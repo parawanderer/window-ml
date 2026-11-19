@@ -74,6 +74,15 @@ export async function forStored<T>(value: T): Promise<T> {
     return mapStrings(value, f, 8);
 }
 
+/** What a subtree deeper than the stored scrub reads becomes when it holds text. */
+export const DEPTH_WITHHELD = "[withheld: nested deeper than the scrub reads]";
+
+/** Whether a string is anywhere under `value`, but under an image key. */
+function holdsText(value: unknown): boolean {
+    if (typeof value === "string") return true;
+    return value != null && typeof value === "object" && Object.entries(value).some(([k, v]) => !IMAGE_KEY.test(k) && holdsText(v));
+}
+
 /**
  * Every string in a value, through `f`, but those under an image key.
  * @param value the value
@@ -83,7 +92,9 @@ export async function forStored<T>(value: T): Promise<T> {
  */
 function mapStrings<T>(value: T, f: (s: string) => string, depth: number): T {
     if (typeof value === "string") return f(value) as T;
-    if (depth < 0 || value == null || typeof value !== "object") return value;
+    if (value == null || typeof value !== "object") return value;
+    // Deeper than the scrub reads: a subtree holding any text is withheld rather than kept as it is.
+    if (depth < 0) return (holdsText(value) ? DEPTH_WITHHELD : value) as T;
     if (Array.isArray(value)) {
         let changed = false;
         const out = value.map((v) => { const s = mapStrings(v, f, depth - 1); if (s !== v) changed = true; return s; });

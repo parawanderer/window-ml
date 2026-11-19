@@ -209,7 +209,8 @@ function raiseKept(runId: string, seq: number, ask: AskRequest, facts: Record<st
         run.signal.addEventListener("abort", onAbort);
         enders.set(key, finish);
         // `arguments` is what a reader of the pending gates gets (`run.approvals`, which the model may read, and the
-        // external approver): the kept copy. `facts` is what a policy judges: the raw copy, in this worker only.
+        // external approver, whose list puts it in `facts` too: externalApprovals): the kept copy. `facts` is what a
+        // policy judges: the raw copy, in this worker only.
         const base = { key, runId, seq, step: run.stepOf(seq), tool: entry.kind, arguments: entry.facts, ts: raisedAt, routing: run.routing, askId: id, ...(ask.placement ? { placement: ask.placement } : {}) };
         // The copy keeps `effects` (plainCopy is JSON, and EffectsData is plain data), so a judged consumer's card stays
         // judgeable; a copy that lost them (facts that would not serialise) is left to the person, never judged blind.

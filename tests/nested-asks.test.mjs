@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { hostAsks, raiseAsk, canAsk, stepAsks, noteAskOutcome, MAX_ASKS_PER_STEP } from "../src/sw/sw-asks.ts";
 import { ASK_ID, approvalKey, approvalPayload } from "../src/approval-key.ts";
-import { pendingApprovals, resolveApproval } from "../src/sw/sw-consent.ts";
+import { externalApprovals, pendingApprovals, resolveApproval } from "../src/sw/sw-consent.ts";
 
 const FACTS = { argv: ["git", "--no-pager", "status"], cwd: { path: "/w", inRoot: true }, effects: "unknown", sandboxed: true, placement: "host-sandbox" };
 let n = 0;
@@ -459,6 +459,21 @@ test("the step's event keeps the scrubbed facts; the live copy has the raw ones 
     assert.ok(!holds(last, VALUE), "once it settled, neither copy holds the value: not the facts, not the person's note");
     assert.equal(last.asks[0].note, `not with ${MARK}`);
     assert.ok(!holds(stepAsks(r.runId, 2, true), VALUE), "a later event of the step (its DONE) gets no raw facts either");
+    unhost();
+});
+
+test("the external approver's list (__mlApprovals.list) gets the kept copy in facts and arguments; the policy keeps the raw", async () => {
+    const { r, unhost } = run({ keep, routing: "external" });
+    const p = raiseAsk(r.runId, 5, { kind: "sh", facts: SECRET_FACTS, consumer: "sh", placement: "host-sandbox" });
+    for (let i = 0; i < 20 && !keysOf(r.runId).length; i++) await tick();
+    const [key] = keysOf(r.runId);
+    const mine = externalApprovals().filter((d) => d.key === key);
+    assert.equal(mine.length, 1, "positive control: an externally routed gate is listed");
+    assert.ok(!holds(mine, VALUE), JSON.stringify(mine[0].facts));
+    assert.ok(holds(mine[0].facts, MARK) && holds(mine[0].arguments, MARK));
+    assert.ok(holds(pendingApprovals.get(key).descriptor.facts, VALUE), "what a policy judges is still the raw copy");
+    resolveApproval(key, { approved: false, source: "external" });
+    await p;
     unhost();
 });
 

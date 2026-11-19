@@ -42,7 +42,7 @@ import { handleRunLogDump } from "./sw/sw-run-log";
 import { handleRunStateDump } from "./sw/sw-run-state";
 import { releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw/sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { costCalls } from "./sw/sw-prices";
-import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants } from "./sw/sw-consent";
+import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, externalApprovals, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants } from "./sw/sw-consent";
 import { syncPresence, isVisible, presence, injectRunTools, injectPageScripts, SITE_REQUESTS_KEY } from "./sw/sw-presence";
 import { isExtensionSender, senderFacts, editSiteAccess, pageRefusal, agentRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, upgradeNotice, dismissUpgradeNotice } from "./sw/sw-site-access";
 import { policiesReady, forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView } from "./sw/sw-policies";
@@ -98,7 +98,7 @@ const inflight = new Map<string, AbortController>();
 (globalThis as unknown as { __mlApprovals?: unknown }).__mlApprovals = {
     // Only OPTED-IN gates (approvalRouting "both"/"external") are visible/resolvable here — a default "ui"
     // run stays human-only, so an orchestrator can't approve a run that never asked to be driven externally.
-    list: (): PendingApprovalDescriptor[] => [...pendingApprovals.values()].map(v => v.descriptor).filter(externallyResolvable),
+    list: (): PendingApprovalDescriptor[] => externalApprovals(),
     resolve: (key: string, decision: boolean | ApprovalDecision): boolean => {
         const entry = pendingApprovals.get(key);
         if (!entry || !externallyResolvable(entry.descriptor)) return false;   // unknown, or a UI-only gate
