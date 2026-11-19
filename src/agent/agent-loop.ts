@@ -139,6 +139,14 @@ export interface AgentLoopDeps {
      *  read-only try, a precheck, a thrown dispatch, a denial) before the transcript, the log, pointers or the model see
      *  it: the worker's one crossing into model context (sw-scrub.ts). Omitted → the result unchanged. */
     forModel?(name: string, result: string): Promise<string>;
+    /** The same crossing for text that cannot wait for it: a live output's view (`live`: a tail that begins a secret
+     *  is held back), and the lines the loop appends after `forModel` (the `@tool:` line, the cut line, the budget
+     *  line). Synchronous: it runs on every delta. Omitted → the text unchanged. */
+    scrubText?(text: string, live: boolean): string;
+    /** The same crossing for what the run stores or shows beside the result: the tool's Out render (the sidebar and
+     *  both exports draw it) and so a pointer's fuller capture, which a later `@tool:` read hands a script or the
+     *  model. Omitted → unchanged. */
+    scrubStored?<T>(value: T): Promise<T>;
 }
 
 /** Where in a tool call's dispatch a throw happened: the read-only try, the auto-approve decision, the doomed-action
@@ -1021,7 +1029,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // streamOutput } so the reducer patches the pending row additively; the DONE below supersedes it.
             // Its head is the model's cut, for a tool that has one, so the part the model read stays in view.
             const cut = call.name === "exec" || call.name === "python_exec" ? resolveOutputCap(call.name, args.maxChars, args.maxCharsReason).cap : 0;
-            const fan = makeStreamFan(opts.stream, (out, marks) => deps.emit?.({ step, seq: s, streamOutput: out, streamMarks: marks }), panelHead(cut));
+            const fan = makeStreamFan(opts.stream, (out, marks) => deps.emit?.({ step, seq: s, streamOutput: deps.scrubText ? deps.scrubText(out, true) : out, streamMarks: marks }), panelHead(cut));
             let result: string, approval: Approval | undefined;
             let tr: ToolRunResult | undefined;   // the full result — its render slots ride the DONE emit
             if (stopRun || signal?.aborted) {
@@ -1151,6 +1159,12 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 try { result = String(await deps.forModel(call.name, result)); }
                 catch { result = `Error: the "${call.name}" call's result could not be checked before you read it, so it is withheld.`; }
             }
+            // What the run keeps beside the result crosses the same scrub, or the panel, the exports and a pointer
+            // would hold what the model was kept from.
+            if (tr?.renderOut && deps.scrubStored) {
+                try { tr = { ...tr, renderOut: await deps.scrubStored(tr.renderOut) }; }
+                catch { tr = { ...tr, renderOut: undefined }; }
+            }
             const entry: AgentTranscriptEntry = { tool: call.name, arguments: args, result };
             // Real result nodes ride the transcript ENTRY too (page-side only — undefined for the delegated
             // path). They reach the caller's res.transcript / onStep, never the model.
@@ -1277,7 +1291,8 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const budgetLine = call === msg.tool_calls[msg.tool_calls.length - 1] && left > 0 && left <= 2
                 ? `\n[${left} step${left === 1 ? "" : "s"} left this turn: answer before it runs out, or say what is left undone.]`
                 : "";
-            const forModel = `${result}${cutLine}${embedLine}${budgetLine}`;
+            const appended = `${cutLine}${embedLine}${budgetLine}`;
+            const forModel = `${result}${appended && deps.scrubText ? deps.scrubText(appended, false) : appended}`;
             // The DONE event carries the clean `result` for the pretty Out AND — when a token line was appended —
             // `modelResult` (what the model ACTUALLY saw), so the log's raw view stays complete (the AGENTS rule).
             // Folded onto the In render — the slot that already shows the code, since a diff of it belongs
