@@ -88,12 +88,6 @@
       "cost": "size",
       "why": "a new scalar"
     },
-    "ndarray.round": {
-      "effects": "pure; mutates(the out argument) when out= is given",
-      "returns": "fresh; alias(the out argument) when out= is given",
-      "cost": "size",
-      "why": "a new rounded array, or the out array written in place"
-    },
     "ndarray.sum": {
       "effects": "pure",
       "returns": "fresh",

@@ -242,7 +242,8 @@ json.dumps(res)
 // --- the hard-coded list and the manifest say the same thing, until the data form replaces both ---
 
 test("AGREE: every numpy leaf the manifest marks as writing its out argument is in DIALECT_OUT_ARGS, and the reverse", () => {
-    // Only the names the manifest LISTS: ndarray.round keeps its leaf row (what it does) while UNLISTED keeps it out.
+    // Only the names the manifest LISTS. ndarray.round has no row: a row nobody lists reads as admitted
+    // (tests/manifest-schemas.test.mjs), so why it is out lives in UNLISTED (make-corpus-count.py) alone.
     const man = JSON.parse(FILES["manifest-numpy.json"]);
     const names = new Set([...man.functions.map((f) => `numpy.${f}`), ...Object.entries(man.kinds).flatMap(([k, ms]) => ms.map((m) => `${k}.${m}`))]);
     const marked = Object.entries(man.leaves ?? {}).filter(([key, row]) => names.has(key)
