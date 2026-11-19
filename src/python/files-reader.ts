@@ -37,8 +37,8 @@ export type Txn = number;
 
 /**
  * One front end's connection to the reader: paths are session-relative and canonical (`attached/<h>/<name>`,
- * `agent/…`, `""` for the root). The session is the channel's, set by the offscreen document per cell and never by
- * the caller; a descriptor opened under one session answers EBADF under any other, and every call does while it is null.
+ * `agent/…`, `""` for the root). The session is the channel's, set by the offscreen document and never by the
+ * caller (Python's: once, to the run's, for the worker's life); a descriptor opened under one session answers EBADF under any other, and every call does while it is null.
  * Read descriptors and write descriptors share one number space, and `read`/`fstat` take either.
  */
 export interface FilesChannel {
@@ -47,7 +47,7 @@ export interface FilesChannel {
      * (ruling 86, which withdrew ruling 81's folder per model). The reader's to say, never a caller's.
      */
     readonly home?: string;
-    /** The session of the cell in flight, or null between cells; `attemptTxn` joins every `openWrite` to that txn. */
+    /** The session this channel serves (a Python run's worker: the run's, set once), or null for none; `attemptTxn` joins every `openWrite` to that txn. */
     setSession(hash: string | null, opts?: { attemptTxn?: Txn }): void;
     stat(path: string, opts?: { txn?: Txn }): Promise<FileStat>;
     opendir(path: string, opts: { cursor?: string; limit: number; txn?: Txn }): Promise<DirPage>;

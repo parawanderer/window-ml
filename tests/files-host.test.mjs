@@ -1,5 +1,6 @@
 // files-host.test.mjs — which Python workers get `/files` (files-host.ts): none until the reader is set, then only a
-// worker-hosted run's own, its session fixed to the run's; and what a worker may ask of the channel (files-wire.ts).
+// worker-hosted run's own, its session fixed to the run's; what a worker may ask of the channel (files-wire.ts); and
+// the mount's refusal of links (files-mount.ts), which needs no core.
 
 import { test } from "node:test";
 import assert from "node:assert";
@@ -70,4 +71,17 @@ test("a worker's request names only a listed op: setSession, dispose and prototy
     handle({ filesReq: { id: ++id, op: "stat", args: ["agent"] } });
     await new Promise((r) => setTimeout(r, 20));
     assert.deepEqual(calls.map((c) => c[0]), ["stat"]);
+});
+
+// --- links: neither kind is made under /files ---
+
+test("a hard link is refused EPERM by the mount's own node op, as a symbolic one is (this core's os has no link)", async () => {
+    const { makeFilesMount } = await import("../src/python/files-mount.ts");
+    class ErrnoError extends Error { constructor(errno) { super(`errno ${errno}`); this.errno = errno; } }
+    const ERRNO_CODES = { EPERM: 63, EINVAL: 28 };
+    const { type } = makeFilesMount({ FS: { ErrnoError }, ERRNO_CODES, call: () => assert.fail("a link never asks the reader"), data: new Uint8Array(0), Interrupted: class {} });
+    for (const op of ["link", "symlink"]) {
+        assert.equal(typeof type.node_ops[op], "function", op);
+        assert.throws(() => type.node_ops[op]({}, "x", {}), (e) => e.errno === ERRNO_CODES.EPERM, op);
+    }
 });

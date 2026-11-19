@@ -77,7 +77,7 @@ interface Stat { kind: "file" | "dir"; size: number; mtimeMs: number; hidden: bo
 
 /**
  * Build the `/files` type and the per-cell reset. The session is never the mount's: the offscreen document sets the
- * channel's per cell, and every descriptor this mount holds answers EBADF under any other.
+ * channel's once, to the run's, for the worker's life (files-host.ts), and every descriptor answers EBADF under any other.
  * @param deps the worker's FS, errno table and channel
  * @returns `type` for `FS.mount`, `remount()` for each cell's start, and `stats` for tests
  */
@@ -116,7 +116,7 @@ export function makeFilesMount(deps: FilesMountDeps) {
     }
 
     // THE READ CACHE: fixed slots, never a buffer per chunk (#1999, ranged.ipynb). Keyed by descriptor and chunk, and
-    // emptied at every cell, so a descriptor a later cell reaches is asked again under that cell's session.
+    // emptied at every cell, so a later cell reads again what another front end may have changed between cells.
     const slots = Array.from({ length: READ_CACHE_SLOTS }, () => ({ key: "", n: 0, used: 0, buf: null as Uint8Array | null }));   // state: cache — read chunks, emptied per cell
     let tick = 0;   // state: cache — the slots' LRU clock
     function chunk(fd: number, index: number): { buf: Uint8Array; n: number } {
@@ -244,6 +244,8 @@ export function makeFilesMount(deps: FilesMountDeps) {
                 return [".", "..", ...kids.keys()];
             },
             symlink() { throw new FS.ErrnoError(ERRNO_CODES.EPERM); },
+            // This core's `os` has no `link`; refused here too, for whatever reaches the node op.
+            link() { throw new FS.ErrnoError(ERRNO_CODES.EPERM); },
             readlink() { throw new FS.ErrnoError(ERRNO_CODES.EINVAL); },
         },
         stream_ops: {
@@ -263,8 +265,8 @@ export function makeFilesMount(deps: FilesMountDeps) {
                 try { w = req("openWrite", [p, flag, txn]); }
                 catch (e) {
                     try { req("abortTx", [txn]); } catch { /* */ }
-                    // A file `mknod` made for this open exists only here: a refused open must not leave it as a phantom.
-                    if (node.fresh) { try { FS.destroyNode(node); } catch { /* already gone */ } stale(node); }
+                    // A file `mknod` made for this open exists only here: forget the listing, so no lookup finds it.
+                    if (node.fresh) stale(node);
                     throw e;
                 }
                 node.fresh = false;
@@ -348,8 +350,8 @@ export function makeFilesMount(deps: FilesMountDeps) {
     };
 
     /**
-     * At a cell's start: drop what the last cell's session left in the mount (its nodes and stats, the read cache) and
-     * mount afresh. Open streams keep their descriptors, which the channel judges against the new cell's session.
+     * At a cell's start: drop what the last cell left in the mount (its nodes and stats, the read cache) and mount
+     * afresh, so a change another front end made between cells is seen. Open streams keep their descriptors.
      */
     function remount() {
         dropCache();

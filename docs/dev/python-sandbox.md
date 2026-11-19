@@ -761,8 +761,9 @@ disposes it when the worker dies, which aborts every write still open.
   file lands with part of what was written. A per-cell commit stays possible (the txn shape covers it) and is not built.
 - **Refusals are the reader's.** Where a run may write is the reader's to say, and the mount passes its errno through
   unchanged: EROFS at the root and in `attached/`, free under `agent/` (ruling 86). The modes carry write bits on
-  purpose: Emscripten checks them before calling the mount and would say EACCES where the answer is EROFS. A symlink is
-  EPERM. A refused first `open` destroys the node `mknod` made for it, so no phantom file is left in the mount.
+  purpose: Emscripten checks them before calling the mount and would say EACCES where the answer is EROFS. A symlink and
+  a hard link are EPERM (this core's `os` has no `link`; the node op refuses anyway). A refused first `open` drops the
+  directory's listing, so the next lookup asks the reader, which has no such file: no phantom is left in the mount.
 - **The working directory is `/files/agent`**, the reader's `home`, posted with the channel's memory and entered at
   every mount, so a relative `open()` lands where the run writes; `../attached/` reads, and never writes.
 - **A hidden file is refused in the reader's words**, since the model acts on the text and an errno carries none. The
