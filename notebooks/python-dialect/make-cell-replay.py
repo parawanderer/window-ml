@@ -140,11 +140,16 @@ per_run.groupby("model").agg(runs=("run", "size"), cards_recorded=("cells", "sum
 md("""
 ## The counterfactual: mutation of plain data permitted
 
-Simulated without a fork change: before each cell, every plain-data value in the namespace that the cell did not make (a
-DataFrame, Series, ndarray, list, dict, set, str or number: the injected `df`/`tables` and whatever a full-path cell left)
-is rebuilt by `copy.deepcopy` inside an inside cell, so it is owned. The change removes a card only where a cell's
-refusal is a mutation refusal; the upper bound is the count of cells whose FIRST refusal is that class, since a later
-refusal in the same cell is hidden behind it.
+Simulated without a fork change: after each cell's setup and before its code, every mutable plain-data value in the
+namespace, the injected `df` and whatever earlier cells left, is rebuilt under its own name inside an inside cell, so it
+is owned: a DataFrame, Series, list or dict as `x = x.copy()`, an ndarray as `numpy.array(x, copy=True)`.
+`copy` is not an admitted module, so `copy.deepcopy` cannot be the rebuild. The rebuild is shallow: a container inside a
+container, and the DataFrames in the `tables` dict, stay unowned. Sets are left alone (their mutators are refused as
+unlisted attributes whoever made them), and strings, numbers and tuples cannot be written. The driver checks each rebuild
+on a value a full-path cell made before it starts, counts the values rebuilt per cell, and stops on any rebuild the
+dialect refuses, so the two replays can agree only because the outcomes do. The change removes a card only where a
+cell's refusal is a mutation refusal; the upper bound is the count of cells whose FIRST refusal is that class, since a
+later refusal in the same cell is hidden behind it.
 """)
 
 code("""
@@ -152,6 +157,8 @@ j = plain[["run", "cell", "model", "outcome"]].merge(owned[["run", "cell", "outc
 moved = j[j.outcome != j.outcome_owned]
 print("cells whose first refusal is a mutation refusal (upper bound on what the change removes):",
       int((plain["class"] == "mutation of a value the cell does not own").sum()))
+assert owned["rebuilt"].sum() > 0, "the counterfactual rebuilt no value"
+print("values rebuilt before cells:", int(owned["rebuilt"].sum()), "over", int((owned["rebuilt"] > 0).sum()), "of", len(owned), "cells")
 print("cells whose outcome changed with plain data owned:", len(moved))
 moved
 """)
