@@ -426,6 +426,9 @@ export interface ShFacts {
     /** The arguments whose leading `~` the host expanded (`argv` and the paths already carry the expansion); `[]` from a
      *  host that expands nothing. */
     tilde: HostTilde[];
+    /** The files at the roots' tops the sandbox holds unreadable for this call (`HostFacts.hiddenSecrets`); `[]` from a
+     *  host that reports none. */
+    hiddenSecrets: string[];
     /** The `/files` arguments the host mapped to the uploads folder (FILE_ATTACHMENTS.md H9; `argv` and the paths carry
      *  the real path); `[]` when nothing was mapped. */
     files: HostFilesMapped[];
@@ -450,6 +453,15 @@ export function filesLines(files: readonly HostFilesMapped[]): ShCardLine[] {
  */
 export function tildeLines(tilde: readonly HostTilde[]): ShCardLine[] {
     return tilde.map((t) => ({ label: "~", value: t.to ? `${t.from} is ${t.to}` : `${t.from} stays literal (${t.reason ?? "no home"})`, ...(t.to ? {} : { warn: true }) }));
+}
+
+/**
+ * The card's lines for the files the sandbox holds unreadable for this call, one per file: a program that loads one
+ * without being given it fails, and the person should see why. Human-facing text.
+ * @param hidden the facts' paths
+ */
+export function hiddenSecretsLines(hidden: readonly string[]): ShCardLine[] {
+    return hidden.map((p) => ({ label: "Held", value: `${p} (unreadable to this call)` }));
 }
 
 /** A walked directory whose walk found a secret, or could not tell, counts as one. */
@@ -519,6 +531,7 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
         mode: facts.mode, sandboxed: facts.sandboxed, placement: facts.placement,
         credential: credentialOf(facts, m),
         tilde: (facts.tilde ?? []).map((t) => ({ ...t })),
+        hiddenSecrets: Array.isArray(facts.hiddenSecrets) ? facts.hiddenSecrets.filter((p): p is string => typeof p === "string") : [],
         files: (facts.files ?? []).map((m) => ({ ...m })),
     };
 }
@@ -722,6 +735,7 @@ export function shCardLines(f: ShFacts, applied?: HostDoneEnvelope | null, asked
         { label: "Program", value: f.program.path + (f.program.version ? ` (version ${f.program.version})` : "") + (f.flavour ? `, ${f.flavour.how}` : ""), ...(f.flavour?.name === "other" ? { warn: true } : {}) },
         { label: "In", value: f.cwd.path + (f.cwd.inRoot ? "" : " (outside the workspace roots)"), ...(f.cwd.inRoot ? {} : { warn: true }) },
         ...tildeLines(f.tilde ?? []),
+        ...hiddenSecretsLines(f.hiddenSecrets ?? []),
         ...filesLines(f.files ?? []),
         f.sandboxed
             ? { label: "Sandbox", value: f.credential?.held ? `on: writes only inside the workspace roots, network to ${f.credential.hosts ? f.credential.hosts.join(", ") : "any host"} on ${portsText(f.credential.ports)} only` : "on: writes only inside the workspace roots, no network" }
@@ -816,7 +830,15 @@ export interface ShResult {
     protectedChanged: HostProtectedChange[] | null;
     /** The host cut `protectedChanged` at its bound; absent = the list is complete. */
     protectedChangedTruncated?: true;
+    /** The files at the roots' tops the sandbox held unreadable for this call, at most {@link SH_HIDDEN_SHOWN}; absent
+     *  when none (or from an older host). */
+    hiddenSecrets?: string[];
+    /** How many more than {@link SH_HIDDEN_SHOWN} were held; absent when the list is complete. */
+    hiddenSecretsMore?: number;
 }
+
+/** How many held files an `ml.sh.run` answer lists; the rest are a count (`hiddenSecretsMore`). */
+export const SH_HIDDEN_SHOWN = 16;
 
 const CHANGE_KINDS: ReadonlySet<unknown> = new Set(["created", "modified", "removed"]);
 
@@ -868,7 +890,7 @@ export function shOut(s: HostStream, token: string | null, head: Uint8Array): Sh
  * @param out the two streams, already shaped
  * @param asked the envelope sent on `start`, or undefined when none was (today's floor)
  */
-export function shResult(done: HostDone, facts: Pick<ShFacts, "placement">, description: CallDescription | null, out: { stdout: ShOut; stderr: ShOut }, asked?: HostEnvelope): ShResult {
+export function shResult(done: HostDone, facts: Pick<ShFacts, "placement"> & Partial<Pick<ShFacts, "hiddenSecrets">>, description: CallDescription | null, out: { stdout: ShOut; stderr: ShOut }, asked?: HostEnvelope): ShResult {
     const okCodes = description?.okCodes ?? [0];
     const ok = !done.error && !done.killed && !done.timedOut && !done.cancelled && done.code !== null && okCodes.includes(done.code);
     const changed = protectedChangedOf(done.protectedChanged);
@@ -878,6 +900,7 @@ export function shResult(done: HostDone, facts: Pick<ShFacts, "placement">, desc
         envelope: done.envelope ?? null,
         ...(asked !== undefined ? { asked } : {}),
         protectedChanged: changed, ...(changed !== null && done.protectedChangedTruncated === true ? { protectedChangedTruncated: true as const } : {}),
+        ...(facts.hiddenSecrets?.length ? { hiddenSecrets: facts.hiddenSecrets.slice(0, SH_HIDDEN_SHOWN), ...(facts.hiddenSecrets.length > SH_HIDDEN_SHOWN ? { hiddenSecretsMore: facts.hiddenSecrets.length - SH_HIDDEN_SHOWN } : {}) } : {}),
         ...(done.error ? { error: `${done.error.code}: ${done.error.message}` } : {}),
         ...(done.killed === "oom" ? { killed: "oom" as const, error: `killed: past its memory bound of ${done.memoryBound ?? "?"} bytes` } : {}),
         ...(typeof done.peakFootprint === "number" ? { peakFootprint: done.peakFootprint } : {}),
@@ -925,6 +948,7 @@ function putWrote(o: unknown): ShCardLine | undefined {
 export function unaskedLines(u: ShUnasked): ShCardLine[] {
     const lines: ShCardLine[] = [{ label: "Allowed by", value: u.by !== "policy" ? "the built-in default" : u.policy ? `the policy "${u.policy}"` : "a policy (no label recorded)" }];
     if (Array.isArray(u.tilde)) lines.push(...tildeLines(u.tilde));
+    if (Array.isArray(u.hiddenSecrets)) lines.push(...hiddenSecretsLines(u.hiddenSecrets));
     if (Array.isArray(u.files)) lines.push(...filesLines(u.files));
     const put = putWrote(u.outcome);
     if (put) return [...lines, put];

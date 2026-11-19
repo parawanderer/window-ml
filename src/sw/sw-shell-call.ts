@@ -412,7 +412,7 @@ async function runCall(ctx: ShCallContext, req: ShRunRequest, started: (h: Shell
             // asking is never only in the run log.
             const unasked: ShUnasked | undefined = verdict.by === "person" ? undefined
                 : { by: verdict.policy !== undefined ? "policy" : "default", ...(verdict.policy !== undefined ? { policy: verdict.policy } : {}),
-                    argv: [...f.argv], ...(f.tilde.length ? { tilde: f.tilde } : {}), ...(f.files.length ? { files: f.files } : {}), outcome: shOutcome(result) as unknown as Record<string, unknown> };
+                    argv: [...f.argv], ...(f.tilde.length ? { tilde: f.tilde } : {}), ...(f.hiddenSecrets.length ? { hiddenSecrets: f.hiddenSecrets } : {}), ...(f.files.length ? { files: f.files } : {}), outcome: shOutcome(result) as unknown as Record<string, unknown> };
             spansByStep.set(k, [...(spansByStep.get(k) ?? []), shSpanOf(f.argv[0] ?? "", result, unasked)]);
             if (spansByStep.size > SPAN_STEPS_MAX) spansByStep.delete(spansByStep.keys().next().value!);
             return { ok: result };
@@ -464,6 +464,7 @@ function envelopeDetail(r: ShResult): Record<string, string | number | boolean> 
         applied: r.envelope ? envelopeText(r.envelope) : "unknown",
         ...(envelopeMismatch(r.envelope, r.asked) ? { envelopeMismatch: true } : {}),
         protectedChanged: r.protectedChanged ? r.protectedChanged.length : "unknown",
+        ...(r.hiddenSecrets ? { hiddenSecrets: r.hiddenSecrets.length + (r.hiddenSecretsMore ?? 0) } : {}),
         ...(r.protectedChangedTruncated ? { protectedChangedTruncated: true } : {}),
     };
 }
