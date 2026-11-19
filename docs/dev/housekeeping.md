@@ -22,7 +22,7 @@ you add an emitter.
 | `pyodide/prewarm` (`reason: run-start / commander`) | the worker (`PYTHON_PREWARM`) | Only when it actually started the runtime; an already-running one logs nothing. |
 | `pyodide/cold-start` (`ms`, `reason: prewarm / run`, `key` = principal) | `offscreen.ts`, from the worker's `booted` message | The start itself, whatever caused it. A warm run reports nothing. |
 | `pyodide/prewarm-used` (`ms`, `detail.warm`) | `offscreen.ts` | The first run after a pre-warm: warm, or still starting and how long it waited. |
-| `pyodide/kill` (`reason: timeout / start-timeout / crashed`) | `offscreen.ts` `killWorker` | `detail.queuedRuns` is how many runs behind it failed with it; a crash keeps the worker's message in `detail.message`. |
+| `pyodide/kill` (`reason: timeout / start-timeout / stopped / library-removed / kernel-death / crashed`) | `offscreen.ts` `killWorker` | `detail.queuedRuns` is how many runs behind it failed with it; a crash keeps the worker's message in `detail.message`. |
 | `pyodide/reap` (`key` = principal, `ms` = idle time, `detail.live`) | `offscreen.ts` `reapWorker` | An idle worker was shut (`py-reap.ts`); `detail.live` when it held a run's namespace, which is lost; `detail.between` when that run's turn had ended. |
 | `pyodide/respawn` (`key` = principal, `detail.mode`) | `offscreen.ts` `ensureWorker` | A principal's worker was killed and is starting fresh: its kept bench namespace died with the old worker. |
 | `fetch-cache/evict` (`reason: budget`, `key`, `bytes`) | the page (`injected.ts`, `FetchCache`'s `onEvict`) | Page-origin, so only the tab that fetched the URL reads the key back. |

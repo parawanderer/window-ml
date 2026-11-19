@@ -68,6 +68,7 @@ export const SETTING_TEXT: Readonly<Partial<Record<keyof MlConfig, SettingText>>
     shellRoots: { name: "Workspace folders", tip: "Absolute paths, one per line. A call's working folder must be inside one; with the sandbox on, programs may write only inside them." },
     shellSandbox: { name: "Run programs under the OS sandbox", tip: "On by default. Each call runs under the OS sandbox: writes only inside the workspace folders, no network, credential folders hidden. Where no sandbox is available, every call's card says so." },
     shellPath: { name: "Program search path (optional)", tip: "Directories to look programs up in, in order, one per line. Empty: the host's default (your PATH plus the usual system folders)." },
+    shellRevealsAllow: { name: "Programs that may show other processes", tip: "Programs such as ps, lsof and top show every process's command line, user and open files, including other programs' arguments. Their calls ask until the program is listed here, one per line; a listed program's calls that would otherwise run without asking then do. Only you change this list: here, or with \"Always allow\" on such a call's card." },
 };
 
 /**

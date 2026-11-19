@@ -2686,11 +2686,15 @@
           "type": "string"
         },
         "cause": {
-          "description": "Why it asks, as a slug: why the policy is gone (`archived`, `removed`, `narrowed`), `outside-dialect`, `ask-policy` (an `ask` policy matched, and the card offers no \"remember\"), `nav-only` (a read of an origin a policy lets the run go to, not read), or `start-left` (a read of the start origin once the tab has left it).",
+          "description": "Why it asks, as a slug: why the policy is gone (`archived`, `removed`, `narrowed`), `outside-dialect`, `ask-policy` (an `ask` policy matched, and the card offers no \"remember\"), `nav-only` (a read of an origin a policy lets the run go to, not read), `start-left` (a read of the start origin once the tab has left it), or `reveals` (a call whose program shows other processes and is not in `shellRevealsAllow`, and would otherwise run unasked).",
           "type": "string"
         },
         "policy": {
           "description": "The gone policy's label, or for `ask-policy` the policy that asks; absent when no policy is involved.",
+          "type": "string"
+        },
+        "program": {
+          "description": "`reveals` only: the program \"Always allow\" adds to `shellRevealsAllow`, the manifest's `program`.",
           "type": "string"
         },
         "bridged": {
