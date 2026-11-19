@@ -1056,7 +1056,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // eviction (its worker forgot the hold, and the page may have moved). A run's first turn is on the person's page.
         void judgeTurnStart(tabId, runId, { first: !resumeMessages, force: resurrected || !!arrivalHold(runId) });
         const startEvent = {
-            kind: "agent", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 },
+            kind: "agent", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0, ...(p.forkOf && !resurrected && !resumeMessages ? { forkOf: p.forkOf } : {}) },
             // A fresh run's task as the model got it, the page context in front (`firstUserTurn`); the bubble shows the task.
             task: resurrected ? (resumeOriginalTask ?? p.task) : firstUserTurn(modelTask, resumeMessages ? undefined : p.pageContext), model: p.model, maxSteps: p.maxSteps,
             ...(p.display && !resurrected && p.builtBy === "worker" ? { display: p.display }
