@@ -202,3 +202,74 @@ test("RED TEAM (#2008): a text nested past the scrub's depth is refused, not han
         assert.equal(leaks(out), false, `a text beyond the scrub's depth is handed out raw: ${JSON.stringify(out)}`);
     }
 });
+
+// --- the scrub's KEYS: a registered value used as one is text too ---
+
+const rowBase = { id: { runtime: "local", hash: "abcd0031" }, kind: "agent", status: "done", model: "m", title: "a title" };
+
+test("RED TEAM (#2008): a registered value used as a KEY of a nested field is scrubbed like text", () => {
+    // A tool or an index that groups by page-supplied text (a header, a device name, a page title) puts a value in a
+    // KEY, and JSON keeps keys as keys. Every exit sends the row as JSON, so a key is a string a client reads.
+    const SUBS = registrySubs([{ name: "API_TOKEN", value: VALUE }]);
+    const out = rowForEgress({ ...rowBase, extra: { [VALUE]: ["row"], plain: VALUE } }, SUBS);
+    assert.equal(leaks(out), false, `a key is handed out raw: ${JSON.stringify(out)}`);
+    assert.ok(Object.hasOwn(out.extra, MARK), `the key is scrubbed to the marker: ${JSON.stringify(out.extra)}`);
+    assert.ok(holds(out.extra, MARK), "control: the value in a leaf is scrubbed too");
+});
+
+test("RED TEAM (#2008): two keys that scrub to one text keep both values, numbered", () => {
+    // A key already written as the marker beside the value it names: after the scrub both read the same, and a copy
+    // that kept only one would report to the person that half their data vanished.
+    const SUBS = registrySubs([{ name: "API_TOKEN", value: VALUE }]);
+    const out = rowForEgress({ ...rowBase, extra: { [MARK]: "first", [VALUE]: "second" } }, SUBS);
+    assert.equal(leaks(out), false, JSON.stringify(out));
+    assert.deepEqual(Object.values(out.extra).sort(), ["first", "second"], `both values survive: ${JSON.stringify(out.extra)}`);
+    assert.equal(Object.keys(out.extra).length, 2, "under two keys");
+});
+
+test("RED TEAM (#2008): a __proto__ key stays a key and does not become the copy's prototype", () => {
+    // A row built from parsed JSON can carry an own "__proto__" (JSON.parse makes one); a copy written with `out[k] =`
+    // would set the prototype instead, silently losing the field and poisoning every lookup on the copy.
+    const SUBS = registrySubs([{ name: "API_TOKEN", value: VALUE }]);
+    const extra = JSON.parse(`{"__proto__": {"polluted": ${JSON.stringify(VALUE)}}, "ok": 1}`);
+    const out = rowForEgress({ ...rowBase, extra }, SUBS);
+    assert.equal(leaks(out), false, JSON.stringify(out));
+    assert.equal(Object.getPrototypeOf(out.extra), Object.prototype, "the copy's prototype is untouched");
+    assert.ok(Object.hasOwn(out.extra, "__proto__"), "the key survives as data");
+    assert.equal(out.extra.polluted, undefined, "and nothing it held became an inherited field");
+});
+
+test("RED TEAM (#2008): past the depth, a subtree whose KEY the scrub would change is dropped, and a plain one is kept", () => {
+    const SUBS = registrySubs([{ name: "API_TOKEN", value: VALUE }]);
+    const at = (leaf) => { let v = leaf; for (let i = 0; i < 5; i++) v = { [`n${i}`]: v }; return v; };
+    // Control: a plain-keyed, text-free subtree past the depth is data, and is kept.
+    const kept = rowForEgress({ ...rowBase, extra: at({ a: 1 }) }, SUBS);
+    assert.equal(assertKept(kept, "extra"), true, "control: a text-free plain subtree is kept");
+    // A value used as a key past the depth is text the walk cannot reach: withheld, never sent as it is.
+    const out = rowForEgress({ ...rowBase, extra: at({ [VALUE]: 1 }) }, SUBS);
+    assert.equal(leaks(out), false, `a key past the depth is handed out: ${JSON.stringify(out)}`);
+    // And a text VALUE past the depth, which the previous section covers, stays withheld.
+    assert.equal(leaks(rowForEgress({ ...rowBase, extra: at({ a: VALUE }) }, SUBS)), false);
+});
+
+/** Whether the row still carries `extra` (the control's own field, not a withheld one). */
+function assertKept(row, field) {
+    return row && typeof row === "object" && row[field] !== undefined;
+}
+
+test("RED TEAM (#2008): with no substitutions to trust, a key is kept only in a schema's shape", () => {
+    // With no subs every string is withheld, so an object whose fields are all text empties and is dropped whole.
+    const out = rowForEgress({ ...rowBase, extra: { plain: "x", [VALUE]: "y", "has space": "z" } }, null);
+    assert.equal(leaks(out), false, `a key is handed out with no subs: ${JSON.stringify(out)}`);
+    assert.equal(out.extra, undefined, "an object emptied by the scrub is nothing to send");
+    // With data that survives (numbers), only the schema-shaped KEY keeps its entry.
+    const data = rowForEgress({ ...rowBase, extra: { plain: 1, [VALUE]: 2, "has space": 3 } }, null);
+    assert.equal(leaks(data), false, `a key is handed out with no subs: ${JSON.stringify(data)}`);
+    assert.equal(Object.keys(data.extra).join(","), "plain", "a schema-shaped key is kept, the others' entries are dropped");
+    // The stated residue, pinned: a registered value that itself has a schema key's shape survives as a key on this
+    // path (SECRET_HANDLES.md, the stored scrub's known limits). The row asserts TODAY's behaviour, so a repair that
+    // removes the residue has to change this row deliberately.
+    const shaped = "plugsecretword";
+    const residue = rowForEgress({ ...rowBase, extra: { [shaped]: 1 } }, null);
+    assert.ok(Object.hasOwn(residue.extra, shaped), "the residue: a schema-shaped value used as a key survives with no subs");
+});
