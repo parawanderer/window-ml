@@ -33,8 +33,10 @@ can `pd.merge` them; keys validated as Python identifiers by `pyVarNameError`, s
 (the same accommodate-don't-fight tack as the read_csv redirect; `tables` is a reserved key). A map sent as a JSON
 STRING (`"{\"df\": \"https://…\"}"`, how glm-4.7-flash reads the schema's `oneOf`) is that map (`tablesMapFromJson`,
 dom.ts); the loader and the consent check both decode through it, or a sheet inside the string would skip its card. A
-path on the page's site (`/sales.csv`, `./x.csv`) is resolved against the page and read from the fetch cache like the
-absolute URL. A map key that is not a variable name (models key the map by the URL itself) loads under a name
+path on the page's site (`/sales.csv`, `./x.csv`, `../x.csv`) is resolved against the page and read from the fetch cache
+like the absolute URL, by one rule on both hosts (`sitePathUrl`: the page's `_loadTable` and the worker's `workerTable`,
+which until 2026-11-19 sent a path to the DOM reader as a selector). No CSS selector starts with `/`, `./` or `../`;
+`x.csv` is a selector, and `//host/x` or a path the URL parser takes off the page's origin is not a path. A map key that is not a variable name (models key the map by the URL itself) loads under a name
 derived from it (`derivedTableName`: `…/sales.csv` → `sales`) with the key as its alias; a reserved name is still
 refused. Each source auto-dispatches by shape
 (`_loadTable`): **a `<table>`/ARIA-grid selector** is walked page-side (`extractTable`,
@@ -316,7 +318,13 @@ worker drives with `autoApprovePython` on:
    marked `inside` (`grantRunPython`). `runPython` passes `inside` to the worker only for a `runGated` caller.
 2. The worker loads the allow tables once (`dialectSetup` in `python-dialect-run.ts`, from `dialect-data.ts`, which bundles
    `notebooks/python-dialect/data/`). It refuses to run anything inside on a core without `_restricted`, or one whose
-   `_restricted.build()` reports specialization, tier 2 or a JIT. On such a core every cell asks.
+   `_restricted.build()` reports specialization, tier 2 or a JIT. On such a core every cell asks. **A C callee's write
+   is invisible to the ownership check**, which sees only the interpreter's own store sites (an item assignment, an
+   in-place operator, a listed mutator read off an unowned value). So a module function or ufunc taking `out` is in
+   `DIALECT_OUT_ARGS`, re-registered with a check that refuses `out` bound to anything but None. A C method with an
+   argument that can write is not listed at all (`UNLISTED` in make-corpus-count.py, `ndarray.round`): a checker on a
+   C method does not survive a `*` or `**` call, which reaches the gate as the bound builtin rather than the descriptor
+   its tables key on. `tests/python-dialect-out-args.test.mjs` enumerates both.
 3. `wrapUserScript(…, inside)` runs the cell through `run_cell` (`INSIDE_CELL`, `python-dialect-run.ts`) in a COPY of the namespace that holds no `_` name.
    A bare trailing expression gets `return ` spliced in at its own column, so the value matches the full path.
 4. If it finishes, its bindings are copied back, except a builtin's name or one starting with `_`, and only if every

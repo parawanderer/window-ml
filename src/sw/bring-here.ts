@@ -5,6 +5,7 @@ import { moveRun, type MoveOutcome } from "./move-run";
 import { localRuntimeId, runSessionCommand, sessionServer } from "./sw-sessions";
 import { THIS_BROWSER } from "../session/session-commands";
 import { BRING_HERE_ORDER, originOf, type BringableSession } from "./bring-order";
+import { forRowText } from "./sw-scrub";
 
 /**
  * Every agent session of this browser that may be brought to a tab: settled, and either held in memory on another tab
@@ -15,13 +16,14 @@ import { BRING_HERE_ORDER, originOf, type BringableSession } from "./bring-order
  */
 export function bringableSessions(tabId: number, tabUrl: string): BringableSession[] {
     const out: BringableSession[] = [];
-    for (const s of sessionServer.index.list()) {
+    for (const s of sessionServer.shownList()) {
         if (s.kind !== "agent" || s.status === "running" || s.status === "waiting") continue;
         const hash = s.id.hash;
         if (runControllers.has(hash) || startingControllers.has(hash)) continue;
         const held = bgRuns.get(hash);
         if (held ? held.tabId === tabId : !s.saved) continue;
-        const url = (held ? held.p.pageUrl : undefined) ?? s.page?.url ?? "";
+        // The row is scrubbed already; a held run's own page URL crosses the same scrub.
+        const url = (held?.p.pageUrl != null ? forRowText(held.p.pageUrl) : s.page?.url) ?? "";
         out.push({ hash, title: s.title || s.task || hash, url, lastTs: s.lastTs, held: !!held });
     }
     return out.sort(BRING_HERE_ORDER(originOf(tabUrl)));

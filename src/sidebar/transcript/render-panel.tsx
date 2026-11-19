@@ -5,7 +5,7 @@
 import type { ComponentChildren } from "preact";
 import { GLYPH, RESOLVED_LABEL, rungLabel, rungMeta } from "../export/fetch-ladder";
 import { IconCheck, IconChevron, IconCopy, IconEye, IconEyeOff, IconRows, IconSummary } from "../icons";
-import { scrollToStepSeq } from "./step-scroll";
+import { scrollToStepSeq, revisionStepSeq } from "./step-scroll";
 import { useState, useRef, useEffect, useLayoutEffect, useMemo } from "preact/hooks";
 import { signal } from "@preact/signals";
 import type { RenderDescriptor, LocateSubstep, CodeRevision } from "../../contract/contract-render";
@@ -658,7 +658,7 @@ function CodeDiff({ revision, after, lang, hash, failed }: { revision: CodeRevis
                     not, because an id you can copy beats a name we invented. */}
                 <PointerChip cls="r-diff-ref"
                     label={revision.label ? `${revision.tool}: ${revision.label}` : revision.ref}
-                    onClick={() => scrollToStepSeq(revision.seq, hash, "in")}
+                    onClick={() => scrollToStepSeq(revisionStepSeq(revision.ref, sessionMap.get(hash || "")?.steps), hash, "in")}
                     tip={<>Go to the {revision.tool} call this revises{revision.label ? <> — the model called it "{revision.label}"</> : null}.</>} />
                 {rows
                     ? <span class="r-diff-stat"><b class="r-diff-add">+{stat.added}</b> <b class="r-diff-del">−{stat.removed}</b></span>

@@ -189,3 +189,26 @@ test("placeCard clears the cursor's own image: a card below starts under the poi
     const low = placeCard({ left: 100, top: 500, bottom: 518 }, { w: 300, h: 240 }, view, 4, 8, 502 + 24);
     assert.ok(low.top + 240 <= 502, "above, the whole card is over the hotspot, so the cursor is never under it");
 });
+
+// --- an empty array or object ---
+const rows = () => [...host.querySelectorAll(".jt-row")].map(r => r.textContent.replace(/\s+/g, ""));
+
+test("an empty root array is one line, `[]`, with no chevron", async () => {
+    await mountTree([]);
+    assert.deepEqual(rows(), ["[]"]);
+    assert.equal(host.querySelector(".tri.open, .jt-clickable, [role=button]"), null, "nothing to open");
+});
+
+test("an empty root object is one line, `{}`, with no chevron", async () => {
+    await mountTree({});
+    assert.deepEqual(rows(), ["{}"]);
+    assert.equal(host.querySelector(".jt-clickable, [role=button]"), null);
+});
+
+test("an empty nested array or object is `[]` / `{}` after its key, with the comma a leaf draws, and no toggle of its own", async () => {
+    await mountTree({ a: [], b: {}, c: 1 });
+    assert.deepEqual(rows(), ["{", '"a":[],', '"b":{},', '"c":1', "}"]);
+    assert.equal(host.querySelectorAll(".jt-clickable").length, 1, "only the root opens");
+    await mountTree({ rows: [[], {}] }, { allOpen: true });
+    assert.deepEqual(rows(), ["{", '"rows":[', "[],", "{}", "]", "}"]);
+});
