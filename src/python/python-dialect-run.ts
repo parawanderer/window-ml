@@ -202,7 +202,36 @@ def _ml_dialect_setup(_files):
     # What the gate admitted, kept for a library's shape rule: it judges imports by exactly these tables.
     import sys, types
     sys.modules.setdefault("_ml_libraries", types.SimpleNamespace(pins={})).admitted = restricted.load_manifests(_dir)["modules"]
+    _ml_buffer_args(_files, _restricted, restricted)
     return ""
+
+def _ml_buffer_args(_files, _restricted, restricted):
+    # A leaf the manifest marks "write(buffer arg) when <p>= is given" (DataFrame.to_string(buf=…)) writes the file or
+    # buffer <p> names, which the fork's own deny-list (restricted._EFFECTFUL) does not know. So it is re-registered
+    # with an entry check that refuses <p> bound to anything but None, by keyword or by position, and the call asks. A
+    # second lifted allow_call replaces the first's checker; the fork's own check still runs after this one.
+    import inspect, json, re
+    for _mod in ("numpy", "pandas"):
+        for _key, _row in json.loads(_files[f"manifest-{_mod}.json"]).get("leaves", {}).items():
+            _m = re.search(r"write\\(buffer arg\\) when (\\w+)= is given", _row.get("effects", ""))
+            if not _m:
+                continue
+            _kind, _, _name = _key.partition(".")
+            _cls = restricted._kind_class(_mod, _kind)
+            for _c in (_cls if isinstance(_cls, tuple) else (_cls,) if _cls else ()):
+                _f = restricted._static_function(_c, _name)
+                if _f is None:
+                    continue
+                _p = _m.group(1)
+                _params = list(inspect.signature(_f).parameters)[1:]
+                _at = _params.index(_p) if _p in _params else None
+                _own = restricted.entry_check(_name, True, arguments=_name in restricted._ENTRY_CHECKED)
+                def _check(func, self, args, kwargs, _name=_name, _p=_p, _at=_at, _own=_own):
+                    _a = args if self is not None else args[1:]
+                    if (kwargs or {}).get(_p) is not None or (_at is not None and len(_a) > _at and _a[_at] is not None):
+                        raise restricted.NotInDialect(f"not in dialect: {_name}({_p}=…) writes to the file or buffer it is given")
+                    _own(func, self, args, kwargs)
+                _restricted.allow_call(_f, True, _check)
 _ml_dialect_setup(${JSON.stringify(files)})
 `;
 
