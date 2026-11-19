@@ -713,7 +713,7 @@ test("the run state panel shows the LIVE turn: what it was asked, the gate it wa
         // IT FOLLOWS THE RUN: a message sent while the turn waits is queued for its next step, and the panel's next
         // read shows it in the mailbox without anything being reopened.
         const mailbox = panel.locator('[data-member="run.mailbox"]');
-        await expect(mailbox.locator(".jt-preview")).toHaveText("[ ]");
+        await expect(mailbox.locator(".jt-empty")).toHaveText("[]");
         // A WATCH over the same thing, typed as JSONPath: nothing to match yet, and it fills in on its own below.
         const watchInput = panel.locator(".rstate-watch-input");
         await watchInput.fill("$.inspector.run.mailbox[*].text");
