@@ -178,6 +178,10 @@ def _ml_inside_run(_src, _g):
     return _v
 `;
 
+/** The admitted module functions and ufuncs that write into the array their `out` parameter is given (filled by the
+ *  fix that refuses it). */
+export const DIALECT_OUT_ARGS: [string, string, string][] = [];
+
 /**
  * Make the interpreter ready to run cells inside the dialect, once per worker: the fork's modules present, its build
  * gate off (no specialization, tier 2 or JIT), the whitelist and manifests written where `load_manifests` reads them,
