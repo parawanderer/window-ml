@@ -69,10 +69,11 @@ async function workerRun(calls, { answer = () => true } = {}) {
 
 // --- which consumers a proposal may name ---
 
-test("a proposal for consumer setting is refused until propose_policy gains setting rows (MODEL_SETTINGS.md, open question 10)", () => {
+test("a proposal may name consumer setting (MODEL_SETTINGS.md, \"Proposing a `setting` policy\"), and no other new one", () => {
     const r = PP.checkProposal({ consumer: "setting", effect: "allow", when: '(c) => c.key === "theme"', label: "Theme follows the model" });
-    assert.match(r.error, /"consumer" must be "fetch" or "act"/);
-    assert.ok(!("proposal" in r));
+    assert.equal(r.proposal?.consumer, "setting");
+    assert.match(PP.checkProposal({ consumer: "sh", effect: "allow", when: "(c) => true", label: "x" }).error, /"consumer" must be "fetch", "act" or "setting"/);
+    assert.match(PP.checkProposal({ consumer: "setting", effect: "allow", when: "(c) => c.host === \"x\"", label: "x" }).error, /does not run/, "a setting rule reads a setting's facts, not a fetch's");
 });
 
 // --- the measure: what a proposal matches, from the run's own calls and a probe ---

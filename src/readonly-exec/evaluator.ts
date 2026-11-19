@@ -544,6 +544,8 @@ export class Evaluator {
     /** Each message row, to its index: the print boundary abridges a large one and names how to print it whole. */
     private rows = new Map<object, number>();
     constructor(private ml: Record<string, unknown> | null, private budget: number = STEP_BUDGET, private realm: ReadonlyRealm = "page") { this.fuel = budget; }
+    /** The steps spent so far, at most the budget: what a caller that shares one budget across evaluations charges. */
+    stepsSpent(): number { return Math.min(this.budget, this.budget - this.fuel); }
 
     /** STRICT FACADES: the policy realm's `c` and every object and array inside it. Reading a field one does not have
      *  is a REFUSAL, never `undefined`, so a typo'd `deny` is a broken policy the person sees rather than a rule that

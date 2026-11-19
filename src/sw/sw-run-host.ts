@@ -36,9 +36,9 @@ import { extractGrants, fetchUrlLiterals, tabGrantsForCall } from "./grant-extra
 import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
 import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, grantOnceFetch, consentFetch, fetchConsent, resolveApproval } from "./sw-consent";
-import { settingBeforeCard, settingCard, settingFacts, holdSettingChange, releaseSettingChange, noteSettingDeclined, watchSetting, settingEntries, settingChangedElsewhere, type SettingChange } from "./sw-change-setting";
+import { settingBeforeCard, settingCard, settingFacts, settingMeasureDeps, holdSettingChange, releaseSettingChange, noteSettingDeclined, watchSetting, settingEntries, settingChangedElsewhere, type SettingChange } from "./sw-change-setting";
 import { ASK_POLICY_CAUSE, navOnlyWhy, startLeftWhy, judgeCall, fetchFacts, navigateFacts, actFacts, noteAct, dropActs, actsOf, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
-import { checkProposals, recordedFetches, measureBreadth, breadthNote, measureActBreadth, actBreadthNote, type PolicyProposal } from "./policy-proposal";
+import { checkProposals, recordedFetches, measureBreadth, breadthNote, measureActBreadth, actBreadthNote, measureSettingBreadth, measureSettingRows, settingBreadthNote, recordedSettingKeys, type PolicyProposal, type SettingBreadth } from "./policy-proposal";
 import { approveManifest, checkManifestProposal, draftCardNote, type CheckedManifest } from "./sw-manifest-proposal";
 import { approveLibrary, checkLibraryProposal, isLibraryDraft, precheckLibrary, type CheckedLibrary } from "./sw-library-proposal";
 import { isExtensionSender, senderSelfApproves } from "./sw-site-access";
@@ -537,6 +537,13 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
      *  page's run never does (`pageStartPayload`), nor one handed to the worker: within the turn of its hand-over `p` is
      *  still the page's, and after it the stored copy has the tool stripped (`markWorkerRun`). */
     const offersProposals = (): boolean => p.builtBy === "worker" && byWorker() && runsInWorker(p, "propose_policy");
+    /** Each `propose_policy` call's `setting` measures, from its precheck to its card: keyed by the call's own arguments
+     *  object, so a second call with the same rule is measured again over fresh samples. */
+    const settingMeasures = new WeakMap<object, (SettingBreadth | undefined)[]>(); // state: plumbing
+    /** The run's messages as the loop holds them, or none. */
+    const runMessages = (): readonly import("../contract").NeutralMessage[] => {
+        try { return contextByRun.get(runId)?.().messages ?? bgRuns.get(runId)?.messages ?? []; } catch { return []; }
+    };
     /** Whether this run may ask the person to store a program manifest (`propose_manifest`): one the worker built, whose
      *  tools offer it (the settings turned ml.sh on when it started). Whether the host answers is the check's. */
     const offersManifests = (): boolean => p.builtBy === "worker" && byWorker() && runsInWorker(p, "propose_manifest");
@@ -1753,7 +1760,15 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     if (name === "propose_policy") {
                         if (!offersProposals()) return `Error: propose_policy is not offered in this run.`;
                         const c = checkProposals(args);
-                        return "error" in c ? c.error : null;
+                        if ("error" in c) return c.error;
+                        // A `setting` row is measured here, once: an allow that frees nothing, or a rule too costly to measure,
+                        // is refused before any card, and the measure that passed is the one the card shows (`settingMeasures`).
+                        if (c.proposals.some((q) => q.consumer === "setting")) {
+                            const m = measureSettingRows(c.proposals, await settingMeasureDeps(), recordedSettingKeys(runMessages()));
+                            if ("error" in m) return m.error;
+                            settingMeasures.set(args, m.measures);
+                        }
+                        return null;
                     }
                     // A manifest draft is resolved through the host and checked as the store would; nothing runs.
                     if (name === "propose_manifest") {
@@ -1807,10 +1822,16 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         const c = offersProposals() ? checkProposals(args) : undefined;
                         if (c && "proposals" in c) {
                             proposal = c.proposals;
-                            let messages: readonly import("../contract").NeutralMessage[] = [];
-                            try { messages = contextByRun.get(runId)?.().messages ?? bgRuns.get(runId)?.messages ?? []; } catch { /* no history: measured over nothing, and the card says so */ }
+                            const messages = runMessages();
                             const calls = recordedFetches(messages);
-                            const notes = proposal.map((q) => q.consumer === "act" ? actBreadthNote(q, measureActBreadth(q, actsOf(runId))) : breadthNote(q, measureBreadth(q, calls)));
+                            // The precheck's measure of this very call; measured here only if no precheck ran. A setting changed
+                            // since does not change what the card says: the judge decides at the call.
+                            const measured = settingMeasures.get(args);
+                            settingMeasures.delete(args);
+                            const settings = !measured && proposal.some((q) => q.consumer === "setting") ? await settingMeasureDeps() : undefined;
+                            const notes = proposal.map((q, i) => q.consumer === "act" ? actBreadthNote(q, measureActBreadth(q, actsOf(runId)))
+                                : q.consumer === "setting" ? settingBreadthNote(q, measured?.[i] ?? measureSettingBreadth(q, settings!, recordedSettingKeys(messages)))
+                                : breadthNote(q, measureBreadth(q, calls)));
                             // One card, each rule its own section with its own measured note; one answer adds them all.
                             renderIn = proposal.length === 1
                                 ? { type: "code", text: proposal[0].source, lang: "javascript", format: true, note: notes[0] }

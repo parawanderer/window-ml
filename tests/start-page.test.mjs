@@ -6,7 +6,7 @@ import { JSDOM } from "jsdom";
 import { createRequire } from "node:module";
 const require_ = createRequire(import.meta.url);
 
-let h, render, StartPage, ChatStore, FakeHost, saveDraft, saveDraftImages, loadDraftImages, loadDraftFiles, saveDraftFiles, doc, win;
+let h, render, StartPage, uploadsForDocs, ChatStore, FakeHost, saveDraft, saveDraftImages, loadDraftImages, loadDraftFiles, saveDraftFiles, doc, win;
 const IMG = "data:image/png;base64,iVBORw0KGgo=";
 const IMG2 = "data:image/png;base64,AAAA";
 const flush = async (ms = 120) => { await new Promise((r) => setTimeout(r, ms)); };
@@ -19,7 +19,7 @@ before(async () => {
     }
     doc = win.document;
     ({ h, render } = require_("preact"));
-    ({ StartPage } = await import("../src/chat/start-page.tsx"));
+    ({ StartPage, uploadsForDocs } = await import("../src/chat/start-page.tsx"));
     ({ ChatStore } = await import("../src/chat/chat-store.ts"));
     ({ FakeHost } = await import("../src/chat/fake-host.ts"));
     ({ saveDraft, saveDraftImages, loadDraftImages, loadDraftFiles, saveDraftFiles } = await import("../src/sidebar/drafts.ts"));
@@ -377,4 +377,25 @@ test("what the runtime makes of a started chat: the model gets the blocks, the t
     const chat = fake.history(started[0]).find((e) => e.kind === "chat");
     assert.equal(chat.request.messages[0].content, 'read it\n\n<file name="a.txt" type="text/plain" bytes="5">\nhello\n</file>');
     assert.deepEqual(chat.display, { typed: "read it", context: [{ kind: "file", file: { name: "a.txt", type: "text/plain", bytes: 5, lines: 1 } }] });
+});
+
+// --- which doc's chip draws which upload: a progress index counts the sendable docs only ---
+
+const pdfDoc = (name) => ({ name, type: "application/pdf", data: "JVBERi0=" });
+const at = (index) => ({ name: `f${index}.pdf`, fraction: 0.5, index });
+
+test("two sendable docs each get the upload at their own index", () => {
+    const got = uploadsForDocs([pdfDoc("a.pdf"), pdfDoc("b.pdf")], [null, null], [at(0), at(1)]);
+    assert.deepEqual(got.map((p) => p?.index), [0, 1]);
+});
+
+test("three sendable docs with a refused one between them: the refused doc has no bar and the later ones are not shifted", () => {
+    const docs = [pdfDoc("a.pdf"), pdfDoc("b.pdf"), { name: "x.bin", type: "application/octet-stream", why: "not a text file" }, pdfDoc("c.pdf")];
+    const got = uploadsForDocs(docs, [null, null, "not a text file", null], [at(0), at(1), at(2)]);
+    assert.deepEqual(got.map((p) => p?.index), [0, 1, undefined, 2]);
+});
+
+test("a doc whose upload has not reported yet has no bar, and the others keep theirs", () => {
+    const got = uploadsForDocs([pdfDoc("a.pdf"), pdfDoc("b.pdf"), pdfDoc("c.pdf")], [null, null, null], [at(2)]);
+    assert.deepEqual(got.map((p) => p?.index), [undefined, undefined, 2]);
 });

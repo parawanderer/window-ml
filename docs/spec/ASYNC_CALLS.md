@@ -171,14 +171,25 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    detached `ml.sh` call or cell; the `Detached` texts say the task runs on. Slice B: the table is durable in
    `chrome.storage.session` (`ml_tasks:<runId>`), read back by `hydrateTasks` before a turn opens it; `PY_DONE` for a
    cell a new worker never sent fetches the result from the offscreen document (`PY_RESULT`) and parks it; the cap is the
-   `detachedTaskMaxMin` setting (default 60) for both executors, and `PY_DETACHED_MAX_MS` is its 60 min ceiling.
+   `detachedTaskMaxMin` setting (default 60) for both executors, and `PY_DETACHED_MAX_MS` is its 60 min ceiling. Slice C: a
+   finished task with no turn running starts the run's next turn through the person's Continue path (`startTurnFor`,
+   `sw-tasks.ts`), unless `taskNotifyOnly` is on, `taskTurnChainMax` (default 5) turns were already started in a row, the run is
+   page-built, busy, has no tab or sits on an extension page; each parks the result and logs `task`/`not-started` with its
+   reason, and notify-only and the cap also say a transcript line. Completions that arrive while the turn starts coalesce into
+   it, and a person's message sent meanwhile is steered into that turn: a starting resume no longer answers "busy" and
+   loses it. A turn started for a task never runs on an empty inbox: if its result was read elsewhere while the page was
+   adopted, nothing starts, the chain count is given back and `task`/`not-started` logs `empty-inbox`. The check runs in
+   `userRunAction` after the page-adopt awaits and before `hostRun` (ruled 2026-11-14), since a turn stopped after
+   hosting still emits a result and nothing can drain the inbox without a live turn. The chain count is
+   `ml_task_chain:<runId>` and the person's
+   next word resets it. A result for an archived or released run is dropped with a record.
    Slice D: the lifetimes list, one paragraph ("HOW LONG THINGS LAST") in the default system prompt
    (`lifetimesClause`, `prompts.ts`, appended by `composeSystemPrompt`), nowhere else. Its two figures are the person's
    settings, carried in the public config (`pythonIdleMinutes`, `detachedTaskMaxMin`) so a page-built run composes the
    same text: the idle figure as the reap reads it (`idleMinutes`, `py-reap.ts`), the cap as the sandbox applies it
    (`capMinutes` and `clampDetachedMs`, `py-lease.ts`), both defaulting to `DEFAULT_CONFIG`; `tests/agent-start.test.mjs`
-   compares them with `DEFAULT_REAP_BETWEEN_MS` and `PY_DETACHED_MAX_MS`. NOT built: a completion starting a turn,
-   notify-only, the chain cap and the no-tab state. This
+   compares them with `DEFAULT_REAP_BETWEEN_MS` and `PY_DETACHED_MAX_MS`. NOT built: the HUD per-run task mark
+   (slice E, with the chat-page lane; slice C keeps the transcript line) and the no-tab state on the chat page. This
    reverses rule 4, and the mode 1 ruling that a model answering while a build is detached ends the build, for the two executors that run
    outside the service worker: an `ml.sh` call (the host's process) and a detached `python_exec` cell (the offscreen
    document). A fetch runs IN the service worker and dies with it, so it stays turn-bound: the turn's end cancels it,
@@ -266,7 +277,7 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
      and mobile in one change), as with the task line.
    - **Notify-only is a setting.** A durable per-config flag in DevTools Settings (the settings rule; the popup is
      optional) switches every run to notify-only: a completion with no turn running parks, the person sees a
-     transcript system line and a HUD mark, and the model reads it at the next turn the person starts. The
+     transcript system line (slice C) and a HUD mark (slice E, with the chat-page lane), and the model reads it at the next turn the person starts. The
      subscription path (mode 2, "a detached call's completion") is unchanged by either setting.
    - **A chain of started turns is capped.** RULED 2026-11-12 (Shane, both numbers). A started turn can detach a
      task whose completion starts the next, so turns can follow one another with no person's message between them.
@@ -293,6 +304,22 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
      a turn; a started turn runs on no page we own; a parked result is delivered only to its own run, on its own session, at that run's next turn; a run
      archived or released first drops it, and the drop is a run-log record; the per-task deadline and the cap hold
      between turns; session release ends every task of the session; a page reaches no parked result.
+     Proposed 2026-11-14 for slice C (red-team rows, to be written as failing tests first):
+     1. A completion never starts a turn for another run or session, including through a forged run id on any
+        page-started type or `HANDLE_MAP` shape.
+     2. With notify-only on, no path starts a turn: memory, `pythonDone` after an eviction, or the attach probe.
+     3. The chain cap holds across a worker eviction, and nothing a page can send resets the count (a page's
+        `INJECT_MESSAGE` or steer, or a page-built run's message).
+     4. A started turn never runs on a page we own or a non-http(s) tab, including a tab that navigated to one after
+        the task detached.
+     5. A run with no tab, an archived one or a released one starts nothing, and a late result is dropped with its
+        record.
+     6. A person's message held during a starting turn reaches only that run's turn; if the turn never hosts, it is
+        taken back with the notice, never delivered later.
+     7. `ml_task_chain:` is not readable or writable from a page, and a page cannot set `taskNotifyOnly` or
+        `taskTurnChainMax` (the `SET_MODEL` control is the only setting a page may change).
+     OPEN, untouched by slice C: a person's empty Continue probably shows as done on the chat page until its first
+     step, as a task-started turn did before `session-index.ts` treated `agent-task-say` as running.
 5. **The handle is the run's.** It is answered only for the run that made it, from that run's own tab or the service
    worker, with the sender checks the inbox already has; a page cannot await, cancel or read another run's call. A
    detached call, its wake and its collection are records in the run log (`python`/`detached`, `shell`/`detached`,
