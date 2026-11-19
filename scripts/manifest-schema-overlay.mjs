@@ -137,6 +137,15 @@ export function refineProgramManifest(gen) {
         ],
     });
 
+    // Flavours (PROGRAM_MANIFEST.md, "Flavours"): at least one; the gnu probe reads a version like `version` does; an
+    // overlay's flag names are flag names; a flavoured manifest is a binary whose core is written for every
+    // implementation (`range: "*"`).
+    patch(doc, "$defs.ManifestFlavours", { anyOf: [{ required: ["gnu"] }, { required: ["bsd"] }] });
+    patch(doc, "$defs.ManifestFlavours.properties.gnu.properties.probe.properties.args", { minItems: 1 });
+    patch(doc, "$defs.ManifestFlavours.properties.gnu.properties.probe.properties.pattern", { minLength: 1, format: "regex", pattern: "^\\^" });
+    patch(doc, "$defs.ManifestFlavours.properties.gnu.properties.probe.properties.range", { pattern: `^\\s*${COMPARATOR}(?:\\s+${COMPARATOR})*\\s*$` });
+    patch(doc, "$defs.FlavourOverlay.properties.flags", { propertyNames: { pattern: "^-{1,2}[A-Za-z0-9][A-Za-z0-9-]*$" } });
+
     // The entrypoint: a relative path with no `.`, `..` or empty segment and no leading `-`; a sha256 in lowercase hex.
     patch(doc, "$defs.ManifestEntrypoint.properties.path", { pattern: `^(?![/-])${SEGMENT}(?:/${SEGMENT})*$` });
     patch(doc, "$defs.ManifestEntrypoint.properties.sha256", { pattern: "^[0-9a-f]{64}$" });
@@ -149,6 +158,7 @@ export function refineProgramManifest(gen) {
     patch(doc, "$defs.ManifestNetwork.properties.hosts", { minItems: 1, items: { type: "string" } });
     doc.allOf = [
         { if: { required: ["network"] }, then: { required: ["credential"] } },
+        { if: { required: ["flavours"] }, then: { required: ["version"], properties: { version: { properties: { range: { const: "*" } } } } } },
         ...Object.entries(PROVIDERS).map(([name, p]) => ({
             if: { required: ["credential"], properties: { credential: { properties: { provider: { const: name } } } } },
             then: { properties: { program: { const: p.program }, network: { properties: { ports: { items: { enum: p.ports } }, hosts: { items: { enum: p.hosts } } } } } },
