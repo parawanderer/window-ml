@@ -1,11 +1,11 @@
-// redteam-ml-table.test.mjs — an auto-approved survey reads no table its source rule did not allow (#ml.table): the kind the
-// ask is decided on is the kind the read uses, a source's own getters are never run to decide it, and the answer is a value
-// the survey cannot write back. Source: src/ml/ml-table.ts (tableSource, tableSourceAsks), src/readonly-exec/policy.ts (the
-// facade's `table`), docs/spec/ML_TABLE.md, "Sources, and when one asks", "Ownership".
+// redteam-ml-table.test.mjs — an auto-approved survey reads no table its source rule did not allow (#ml.table): the source is
+// resolved ONCE, so the kind the ask is decided on is the kind the read uses even for an object the page can shape; a fetch
+// result is read from own data properties, never a getter; and the answer is a copy. Source: src/ml/ml-table.ts
+// (tableSource, tableSurvey), src/readonly-exec/policy.ts (the facade's `table`), docs/spec/ML_TABLE.md.
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import { table, tableSource, tableSourceAsks } from "../src/ml/ml-table.ts";
+import { table, tableSource, tableSurvey } from "../src/ml/ml-table.ts";
 import { mlFetchCache } from "../src/ml/ml-fetch-cache.ts";
 import { derivedFetchFields } from "../src/ml/fetch-result.ts";
 
@@ -17,21 +17,12 @@ const fetched = (url, text, extra = {}) => {
     derivedFetchFields(r, { markdown: () => undefined, python: false });
     return r;
 };
-function host() {
-    const reads = [];
-    const ml = {
-        _resolveTable: (sel) => { reads.push(sel); return { kind: "rows", columns: [...SALES.columns], rows: SALES.rows.map((r) => [...r]) }; },
-        _tableAsks: (src) => tableSourceAsks(tableSource(src)),
-    };
-    ml.table = function (src, opts) { reads.push(["table", src, opts]); return table.call(ml, src, opts); };
-    return { ml, reads };
-}
+/** The host member's `this`: the page-table read a survey may reach. */
+const host = () => ({ _resolveTable: () => ({ kind: "rows", columns: [...SALES.columns], rows: SALES.rows.map((r) => [...r]) }) });
 
-// --- the ask and the read must be about the same source ---
+// --- the ask and the read are one resolution ---
 
-test("RED TEAM (ml.table): the kind the ask is decided on is the kind the read uses, for a source the page can shape", {
-    todo: "tableSourceAsks(tableSource(src)) runs once for the ask and table() runs it again: a page element whose nodeType accessor answers 1 the first time and 2 after, with expandos url/status/type, reads as an element (free) to the ask and as a Google Sheet to the read, so FETCH_SHEET runs with no card",
-}, async () => {
+test("RED TEAM (ml.table): a source the page can shape is resolved once, so what the ask judged is what the read would read", async () => {
     const win = new JSDOM("<!doctype html><body><div id='x'>t</div></body>").window;
     const el = win.document.getElementById("x");
     let n = 0;
@@ -39,10 +30,23 @@ test("RED TEAM (ml.table): the kind the ask is decided on is the kind the read u
     el.url = "https://docs.google.com/spreadsheets/d/EVIL/edit#gid=0";
     el.status = 200;
     el.type = "csv";
-    const asked = tableSource(el);
-    assert.equal(tableSourceAsks(asked), null, "positive control: the first look is free");
-    const read = tableSource(el);
-    assert.deepEqual(read, asked, `the read resolved the source to ${read.kind} after the ask decided on ${asked.kind}`);
+    // The survey resolves once: the ask it reports is about the same kind its read would take.
+    const s = tableSurvey.call(host(), el);
+    assert.match(s.asks ?? "", /Google Sheet/, `an element carrying a Sheets URL was read with a free ask: ${JSON.stringify(s.asks)}`);
+    // And two resolutions of that object agree, so no look can decide one kind and a later one another.
+    assert.deepEqual(tableSource(el), tableSource(el), "the same object resolved to two kinds");
+});
+
+test("RED TEAM (ml.table): positive control: a real element is free to read, and its read is the page table", async () => {
+    const win = new JSDOM("<!doctype html><body><table id='sales'><tr><td>north</td><td>10</td></tr></table></body>").window;
+    const el = win.document.getElementById("sales");
+    const s = tableSurvey.call(host(), el);
+    assert.equal(s.asks, null, `a real element asked: ${s.asks}`);
+    globalThis.document = win.document;   // elPath names the element by its place in the page
+    try {
+        const t = await s.read({});
+        assert.deepEqual(t.rows[0], SALES.rows[0]);
+    } finally { delete globalThis.document; }
 });
 
 test("RED TEAM (ml.table): a fetch result is read from its own data properties, so a url getter is never run", async () => {
@@ -55,12 +59,12 @@ test("RED TEAM (ml.table): a fetch result is read from its own data properties, 
 
 // --- the answer is the survey's to edit, and an edit to it reaches nothing ---
 
-test("RED TEAM (ml.table): editing the answer reaches neither the page table nor a second read", async () => {
+test("RED TEAM (ml.table): editing the answer reaches neither the fetch cache nor a second read", async () => {
     mlFetchCache.set(CSV_URL, fetched(CSV_URL, CSV));
-    const { ml } = host();
-    const t = await ml.table(CSV_URL);
+    const ml = { ...host(), table };
+    const t = await table.call(ml, CSV_URL);
     t.rows[0][1] = 999;
     t.columns.push("x");
-    assert.equal((await ml.table(CSV_URL)).rows[0][1], 10, "a second read returned the edited copy");
+    assert.equal((await table.call(ml, CSV_URL)).rows[0][1], 10, "a second read returned the edited copy");
     assert.equal(mlFetchCache.get(CSV_URL).table.rows[0][1], 10, "the cache was edited through the answer");
 });
