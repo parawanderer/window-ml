@@ -157,6 +157,62 @@ moved
 """)
 
 md("""
+## Behind the first refusal: a syntactic count of the stores
+
+The bound above is on the mutation change ALONE. A refused cell stops at its first refusal, and nothing after that line
+was judged: 83 cells stop at a refusal of another class, 41 of them at `pd.read_csv`. If the vocabulary is widened first,
+which is what the counts above point to, those cells run further, and a mutation refusal can appear behind the first one.
+
+So this counts, from the recorded source by `ast` and without running it, the stores the gate would judge as a mutation
+of a value the cell does not own: item or attribute assignment, an augmented assignment, `del x[...]`, a call with
+`inplace=True`, or a listed mutating method of list, dict or set, each on a ROOT name the cell did not bind before that
+line (an import binds a module the cell did not make, so it does not count). SYNTACTIC: a store in a branch that never
+runs counts, and one made through an alias the cell bound (`y = df; y["a"] = 0`) is missed. The extract
+(`stores.json`, from `cell-replay/stores.py`) holds counts per kind, never the code.
+""")
+
+code("""
+STORES = HERE / "data" / "cell-replay" / "stores.json"
+st = pd.DataFrame(wmlnb.extract(STORES, lambda: replay("stores", STORES), source={}))
+KINDS = ["item", "attr", "aug", "aug_name", "del", "inplace", "method"]
+st["parsed"] = st.stores.notna()
+kinds = pd.DataFrame([d if isinstance(d, dict) else {k: 0 for k in KINDS} for d in st.stores])[KINDS]
+st = pd.concat([st.drop(columns="stores"), kinds], axis=1)
+st["any_store"] = st[KINDS].sum(axis=1) > 0
+refused = plain[plain.refused.notna()].merge(st, on=["run", "cell", "model"])
+print(f"{len(refused)} refused cells; {int((~refused.parsed).sum())} do not parse as Python")
+print("refused cells with a store on a value the cell did not make:", int(refused.any_store.sum()))
+display(refused.groupby("class")[["any_store"]].sum().assign(cells=refused.groupby("class").size()))
+refused.loc[refused.any_store, ["model", "class"] + KINDS]
+""")
+
+md("""
+The one store is an attribute assignment on `decimal`'s context (`getcontext().prec = ...`). That is library state, not
+plain data that a full-path cell made or that the harness injected, so a change that permits mutating such data would not
+admit it either. On this sample, then, no refused cell has a store on plain data it did not make, even behind its first
+refusal (syntactically, with the caveats above).
+""")
+
+md("""
+## Two notes on single classes
+
+- `attribute 'columns' of DataFrame` and `attribute 'shape' of DataFrame` (one cell each): nothing differs in those
+  cells. Neither attribute is in `manifest-pandas.json` (`columns` appears there only as the dynamic rule for a
+  column read by name, `df.amount`), and every form of the read is refused on the injected frame, `df.shape`,
+  `x = df.shape`, `print(df.columns)` and `list(df.columns)` alike (probed through `replay.mjs` on synthetic cells).
+  No recorded cell reads either inside: the three others that read them stopped at an earlier refusal.
+- The "operation on None" cells are not the replay's artefact. Their recorded results are the same `TypeError` on `None`:
+  the run loaded its table under another name, so `df` was `None` in the real run as well (counted below, from the
+  recorded result text).
+""")
+
+code("""
+none_cells = plain[plain["class"] == "operation on None (the cell named a table it did not load)"].merge(st[["run", "cell", "recorded_none"]], on=["run", "cell"])
+print(f"{len(none_cells)} replayed 'operation on None' cells, {int(none_cells.recorded_none.sum())} with the TypeError on None in the recorded result; "
+      f"{int(st.recorded_none.sum())} recorded cells in all")
+""")
+
+md("""
 ## The unclassified remainder, with examples
 
 A refusal no class above matched, with its text (line numbers stripped). Empty means every refusal was classified.
