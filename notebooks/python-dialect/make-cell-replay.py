@@ -1,0 +1,183 @@
+"""make-cell-replay.py — builds cell-replay.ipynb: of the python_exec cells real runs wrote, how many would finish inside
+the read-only dialect, why the rest are refused, and how many cards a change to ownership would remove.
+
+    node scripts/nb.mjs make notebooks/python-dialect/cell-replay.ipynb
+
+The cells are written here; edit this file, not the notebook. The rows come from data/cell-replay/replay.json and
+replay-owned-plain.json, which cell-replay/replay.mjs produced by replaying each recorded run's cells, in order and in
+one namespace, through the restricted-mode core's inside try (NB_REFRESH=1 runs it again over the same run exports,
+which live in ~/git/window-ml and are not in the repo; about four minutes per mode). The extracts hold features only:
+run hash, model, cell index, outcome and the fork's refusal text, never a cell's code.
+"""
+
+from pathlib import Path
+
+import nbformat as nbf
+
+HERE = Path(__file__).resolve().parent
+cells = []
+md = lambda s: cells.append(nbf.v4.new_markdown_cell(s.strip()))
+code = lambda s: cells.append(nbf.v4.new_code_cell(s.strip()))
+
+md("""
+# Why read-only Python cells ask: the recorded cells, re-judged inside the dialect
+
+The question (ruled by Shane, 2026-11-19, through the coordinator): of the Python cells a run tries inside the read-only
+dialect, what share finishes inside; for the refused ones, why; how many approval cards that leaves per run; and how many
+refused cells would finish inside had mutation of plain data the cell did not make (a full-path cell's, or the injected
+`df`/`tables`) been allowed. It decides whether a design that lets the model edit its own kernel values unasked is worth
+building.
+
+No recorded run ever tried a cell inside: every bench and observe run is page-built, and page-hosted Python skips the
+dialect (`sw-run-host.ts`, "this run's Python runs on the page, where nothing is tried inside the dialect"). So the
+recorded cells are REPLAYED here, offline, through the fork core's inside try. That gives an answer under these caveats,
+which bound everything below:
+
+1. **One task.** Every cell is from `csv-total` ("what is the exact total of the `amount` column of /sales.csv"), in two
+   sweeps of the prompt-budget study (`prompt-budget-cuts`, `-rep2`, 2026-11-13). A summing task is close to the best case
+   for a read-only dialect; nothing here says how a task that reshapes data fares.
+2. **The models believed Python ran on the page.** Their prompts and results were those of page-hosted Python, with no
+   dialect to stay inside and every cell approved. A model told about the dialect, or shown its refusals, would write
+   other cells.
+3. **Six models, unevenly.** qwen3.6:35b wrote nearly half the cells. The pooled share is that model's; read the
+   by-model table.
+
+And three of the replay's own: the injected table is rebuilt as the worker's fetch cache holds it (`kind: "rows"`, from
+the fixture's deterministic CSV), not from the run's bytes; the worker's lockdown is not installed (the wrapper runs
+with `hardened` off, as `tests/python-dialect-inside.test.mjs` drives it); and a refused cell's full-path rerun has no
+`ml` and no network, only a read of the task's /sales.csv served from the fixture, so a cell that needed more than that
+leaves less behind for the cells after it.
+""")
+
+code("""
+import json, re
+import pandas as pd
+import wmlnb
+
+HERE = wmlnb.ROOT / "notebooks" / "python-dialect"
+PLAIN = HERE / "data" / "cell-replay" / "replay.json"
+OWNED = HERE / "data" / "cell-replay" / "replay-owned-plain.json"
+pd.set_option("display.width", 200)
+pd.set_option("display.max_colwidth", 80)
+
+def replay(mode, out):
+    raise RuntimeError(f"re-extract with: node --import tsx notebooks/python-dialect/cell-replay/replay.mjs {mode} {out} <run.json>... "
+                       "(the 58 exports are listed by the extract's source; dist/pyodide must be the fork core)")
+
+plain = pd.DataFrame(wmlnb.extract(PLAIN, lambda: replay("", PLAIN), source={}))
+owned = pd.DataFrame(wmlnb.extract(OWNED, lambda: replay("--owned-plain", OWNED), source={}))
+pd.DataFrame(wmlnb.provenance(PLAIN, OWNED))
+""")
+
+md("""
+## The classes, from the refusal text itself
+
+Each refused cell carries the fork's own text (`not in dialect: ...`, the `notInDialect` a worker run puts on the card as
+`askWhy`). The classes are read from that text alone. A mutation refusal names its kind ("item assignment to", "a method
+that writes", "an in-place operator on" "a value the cell does not own"); the text does not say who made the value, so
+the full-made / injected split is read from the counterfactual below instead.
+""")
+
+code("""
+CLASSES = [
+    ("mutation of a value the cell does not own", r"does not own"),
+    ("import", r"not in dialect: (import |a relative import)"),
+    ("unlisted leaf: pd.read_csv", r"attribute 'read_csv' of module"),
+    ("unlisted attribute or leaf", r"not in dialect: (attribute '|the attribute )"),
+    ("unlisted call", r"not in dialect: call on "),
+    ("operation on None (the cell named a table it did not load)", r"on NoneType"),
+    ("construct outside the dialect", r"generator expression|While|Lambda|ClassDef"),
+    ("an inside-defined function called outside", r"was defined in a cell that ran inside"),
+    ("step budget, memory cap or recursion", r"step budget|memory cap|recursion past"),
+    ("core without the gate", r"no membership predicate|cannot be trusted"),
+    ("a refusal caught by library code", r"caught by library code"),
+]
+
+def klass(text):
+    if not isinstance(text, str): return None
+    for name, rx in CLASSES:
+        if re.search(rx, text): return name
+    return "unclassified"
+
+for df in (plain, owned):
+    df["class"] = df.refused.map(klass)
+    df["outcome"] = df["class"].fillna("finished inside")
+    df.loc[df.inside & df.insideError.notna(), "outcome"] = "inside, raised (no card: the error is the result)"
+
+print(f"{len(plain)} cells in {plain.run.nunique()} runs, {plain.model.nunique()} models")
+plain.outcome.value_counts().to_frame("cells").assign(share=lambda t: (t.cells / len(plain)).round(3))
+""")
+
+md("""
+## By model
+
+The share that would have run without a card (finished inside, or raised inside), per model, and each model's refusals
+by class. The spread matters more than the pooled figure (caveat 3).
+""")
+
+code("""
+by_model = plain.groupby("model").agg(runs=("run", "nunique"), cells=("cell", "size"), no_card=("inside", "sum"))
+by_model["no_card_share"] = (by_model.no_card / by_model.cells).round(2)
+display(by_model.sort_values("cells", ascending=False))
+pd.crosstab(plain.model, plain["class"]).loc[by_model.sort_values("cells", ascending=False).index]
+""")
+
+md("""
+## Cards per run
+
+A card is a refused cell (its full-path rerun is what the person approves). Recorded: every cell asked, so the recorded
+cards per run are the cells per run. Replayed: only the refused ones.
+""")
+
+code("""
+per_run = plain.groupby(["model", "run"]).agg(cells=("cell", "size"), cards=("inside", lambda s: int((~s).sum()))).reset_index()
+print("cards per run, replayed:", per_run.cards.value_counts().sort_index().to_dict())
+print("runs with no card left:", int((per_run.cards == 0).sum()), "of", len(per_run))
+per_run.groupby("model").agg(runs=("run", "size"), cards_recorded=("cells", "sum"), cards_replayed=("cards", "sum"),
+                             mean_replayed=("cards", "mean")).round(2)
+""")
+
+md("""
+## The counterfactual: mutation of plain data permitted
+
+Simulated without a fork change: before each cell, every plain-data value in the namespace that the cell did not make (a
+DataFrame, Series, ndarray, list, dict, set, str or number: the injected `df`/`tables` and whatever a full-path cell left)
+is rebuilt by `copy.deepcopy` inside an inside cell, so it is owned. The change removes a card only where a cell's
+refusal is a mutation refusal; the upper bound is the count of cells whose FIRST refusal is that class, since a later
+refusal in the same cell is hidden behind it.
+""")
+
+code("""
+j = plain[["run", "cell", "model", "outcome"]].merge(owned[["run", "cell", "outcome"]], on=["run", "cell"], suffixes=("", "_owned"))
+moved = j[j.outcome != j.outcome_owned]
+print("cells whose first refusal is a mutation refusal (upper bound on what the change removes):",
+      int((plain["class"] == "mutation of a value the cell does not own").sum()))
+print("cells whose outcome changed with plain data owned:", len(moved))
+moved
+""")
+
+md("""
+## The unclassified remainder, with examples
+
+A refusal no class above matched, with its text (line numbers stripped). Empty means every refusal was classified.
+""")
+
+code("""
+rest = plain[plain["class"] == "unclassified"]
+rest.refused.str.replace(r"\\(line \\d+\\)", "(line N)", regex=True).value_counts().to_frame("cells")
+""")
+
+md("""
+## Every refusal text, counted
+
+What the classes were read from, line numbers stripped.
+""")
+
+code("""
+plain.refused.dropna().str.replace(r"\\(line \\d+\\)", "(line N)", regex=True).str.replace("not in dialect: ", "").value_counts().to_frame("cells")
+""")
+
+nb = nbf.v4.new_notebook()
+nb["cells"] = cells
+nb["metadata"]["kernelspec"] = {"name": "python3", "display_name": "Python 3", "language": "python"}
+nbf.write(nb, HERE / "cell-replay.ipynb")

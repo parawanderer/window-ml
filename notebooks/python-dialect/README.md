@@ -26,3 +26,8 @@ beside it (`make-<name>.py`, the file to edit) and its pinned inputs under `data
   timings come from `regex-cost/bench.py` (run by `regex-cost/one.mjs <coreDir> <fork Lib/restricted.py>`, since the
   core's own `restricted` lacks `regex_work`); inputs pinned in `data/regex-cost/bench.json`. Generator:
   `make-regex-cost.py`.
+- [cell-replay.ipynb](cell-replay.ipynb): the python_exec cells real runs wrote (129 cells, 58 runs, six models, one task),
+  replayed in order through the restricted-mode core's inside try, since no recorded run ever tried one inside: the share
+  that finishes inside, the refusals by class from the fork's own text, cards per run, and the counterfactual with
+  mutation of plain data the cell did not make permitted. The replay is `cell-replay/replay.mjs`; its extracts in
+  `data/cell-replay/` hold features, never cell text. Generator: `make-cell-replay.py`.
