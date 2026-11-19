@@ -28,6 +28,7 @@ import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { isExtensionSender } from "./sw-site-access";
 import { fileChunks } from "./sw-file-chunks";
 import { fetchLLM, streamLLM, getConfig, listAvailableModels, modelCapabilitiesBatch, residentContextLength } from "./sw-llm";
+import { forModelMessages } from "./sw-scrub";
 import { workerMl } from "./worker-ml";
 import { ocrRequest } from "../ml/ml-vision";
 import { planImages } from "../image-gate";
@@ -801,10 +802,10 @@ export async function sessionStorageStats(): Promise<StoreBytes | null> {
     return summarizeStore(rows, seen);
 }
 
-/** A small model call on the utility profile: `side.call`, and the runtime's own titles. */
+/** A small model call on the utility profile: `side.call`, and the runtime's own titles. The messages cross the by-value scrub first (a task can hold a registered secret); a failed scrub rejects, so nothing raw is sent. */
 async function utilityCall({ messages, schema, maxTokens, session }: { messages: NeutralMessage[]; schema?: object; maxTokens: number; session?: string }): Promise<{ content: string; usage?: unknown }> {
     const r = await fetchLLM({
-        messages, extend: "utility", maxTokens, think: false,
+        messages: await forModelMessages(messages), extend: "utility", maxTokens, think: false,
         ...(schema ? { schema: schema as never } : {}),
         hint: { use: "utility", ...(session ? { session: hintSession(session) } : {}) },
     }) as { content: string | null; usage?: unknown };

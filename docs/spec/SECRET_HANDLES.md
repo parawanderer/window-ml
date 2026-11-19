@@ -165,6 +165,9 @@ on real captured output in its PR.
     value, [`sw-shell-call.ts`](../../src/sw/sw-shell-call.ts) `peekTail`, and the task messages);
   - a resumed run's history ([`forModelHistory`](../../src/sw/sw-scrub.ts)), so a value registered after a session
     was stored is scrubbed from what a resumed model is sent, though the stored session still holds it;
+  - the utility model's calls ([`forModelMessages`](../../src/sw/sw-scrub.ts), on `utilityCall`): a session's title,
+    made from its task, and every `side.call`, in every role, on copies; the call is not sent when the registry cannot
+    be read;
   - the run log's `key`, which keeps an error's raw text for extension pages: the registry's values are scrubbed from
     it, and the backend's own URL, key and filter stay there as today;
   - what the run keeps beside a tool result (`forStored`, the loop's `scrubStored`): the tool's Out render, which the

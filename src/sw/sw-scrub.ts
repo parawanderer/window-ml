@@ -114,6 +114,21 @@ export async function forModel(text: string): Promise<{ text: string; changed: b
 }
 
 /**
+ * The messages of a model call the worker composes itself (the utility profile's titles and `side.call`), scrubbed the
+ * way {@link forModel} scrubs a result, in every role: a person's task or a sidebar's excerpt can hold a registered
+ * value. Copies, so the asker's array is left as it was. Fails closed by THROWING, so the call is never sent.
+ * @param messages the call's messages
+ * @returns the messages the backend may get
+ * @throws when the config or the registry cannot be read, with nothing of either in the message
+ */
+export async function forModelMessages(messages: NeutralMessage[]): Promise<NeutralMessage[]> {
+    let secrets: SecretSub[];
+    try { secrets = await configSecrets(); await registryReady(); } catch { throw new Error("The request was not sent: the registered secrets could not be read to check it."); }
+    const subs = registrySubsNow();
+    return messages.map((m) => typeof m.content === "string" && m.content ? { ...m, content: scrubRegistry(scrubSecrets(m.content, secrets), subs).text } : m);
+}
+
+/**
  * The line a tool result ends with when registered values were taken out of it: names and a count, never a value, so
  * the model does not conclude the value was absent.
  * @param counts from {@link forModel}
