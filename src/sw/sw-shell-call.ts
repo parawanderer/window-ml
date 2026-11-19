@@ -14,7 +14,7 @@ import type { EffectsData } from "../effects";
 import type { ShCallSpan, ShUnasked } from "../contract";
 import type { TokenStore } from "../pointers/token-pipe";
 import { bytesOf, HostError, hostTakesEnvelope, READ_CHUNK, type HostClient, type HostPutFacts, type HostEnvelope, type HostFacts, type HostStream } from "../shell/host-protocol";
-import { credentialFor, envelopeFor, envelopeMismatch, envelopeText, manifestFor, manifestsFor, parseShRun, planSpawn, protectedChangesText, shFacts, shOut, shOutcome, shResult, wireCodeOf, ShRefused, SH_HEAD_BYTES, SH_HOST_TIMEOUT_MS, SH_LEASE_MS, type ShFacts, type ShOut, type ShResult, type ShRunRequest } from "../shell/sh-call";
+import { credentialFor, envelopeFor, isShipped, factsFlavour, flavourReplan, envelopeMismatch, envelopeText, manifestFor, manifestsFor, parseShRun, planSpawn, protectedChangesText, shFacts, shOut, shOutcome, shResult, wireCodeOf, ShRefused, SH_HEAD_BYTES, SH_HOST_TIMEOUT_MS, SH_LEASE_MS, type ShFacts, type ShOut, type ShResult, type ShRunRequest } from "../shell/sh-call";
 import { OUTPUT_CAP } from "../contract/contract-pointers";
 import { detachedCapMs, detachTask, type TailAnswer, type TaskOutcome } from "./sw-tasks";
 import { toolToken } from "../util";
@@ -30,7 +30,7 @@ import { ASKED_TAIL_CHARS, PEEK_DEFAULT_BYTES, peekBytesFor, peekDetail } from "
 import { forModel } from "./sw-scrub";
 import { holdOutput, shellHost, ShellUnavailable, withShell, type ShellHost } from "./sw-shell";
 import { manifestsReady, storedManifests } from "./sw-manifests";
-import type { ProgramManifest } from "../shell/program-manifest";
+import { flavourOf, type ProgramManifest } from "../shell/program-manifest";
 import { operandArgs, operandChanges, type RanCall } from "../shell/manifest-proposal";
 
 /** The step a call is made from, as the worker knows it: never anything the script said. */
@@ -311,7 +311,9 @@ async function runCall(ctx: ShCallContext, req: ShRunRequest, started: (h: Shell
             const stored = storedManifests();
             // No session mounts an uploads folder yet (FILE_ATTACHMENTS.md H16), so no call passes `files` and `/files`
             // stays the browser sandbox's; once one does, `hostMapsFiles(h.hello)` gates it.
-            const plan = planSpawn(req, { cwd, roots, stored, tilde: h.hello.tilde === true });
+            const session = { cwd, roots, stored, tilde: h.hello.tilde === true };
+            const place = { roots, stored, platform: h.hello.platform };
+            let plan = planSpawn(req, session);
             if (plan.filesRefusal) return refuse("Refused", plan.filesRefusal);
             // A credential the host injects, only when its hello lists the provider (an older host would ignore it).
             const credential = await credentialFor(plan, h);
@@ -322,9 +324,27 @@ async function runCall(ctx: ShCallContext, req: ShRunRequest, started: (h: Shell
             let done;
             let asked: HostEnvelope | undefined;
             for (let attempt = 0; ; attempt++) {
-                const id = facts.id;
+                let id = facts.id;
                 const discard = () => h.client.discard(id).catch(() => { /* expired or gone: nothing to start either way */ });
-                try { f = shFacts(facts, await versionOf(ctx, h, facts, manifestsFor(stored, roots).list), { roots, stored }); }
+                try {
+                    const version = await versionOf(ctx, h, facts, manifestsFor(stored, roots).list);
+                    // The flavour the facts show may add hardening or a path to resolve that the first plan, made before
+                    // any facts, could not know: discard, spawn the flavour's plan, and describe ITS facts, from the same
+                    // program file only (PROGRAM_MANIFEST.md, "Flavours": where hardening is inserted).
+                    const again = attempt === 0 ? flavourReplan(req, session, plan, factsFlavour(facts, version, place)) : null;
+                    if (again) {
+                        await discard();
+                        const was = facts.program.fingerprint;
+                        plan = again;
+                        facts = await spawn();
+                        id = facts.id;
+                        if (!was || facts.program.fingerprint !== was) {
+                            await discard();
+                            return refuse("Denied", `ml.sh: ${facts.program.path} changed while its flavour was read: not run`);
+                        }
+                    }
+                    f = shFacts(facts, version, place);
+                }
                 catch (e) { await discard(); throw e; }
                 const v = await decide(ctx, f);
                 if ("refused" in v) { await discard(); return refuse("Denied", v.refused); }
@@ -459,7 +479,11 @@ function envelopeDetail(r: ShResult): Record<string, string | number | boolean> 
  */
 export async function versionOf(ctx: Pick<ShCallContext, "runId" | "seq" | "signal">, h: ShellHost, facts: HostFacts, manifests?: readonly ProgramManifest[]): Promise<string | null> {
     const m = manifestFor(facts.argv, undefined, manifests);
-    if (!m?.version || m.version.range === "*" || !m.version.args.length) return null;
+    // A flavoured manifest reads its gnu probe, and only when nothing cheaper told the flavour (an in-root program, a
+    // file of another name, the macOS system program: flavourOf); any other manifest reads its version range's.
+    const spec = m?.flavours ? (flavourOf(m, facts.program, h.hello.platform, undefined, isShipped(m)).probe ? m.flavours.gnu!.probe : null)
+        : m?.version && m.version.range !== "*" && m.version.args.length ? m.version : null;
+    if (!m || !spec) return null;
     const fp = facts.program.fingerprint;
     const log = (reason: string, version?: string | null) => recordRunLog(ctx.runId, { subsystem: "shell", kind: "version-probe", reason, detail: { program: facts.program.path, ...(version !== undefined ? { version: version ?? "unread" } : {}) } });
     // Refused BEFORE the cache: a hard link inside a root to a probed program shares its fingerprint, and must not
@@ -470,7 +494,7 @@ export async function versionOf(ctx: Pick<ShCallContext, "runId" | "seq" | "sign
     if (versions.has(fp)) return versions.get(fp) ?? null;
     // Nothing starts after a cancel, the probe included (finding B).
     if (ctx.signal.aborted) return null;
-    const probe = await h.client.spawn({ argv: [facts.program.path, ...m.version.args], cwd: facts.cwd.path, mode: "host", timeoutMs: PROBE_TIMEOUT_MS, owner: ownerOf(ctx) });
+    const probe = await h.client.spawn({ argv: [facts.program.path, ...spec.args], cwd: facts.cwd.path, mode: "host", timeoutMs: PROBE_TIMEOUT_MS, owner: ownerOf(ctx) });
     const drop = () => h.client.discard(probe.id).catch(() => { /* gone */ });
     // The same file the call resolved, under the same enforcer: otherwise its answer is not this program's.
     if (probe.program.fingerprint !== fp || probe.placement !== "host-sandbox") { await drop(); log("changed"); return null; }
@@ -492,7 +516,7 @@ export async function versionOf(ctx: Pick<ShCallContext, "runId" | "seq" | "sign
             if (s === done.stdout && done.code === 0 && s.size) {
                 const r = await h.client.read(s.ptr, 0, PROBE_BYTES);
                 const bytes = bytesOf(r.data);
-                if (!binaryKind(bytes)) version = new RegExp(m.version.pattern, "m").exec(new TextDecoder().decode(bytes))?.[1] ?? null;
+                if (!binaryKind(bytes)) version = new RegExp(spec.pattern, "m").exec(new TextDecoder().decode(bytes))?.[1] ?? null;
             }
             await h.client.release(s.ptr).catch(() => { /* gone with the session */ });
         }
