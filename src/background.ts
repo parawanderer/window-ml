@@ -742,7 +742,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             await policiesReady;
             if (p.op === "add") {
                 const source = str(p.source, POLICY_SOURCE_MAX), label = str(p.label, POLICY_LABEL_MAX);
-                const consumer = p.consumer === "sh" ? "sh" : p.consumer === undefined || p.consumer === "fetch" ? "fetch" : undefined;
+                const consumer = p.consumer === "sh" || p.consumer === "setting" ? p.consumer : p.consumer === undefined || p.consumer === "fetch" ? "fetch" : undefined;
                 if (!source || !label || !effect || !consumer) { sendResponse({ error: "a policy needs an effect (allow, deny or ask), a label and its code" }); return; }
                 addGlobalPolicy({ consumer, effect, source, label });
             } else if (p.op === "edit") {
