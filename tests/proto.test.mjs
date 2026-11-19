@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { readFileSync, rmSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkPin, protocVersion, generate } from "../scripts/gen-proto.mjs";
+import { checkPin, protocVersion, generate, withoutProtocVersion } from "../scripts/gen-proto.mjs";
 import { readVarint, createFrameReader, MAX_FRAME_BYTES } from "../src/protostream.ts";
 
 test("the vendored schema is byte-for-byte the file at the pinned commit", () => {
@@ -24,9 +24,7 @@ test("the checked-in decoder is what the schema generates", () => {
     // supposed to make impossible — so where protoc IS present, regenerate and diff. Skipped otherwise rather
     // than failing a machine that never asked for a protobuf toolchain (the same rule the CPython tests use).
     if (!protocVersion()) return;
-    // The header's protoc version line is not the decoder: a machine with another protoc release generates the same
-    // code under a different line (35.1 and 36.2 differ only there), and must not read as stale.
-    const code = (s) => s.replace(/^\/\/ +protoc +v\S+$/m, "//   protoc");
+    const code = withoutProtocVersion;   // another protoc release writes another version line, not another decoder
     const tmp = mkdtempSync(join(tmpdir(), "protogen-"));
     try {
         const fresh = generate(tmp);
