@@ -3,7 +3,7 @@
 // that reuse each other's values (notebooks/python-dialect/cell-replay.ipynb, the replay of csv-total's one-cell runs,
 // is the question this measures live).
 //
-//   RESHAPE_MODELS=a,b USE_ENV=1 node --import tsx tests/e2e/bench/run.mjs tests/e2e/bench/specs/reshape.bench.ts --dry
+//   RESHAPE_MODELS=a,b RESHAPE_REPEATS=3 USE_ENV=1 node --import tsx tests/e2e/bench/run.mjs tests/e2e/bench/specs/reshape.bench.ts --dry
 //
 // Each run starts from the HUD (`surface: "hud"`), so the run is the worker's and its Python is worker-hosted: a cell
 // runs unasked when it finishes inside the dialect (its step's approval is "sandbox"), and one that leaves it asks with
@@ -25,12 +25,16 @@ import { reshapeAnswer } from "../../../../examples/cross-page/reshape.mjs";
 /** The models, overridden by RESHAPE_MODELS (comma-separated). */
 const MODELS = (process.env.RESHAPE_MODELS || "qwen3.6:35b,gemma4:31b").split(",").map((s) => s.trim()).filter(Boolean);
 
+/** Repeats per arm and model, overridden by RESHAPE_REPEATS (a positive integer). */
+const REPEATS = Math.max(1, Number.parseInt(process.env.RESHAPE_REPEATS ?? "", 10) || 3);
+
 const ANSWER = reshapeAnswer();
 
 /** An answer with its digit grouping and currency marks taken out, for matching an exact number. */
 const digits = (answer: string): string => answer.replace(/[\s,$€]|EUR/g, "");
 
-/** Right when it names the manager and the amount to the cent (the pair itself is implied by the manager's region). */
+/** Right when it names the manager and the amount to the cent. The manager fixes only the region, not the product; the
+ *  exact amount is what singles out the pair. */
 export const reshapeRight = (answer: string): boolean => digits(answer).includes(ANSWER.amount) && answer.toLowerCase().includes(ANSWER.manager.toLowerCase());
 
 /** The two wordings of the one question. */
@@ -57,7 +61,7 @@ const NOT_SUITE = { included: false, reason: "measures dialect refusals over a m
 export default defineBench({
     name: "reshape",
     description: "A four-table reshaping task from the HUD, so each python_exec cell is tried inside the read-only dialect; three arms (two wordings with the tables hint, one without).",
-    repeats: 3,
+    repeats: REPEATS,
     timeoutMs: 600000,
     approve: "auto",
 

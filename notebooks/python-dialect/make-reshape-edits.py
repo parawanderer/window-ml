@@ -38,8 +38,9 @@ sentence. Every run starts from the HUD, so every cell is tried inside the diale
 
 Each run is classified by the ROUTE its first Python cell took to the files: `tables-url` (a `tables` source that is a full
 URL, which loads inside), `tables-path` (a site path or anything else in `tables`), `read_csv-fetched` and
-`read_csv-unfetched` (no `tables`; a read_csv of a file fetch_url did or did not read), `other`. Only `tables-url` runs
-reach the edits without a file refusal first, so edits are counted within them alone, and the route mix per arm is
+`read_csv-unfetched` (no `tables`; a read_csv of a file fetch_url did or did not read), `other`. The two `tables` routes
+load the files inside the dialect (a site path since the worker's path repair), so they reach the edits without a file
+refusal first: edits are counted within each of them, as separate rows, and nowhere else. The route mix per arm is
 reported apart: it is what the hint changes.
 
 How a refused edit's maker is read (reshape-edits/provenance.py): the root name of the store on the refusal's line, found
@@ -136,14 +137,24 @@ if cells is not None:
 """)
 
 md("""
-## Refused edits, by who made the value: `tables-url` runs only
+## Refused edits, by who made the value: the two `tables` routes, apart
+
+Per cell: each refused edit, by route, arm and maker. Per run: of the runs on each counted route (`runs`, the
+denominator), how many have at least one refused edit of each maker.
 """)
 
 code("""
 if cells is not None:
-    edits = cells[cells["mutation"].notna() & (cells["route"] == "tables-url")]
-    display(edits.groupby(["arm", "maker"]).size().unstack(fill_value=0))
-    display(edits.groupby(["mutation", "maker"]).size().unstack(fill_value=0))
+    COUNTED = ["tables-url", "tables-path"]
+    edits = cells[cells["mutation"].notna() & cells["route"].isin(COUNTED)]
+    display(edits.groupby(["route", "arm", "maker"]).size().unstack(fill_value=0))
+    display(edits.groupby(["route", "mutation", "maker"]).size().unstack(fill_value=0))
+    counted = cells[cells["route"].isin(COUNTED)]
+    per_run = counted.groupby(["route", "arm", "model"]).agg(runs=("run", "nunique"))
+    for m in ["injected", "inside", "full", "alias", "unknown"]:
+        hit = edits[edits["maker"] == m].groupby(["route", "arm", "model"])["run"].nunique()
+        per_run[f"runs with {m}"] = hit.reindex(per_run.index, fill_value=0)
+    display(per_run)
 """)
 
 nb = nbf.v4.new_notebook()
