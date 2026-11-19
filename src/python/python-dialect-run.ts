@@ -219,7 +219,10 @@ def _ml_buffer_args(_restricted, restricted):
     # first's checker; the fork's own check still runs after this one. A parameter the signature lacks is a reason.
     import inspect
     for _mod, _kind, _name, _p in ${JSON.stringify(DIALECT_BUFFER_ARGS)}:
-        _cls = restricted._kind_class(_mod, _kind)
+        try:
+            _cls = restricted._kind_class(_mod, _kind)
+        except ImportError:     # the library is not loaded here, so load_manifests admitted nothing of it either
+            continue
         for _c in (_cls if isinstance(_cls, tuple) else (_cls,) if _cls else ()):
             _f = restricted._static_function(_c, _name)
             if _f is None:
