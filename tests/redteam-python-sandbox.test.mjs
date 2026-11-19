@@ -363,6 +363,8 @@ test("P2-handle: a callback a hardened cell hands the loop with call_later does 
 asyncio.ensure_future(_t())
 "x"`);
     assert.deepEqual(control, { woke: [] }, `control: a scheduled Task is cancelled, got ${JSON.stringify(control)}`);
+    // PHASE assertion: the cancel's spend turns the loop, and a handle already due fires in that turn — a run the
+    // ruling on "after the result" (PYTHON_CANCEL_GAPS) permits, and this row's original `woke === []` failed it.
     const r = await scheduledThenAsk("_rt_p2h", `asyncio.get_event_loop().call_later(0.01, lambda: _m.woke.append(_where()))
 _m.woke.append("armed")
 "x"`);
@@ -424,17 +426,20 @@ _m.woke.append("armed")
 });
 
 test("P2-handle residual: pyodide.webloop.scheduleCallback, a captured JS function, schedules without the loop", { skip }, async () => {
+    // STRICT, not the phase assertion: this is a JS timer the cell's revoke is what stops, as the four JS routes below
+    // are, so a run during the cancel here would mean the revoke had been dropped. The assertion fails on ANY entry
+    // besides its own "sched-ok".
     const r = await scheduledThenAsk("_rt_p2s", `try:
     import pyodide.webloop as _w
     from pyodide.ffi import create_once_callable as _co
-    _w.scheduleCallback(_co(lambda: _m.woke.append(_where())), 10)
+    _w.scheduleCallback(_co(lambda: _m.woke.append("ran")), 10)
     _m.woke.append("sched-ok")
 except BaseException as e:
     _m.woke.append("sched-fail:" + type(e).__name__)
 _m.woke.append("armed")
 "x"`);
     assert.ok(!String(r.woke[0]).startsWith("sched-fail:"), `positive control: scheduleCallback must accept the callable, got ${JSON.stringify(r)}`);
-    assertNoneLater(r, "scheduleCallback", ["sched-ok"]);
+    assert.deepEqual(r, { woke: ["sched-ok", "armed"] }, `nothing this route schedules may run, during the cancel or after: ${JSON.stringify(r)}`);
 });
 
 test("P2-handle: a done-callback on a task the cell made does not run once the result is returned", { skip }, async () => {
@@ -494,35 +499,38 @@ await asyncio.sleep(0.05)
 
 // JS callback registries the lockdown KEEPS (setTimeout/setInterval refuse a string argument but take a
 // callable; queueMicrotask and Promise.then take one too). None of them makes an asyncio.Handle, so the
-// cancel's gc sweep finds nothing and the callback runs after the result. The `scheduleCallback` todo below
-// is one door into this class; these are the others. Each body reports "sched-ok" so a refused schedule is a
-// failure, not a pass.
+// cancel's gc sweep finds nothing; what stops them is the cell's `revoke()`, which runs BEFORE the cancel's
+// loop turns — so a callback here is neither "in-cell" nor "later", and these rows keep the exact list. Each
+// body reports "sched-ok" so a refused schedule is a failure, not a pass.
+// The revoke is compiled into the wrapper at boot (`wrapUserScript`), so no row can rebind it; the mutation
+// (`revoke()` → `pass`, run by hand at b5f685d5) reds these four routes plus the P2-bound regression row, as
+// it did on the base.
 const jsRoutes = [
     ["js.setTimeout + create_once_callable", `_rt_p2js1`, `try:
     from js import setTimeout
     from pyodide.ffi import create_once_callable as _co
-    setTimeout(_co(lambda: _m.woke.append(_where())), 10)
+    setTimeout(_co(lambda: _m.woke.append("ran")), 10)
     _m.woke.append("sched-ok")
 except BaseException as e:
     _m.woke.append("sched-fail:" + type(e).__name__)`],
     ["js.setTimeout + create_proxy", `_rt_p2js2`, `try:
     from js import setTimeout
     from pyodide.ffi import create_proxy as _cp
-    setTimeout(_cp(lambda: _m.woke.append(_where())), 10)
+    setTimeout(_cp(lambda: _m.woke.append("ran")), 10)
     _m.woke.append("sched-ok")
 except BaseException as e:
     _m.woke.append("sched-fail:" + type(e).__name__)`],
     ["js.queueMicrotask + create_once_callable", `_rt_p2js3`, `try:
     from js import queueMicrotask
     from pyodide.ffi import create_once_callable as _co
-    queueMicrotask(_co(lambda: _m.woke.append(_where())))
+    queueMicrotask(_co(lambda: _m.woke.append("ran")))
     _m.woke.append("sched-ok")
 except BaseException as e:
     _m.woke.append("sched-fail:" + type(e).__name__)`],
     ["js.Promise.resolve().then + create_once_callable", `_rt_p2js4`, `try:
     from js import Promise
     from pyodide.ffi import create_once_callable as _co
-    Promise.resolve().then(_co(lambda *_a: _m.woke.append(_where())))
+    Promise.resolve().then(_co(lambda *_a: _m.woke.append("ran")))
     _m.woke.append("sched-ok")
 except BaseException as e:
     _m.woke.append("sched-fail:" + type(e).__name__)`],
@@ -535,7 +543,11 @@ for (const [what, tag, body] of jsRoutes) {
         // Positive control first: the schedule itself succeeded (the body reached "sched-ok").
         assert.ok(r.woke.includes("sched-ok") || r.woke[0]?.startsWith("sched-fail:"), `probe must report how the schedule went, got ${JSON.stringify(r)}`);
         assert.ok(!String(r.woke[0]).startsWith("sched-fail:"), `positive control: the JS registry must accept the callable, got ${JSON.stringify(r)}`);
-        assertNoneLater(r, "this JS route", ["sched-ok"]);
+        // STRICT, not the phase assertion: the cell's revoke is what stops these, and it stops them before the cancel
+        // runs, so the callback cannot be "in-cell" either. Measured: with revoke() replaced by pass, all four of these
+        // routes fire during the cancel — as they did on the base, where only this file's P2-bound regression row also
+        // caught it. A phase assertion here would let the mutation pass, so they keep the exact list.
+        assert.deepEqual(r, { woke: ["sched-ok", "armed"] }, `nothing this route schedules may run, during the cancel or after: ${JSON.stringify(r)}`);
     });
 }
 
