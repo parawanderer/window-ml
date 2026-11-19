@@ -134,6 +134,10 @@ const copyMenu = (v: unknown, path: string): CtxItem[] => [
  *  from a Ctrl+F. Keys carry their schema `description` as a tooltip, and one not in the schema is
  *  flagged as a likely hallucinated argument.
  *
+ *  @gallery empty root array {"v": []}
+ *  @gallery empty root object {"v": {}}
+ *  @gallery empty nested {"v": {"items": [], "meta": {}, "nested": {"a": [], "b": {}, "c": 1}, "rows": [[], {}, 2]}, "defaultOpen": true}
+ *
  *  @gallery-flow strings cut, expand and read tests/gallery-flows/JsonTreeStrings.mjs {"v": {"title": "Release notes", "note": "short and plain", "multi": "line one\nline two\n\tindented with a tab", "long": "The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. ", "script": "echo step 1\necho step 2\necho step 3\necho step 4\necho step 5\necho step 6\necho step 7\necho step 8\necho step 9\necho step 10\necho step 11\necho step 12\necho step 13\necho step 14\necho step 15\necho step 16\necho step 17\necho step 18\necho step 19\necho step 20\necho step 21\necho step 22\necho step 23\necho step 24\necho step 25\necho step 26\necho step 27\necho step 28\necho step 29\necho step 30"}, "defaultOpen": true} */
 export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, allOpen, cut, unsent, dim, path, label, trail, times, menuExtra, comma }: { k?: string; v: unknown; depth?: number; defaultOpen?: boolean; schema?: JsonSchemaNode; desc?: string; unknown?: boolean; allOpen?: boolean; cut?: string;
     /** Another member follows this one in its container: the row ends in a `,`, as the JSON would. */ comma?: boolean;
@@ -160,7 +164,9 @@ export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, 
     if (v === JT_SEEN) return <div class="jt-row jt-seen-end" style={pad}
         {...cursorTipOn("The panel kept more of this value than the tool's output cap let through. The model read up to here, and none of what follows.")}>
         ↓ not sent to the model</div>;
-    if (!branch) {
+    // An empty array or object has nothing to open: it is a leaf that reads `[]` / `{}`, never a node with a chevron and a closing row.
+    const empty = branch && (Array.isArray(v) ? (v as unknown[]).length === 0 : Object.keys(v as object).length === 0);
+    if (!branch || empty) {
         const t = v === null ? "null" : typeof v;
         return <div class={`jt-row${dimCls}`} style={pad} onContextMenu={menu}>
             {/* A labelled root with no chevron keeps the chevron's width, so its name lines up with a branch's. */}
@@ -172,6 +178,7 @@ export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, 
                     ? <StrLeaf s={v} cls={`jt-val jt-${t} ${HLJS_OF[t] ?? ""}`} sep={sep} allOpen={allOpen} />
                     // highlight.js draws `true`, `false` and `null` as a literal WRAPPING a keyword, and a theme colours the inner one
                     // (purple, where the literal's own colour is blue): the same two spans here, or the tree and the text disagree.
+                    : empty ? <span class="jt-val jt-brace jt-empty">{Array.isArray(v) ? "[]" : "{}"}{sep}</span>
                     : <span class={`jt-val jt-${t} ${HLJS_OF[t] ?? ""}`}>{t === "boolean" || t === "null" ? <span class="hljs-keyword">{String(v)}</span> : String(v)}{sep}</span>}
             {trail}
         </div>;
