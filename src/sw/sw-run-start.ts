@@ -44,6 +44,7 @@ import { notePersonTurn } from "./sw-start-approval";
 import { adoptOnTab } from "./adopt-run";
 import { holdStands } from "./nav-arrival";
 import { toPageUi } from "./sw-side-panel";
+import { resetTaskChain, setTaskTurnHost, taskTurnHasWork } from "./sw-tasks";
 
 /** Whether a run the worker builds offers `python_install`. On since the install step (docs/plan/repl/PACKAGES_INSTALL.md,
  *  slice 4): an approved card is installed into the run's own Python worker. */
@@ -191,6 +192,7 @@ export function announce(tabId: number, event: Record<string, unknown>): void {
 export function steerRun(hash: string, text: string, origin?: PromptOrigin, display?: PromptDisplay, images?: string[], shown?: string[]): boolean {
     const inbox = runInboxes.get(hash);
     if (!inbox) return false;
+    resetTaskChain(hash);   // the person spoke: the chain of turns finished tasks started is broken
     const sayId = `sc_${Date.now().toString(36)}_${++steerSeq}`;
     inbox.queue.push({ id: sayId, text, ...(origin ? { origin } : {}), ...(images?.length ? { images } : {}) });
     announce(inbox.tabId, { kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text, sayId, ...(display ? { display } : {}), ...(shown?.length ? { images: shown } : {}) });
@@ -218,13 +220,24 @@ const nextSend = (hash: string): number => Math.max(1, ...runPayloads(hash).map(
  * @param hash the run
  * @param turn the message's turn ({@link nextSend})
  * @param added the pointers it added
+ * @returns the rollback for a message taken back after this: it removes from each payload only the file ids THIS call
+ *   added (one another message attached stays) and puts `sends` back only where this call raised it and no later message
+ *   has raised it further. The task chain's reset is not undone.
  */
-function noteSend(hash: string, turn: number, added: readonly FilePointer[]): void {
+function noteSend(hash: string, turn: number, added: readonly FilePointer[]): () => void {
+    resetTaskChain(hash);   // every delivered message of the person's passes here (a steer, a turn, a queued one)
+    const undo: Array<() => void> = [];
     for (const p of runPayloads(hash)) {
-        p.sends = Math.max(p.sends ?? 1, turn);
+        const before = p.sends, raised = (before ?? 1) < turn;
+        p.sends = Math.max(before ?? 1, turn);
         const fresh = added.filter((a) => !(p.files ?? []).some((g) => g.id === a.id));
         if (fresh.length) p.files = [...(p.files ?? []), ...fresh];
+        undo.push(() => {
+            if (fresh.length) p.files = (p.files ?? []).filter((f) => !fresh.some((a) => a.id === f.id));
+            if (raised && p.sends === turn) { if (before === undefined) delete p.sends; else p.sends = before; }
+        });
     }
+    return () => { for (const u of undo) u(); };
 }
 
 /**
@@ -255,6 +268,33 @@ export function noteRunLine(hash: string, text: string): void {
     if (tabId != null) announce(tabId, { kind: "agent-note", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text });
 }
 
+/** A person's message to a run whose turn is still starting (its page being adopted): held until the turn's inbox opens,
+ *  then steered into it. */
+interface PendingSteer { text: string; origin?: PromptOrigin; display?: PromptDisplay; images?: string[]; shown?: string[]; takeBack: () => void }
+const pendingSteers = new Map<string, PendingSteer[]>();   // state: plumbing — until the starting turn hosts, then handed to its inbox
+
+/** The turn hosted: hand each held message to its inbox, as a steer; one the turn cannot take is said not to have been sent. */
+function flushPendingSteers(hash: string): void {
+    const held = pendingSteers.get(hash);
+    pendingSteers.delete(hash);
+    const refused = (held ?? []).filter((m) => !steerRun(hash, m.text, m.origin, m.display, m.images, m.shown));
+    takeBackAll(hash, refused);
+}
+
+/** The turn never hosted: each held message is taken back and said not to have been sent. */
+function dropPendingSteers(hash: string): void {
+    const held = pendingSteers.get(hash);
+    pendingSteers.delete(hash);
+    takeBackAll(hash, held ?? []);
+}
+
+/** Take back held messages newest first: each one's rollback restores `sends` only while it still holds that message's
+ *  own turn, so the oldest taken back first would find a later one's raise and leave the count high. */
+function takeBackAll(hash: string, held: readonly PendingSteer[]): void {
+    for (const m of [...held].reverse()) m.takeBack();
+    held.forEach(() => noteRefusedTurn(hash, "the run's turn did not start."));
+}
+
 /** A worker-built run's vision facts, for routing a later turn's images: the model it is on now, and what its build
  *  decided about seeing (`rebuild.driverSees`, `rebuild.visionModel`), and the model it was built on. */
 function turnVision(hash: string): { driverSees: boolean; runModel: string | null; visionModel: string | null } {
@@ -277,12 +317,16 @@ function turnVision(hash: string): { driverSees: boolean; runModel: string | nul
  * @param fromTabId when the request came from a tab, the tab it came from: a run is only driven from its own tab
  * @param sentFrom where the message was typed, as the channel it came over knows it (a hub command's sender); wins over
  *   the body's `surface`
+ * @param startedBy set only by a finished task starting the run's next turn (sw-tasks.ts `TaskTurnHost`): the line the
+ *   transcript shows for it, said just before the turn is hosted, and `ready`, asked after the page has been adopted and
+ *   before anything is announced: false when the result the turn is for has been read elsewhere, and the turn is not started. Such a turn is not the person's, so it does not break the chain
+ *   of turns tasks started in a row
  * @returns what happened, or null when this is not the worker's run to drive
  * @throws {FilesRefused} the files break the rule, a PDF will not read, or one would go to a page
  * @throws {ImagesRefused} the images may not be sent
  * @throws {PageGone} no page may frame the message here and the worker may not drive it from this tab
  */
-export async function userRunAction(hash: string, action: "send" | "continue", body: { text?: string; images?: string[]; files?: SentFile[]; elementContext?: ElementContext; maxSteps?: number; surface?: string }, fromTabId?: number, sentFrom?: PromptOrigin): Promise<"steer" | "turn" | "continued" | "busy" | "none" | null> {
+export async function userRunAction(hash: string, action: "send" | "continue", body: { text?: string; images?: string[]; files?: SentFile[]; elementContext?: ElementContext; maxSteps?: number; surface?: string }, fromTabId?: number, sentFrom?: PromptOrigin, startedBy?: { line: string; ready: () => Promise<boolean> }): Promise<"steer" | "turn" | "continued" | "busy" | "none" | null> {
     const stored = bgRuns.get(hash);
     const live = runInboxes.get(hash);
     const tabId = stored?.tabId ?? live?.tabId;
@@ -346,7 +390,11 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
     const turn = nextSend(hash);
     const added: FilePointer[] = [];
     const shelf = sessionTokens(hash).files;
-    const takeBack = <T>(outcome: T): T => { shelf.drop(added.map((f) => f.id)); return outcome; };
+    let rollBack: (() => void) | null = null;   // set once `noteSend` has recorded this message on the payloads
+    // The `shelf.drop` is not observable from outside today: `run.files` reads the payload and a rebuilt shelf re-notes
+    // from it, so the rollback alone keeps both right. It stays so this worker's live shelf never holds a pointer to a
+    // message that was not sent, whatever reads the shelf directly later.
+    const takeBack = <T>(outcome: T): T => { shelf.drop(added.map((f) => f.id)); rollBack?.(); rollBack = null; return outcome; };
     const deliver = async (): Promise<"steer" | "turn" | "continued" | "busy" | "none"> => {
         // A message with nowhere to go holds nothing: a run at the end of its turn (its inbox closed) is busy, and one
         // neither running nor stored is gone. Checked again after the awaits below, which a turn can end during.
@@ -371,33 +419,52 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
             if (action === "continue") return "busy";
             // A run with an inbox takes the steer (steerRun): only then is the message, and what it attached, the run's.
             if (!runInboxes.has(hash)) return takeBack("busy");
-            noteSend(hash, turn, added);
-            return steerRun(hash, text, origin, display, routed.images, attached) ? "steer" : "busy";
+            rollBack = noteSend(hash, turn, added);
+            return steerRun(hash, text, origin, display, routed.images, attached) ? "steer" : takeBack("busy");
         }
         if (!stored) return takeBack("none");
         // A resume already starting (another send still in the awaits below) makes this one busy: a second RESUME_RUN
         // would be refused by `hostRun` with no one listening, the message shown as sent and then lost.
-        if (startingControllers.has(hash)) return takeBack("busy");
+        // A message sent while it starts is held and steered into the turn once its inbox opens (the starter flushes it).
+        if (startingControllers.has(hash)) {
+            if (action !== "send") return takeBack("busy");
+            rollBack = noteSend(hash, turn, added);
+            const held = pendingSteers.get(hash) ?? [];
+            held.push({ text, origin, display, images: routed.images, shown: attached, takeBack: () => takeBack(undefined) });
+            pendingSteers.set(hash, held);
+            return "steer";
+        }
         // Re-register the builtin toolset in the page first: the document may not be the one the last turn ran on.
         // Registered as a start for that await: a CANCEL_ALL_RUNS there must stop this resume, not find nothing live.
         // Not on a page the run is still held on (nav-arrival.ts): the turn judges it again, and the person answers first.
         const starting = beginStart(hash, tabId);
+        let hosted = false;
         try {
-            if (!stored.p.rebuild || (!await holdStands(tabId, hash) && (await adoptOnTab(tabId, hash, stored.p.rebuild)).error)) { endStart(hash, starting); return takeBack("none"); }
+            try {
+                if (!stored.p.rebuild || (!await holdStands(tabId, hash) && (await adoptOnTab(tabId, hash, stored.p.rebuild)).error)) { endStart(hash, starting); return takeBack("none"); }
+                if (starting.signal.aborted) { endStart(hash, starting); return takeBack("none"); }
+            } catch (e) {
+                endStart(hash, starting);
+                throw e;
+            }
+            // A turn started for a task never runs on an empty inbox: its result may have been read while the page was adopted.
+            if (startedBy && !await startedBy.ready()) { endStart(hash, starting); return takeBack("none"); }
             if (starting.signal.aborted) { endStart(hash, starting); return takeBack("none"); }
-        } catch (e) {
+            // Delivered from here on, with no await before the turn is hosted: recorded BEFORE `hostRun` copies the stored
+            // payload into the turn's, so the turn and what it stores at its end carry them.
+            if (action === "send") rollBack = noteSend(hash, turn, added);
+            else if (!startedBy) resetTaskChain(hash);   // the person's Continue breaks the chain too
+            if (text || attached.length) announce(tabId, { kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text, ...(display ? { display } : {}), ...shown });
+            if (startedBy) noteRunLine(hash, startedBy.line);
+            const steps = stepBudget(body.maxSteps);
             endStart(hash, starting);
-            throw e;
+            hostRun({ type: "RESUME_RUN", payload: { runId: hash, task: text, ...(steps ? { maxSteps: steps } : {}) } },
+                tabId, () => { /* reported through the session's events */ }, action === "send" ? origin : undefined, undefined, routed.images);
+            hosted = true;
+            flushPendingSteers(hash);
+        } finally {
+            if (!hosted) dropPendingSteers(hash);
         }
-        if (starting.signal.aborted) { endStart(hash, starting); return takeBack("none"); }
-        // Delivered from here on, with no await before the turn is hosted: recorded BEFORE `hostRun` copies the stored
-        // payload into the turn's, so the turn and what it stores at its end carry them.
-        if (action === "send") noteSend(hash, turn, added);
-        if (text || attached.length) announce(tabId, { kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text, ...(display ? { display } : {}), ...shown });
-        const steps = stepBudget(body.maxSteps);
-        endStart(hash, starting);
-        hostRun({ type: "RESUME_RUN", payload: { runId: hash, task: text, ...(steps ? { maxSteps: steps } : {}) } },
-            tabId, () => { /* reported through the session's events */ }, action === "send" ? origin : undefined, undefined, routed.images);
         return action === "continue" ? "continued" : "turn";
     };
     try {
@@ -406,3 +473,16 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
         throw takeBack(e);
     }
 }
+
+// A finished detached task starts the run's next turn through the same path as the person's "Continue" (sw-tasks.ts,
+// docs/spec/ASYNC_CALLS.md rule 4b). The turn carries no `PromptOrigin` of its own: nobody typed it, so the run's last
+// origin stands, as it does for a task's result in the inbox. `startedBy` is what keeps it from breaking the chain.
+setTaskTurnHost({
+    start: async (runId, _taskId, line) => {
+        let empty = false;
+        const ready = async (): Promise<boolean> => { const ok = await taskTurnHasWork(runId); empty = !ok; return ok; };
+        const outcome = await userRunAction(runId, "continue", {}, undefined, undefined, { line, ready }).catch(() => null);
+        return outcome === "continued" ? true : empty ? "empty-inbox" : false;
+    },
+    say: noteRunLine,
+});

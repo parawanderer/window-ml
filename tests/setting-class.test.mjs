@@ -49,7 +49,7 @@ test("the model may change a setting only with a row in DevTools Settings, and n
     const everywhere = Object.fromEntries(KEYS.map((k) => [k, { tab: "advanced" }]));
     for (const k of [...ofClass("secret"), ...ofClass("gate")]) assert.equal(modelWritable(k, everywhere), false, k);
     assert.equal(modelWritable("notASetting", { notASetting: { tab: "advanced" } }), false);
-    assert.equal(KEYS.filter((k) => modelWritable(k)).length, 49);
+    assert.equal(KEYS.filter((k) => modelWritable(k)).length, 51);
 });
 
 test("the secrets and the gate keys are exactly the ruled ones", async () => {
@@ -60,7 +60,7 @@ test("the secrets and the gate keys are exactly the ruled ones", async () => {
     assert.deepEqual([...SECRET_KEYS, "pageApprovalDomains"].sort(), RULED);
     assert.deepEqual(ofClass("secret"), RULED);
     assert.deepEqual(ofClass("gate"), ["autoApprovePython", "autoApproveReadonly", "autoApproveSelfSource", "shellRevealsAllow"]);
-    assert.equal(ofClass("guarded").length, 22);
+    assert.equal(ofClass("guarded").length, 24);
 });
 
 test("no shell key and not agentStartPage is ever ordinary, so no setting allow frees one", () => {
@@ -118,10 +118,12 @@ test("a backup an older version wrote, changing every setting, lists the 30 guar
     const plan = planRestore(payload, { sync: { ...DEFAULT_CONFIG, apiKey: "sk-mine" }, local: { ml_site_schema: SITE_SCHEMA } });
     const sync = plan.changes.filter((c) => c.area === "sync");
     const risky = sync.filter((c) => c.group === "risky").map((c) => c.key).sort();
-    // Written before shellRevealsAllow existed, so it changes every key but that one, which the restore leaves as it is.
-    assert.deepEqual(risky, KEYS.filter((k) => SETTING_CLASSES[k].class !== "ordinary" && k !== "shellRevealsAllow").sort());
+    // Written before shellRevealsAllow, taskNotifyOnly and taskTurnChainMax existed, so it changes every key but those,
+    // which the restore leaves as they are.
+    const LATER = ["shellRevealsAllow", "taskNotifyOnly", "taskTurnChainMax"];
+    assert.deepEqual(risky, KEYS.filter((k) => SETTING_CLASSES[k].class !== "ordinary" && !LATER.includes(k)).sort());
     assert.equal(risky.length, 30);
-    assert.equal(sync.some((c) => c.key === "shellRevealsAllow"), false, "a backup without the key changes nothing of it");
+    for (const k of LATER) assert.equal(sync.some((c) => c.key === k), false, `a backup without ${k} changes nothing of it`);
     for (const c of sync) {
         if (c.group === "risky") assert.equal(c.why, restoreListsApart(c.key), c.key);
         else assert.equal(SETTING_CLASSES[c.key].class, "ordinary", c.key);

@@ -1,6 +1,6 @@
 # Spec (proposed): settings the model can see and change
 
-**Status: proposed 2026-11-13; discovery and the surface built (#1815, #1952), part (c) spec'd and not built.** From
+**Status: proposed 2026-11-13; discovery, the surface and part (c) built (#1815, #1952, #2001).** From
 Shane's words in the calm-chat-motion session (2026-11-13) and the points agreed there, handed to the settings-specs
 lane by the policies/python/desktop/manifests coordinator. Questions 1 and 2 of the first review (`ml.config()` stays as
 it is; the guarded class is not a second mechanism) were ruled by Shane on 2026-11-13 as proposed. Shane also ruled on
@@ -97,8 +97,7 @@ exec's `ml.config()` is open question 1, a later slice.
   values the shell keys need), the fatigue refusal ("Threat model", item 6) and the red-team rows. Under ruling 2
   guarded keys are read-write from the first commit, so a change can be declined at a guarded card from the start, and
   the fatigue refusal cannot wait for a later key. Built (#1952).
-- **`propose_policy` rows of consumer `setting`** (part (c)): spec'd here ("Proposing a `setting` policy"), its code
-  and red-team rows a PR of their own. Not built.
+- **`propose_policy` rows of consumer `setting`** (part (c)): "Proposing a `setting` policy", below. Built (#2001).
 
 ## Four classes of setting
 
@@ -353,7 +352,7 @@ before any answer. A `setting`/`changed` record goes to the
 run log with the key, from, to and who answered (`docs/dev/run-log.md`); the tool result tells the model the old value
 so it can say how to undo. A change takes effect as the same change made in Settings would, for this run included.
 
-## Proposing a `setting` policy (part (c), not built)
+## Proposing a `setting` policy (part (c))
 
 `propose_policy` accepts `consumer: "setting"` beside `fetch` and `act`, in a run the worker built, under the same
 rules as its other rows: the model proposes, the person approves on a card, the policy lasts for the run, and every
@@ -408,25 +407,57 @@ rule cannot be written to miss the values it knows the measure tries. A pair wit
 For each key the result is **every value** (every pair tried matched; for a sampled key, "every value tried"), **some
 values**, **none**, or **could not be measured**.
 
-**The residual of sampling.** For a key whose `from` or `to` is sampled, "none" means no value tried matched, not that
-none matches. A rule that matches one value the samples did not draw (`c.key === "detachedTaskMaxMin" && c.from === <a
-value in 1–60 not drawn>`, or a `to` outside the enumerated set of an unbounded number) reads "none" for that key, so
-the key is off the card's covers line while the approved allow frees that change when it comes. Drawing afresh per
-proposal makes the miss unpredictable for a rule that guesses, never impossible for one that names a single value. What
-bounds it: the residual is ordinary keys only (the judge frees no guarded key whatever the rule), an allow measuring
-"none" everywhere is refused, so such a rule must also cover a key the card names, and the closing line counts the
-sampled keys that showed no match, so the person sees how much of the table rests on samples alone.
+**The rule's own constants are tried** (coordinator, 2026-11-19). Every constant in the rule's tree joins the values
+tried for each key, as `from` and as `to` (`policy-literals.ts`, a walk over the parsed tree that evaluates nothing;
+arithmetic over constants is folded, so `30 + 7` is 37). A number adds itself and its neighbours ±1, kept to the key's
+domain: a value outside it is refused by `checkSettingChange` before any judge, and a comparison with one is refused at
+check time (below), so no out-of-domain value is added. A string adds itself where the key can hold it, and a value
+carrying it: for a key with a finite list (hours, currencies, models), one listed value that starts with it, one that
+ends with it and one that holds it, drawn at random; for a guarded string or list key, the string with random text after
+it and before it. The strings `c.key` is compared with are key names and are not added. Each added value is paired with
+the key's base values, never with another added one, so the cost grows with the constants, not their square, and runs
+inside the one budget. The card is still decided by the measure, never by reading the source.
 
-**Size.** With today's table and 162 currencies: about 5,100 evaluations per proposal, most of them `hours` (552 × 5 =
-2,760) and `currency` (162 × 5 = 810), each bounded by the realm's step budget. The PR measures the wall time of one
-measure with a rule of the budget's full length and records the number here.
+**The residual of sampling.** For a key whose `from` or `to` is sampled, "none" means no value tried matched, not that
+none matches. A value the rule names is now always tried; what is left is a value the rule computes past folding
+(`c.from === "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx".length`, a member read): it reads "none" for that key, so the key
+is off the card's covers line while the approved allow frees that change when it comes. Drawing afresh per proposal
+makes the miss unpredictable, never impossible. What bounds it: the residual is ordinary keys only (the judge frees no
+guarded key whatever the rule), an allow measuring "none" everywhere is refused, so such a rule must also cover a key
+the card names, and the closing line counts the sampled keys that showed no match, so the person sees how much of the
+table rests on samples alone.
+
+**Size.** With today's table and 162 currencies: about 5,100 evaluations per proposal with 40 server models (4,100 with
+2), most of them `hours` (552 × 5 = 2,760) and `currency` (162 × 5 = 810). Measured on an Apple M5 Pro under Node 26,
+one measure takes 21 ms for `c.key === "theme"`, 0.55 s for a rule that loops 100 steps per evaluation, 4.7 s for 1,000,
+23.6 s for 5,000, and 37 s for a rule that spends the whole per-evaluation budget (`POLICY_STEPS`, 50,000). So each
+evaluation's own budget does not bound the measure, and the measure has a budget of its own (coordinator, 2026-11-19):
+
+- **One step budget for the measure, `SETTING_MEASURE_STEPS` (1,000,000 steps), shared by every `setting` row of one
+  `propose_policy` call.** It is counted in steps, never in wall time. A predicate over the facts costs 8 to 16 steps an
+  evaluation, 40k to 81k for a whole measure (`c.key === "theme"`; a rule over `class`, `widens` and `key.startsWith`);
+  a rule that spends the budget is stopped after 0.3 to 0.4 s on the same machine. A call any of whose rows spends it is
+  refused at check time, before any card, for `allow`, `deny` and `ask` alike: "this rule takes too long to measure over
+  every setting; a setting policy is a short predicate. It is not proposed." Shared rather than per row, so a call of
+  `PROPOSAL_ROWS_MAX` rows costs no more than one.
+- **The measure is taken once, at the precheck, and travels with that call to its card**, so the card shows exactly the
+  measure that passed the refusals. It is held by the call's own arguments, never looked up by the rule's text: the same
+  rule proposed again is a new call, measured again over fresh samples, so re-proposing until a draw misses redraws each
+  time.
+- **With the rule's constants.** Each constant adds one row and one column of the key's base pairs, for every key whose
+  type can hold it. A rule over four keys naming `10`, `"1-"` and `"A"` (`c.from < 10`, `c.from.startsWith("1-")`,
+  `c.from.startsWith("A")`) measured 7,156 evaluations and 199,118 steps, against 5,140 and 41,120 for `c.key ===
+  "theme"`.
+- **A setting's stored value or the server's model list may change between the precheck and the answer.** The card keeps
+  the measure it showed and says nothing new; the judge decides each `change_setting` at the call, over the facts then.
 
 **The card**, leading with the measure, before the label and the code:
 
 - A rule the measure finds covering every ordinary key at every value tried leads with "every setting the agent may
   change", in those words. Not refused: the person decides on the card.
 - Otherwise: "It covers: **Theme** (every value), **Code font size** (some values)." Keys by Settings name
-  (`SETTING_TEXT`), at most 6 in the line, then "and N more", the full list behind a disclosure.
+  (`SETTING_TEXT`), at most 6 in the line, then "and N more"; the full list follows the label in the same note (a
+  disclosure on the card is a later change to the card's renderer).
 - "Could not be measured: **Model**." by name, for every key reported so, for every effect.
 - For an `allow`, the guarded keys it matches are listed apart: "It would also cover, but these always ask whatever a
   policy says: **Shell roots**, **Start page**." No `setting` allow frees a guarded key, a shell key or
@@ -434,14 +465,27 @@ measure with a rule of the budget's full length and records the number here.
 - For a `deny` or `ask`, guarded keys are listed with the rest: a deny of a guarded change is honoured.
 - If the run already called `change_setting`, the card says which of those keys the rule covers.
 - The closing line says what was sampled: "Measured over every setting the agent may change; values marked sampled were
-  tried, not proven. N sampled settings showed no match and could still be covered at a value not tried." The N keys
-  are named behind the disclosure.
+  tried, not proven. N sampled settings showed no match and could still be covered at a value not tried: …", naming
+  the N keys.
 - Deny and ask rows get a card, as fetch deny rows do.
 
 **Refused at check time, no card** (the model reads why):
 
 - an `allow` that covers no ordinary key by the measure: it would free nothing, and a card for it would read as a grant;
 - an `allow` whose only covered ordinary keys could not be measured.
+- a rule, of any effect, that breaks on any (key, from, to) the measure tries (a throw, a coercion, a missing field): a
+  break is no opinion at judge time and says nothing, so a half-dead rule would never be seen. The text names the count,
+  up to three keys, the first break, and the repair: "Error: the rule breaks on 32 settings (shellEnabled, shellRoots,
+  shellPath, …: TypeError: startsWith is not a function on this value); guard it by c.key or by typeof before reading
+  c.from or c.to." A break is counted from the measure's evaluations alone, never by reading the source, so a rule that
+  short-circuits first (`c.key === "theme" && c.to.startsWith("d")`) passes;
+- a `c.key` constant that names no setting (`===`, `!==`, or a constant list's `includes`): "c.key is compared with
+  "themee", which is no setting";
+- a constant compared with `c.from` or `c.to` in an `&&` chain that also says `c.key === "<key>"`, that the key can
+  never hold: an equality with a value outside the key's type or domain, an order with a non-number. The text says what
+  the key takes, generated from its declaration (`settingTakes`: `settingDecl`, `configTypeOk`, `domainAllows`, never a
+  table of its own), so a new setting needs no sentence: "c.to is compared with 517 where c.key is "detachedTaskMaxMin",
+  which takes a whole number from 1 to 60: it can never match."
 
 **What does not change**: the judge, `rejudgePending` (an added allow re-judges an open ordinary setting card, never a
 guarded one), fatigue, the gate and secret keys (refused by `checkSettingChange` before any judge, so a rule over them
@@ -458,9 +502,21 @@ is inert and the measure does not enumerate them), and the `change_setting` tool
   enumerate the inputs); every integer key with a range of at most 2048 has every `to` tried;
 - a bounded number: `c.key === "detachedTaskMaxMin" && c.to === <one value>` reports "some values";
 - random samples: two measures of the same rule draw different random `from` and number samples;
-- the residual: `c.key === "theme" || (c.key === "detachedTaskMaxMin" && c.from === <a value not drawn>)` reports Theme
-  alone, and the closing line counts Detached task limit (minutes) among the sampled keys with no match and names it
-  behind the disclosure;
+- the budget: a rule just under `SETTING_MEASURE_STEPS` is measured, one just over is refused, for each effect; two rows
+  of one call share the budget, so two rules each under half of it are measured and two each over half are refused;
+- the same rule proposed twice in one run is measured twice: a `change_setting` between the two shows on the second card
+  only;
+- the constants: `c.from === 37`, `37 === c.from`, `c.from === 30 + 7` and `c.to > 37 && c.to < 39` cover Detached task
+  limit in every measure; `startsWith` on a listed key and `endsWith` on a guarded one are matched; a computed value
+  (`"…".length`) is the residual row above;
+- the refusals from constants: a `c.key` naming no setting, in `===` and in `includes`; `c.to === 517` on a 1–60 key,
+  `c.from === 5` on `theme`, `c.to === "/tmp"` on a list key; in-domain and order comparisons pass; `settingTakes`
+  describes every key the agent may change (enumerated);
+- the breaks: `c.to.startsWith("d")` is refused for each effect with the count, three keys and the repair;
+  `c.key === "theme" && …` and `typeof c.to === "string" && …` pass;
+- the residual: `c.key === "theme" || (c.key === "detachedTaskMaxMin" && c.from === "<37 characters>".length)` reports
+  Theme alone, and the closing line counts Detached task limit (minutes) among the sampled keys with no match and names
+  it;
 - could not be measured: with no server list, a model key is named as such on the card; an allow covering only model
   keys is refused;
 - refusals: an allow covering only guarded keys;
@@ -475,10 +531,15 @@ is inert and the measure does not enumerate them), and the `change_setting` tool
 - a rule keyed on `c.from` to match nothing now and everything after one approved change: `from` is varied over every
   value the measure tries, so such a rule shows as covering the key on the card before it is approved (for a sampled
   key, the residual above);
-- a rule matching one value of a sampled key outside the samples (`c.from === <a valid value not drawn>`), beside a
-  narrow visible key: the card names the visible key alone and must count the sampled key among those with no match;
+- a rule matching one value of a sampled key that it computes rather than names (`c.from === "<37 characters>".length`),
+  beside a narrow visible key: the card names the visible key alone and must count the sampled key among those with no
+  match;
 - `c.to === <one value>` on an enumerated bounded number key, which must show as "some values";
 - a rule using `c.class` or `c.widens` to look narrow;
+- a constant hidden from the harvest: a number that appears in the source as no constant (`"…".length`,
+  `"x".repeat(n).length`); `Math.max(37, 0)`, `[37][0]` and `const v = c.from; v === 37` do not hide 37, since the
+  constant is in the tree;
+- a rule that breaks only on values outside the base samples (`c.to.length` on a key whose named value is a string);
 - a rule covering only model keys while the server's list cannot be read;
 - a label claiming a narrower scope than the measure;
 - a mixed proposal hiding a setting row behind a fetch row.
@@ -598,7 +659,7 @@ call this surface (above); what it can do is ask the model, in text, to call it.
     code). RULED by the coordinator (2026-11-17): it may, since the card is the person's; the card must name the keys
     or the key pattern the allow covers, measured over every read-write key with sample values from each key's domain
     (for an enum key, the whole domain); and no `setting` allow ever frees a guarded key, a shell key or
-    `agentStartPage`. Spec'd above, "Proposing a `setting` policy"; refused as built until that lands.
+    `agentStartPage`. Built: "Proposing a `setting` policy", above.
 
 ## Owners
 

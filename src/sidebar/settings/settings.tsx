@@ -1889,6 +1889,17 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                         onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("detachedTaskMaxMin", Number.isFinite(n) && n >= 1 && n <= 60 ? n : DEFAULT_CONFIG.detachedTaskMaxMin); }} />
                 </label>
                 <div class="set-hint">The longest a detached task runs before it is ended: a python_exec cell that outran its lease (the sandbox ends it) or an ml.sh call (its timeoutMs is held to this). 1 to 60; 60 is the ceiling and the default. A task keeps running after the model answers, and its result is read at the next turn.</div>
+                <label data-setting="taskNotifyOnly" class="set-check">
+                    <input type="checkbox" checked={c.taskNotifyOnly}
+                        onChange={(e: any) => setField("taskNotifyOnly", e.target.checked)} />
+                    <SettingLbl k="taskNotifyOnly" />
+                </label>
+                <div class="set-hint">Off (the default): a detached task that finishes while no turn is running starts the run's next turn, which reads its result. On: the result is parked and the transcript says so; it is read at your next message.</div>
+                <label data-setting="taskTurnChainMax" class="set-field"><SettingLbl k="taskTurnChainMax" />
+                    <input type="number" min="1" max="20" step="1" value={c.taskTurnChainMax}
+                        onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("taskTurnChainMax", Number.isFinite(n) && n >= 1 && n <= 20 ? n : DEFAULT_CONFIG.taskTurnChainMax); }} />
+                </label>
+                <div class="set-hint">The most turns that finished tasks start one after another with no message from you between them. At the cap a finished task parks its result and the transcript says so; your next message resets the count. 1 to 20, default 5.</div>
                 </Section>
 
                 <Section id="fetch" title="Fetching (fetch_url / ml.fetch)">

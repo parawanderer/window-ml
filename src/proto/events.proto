@@ -31,7 +31,7 @@ syntax = "proto3";
 //   busy.start     a model started working (transitions in and out of idle, not per request)
 //   busy.end       it went idle; this is also when its keep-alive deadline moves
 //   gen.start      one generation began
-//   gen.end        one generation finished; timings, shape, hint, predicted_decode
+//   gen.end        one generation finished; timings, shape, hint, predicted_decode, finish
 //   lease.start    a job outside ollama asked for the GPUs
 //   lease.granted  ollama has vacated them
 //   lease.end      the job finished
@@ -108,6 +108,7 @@ message ComputeInfo {
   repeated UnavailableGPU unavailable_gpus = 3;
   optional GPUTopology topology = 4;
   optional BoxProfile profile = 5;
+  repeated PowerSource power_sources = 6;
 }
 
 // The box profile's prediction for this generation's decode, made before it ran.
@@ -176,6 +177,11 @@ message EventFrame {
   // Frames this subscriber lost to a full buffer, cumulative. Non-zero means its record has a
   // gap, which must not be drawn as a flat line. Absent means none.
   uint64 dropped = 29;
+  // How the generation ended, on gen.end: "tool_calls" (it emitted any tool call, so the
+  // caller means to continue), "answer" (it stopped with none) or "length" (it hit its token
+  // limit). Absent where the server cannot tell. A generation whose client disconnected has
+  // no gen.end, so there is no "closed".
+  string finish = 31;
 }
 
 // The decode speed this model is expected to reach on this placement.
@@ -223,6 +229,7 @@ message GPUInfo {
   string compute = 17;
   string driver = 18;
   optional string runner = 19;
+  optional GPUPower power = 20;
 }
 
 // One link between two GPUs.
@@ -260,6 +267,30 @@ message GPUTopology {
   string detail = 2;
   repeated string gpus = 3;
   repeated GPULink links = 4;
+}
+
+// The latest reading of one power source outside the GPUs: the CPU package, a metering
+// plug. provider and scope say what it is and how much of the machine it covers, so a
+// reading of part of the box is never taken for the whole of it. Every figure is optional.
+// energy_mj is a cumulative counter: integrate differences of it, treating a decrease as a
+// wrap (at energy_wrap_mj) or a reset at the source. Place a reading by at_ms (when ollama
+// read it); source_time is the source's own clock, verbatim.
+message PowerSource {
+  optional string provider = 1;
+  optional string scope = 2;
+  optional int64 power_mw = 3;
+  optional int64 energy_mj = 4;
+  optional int64 energy_wrap_mj = 5;
+  string source_time = 6;
+  optional int64 at_ms = 7;
+  string error = 8;
+  string name = 9;
+}
+
+// A device's power, in milliwatts, as the driver reports it. Board power, not the machine's.
+message GPUPower {
+  optional int32 draw_mw = 1;
+  optional int32 limit_mw = 2;
 }
 
 // A device's utilization, as the driver reports it.

@@ -37,7 +37,7 @@ import { CardApp, endActiveCardDrag } from "./card/hud-card";
 import { releaseAxisHold } from "./resource/chart-interaction";
 import {
     composerOpen, composerElement, composerTarget, selectedRun, cardSteerHash, setCardCollapsed,
-    cardSelectedHash, cardDetail, cardDismissedSet, isCardDismissed, startRefused,
+    cardSelectedHash, cardDetail, undismissCardRun, startRefused,
 } from "./card/card-state";
 import { shownModel, sessionProfile } from "./model";
 import { exportSession, exportSessionJson, printSession } from "./export/export";
@@ -518,7 +518,7 @@ function onMessage(d: any): void {
     else if (d.__mlShowRun && typeof d.__mlShowRun.hash === "string") {
         // The popup's Show: the run whose start card waits on this tab comes to the front, unfolded and undismissed.
         const h = d.__mlShowRun.hash;
-        if (isCardDismissed(h)) { const s = new Set(cardDismissedSet.value); s.delete(h); cardDismissedSet.value = s; }
+        undismissCardRun(h);
         cardSelectedHash.value = h;
         cardDetail.value = true;
         setCardCollapsed(h, false);
