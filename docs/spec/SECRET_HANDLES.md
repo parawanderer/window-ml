@@ -71,14 +71,17 @@ of them has a place for it, and together they answer parts of the threat model a
   (`c.effects.uses("github")`) and bind it to a destination, which is threat 1 as a set predicate. A file the host flags
   as secret-looking is `read(fs(path))` with `secret: true`, inside no bound at all, the sandbox's included, because
   the harm is disclosure and no enforcer bounds that.
-- **Processes are a sink**, and the biggest one ([`SHELL.md`](SHELL.md), "Security invariants"). A script names the handle
-  in `env` (`{ GITHUB_TOKEN: ml.secret("github") }`); the policy sees the NAME; the host injects the value at spawn,
-  into the environment or a credential helper, only for a program whose manifest may receive that secret. Reflection
-  (threat 2) is answered where it is cheapest: a process's output is a host-held pointer, and the host scrubs the
-  registered values from it before anything crosses or a pipe runs over it (`scrubSecrets` in `src/secret-scrub.ts` is
-  the existing form of this, for the backend's own secrets); a program whose manifest says it `echoes` its environment
-  is refused with a secret present ([`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md)). In host mode the person's own
-  credential files and helpers are on disk, which the secret path flag and the scrubbed environment are for.
+- **Processes are a sink**, and the biggest one ([`SHELL.md`](SHELL.md), "Security invariants"). A script names the
+  handle in `env` (`{ GITHUB_TOKEN: ml.secret("github") }`); the policy sees the NAME; the host injects the value at
+  spawn, into the environment or a credential helper, only for a program whose manifest may receive that secret.
+  Reflection (threat 2) is answered by scrubbing the registered values from a process's output before any script or
+  model reads it (`scrubSecrets` in `src/secret-scrub.ts` is the existing form of this, for the backend's own secrets).
+  AMENDED 2026-11-17 (the coordinator's call, under ruling 18's order): the scrub sits in the WORKER, not the host, so a
+  registered value can pass between the stages of a pipe on the host, and the host's `sha256` and `size` are over the
+  raw bytes ("The scrub as built", below). A program whose manifest says it `echoes` its environment is refused with a
+  secret present ([`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md)); that refusal lands with the handles slice, since until
+  then no secret can reach a process at all. In host mode the person's own credential files and helpers are on disk,
+  which the secret path flag and the scrubbed environment are for.
 - **A secret lives beside its sink.** The worker holds the ones `ml.fetch` injects; the host holds the ones processes
   need (the OS keychain is the natural store); a handle names a secret wherever it lives, and the grant is evaluated
   where decisions are made, in the worker. The value never travels to a place that only decides.
@@ -127,7 +130,99 @@ The value was in a gitignored `.env` the whole time. What that fixes in this spe
 
 The test that discriminates: `FOO_SOURCES=a=x@http://u:REALSECRET@10.0.0.1` with `REALSECRET` in a registered `.env`
 comes out redacted by value; the same line with it unregistered comes out redacted by the userinfo pattern. Not
-built; this is the shape the scrub grows into, recorded so the next builder does not start from a name list.
+built; this is the shape the scrub grows into, recorded so the next builder does not start from a name list. Being
+built, 2026-11-17: "The scrub as built", below.
+
+## The scrub as built (2026-11-17)
+
+The order is Shane's (ruling 18: H10, containment, this scrub, H11 to H16, handles last). The worker seat, the
+registry's source and the bounds below are the coordinator's calls, 2026-11-17, under that order. Two PRs: the registry
+by exact value first, the key-shape patterns second, each pattern on by default only with a false-positive rate measured
+on real captured output in its PR.
+
+- **The seat is the worker.** Every text that crosses from the worker into a script or the model passes one scrub,
+  [`forModel`](../../src/sw/sw-scrub.ts) extended with the registry:
+  - a tool result, at the agent loop's hook ([`agent-loop.ts`](../../src/agent/agent-loop.ts), `deps.forModel`), in
+    the worker-hosted loop;
+  - a page-started model request, where it leaves the worker for the backend
+    ([`background.ts`](../../src/background.ts), `FETCH_LLM` and the stream port, keyed on the sender, never on anything
+    the page says): no registered value leaves the worker to a model backend in a page-started request. Every message
+    role is scrubbed, the user's included (the page composed all of them), with a bare `[REDACTED]`, no name and no
+    count line, so a registered name never reaches the model a page drives, and nothing is reported back to the page: no
+    count, no flag, no difference in an answer. This covers the page-hosted loop
+    ([`ml-agent-run.ts`](../../src/ml/ml-agent-run.ts)), whose scrub cannot run in the page (threat 4); a page-reachable
+    scrub message would be an oracle and does not exist (the coordinator's call, 2026-11-17, under ruling 18's order);
+  - the lines the loop appends after that hook (the `@tool:` line, the cut line, the budget line);
+  - an `ml.sh` output's head and every `ml.sh.read` range, where they cross from the worker into the script
+    ([`sh-call.ts`](../../src/shell/sh-call.ts) `headText`, [`sw-shell-call.ts`](../../src/sw/sw-shell-call.ts)), and
+    the run's token store keeps the scrubbed head: a script never holds a registered value, so nothing it returns,
+    logs or passes on can carry one. A `python_exec` cell reaches `ml.sh` only over the `ml` wire, whose `sh.run` and
+    `sh.read` members call the same two functions ([`sw-ml-wire.ts`](../../src/sw/sw-ml-wire.ts)), so it meets the
+    same two crossings and no other;
+  - a tool's live output to the sidebar (`streamOutput`, emitted before the hook and kept in the JSON export): the
+    text so far, scrubbed whole at each delta, its tail held back as a head's is;
+  - a running call's peek tail, which reaches the model through `forModel` already (the task's tail and its stored
+    value, [`sw-shell-call.ts`](../../src/sw/sw-shell-call.ts) `peekTail`, and the task messages);
+  - a resumed run's history ([`forModelHistory`](../../src/sw/sw-scrub.ts)), so a value registered after a session
+    was stored is scrubbed from what a resumed model is sent, though the stored session still holds it;
+  - the run log's `key`, which keeps an error's raw text for extension pages: the registry's values are scrubbed from
+    it, and the backend's own URL, key and filter stay there as today;
+  - what the run keeps beside a tool result (`forStored`, the loop's `scrubStored`): the tool's Out render, which the
+    sidebar and both exports draw, and so a pointer's fuller capture, which a later `@tool:` read hands a script or the
+    model. Every string in it is scrubbed as the result is, without the count line; image data is not scanned;
+  - an error answered to a page (`forPage`): every string under an error key, at any depth beneath it, the config's
+    secrets and then each registered value as a bare `[REDACTED]`, so a page never learns a name. It waits for the
+    registry and fails closed to "The request failed."
+- **The host does not scrub.** A process's held output stays its raw bytes, so a registered value can pass between
+  the stages of a pipe on the host (an OS pipe, which never crosses into the worker); it is scrubbed before any script
+  or model reads it. `done`'s `sha256` and `size` are over the raw bytes. A scrubbed read says so: a text range comes
+  back with its matches replaced, a binary range as scrubbed bytes with `scrubbed: <n>`, and either may be shorter or
+  longer than `length`.
+- **A cut never lets a prefix through.** A read range is fetched with a margin of the longest registered form on each
+  side and scrubbed whole, and a match that overlaps the range is replaced where it overlaps. A head whose last bytes
+  are the start of a registered form is cut before them, and its `complete` is false.
+- **The registry**, by name and value, is `ml_secret_registry` in `chrome.storage.local` (never sync), declared in the
+  state registry beside its store. It is class secret under [`MODEL_SETTINGS.md`](MODEL_SETTINGS.md) ("Not settings,
+  never writable"): never in `GET_CONFIG`, `ml.settings()` or an answer to any page-reachable message, never written by
+  `change_setting`, and not a key of `MlConfig`. The person adds an entry in the DevTools Settings panel, through a
+  message only an extension page may send; the panel gets names and a count back, never a value. The backend's own
+  URL, key and model filter stay the built-in entries (`secretsOf`). Bounds, each refused when an entry is added:
+  at most 64 entries; a value of 8 to 512 characters (a shorter one would match ordinary text, and the margins and
+  the base64 forms grow with a longer one); a NAME matching `[A-Z0-9_]{1,40}`, since it is written into model-facing
+  text. `ml_secret_registry` is in no backup, export or archive-folder file (the backup inventory classes it `never`),
+  the state inspector shows its names and a count, never a value, and the housekeeping log records a read of the store
+  that failed (`secrets`/`registry-unreadable`), with no name and no value.
+- **Before the registry is read, no crossing reads it as empty.** The worker starts the read when it starts. A crossing
+  that can wait (a tool result, a page-started request, an `ml.sh.read` range) awaits it; one that cannot (a live
+  output's delta, the loop's appended lines, the run log's `key`) shows nothing, or a held-back line, until it is done.
+  A store that cannot be read fails each waiting crossing closed and is read again by the next one, and a change the
+  store reports while the first read is in flight wins over that read.
+- **The forms matched** for each value: as written, JSON-escaped, percent-encoded, base64 (standard and URL-safe, at
+  each of the three byte alignments a value can take inside a longer base64 run) and shell-escaped (single-quoted with
+  `'\''`, and backslash-escaped).
+- **The output says it was touched.** Each match becomes `[REDACTED:<NAME>]`, and the tool result ends with one line,
+  `1 secret redacted (PLUG_PASSWORD)`, names and a count, never a value. What the run stores and exports is what the
+  model saw, so the sidebar (its live output included), the run log and both exports never hold a registered value
+  that arrived after it was registered.
+- **Known limits**: images; the person's own turn and the page context the run is started with; a value that was
+  transformed or only partly echoed (threat 2); a value registered after a session stored it (re-scrubbing stored
+  sessions is a later slice); anything a pattern does not know until PR 2; a script or model that already holds a guess
+  can confirm it, by echoing the guess and seeing the marker; the model's own tool arguments, which are not scrubbed; an
+  approved page that drives a model can confirm a full guess it already holds if the model repeats the marker, and
+  learns no name; the page-world tool results of a page-hosted run stay the page's own and are not scrubbed for the
+  page; a page whose own text comes back in an error (a refusal that quotes what it refused) can confirm that a guess
+  equals a registered value, by seeing `[REDACTED]` where its text was, though never which one; a registered value at
+  rest in the value store behind a pointer (a `fetch_url` page's whole text, a stored table) until PR 2 scrubs it where
+  it is written: every model-bound read of it (a `@tool:` read, a pipe's head, range or grep, the output of a script
+  that called `ml.dereference`) crosses the scrub, so what remains is the value at rest and an approved script that
+  reads it and transforms it before printing; a registered value inside an answer's `data` to a page (anything not under
+  an error key) is not scrubbed, since the data is the handler's answer and only the error text is the worker's own;
+  `GET_CONFIG`'s answer to a page is not run through the registry, by design, since what keeps a secret out of it is
+  `publicConfig`'s fixed key list (`redteam-lifetimes-config.test.mjs`, #1942, enumerates it, no secret key among them),
+  and a public value equal to a registered one reaches the model only through a crossing that scrubs it (a page-started
+  request, or a tool result that read the page).
+- **Deferred to the handles slice**: reading values from a listed `.env` (a new host message), the keychain, a handle's
+  value, and the `echoes` refusal.
 
 ## Open questions
 

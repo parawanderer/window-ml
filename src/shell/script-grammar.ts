@@ -250,7 +250,9 @@ export function awkProgramRefusal(text: string): string | undefined {
     return undefined;
 }
 
-/** For the scanner tests only. */
+/** GNU sed's regex delimiter scanner, exported for the scanner tests (tests/sed-scanners.test.mjs) only. */
 export const __gnuRegexEnd = gnuRegexEnd;
+/** BSD sed's regex delimiter scanner, exported for the scanner tests only. */
 export const __bsdDelimitedEnd = bsdDelimitedEnd;
+/** The plain delimiter scanner (replacement text, y operands), exported for the scanner tests only. */
 export const __plainDelimitedEnd = plainDelimitedEnd;

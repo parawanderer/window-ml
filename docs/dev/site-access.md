@@ -49,6 +49,16 @@ settings a change replaced stay scrubbed while the worker lives, for a request i
 resumed history crosses `forModel` once before its first model call (a session saved before the scrub).
 `tests/error-scrub.test.mjs` walks every page-started type under each backend failure.
 
+**A registered secret reaches no script and no model** (SECRET_HANDLES.md, "The scrub as built"). The person's
+registry (`ml_secret_registry` in local storage, `src/sw/sw-secret-registry.ts`, edited in Settings, Secrets, through the
+extension-only `SECRET_REGISTRY` message) rides the same `forModel`, which adds `[REDACTED:<NAME>]` and a count line;
+the matching is `src/secret-registry.ts`. The other crossings: an `ml.sh` head and `ml.sh.read` range where they enter
+the script (`sw-shell-call.ts`: a cut head holds back a tail that begins a value, a read is widened by the longest
+form), the live `streamOutput` and the loop's appended lines (`scrubText`), the run log's `key` (`forPerson`: the
+config's secrets stay, a registered value goes), and a page-started model request where it leaves the worker
+(`forBackendFromPage` in the router's `FETCH_LLM` and stream port: every role, a bare `[REDACTED]`, nothing said back to
+the page). `tests/secret-scrub-crossings.test.mjs` holds a row per crossing.
+
 **A page's screenshot is of its own tab, or nothing.** `CAPTURE_TAB` goes through the debugger by tab id when CDP is
 on; otherwise `captureOwnTab` (`sw-capture.ts`) takes `captureVisibleTab` only while the sender's tab is the one its
 window shows, and throws the shot away if the window showed another tab while it was taken. `captureVisibleTab` takes a

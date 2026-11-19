@@ -139,6 +139,14 @@ export interface AgentLoopDeps {
      *  read-only try, a precheck, a thrown dispatch, a denial) before the transcript, the log, pointers or the model see
      *  it: the worker's one crossing into model context (sw-scrub.ts). Omitted → the result unchanged. */
     forModel?(name: string, result: string): Promise<string>;
+    /** The same crossing for text that cannot wait for it: a live output's view (`live`: a tail that begins a secret
+     *  is held back), and the lines the loop appends after `forModel` (the `@tool:` line, the cut line, the budget
+     *  line). Synchronous: it runs on every delta. Omitted → the text unchanged. */
+    scrubText?(text: string, live: boolean): string;
+    /** The same crossing for what the run stores or shows beside the result: the tool's Out render (the sidebar and
+     *  both exports draw it) and so a pointer's fuller capture, which a later `@tool:` read hands a script or the
+     *  model. Omitted → unchanged. */
+    scrubStored?<T>(value: T): Promise<T>;
 }
 
 /** Where in a tool call's dispatch a throw happened: the read-only try, the auto-approve decision, the doomed-action
@@ -465,12 +473,14 @@ const STOPPED_SURVEY = "Error: the user cancelled the run while this survey was 
 /** {@link orStopped}'s answer when the run's signal aborted first. */
 const STOPPED: unique symbol = Symbol("stopped");
 
-const normalize = (d: ApprovalDecision, orig: Record<string, unknown>): { approved: boolean; feedback: string | null; arguments: Record<string, unknown>; source: "user" | "external" | "policy"; cancelled: boolean } => {
+const normalize = (d: ApprovalDecision, orig: Record<string, unknown>): { approved: boolean; feedback: string | null; arguments: Record<string, unknown>; source: "user" | "external" | "policy" | "worker"; cancelled: boolean } => {
     if (d && typeof d === "object") return {
         approved: !!d.approved,
         feedback: typeof d.feedback === "string" && d.feedback.trim() ? d.feedback.trim() : null,
         arguments: d.approved && d.arguments && typeof d.arguments === "object" ? d.arguments : orig,
-        source: d.source === "external" || d.source === "policy" ? d.source : "user",
+        source: d.source === "external" || d.source === "policy" || d.source === "worker" ? d.source : "user",
+        // The worker only ever closes a card as a denial.
+        ...(d.source === "worker" ? { approved: false } : {}),
         cancelled: !!d.cancelled,
     };
     return { approved: !!d, feedback: null, arguments: orig, source: "user", cancelled: false };
@@ -1019,7 +1029,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // streamOutput } so the reducer patches the pending row additively; the DONE below supersedes it.
             // Its head is the model's cut, for a tool that has one, so the part the model read stays in view.
             const cut = call.name === "exec" || call.name === "python_exec" ? resolveOutputCap(call.name, args.maxChars, args.maxCharsReason).cap : 0;
-            const fan = makeStreamFan(opts.stream, (out, marks) => deps.emit?.({ step, seq: s, streamOutput: out, streamMarks: marks }), panelHead(cut));
+            const fan = makeStreamFan(opts.stream, (out, marks) => deps.emit?.({ step, seq: s, streamOutput: deps.scrubText ? deps.scrubText(out, true) : out, streamMarks: marks }), panelHead(cut));
             let result: string, approval: Approval | undefined;
             let tr: ToolRunResult | undefined;   // the full result — its render slots ride the DONE emit
             if (stopRun || signal?.aborted) {
@@ -1102,7 +1112,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                         // A PERSON decided at the gate, so the gap before the next call is theirs — unless the decision
                         // came through the external channel (a harness, an orchestrator): that is code, in
                         // milliseconds, and there is no honest label for it, so it adds none.
-                        if (!(typeof rawDecision === "object" && (rawDecision?.source === "external" || rawDecision?.source === "policy"))) waited = "human";
+                        if (!(typeof rawDecision === "object" && (rawDecision?.source === "external" || rawDecision?.source === "policy" || rawDecision?.source === "worker"))) waited = "human";
                         const d = normalize(rawDecision as ApprovalDecision, args);
                         // CANCELLED while the gate was open (Stop pressed) — two channels, either suffices:
                         // `signal.aborted` (CANCEL_RUN aborted the run's controller) OR `d.cancelled` (CANCEL_RUN
@@ -1122,7 +1132,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                                 approval = "denied";
                                 // Attribute the denial accurately: a human in a browser surface, or an external
                                 // approver (the __mlApprovals IPC channel — an orchestrator / policy driver).
-                                const who = d.source === "external" ? "an external approver" : d.source === "policy" ? "a policy the person set while the card was showing" : "the user";
+                                const who = d.source === "external" ? "an external approver" : d.source === "policy" ? "a policy the person set while the card was showing" : d.source === "worker" ? "the extension, before the person answered" : "the user";
                                 result = d.feedback
                                     ? `Denied by ${who}: ${d.feedback}\nDo not retry this exact call unchanged; address the feedback or try another approach.`
                                     : `Denied by ${who}. Do not retry this exact call; try another approach.`;
@@ -1148,6 +1158,12 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             if (deps.forModel) {
                 try { result = String(await deps.forModel(call.name, result)); }
                 catch { result = `Error: the "${call.name}" call's result could not be checked before you read it, so it is withheld.`; }
+            }
+            // What the run keeps beside the result crosses the same scrub, or the panel, the exports and a pointer
+            // would hold what the model was kept from.
+            if (tr?.renderOut && deps.scrubStored) {
+                try { tr = { ...tr, renderOut: await deps.scrubStored(tr.renderOut) }; }
+                catch { tr = { ...tr, renderOut: undefined }; }
             }
             const entry: AgentTranscriptEntry = { tool: call.name, arguments: args, result };
             // Real result nodes ride the transcript ENTRY too (page-side only — undefined for the delegated
@@ -1275,7 +1291,8 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const budgetLine = call === msg.tool_calls[msg.tool_calls.length - 1] && left > 0 && left <= 2
                 ? `\n[${left} step${left === 1 ? "" : "s"} left this turn: answer before it runs out, or say what is left undone.]`
                 : "";
-            const forModel = `${result}${cutLine}${embedLine}${budgetLine}`;
+            const appended = `${cutLine}${embedLine}${budgetLine}`;
+            const forModel = `${result}${appended && deps.scrubText ? deps.scrubText(appended, false) : appended}`;
             // The DONE event carries the clean `result` for the pretty Out AND — when a token line was appended —
             // `modelResult` (what the model ACTUALLY saw), so the log's raw view stays complete (the AGENTS rule).
             // Folded onto the In render — the slot that already shows the code, since a diff of it belongs

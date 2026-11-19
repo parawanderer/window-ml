@@ -694,8 +694,8 @@ and the run-scope lifetime rules (it survives a resume and is removed at archive
   at a root's top, a held symlink target, or a linked template), or a `hide` in a layer below it. By the layer rule
   below, a session `show` overrides a person's global `hide`. A shown path is readable AND writable, and is never listed
   in `hiddenSecrets`. The credential directories (`.ssh`, `.gnupg`, `.aws` and the rest) and the masks under `$HOME` are
-  not defaults a `show` releases in this version: a `show` that matches one is refused, naming it. This is the
-  coordinator's call narrowing ruling 34, open to Shane's override.
+  not defaults a `show` releases in this version: a `show` that matches one is refused, naming it. This was the
+  coordinator's call narrowing ruling 34; Shane's ruling 46 (2026-11-18) keeps it.
 - **A pattern** is an absolute path inside a root, or a glob within the roots using `*`, `?` and `[…]` inside one path
   segment; `**` is refused, since on Linux every match is a mask the host builds by walking the tree. At most 512
   characters, and at most 256 entries a scope.
@@ -760,7 +760,9 @@ defaults do on each platform, and the file browser marks the name as hidden (the
 item asks for).
 
 **Known limits.** On Linux a `hide` is resolved when the call is spawned, so a file the call creates that matches it is
-not masked for that call; macOS's rules match by pattern and cover it. The next call's spawn holds it on both.
+not masked for that call; macOS's rules match by pattern and cover it. The next call's spawn holds it on both. A file
+inside a credential directory, or under a mask in `$HOME`, has no `show` that releases it (ruling 46): a layout that
+keeps a file a call needs in one has no override in this version, and moves that file out.
 
 **The read, for the view.** The view of the effective list is the access tab of small-fixes' per-session Session
 summary page, a read-only layered list (default < global < session) with a scope chip, an "overrides <rule>" line and
