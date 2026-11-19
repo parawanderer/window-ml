@@ -17,7 +17,7 @@ import { tabReadyFailure } from "./tab-ready";
 import { browserInfo } from "../util";
 import { SessionIndex, type IngestSource } from "../session/session-index";
 import { SESSIONS_PORT, SessionServer } from "../session/session-server";
-import { STORE_MAX_SESSIONS, SessionStore, indexedDbBackend, type SessionHistory } from "../session/session-store";
+import { STORE_MAX_SESSIONS, SessionStore, indexedDbBackend, type SessionHistory, type WriteFailure } from "../session/session-store";
 import { AGENT_START_PAGE, DEFAULT_CONFIG, modelFilterAllows } from "../contract/contract-config";
 import type { NeutralMessage } from "../contract/contract-chat";
 import { cleanTitle, titleMessages } from "../session/session-title";
@@ -584,8 +584,8 @@ export const sessionStore = (() => {
             },
             archive: {
                 enabled: () => archiveOn,
-                move: async (row, events) => {
-                    await archiveCall<boolean>("put", { input: { summary: row.summary, events, history: row.history ?? null, split: row.split, bytes: row.bytes }, archivedTs: Date.now() });
+                move: async (row, events, history) => {
+                    await archiveCall<boolean>("put", { input: { summary: row.summary, events, history, split: row.split, bytes: row.bytes }, archivedTs: Date.now() });
                     scheduleFolderSync();
                 },
             },
@@ -593,10 +593,32 @@ export const sessionStore = (() => {
             limits: storeLimits,
             // Screenshots are written as PNG and shrunk once the writes stop (sw-image-compact.ts).
             onWrite: () => imageCompaction?.kick(),
+            // A failed write is recorded and said on the session; the run goes on (SESSION_HISTORY_STORE.md, §3).
+            onWriteFailed: (f) => {
+                recordHousekeeping({ subsystem: "sessions", kind: "write-failed", key: f.hash, detail: { events: f.events, positions: f.positions, error: f.error } });
+                noteUnsaved(f);
+            },
+            onMigrated: (m) => recordHousekeeping({ subsystem: "sessions", kind: m.error ? "migrate-failed" : "migrate", key: m.hash, bytes: m.bytes, detail: { positions: m.positions, ...(m.error ? { error: m.error } : {}) } }),
         });
     }
     catch { return null; }
 })();
+
+/**
+ * Say on a session, in one line of its step list, what a failed write did not save. Ingested like any worker event, so
+ * the sidebar and the chat page both show it; it is written with the session's next write that succeeds.
+ * @param f what the store could not write
+ */
+function noteUnsaved(f: WriteFailure): void {
+    const what = [f.events ? `${f.events} event${f.events === 1 ? "" : "s"}` : "", f.positions ? `${f.positions} history message${f.positions === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ") || "a change to it";
+    ingestSessionEvent({ kind: "agent-note", id: f.hash, ts: Date.now(), save: false, session: { hash: f.hash, turn: 0 }, text: `Not saved: ${what} of this session could not be written to disk (${f.error}).` }, { trusted: true, hosts: false });
+}
+
+defineState({
+    id: "session.history", scope: "session", realm: "worker", audience: "human", lostOn: [],
+    describe: "What a saved session would be continued from, as stored: one record per message in `history` and the payload in `runmeta` (form 2), or still on the session's row (form 1, until the upgrade moves it).",
+    read: ({ runId }) => (runId ? sessionStore?.historyForm(runId) : undefined),
+});
 
 /** The background pass that re-encodes saved screenshots as lossless WebP once the store goes quiet. */
 const imageCompaction = sessionStore ? imageCompactor(sessionStore, { record: recordHousekeeping, paused: compactionPaused() }) : null;
@@ -610,6 +632,14 @@ if (sessionStore) defineJob({
     trigger: "on every save, when the browser starts, and when the retention or storage settings change",
     // `archive-failed`: the archive refused a session meant to move there, so it was kept where it was.
     log: { subsystem: "sessions", done: ["evict"], failed: ["archive-failed"] },
+});
+if (sessionStore) defineJob({
+    id: "sessions.migrate",
+    title: "Saved-session upgrade",
+    trigger: "when the browser starts, until every session saved before version 2 is moved",
+    // One record per session moved; `migrate-failed` leaves that session as it was, resumed from its row, and the
+    // next start tries again. `write-failed` is an ordinary write that did not land (a full disk).
+    log: { subsystem: "sessions", done: ["migrate"], failed: ["migrate-failed", "write-failed"] },
 });
 
 /** The index and its server, for this worker's life. */
@@ -654,6 +684,8 @@ if (sessionStore) {
         .then(() => store.sweep())
         // A sweep that fails must not cost the list: the sessions it meant to drop are listed one more time instead.
         .catch(() => [])
+        // The upgrade's pass, in the background: a row not yet moved is resumed from the row meanwhile.
+        .then((r) => { void store.migrate().catch(() => 0); return r; })
         .then(() => store.open())
         .then((rows) => {
             sessionServer.restored(sessionServer.index.restore(rows.map((r) => ({ summary: r.summary, count: r.count }))));

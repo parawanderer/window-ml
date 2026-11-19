@@ -92,7 +92,7 @@ page-hosted one. Several stores exist once per host.
 | State | Where | Persisted |
 | --- | --- | --- |
 | The session index: summary (title, pinned, status, start model, start page, lineage), event ring, gates, owner tab | `SessionIndex` (`session-index.ts`), `SessionSummary` (`session-host.ts`) | summaries and events of SAVED sessions in `ml-saved-sessions` |
-| A finished run's history (messages, payload, sub spend) | session store `history` | `ml-saved-sessions` if saved; otherwise only `bgRuns` (memory) |
+| A finished run's history (messages, payload, sub spend) | session store: one record per message in the `history` store (`[hash, pos]`), the payload and sub spend in `runmeta` (`[hash]`); a row written before version 2 carries it as `history` until `SessionStore.migrate` moves it (`session.history` in the inspector). The writer's memory of its last write (`written`) is a cache: lost, the next write is a whole one | `ml-saved-sessions` (version 2) if saved; otherwise only `bgRuns` (memory) |
 | Chats: `createChat` histories | page `sessionRegistry`; worker-hosted `chats` (`sw-chat.ts`, cap 32) | `ml_session_<hash>` and store `history` when `save: true` |
 | A worker-hosted chat's PDFs (`chat.files`) | `BgChat.files` (`sw-chat.ts`): name, pages, pages sent, two row keys | the list in `ml_session_<hash>` (`StoredSession.files`); the bytes as held `ml-values` rows, released with the chat's session |
 | Page registries of runs and handles | `agentRegistry`, `handleRegistry` (`bus.ts`) | no; they never shrink, so finished runs stay resumable for the page's life |

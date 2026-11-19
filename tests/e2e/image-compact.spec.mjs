@@ -94,9 +94,9 @@ async function savedStore(ext) {
         const req = indexedDB.open("ml-saved-sessions");
         req.onerror = () => reject(req.error);
         req.onsuccess = () => {
-            const tx = req.result.transaction(["sessions", "events"], "readonly");
-            const rows = tx.objectStore("sessions").getAll(), events = tx.objectStore("events").getAll();
-            tx.oncomplete = () => { resolve({ rows: rows.result, events: events.result }); req.result.close(); };
+            const tx = req.result.transaction(["sessions", "events", "history"], "readonly");
+            const rows = tx.objectStore("sessions").getAll(), events = tx.objectStore("events").getAll(), history = tx.objectStore("history").getAll();
+            tx.oncomplete = () => { resolve({ rows: rows.result, events: events.result, history: history.result }); req.result.close(); };
         };
     }));
 }
@@ -131,12 +131,12 @@ test("a saved chat's screenshot is stored as PNG, then rewritten as WebP once th
 
         // COMPACT_QUIET_MS after the last write, the event holds a WebP instead.
         await expect.poll(async () => { const s = await savedStore(ext); return holding(s, "data:image/webp;base64,") && !holding(s, shot.slice(0, 200)); }, { timeout: 60_000, intervals: [2000] }).toBe(true);
-        const { rows } = await savedStore(ext);
+        const { rows, history } = await savedStore(ext);
         const row = rows.find((r) => r.compacted);
         expect(row, JSON.stringify(rows.map((r) => ({ hash: r.hash, count: r.count, compacted: r.compacted })))).toBeTruthy();
         expect(row.compacted).toBe(row.count);
         // What a resume would send the model is untouched.
-        if (row.history) expect(JSON.stringify(row.history)).not.toContain("data:image/webp");
+        expect(JSON.stringify(history)).not.toContain("data:image/webp");
         // And the pass is in the housekeeping log, start to finish.
         const log = await ext.sw.evaluate(async () => (await chrome.storage.session.get("ml_hk_log")).ml_hk_log ?? []);
         const mine = log.filter((e) => e.subsystem === "sessions" && e.kind.startsWith("compact"));
@@ -176,7 +176,7 @@ test("a browser closed before the pass ran: the next start finds the saved PNG a
 
         ext = await launchExtension({ userDataDir });
         try {
-            const { rows } = await savedStore(ext);
+            const { rows, history } = await savedStore(ext);
             expect(rows.every((r) => !r.compacted), "nothing was compacted before the browser closed").toBe(true);
             await expect.poll(async () => { const s = JSON.stringify((await savedStore(ext)).events); return s.includes("data:image/webp;base64,") && !s.includes(shot.slice(0, 200)); }, { timeout: 60_000, intervals: [2000] }).toBe(true);
         } finally { await ext.close(); }

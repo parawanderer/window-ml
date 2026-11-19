@@ -151,8 +151,9 @@ not yet bound resume**: Shane's ruling (only a recent window is loaded) is met f
 only once a compaction policy writes a smaller view ("Open", below). Everything else (transcript, export, the model's
 reads of older history) takes a range.
 
-**Expected cost after the change** (to be measured by the build, same script): rows written per step drop from O(N)
-to O(1), so the 800-step case above writes about 3.3 MB of history instead of 1.35 GB.
+**Cost after the change** (measured by slice 2 with the same script, counting the history positions and `runmeta`
+each write puts): the 800-step case writes 3.34 MB of history for a 3.34 MB history (1.0x, was 1.35 GB), 8 KB of
+`runmeta` once, and 0.27 MB of rows; 200 steps, 0.84 MB for 0.84 MB.
 
 **The upgrade.** Old state meets the new code on someone's machine, and that is what gets tested:
 
@@ -352,6 +353,14 @@ In order. Each is one PR, with what it must not break.
 2. **The `history` and `runmeta` stores, the writer, the upgrade, `onError`, `historyBytes` in the budget** (§3).
    Medium. Must not break: resume of a session saved by today's code (the upgrade fixture), a run resumed after
    worker eviction, `ml.resumeChat`, the Storage page's figures.
+   BUILT (`session-store.ts`): version 2 creates `history`, `runmeta`, and `marks` and `views` empty (so slice 5 needs
+   no version); the writer compares by identity, then by a 32-bit print and length, so a page's chat (new objects at
+   every save) writes only what changed too; `checkImmutable` is the test build's check of the rule; a failed write
+   rolls its row back, is recorded (`sessions/write-failed`) and said on the session as an `agent-note`; `migrate`
+   moves each version-1 row in one transaction, and any other write of such a row moves it in the same transaction.
+   Left for later slices: the pass walks the rows `open()` already holds, not a cursor (slice 3 stops `open()` loading
+   them); `marks` and `views` are not written (slice 5; an absent view is the whole history); the resume snapshot
+   still carries `messages`, and an unsaved run's history is not written under its run id.
 3. **`open()` without histories; the protected-session eviction rule** (§3). Small. Must not break: the session
    list after a restart, a pinned session surviving, the housekeeping log's eviction records.
 4. **Ranged `events` reads, `session.backfill` by key range, the chat page's newest window** (§5). Medium. Changes
