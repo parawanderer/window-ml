@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 // The session list FIRST, as a page loads it (the gallery did): the page's status words once came through an import
 // cycle from it, and loaded in this order they were still undefined, so the state line went missing.
 await import("../src/chat/session-list.tsx");
-const { summaryLines } = await import("../src/chat/session-summary.tsx");
+const { summaryLines, shortFormLines, SHORT_FORM_KEYS } = await import("../src/chat/session-summary.tsx");
 const { STATUS_LABEL } = await import("../src/chat/status-words.ts");
 
 const NOW = Date.UTC(2026, 10, 19, 12, 0, 0);
@@ -89,4 +89,56 @@ test("the sidebar's session store opens one port through services() and closes i
         assert.equal(opened, 2, "a later header opens a fresh one");
         releaseSessionStore();
     } finally { installServices(before); }
+});
+
+// --- the row's hover card: the short form ---
+
+test("the short form is exactly state, last, model and asks, in summaryLines' own order, with the same words", () => {
+    const r = row({ status: "waiting", model: "qwen3:32b", pendingApprovals: 2 });
+    const full = summaryLines(r, rt(), NOW), short = shortFormLines(r, rt(), NOW);
+    assert.deepEqual(keys(short), ["state", "asks", "last", "model"]);
+    assert.deepEqual([...keys(short)].sort(), [...SHORT_FORM_KEYS].sort());
+    for (const l of short) assert.equal(l.value, val(full, l.key), `${l.key} is the page's own wording`);
+});
+
+test("each absent field draws no line in the short form: no model, no asks", () => {
+    assert.deepEqual(keys(shortFormLines(row({ model: null, pendingApprovals: 0 }), rt(), NOW)), ["state", "last"]);
+    assert.deepEqual(keys(shortFormLines(row({ model: "m", pendingApprovals: 0 }), rt(), NOW)), ["state", "last", "model"]);
+    assert.deepEqual(keys(shortFormLines(row({ model: null, pendingApprovals: 1 }), rt(), NOW)), ["state", "asks", "last"]);
+    assert.deepEqual(keys(shortFormLines(row({ lastTs: NaN, model: null }), rt(), NOW)), ["state"]);
+});
+
+test("the short form never carries kind, runtime, page or started", () => {
+    const r = row({ model: "m", page: { url: "https://a.example/", title: "A" }, startedBy: { id: "x", kind: "local", name: "Me" } });
+    for (const k of ["kind", "runtime", "page", "started"]) assert.ok(!keys(shortFormLines(r, rt(), NOW)).includes(k), k);
+});
+
+test("a list row with the hover card in place still opens its session on click, and the card is not in the DOM until hovered", async () => {
+    const { JSDOM } = await import("jsdom");
+    const { createRequire } = await import("node:module");
+    const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", { pretendToBeVisual: true, url: "https://chat.test/" });
+    for (const k of ["localStorage", "window", "document", "Node", "FileReader", "Event", "HTMLElement"]) {
+        Object.defineProperty(globalThis, k, { value: dom.window[k], configurable: true, writable: true });
+    }
+    const { h, render } = createRequire(import.meta.url)("preact");
+    const { SessionList } = await import("../src/chat/session-list.tsx");
+    const { ChatStore } = await import("../src/chat/chat-store.ts");
+    const { FakeHost } = await import("../src/chat/fake-host.ts");
+    const fake = new FakeHost({ runtimes: [{ ...rt(), capabilities: { chat: true, agent: true } }], sessions: [{ summary: row({ title: "Plot the fare prices", status: "waiting", model: "qwen3:32b", pendingApprovals: 2, lastTs: Date.now() - 60_000 }) }] });
+    const store = new ChatStore(fake);
+    store.start();
+    await new Promise((r) => setTimeout(r, 150));
+    const host = dom.window.document.getElementById("root");
+    render(h(SessionList, { store, activeKey: null, narrow: false, onStart() {}, gear: null, gearWide: null }), host);
+    await new Promise((r) => setTimeout(r, 50));
+    const btn = host.querySelector("button.chat-row");
+    assert.ok(btn, "the row is drawn");
+    assert.ok(btn.querySelector(".hc"), "its title is a hover-card trigger");
+    assert.equal(btn.querySelector(".hc-card"), null, "no card until the pointer rests");
+    assert.equal(btn.parentElement.children.length, 2, "the row's menu is still the button's sibling, not inside it");
+    btn.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 30));
+    assert.deepEqual((await import("../src/sidebar/store.ts")).view.value, { name: "detail", hash: "local:a1b2c3d4" }, "the click opened the session");
+    render(null, host);
+    store.stop?.();
 });

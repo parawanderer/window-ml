@@ -4751,3 +4751,8 @@ pre.code.morphing:not(.numbered) > code, pre.code.morphing .lcode { visibility: 
 .sum-empty { color: var(--fg-faint); margin: 10px 0; }
 /* The detail header's per-session menu (session-menu.tsx): the one menu look, hung under its button like `.menu`. */
 .sb-session-menu { position: absolute; top: calc(100% + 5px); right: 0; z-index: 20; }
+
+/* `.sum-hc`: the body of a session row's hover card (SessionHoverCard): wraps normally, because the row's title it hangs from is a nowrap ellipsis line. */
+.sum-hc { white-space: normal; min-width: 180px; }
+/* `.sum-hc-title`: the session's title, as the heading of its hover card. */
+.sum-hc-title { font-weight: 600; margin-bottom: 4px; overflow-wrap: anywhere; }
