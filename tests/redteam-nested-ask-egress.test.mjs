@@ -30,7 +30,7 @@ globalThis.chrome = {
         onChanged: { listeners: [], addListener(f) { this.listeners.push(f); } },
     },
 };
-const { _setRegistryForTest, _coldRegistryForTest } = await import("../src/sw/sw-secret-registry.ts");
+const { _setRegistryForTest } = await import("../src/sw/sw-secret-registry.ts");
 const { hostAsks, raiseAsk, stepAsks, keptEvent } = await import("../src/sw/sw-asks.ts");
 const { pendingApprovals, externalApprovals, resolveApproval } = await import("../src/sw/sw-consent.ts");
 const { forStored, DEPTH_WITHHELD } = await import("../src/sw/sw-scrub.ts");
@@ -145,12 +145,14 @@ test("the depth guard fails closed toward WITHHELD, not toward keeping the subtr
     assert.deepEqual(await forStored({ nums }), { nums });
 });
 
-test("the fail-closed path (no registry) withholds values too, and not keys", T, async () => {
-    // The same hole, through the path that exists for a scrub that THREW: every string becomes STORED_WITHHELD, and a
-    // key is not a string the scrub visits, so it survives anyway.
-    _coldRegistryForTest();
+test("the fail-closed path (the config cannot be read) withholds values too, and not keys", T, async () => {
+    // `_coldRegistryForTest` only empties the registry: the next `registryReady()` reads the mocked storage, succeeds
+    // with nothing in it, and the scrub runs normally. To reach the catch in forStored a read it makes must THROW, and
+    // the first one is the config's (`getConfig` is uncached, so patching `sync.get` is enough).
+    const get = chrome.storage.sync.get;
+    chrome.storage.sync.get = async () => { throw new Error("storage is gone"); };
     try {
         const got = await forStored({ a: "anything", [VALUE]: "v" });
-        clean("forStored with no registry", got);
-    } finally { _setRegistryForTest([{ name: NAME, value: VALUE }]); }
+        clean("forStored with no config", got);
+    } finally { chrome.storage.sync.get = get; }
 });
