@@ -693,7 +693,8 @@ model-made or page-derived file must not borrow. Its text is untrusted input lik
 attachment today. Nothing is evicted silently. When the session's files made by its runs are over the quota, a post is
 refused by name and the cell's result says so: `w.npy was not kept: the session holds 1.4 GB of files made by its runs;
 delete some in the files panel.` A flush over the quota raises ENOSPC for that file
-when it is made, and the cell's result names it (item 3).
+when it is made, and the cell's result names it (item 3). A restore can leave a session over its quota; it is then
+marked over it and refuses writes the same way until it is back under (ruling 48, "A restore over the quota", below).
 
 **The host's disk.** `/files/` is the browser sandbox's, never the `ml.sh` workspace's, and the two never alias: an argv
 item `/files/x` is a host path, as today. Bytes cross only as `@file:` handles: `ml.sh.put` writes one out (ruling 3),
@@ -1263,28 +1264,42 @@ nothing into the repository.
   (a copy of the person's index, for its stat cache) and a private `GIT_OBJECT_DIRECTORY`, both in the host's own
   directory, with the repository's object directory as an alternate (`GIT_ALTERNATE_OBJECT_DIRECTORIES`). The person's
   index, HEAD, stash list and object store are unchanged; the private directory is deleted when the diff is made.
-- H11. Changed files are hashed with `git hash-object -w --no-filters --stdin-paths` and entered with
-  `git update-index --index-info`, never `git add` or `update-index --add`, which run a clean filter. Every git spawn
-  carries the git belt (`core.fsmonitor=false`, `core.pager=cat`, `GIT_OPTIONAL_LOCKS=0`), so no filter, textconv,
-  fsmonitor or hook runs. Untracked files are included; ignored files are not, except the uploads folder. The snapshot
-  runs whatever `repoConfigRunsCode` says: the belt, `--no-filters`, `--no-ext-diff` and `--no-textconv` leave no path
-  by which the repository's config runs a program, and the e3 row with a clean filter, an fsmonitor and a hook
-  configured is the pass condition for that case too. AMENDED 2026-11-13 (host lane): the belt alone was not enough,
-  since the person's global config (`git lfs install` sets `filter.lfs.clean`) also runs a program; H7's
-  `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM` close that. AMENDED 2026-11-17 (host lane, found building H10): nor
-  for a spawn that writes the scratch index (`write-tree`, `read-tree`, `update-index`). The write runs the
-  repository's `post-index-change` hook, and its check of a racily clean entry reads the file through the clean
-  filter, at the entry's path from the process's directory, since `write-tree` never enters `GIT_WORK_TREE`. So each
-  scratch spawn also sets `core.hooksPath=/dev/null` and runs in, and names as `GIT_WORK_TREE`, an empty directory of
-  the scratch store (window-ml-host `src/snapshot.rs`). The changed set is the host's own stat comparison against
-  the scratch index, not a git status.
+- H11. Changed files are hashed with `git hash-object -w --no-filters --stdin-paths` and entered with `git update-index
+  --index-info`, never `git add` or `update-index --add`, which run a clean filter. Every git spawn carries the git belt
+  (`core.fsmonitor=false`, `core.pager=cat`, `GIT_OPTIONAL_LOCKS=0`), so no filter, textconv, fsmonitor or hook runs.
+  Untracked files are included; ignored files are not, except the uploads folder. The snapshot runs whatever
+  `repoConfigRunsCode` says: the belt, `--no-filters`, `--no-ext-diff` and `--no-textconv` leave no path by which the
+  repository's config runs a program, and the e3 row with a clean filter, an fsmonitor and a hook configured is the pass
+  condition for that case too. AMENDED 2026-11-13 (host lane): the belt alone was not enough, since the person's global
+  config (`git lfs install` sets `filter.lfs.clean`) also runs a program; H7's `GIT_CONFIG_GLOBAL` and
+  `GIT_CONFIG_NOSYSTEM` close that. AMENDED 2026-11-17 (host lane, found building H10): nor for a spawn that writes the
+  scratch index (`write-tree`, `read-tree`, `update-index`). The write runs the repository's `post-index-change` hook,
+  and its check of a racily clean entry reads the file through the clean filter, at the entry's path from the process's
+  directory, since `write-tree` never enters `GIT_WORK_TREE`. So each scratch spawn also sets `core.hooksPath=/dev/null`
+  and runs in, and names as `GIT_WORK_TREE`, an empty directory of the scratch store (window-ml-host `src/snapshot.rs`).
+  The changed set is the host's own stat comparison against the scratch index, not a git status. AMENDED 2026-11-19 (the
+  coordinator's call): an untracked file whose path looks like a secret (the host's `facts::looks_secret`: a dotenv name
+  other than the three templates, `*.pem`, `id_*`, a credentials directory such as `.ssh` or `.aws` among its
+  components) is never entered, inside the uploads folder or out, so it is in neither tree and the diff draws no body
+  for it. It is not silently absent: the name rule also matches ordinary files (`id_*` matches `id_utils.py`), so its
+  path joins H12's not-captured list with the reason "withheld: the name looks like a secret". That list is H12's. A
+  tracked one is H13's.
 - H12. Bounds: no file over the diff cap (1 MB, "The diff's cap") goes into the tree; it is compared by size and
   sha256 instead. The walk stops at `WALK_CAP` (20 000) entries; past that the call's diff is null with the reason.
 - H13. The diff is `git diff-tree --no-ext-diff --no-textconv` of the two trees. Its body goes out as held output (a
   pointer, as stdout does), and `done` carries the summary line (`edited a.py (+3 −1); deleted old.log`). A change is
-  reported as "changed during this call", never attributed to the call's process, since another process may have
-  written meanwhile. An orphaned call's snapshot reports through `status`/`ended`, as `protectedChanged` does. A
-  workspace that is not a git repository gets a null diff (open, as in the section above).
+  reported as "changed during this call", never attributed to the call's process, since another process may have written
+  meanwhile. An orphaned call's snapshot reports through `status`/`ended`, as `protectedChanged` does. A workspace that
+  is not a git repository gets a null diff (open, as in the section above). AMENDED 2026-11-19 (the coordinator's call):
+  the body of a file whose path looks like a secret never reaches the model through the diff, tracked or untracked. A
+  tracked one that changed is listed by path as "changed, contents withheld", with no line of its body in the held
+  output or the summary. "Changed" includes a deleted tracked file (no line of the old body) and a mode-only change. By
+  the coordinator's call, a blob shown under an ordinary name is withheld the same way when its id equals the blob of a
+  path that looks like a secret in either tree: `cp .env notes.txt` of a tracked `.env`, or `git mv .env notes.txt`,
+  shows `notes.txt` as "changed, contents withheld". The scrub by value (#1948) is the second layer under this rule,
+  never the reason to show a body. A name says nothing of a hardlink to a held file under another name, a copy of an
+  untracked secret file (its blob is in neither tree to compare), an edited copy, or a secret in an ordinary file: those
+  reach the diff, and only the scrub by value stands between them and the model.
 - H14. The diff's file list is what the call's end flushes to the browser backup ("The sync").
 
 **Telling an old host apart** (H15). `hello` gains `mounts: true` and `snapshot: true` (and `filesArgv: true`, H9;
@@ -1393,12 +1408,18 @@ delete of one git cannot undo asks, for a cell and for an `ml.sh` call whose man
   The scratch index and the private object directory live outside the worktree and are gone after the diff; a build
   that drops `GIT_OBJECT_DIRECTORY` turns this row red.
 - What the snapshot takes (H11). An ignored `.env` never enters a tree; an ignored file inside the uploads folder does;
-  an untracked file the call creates appears in the after-tree.
+  an untracked file the call creates appears in the after-tree. AMENDED 2026-11-19: an untracked `.env.local` that is
+  not ignored, and an untracked `id_ed25519` inside the uploads folder, enter neither tree; an untracked ordinary file
+  beside them still does. An untracked `id_utils.py` is in neither tree and is in the not-captured list with the name
+  reason.
 - Bounds (H12). A workspace with a FIFO, a socket and an unreadable file snapshots within budget and lists them as not
   captured, never opening them. A changed file over the cap is reported by size and sha256, never its body; a file
   under the cap whose only change is its mtime is not reported.
 - The report (H13). The body goes out as a held pointer and `done` carries only the summary line; a change by another
-  process reads "changed during this call", unattributed.
+  process reads "changed during this call", unattributed. AMENDED 2026-11-19: a tracked `.env` the call changed is
+  listed as "changed, contents withheld", and no line of its old or new body is in the held output, the summary, the run
+  log or either export. A tracked `.env` the call deleted is listed the same way, with no line of its old body. `cp .env
+  notes.txt` of a tracked `.env` lists `notes.txt` as "changed, contents withheld", with no line of its body.
 - An old host (H15). With a `hello` carrying neither field the worker sends no `mount`, `fetch`, `store`, `list`,
   `remove`, `rename`, `stat` or snapshot call and no probe; `mounts: "yes"`, `1` or `{}` read as absent.
 - Pages, four ways. Each new message type is refused at the router from a page, the host seeing nothing; a
@@ -1595,8 +1616,9 @@ ruling 32's hash-only matcher's; and whether a Parquet writer wheel exists.
 A backup (docs/spec/BACKUP_FORMAT.md, docs/dev/backup.md) is the archive's SQLite schema holding every session; it
 gains the session's files. Two tables, in the schema `migrate` builds:
 
-- `files (hash, path, kind, size, sha256, mtime, provenance, hidden)`: one row per file of a session (`hash`, the
-  session), its path under `/files`, and `hidden` set for a file the person marked secret.
+- `files (hash, path, kind, size, sha256, mtime, provenance, hidden, omitted)`: one row per file of a session (`hash`,
+  the session), its path under `/files`, `hidden` set for a file the person marked secret, and `omitted` saying why a
+  row has no chunks (`"size"` in a month file, ruling 47, below), null when its bytes are there.
 - `file_chunks (sha256, idx, data)`: a file's bytes in chunks of 1 MiB, keyed by the file's content hash, so a file
   attached to two sessions is held once, as `images` is today.
 
@@ -1642,6 +1664,69 @@ to warn, so the backup's `meta` records `files: <count>` for a later version to 
 a fixture of a pre-files backup restores with no files and no error; a backup with files restores them byte-identical;
 a hidden file restores as a hidden name with no bytes.
 
+### The archive folder's month files carry them too (ruling 47)
+
+Shane's ruling 47 (2026-11-18): a session's files go into the archive folder's month files, not only into the one-off
+backup, in the same two tables and the same volumes. A session moved into the archive keeps its files, so there is still
+one place each session lives, and the folder is a copy of it. A setting leaves out files over a size, since the folder
+is often on a drive a cloud service syncs.
+
+- **The setting**, the coordinator's call (2026-11-19), open to Shane's override: `archiveFileMaxMB`, a number in MB
+  like `sessionStoreBudgetMB` and `valueStoreBudgetMB`, default 100. A file larger than it is left out of the month
+  files; 0 removes the limit. It is in DevTools Settings beside the archive folder's form (the rule for a new setting)
+  and in the chat page's Extension tab where the folder is set. It changes only the folder: a one-off backup carries
+  every file that is not hidden, whatever its size. The default is reasoned from an assumed uplink, not measured
+  (below).
+- **Why 100 MB.** A sync rewrites each dirty month whole (archive.md, "Dirty months"), 30 seconds after an archive write
+  and every 6 hours, so a file in a month is uploaded again each time any session of that month changes, by the cloud
+  client that syncs the folder. At an uplink of 20 Mbit/s, an assumption for a home connection and not a measurement,
+  100 MB is about 40 seconds of upload per file per rewrite: past it the folder costs more than a copy is worth to most
+  people, and a person who wants the large files kept raises the limit or makes a one-off backup. A data file a run made
+  (a Parquet or a CSV of a fetched table) is usually well under it; a model checkpoint or a video is not.
+- **Changing the limit marks the months it affects dirty**, as switching the form does (backup.md): raising it, every
+  month holding a file omitted by size that is now within it; lowering it, every month holding a file now over it. The
+  next sync rewrites those months, so the folder matches the setting from that sync on, and no other month is rewritten.
+  Row: with months A (an omitted 150 MB file), B (a 60 MB file) and C (small files only), raising the limit to 200 marks
+  only A dirty and the sync writes the file into A; lowering it to 50 marks only B and the sync leaves the file out of
+  B.
+- **What is left out is named.** A file over the limit keeps its `files` row, with no chunks and `omitted: "size"`, and
+  the month's `meta` lists it with the limit in force when the month was written. A restore from the folder lists it
+  under its path as "not in the archive folder: over <the limit> MB", read from that `meta`, and a read of it fails with
+  that reason. Its bytes are still in the browser's archive while the session is: only a wiped profile loses them.
+- **A hidden file** is left out of the month files as it is out of a backup, by the same rule (above), and a month file
+  is a set of volumes as a backup is. A month's first volume keeps the month's name (`2026-10.wmlbak`); the others are
+  `2026-10.v2.wmlbak` and on, in the month's form. An install from before this does not read those names as months
+  (`MONTH_FILE`, `src/archive/archive-folder.ts`), so it ignores them.
+- **An older install reading a new month.** The first volume is an ordinary month file with two more tables and more
+  `meta` keys. An install from before this reads its sessions as it always has and ignores the `files` and `file_chunks`
+  tables and the volume list, with no error; it imports the sessions without their files. Row: a fixture of a new first
+  volume, read by the merge as it is on main before this, imports its sessions and reports no error.
+- **A month an older install rewrote.** Such a month comes back without `files` rows (Known limits, below). The newer
+  install's merge never reads an absent `files` row as a deletion: a file leaves the browser's archive only by the
+  person deleting it or by a `removed` entry (backup.md, 3b), never because a month file lacks it. When the merge finds
+  the archive holding files the month lacks, it marks that month dirty, so the next sync writes them back. Row: a month
+  rewritten without `files` rows, merged by the newer install, leaves every file in the browser's archive byte-identical
+  and marks the month dirty.
+- **Known limits.** An install from before this that rewrites a month (a change on a second machine running the older
+  version) writes it without the `files` rows, and the folder's copy of that month's files is lost until a newer install
+  merges that month and rewrites it; the volumes it ignores are left orphaned until then. The sessions themselves, and
+  the files in each browser's archive, are unaffected. Rows: a month with a file over the limit restores it as omitted
+  by size, naming the limit from its `meta`; a month with files restores them byte-identical; and a pre-files month file
+  restores with no files and no error.
+
+### A restore over the quota (ruling 48)
+
+Shane's ruling 48 (2026-11-18): a restore restores every file, since they are the person's, even when that takes a
+session over its quota. The session is then marked over its quota, and a write under `agent/` is refused by name as the
+quota refuses one ("Lifetime and quota", above) until the person deletes enough to be back under. Reads, copies out of
+`attached/`, deletes and renames are unaffected. The restore screen says which sessions came back over their quota and
+by how much.
+
+This is the session's quota, not the browser's storage. A restore the browser's free space cannot hold still fails
+before the shelf is touched ("The staging space", above). Rows: a fixture whose `agent/` total is over the quota
+restores every file byte-identical, a write after it is refused naming the total, and a delete that brings the session
+under lets the next write through.
+
 **Whether the hub changes.** No: `ml.fs` and the mounts are the runtime's, and backup and restore are local. The
 file browser's commands are the session-store amendment's (ruling 24).
 
@@ -1649,14 +1734,9 @@ file browser's commands are the session-store amendment's (ruling 24).
 
 Settled as the coordinator's calls and written in above: the dump is `ml.fs.cp`; if WORKERFS cannot run under the
 lockdown, `attached/` gets a custom read-only mount over the ranged reader, never a loosened lockdown; `readFile`'s
-bound is 8 MiB; and no sidecar for JSON or text. Two remain for Shane:
-
-1. **Archive month files.** Whether a session's files go into the archive folder's month files, not only the one-off
-   backup. Recommended yes, the same tables and the same volumes: a session moved to the archive must keep its files,
-   and there is one place each session lives. With a setting to leave out files over a size, since the folder may be
-   a cloud drive.
-2. **A restore over the quota.** Recommended: restore every file (they are the person's), mark the session over its
-   quota, and refuse new writes by name until the person deletes some, as the quota already does.
+bound is 8 MiB; and no sidecar for JSON or text. The two left for Shane are settled (2026-11-18) and written in
+above: the archive folder's month files carry a session's files, with a size limit (ruling 47), and a restore over
+the quota restores every file and then refuses writes until the session is back under (ruling 48).
 
 ## Trust
 

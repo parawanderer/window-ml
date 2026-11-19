@@ -173,6 +173,43 @@ test("a fatal error in the import is a failed install that names it", async () =
     assert.equal(imp.terminated, true);
 });
 
+// The worker's own word for a dead interpreter (python-worker.ts, ruling 26). A run's cell answered this way tells the
+// model its namespace is gone; a candidate is not the run's interpreter, so its install is refused with the cause alone.
+const RUN_LOSS = /this run's Python|restarted for the next cell/;
+
+test("an import the worker answers as the kernel's death is a failed install that names the cause, not a lost run namespace", async () => {
+    const c = await candidate("import-kernel-death");
+    await answerCell(c.w, { ok: true, value: SCAN_OK });
+    const imp = importWorker(c.w);
+    await answerCell(imp, { ok: false, error: "RangeError: Maximum call stack size exceeded", fatal: true });
+    const r = await c.answer;
+    assert.deepEqual([r.ok, r.died], [false, true]);
+    assert.match(r.error, /Maximum call stack size exceeded/);
+    assert.doesNotMatch(r.error, RUN_LOSS);
+    assert.equal(imp.terminated, true);
+});
+
+test("an install candidate's kernel-death cause is bounded like a run's", async () => {
+    const c = await candidate("import-kernel-death-long");
+    await answerCell(c.w, { ok: true, value: SCAN_OK });
+    const imp = importWorker(c.w);
+    const long = `PythonError: Traceback (most recent call last):\n${"  File \"/lib/m.py\", line 1, in f\n    f()\n".repeat(1000)}RuntimeError: function signature mismatch`;
+    await answerCell(imp, { ok: false, error: long, fatal: true });
+    const r = await c.answer;
+    assert.ok(r.error.length <= 300 && !r.error.includes("\n"), `bounded to one line: ${r.error.length} characters`);
+    assert.match(r.error, /RuntimeError: function signature mismatch$/);
+});
+
+test("a scan the worker answers as the kernel's death hands the import to a fresh worker, and the install can still pass", async () => {
+    const c = await candidate("scan-kernel-death");
+    await answerCell(c.w, { ok: false, error: "RangeError: Maximum call stack size exceeded", fatal: true });
+    const imp = importWorker(c.w);
+    assert.notEqual(imp, c.w, "the import went to a fresh worker");
+    assert.equal(c.w.terminated, true);
+    await answerCell(imp, { ok: true, value: "null" });
+    assert.deepEqual(await c.answer, { ok: true, scan: null });
+});
+
 for (const [name, end, reason] of [["the deadline", (c) => c.deadline(), "install-deadline"], ["Stop", (_c, run) => send({ type: "PY_INSTALL_STOP", run }), "stopped"]]) {
     test(`${name} in the import ends the candidate as a failed install`, async () => {
         const run = `end-import-${reason}`;

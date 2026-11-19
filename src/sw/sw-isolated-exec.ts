@@ -30,7 +30,9 @@ import type { IsoAnswer } from "./iso-channel";
 
 /** What the worker binds in the isolated world: the pointer reads the script names, `ml.current` (or why not), and
  *  whether `ml.sh` is there (the script names it and the worker bound it to the step; its calls ride the channel). */
-export interface IsolatedBindings { reads: readonly PreRead[]; current?: ExecCurrent; currentError?: string; sh?: boolean }
+export interface IsolatedBindings { reads: readonly PreRead[]; current?: ExecCurrent; currentError?: string; sh?: boolean;
+    /** `ml.settings()`'s entries, read for this exec (sw-change-setting.ts `settingEntries`); only in a run the worker built. */
+    settings?: Record<string, unknown> }
 
 /** What a run of the wrapper returns, the shape `cdpEval` reports. */
 export type IsolatedResult = { ok: true; value: string; logs: string[]; dropped: number } | { error: string };
@@ -39,15 +41,15 @@ export type IsolatedResult = { ok: true; value: string; logs: string[]; dropped:
 export const ISOLATED_HELPERS = ["queryAll", "a11y", "pipe", "schema", "range"] as const;
 
 /** The `ml` members an isolated exec is given; anything else throws a sentence saying so. */
-export const ISOLATED_ML_MEMBERS = ["current", "dereference", ...ISOLATED_HELPERS, "sh"] as const;
+export const ISOLATED_ML_MEMBERS = ["current", "settings", "dereference", ...ISOLATED_HELPERS, "sh"] as const;
 
 /**
- * The members one isolated exec is given: `current` only when it was read for it (or failed to be), `sh` only when the
- * worker bound it.
+ * The members one isolated exec is given: `current` only when it was read for it (or failed to be), `settings` and `sh`
+ * only when the worker bound them.
  * @param b what was bound
  */
 export const isolatedMembers = (b: IsolatedBindings): string[] =>
-    ISOLATED_ML_MEMBERS.filter((m) => (m !== "current" || b.current || b.currentError) && (m !== "sh" || b.sh));
+    ISOLATED_ML_MEMBERS.filter((m) => (m !== "current" || b.current || b.currentError) && (m !== "settings" || b.settings) && (m !== "sh" || b.sh));
 
 // Live console lines, keyed by the call's nonce: the user-script world posts them through `onUserScriptMessage`, which
 // only a world this extension configured can reach. The nonce is the second check, the tab the first.
@@ -98,7 +100,7 @@ const nonce = (): string => Array.from(crypto.getRandomValues(new Uint8Array(16)
  */
 export function isolatedWrapper(inner: string, b: IsolatedBindings, n: string, stream: string, ask = ""): string {
     const members = isolatedMembers(b);
-    const bound = JSON.stringify({ reads: b.reads, current: b.current ?? null, currentError: b.currentError ?? null, members });
+    const bound = JSON.stringify({ reads: b.reads, current: b.current ?? null, currentError: b.currentError ?? null, settings: b.settings ?? null, members });
     return `(async () => {
     globalThis.__mlIsoStarted = ${JSON.stringify(n)};
     const __B = JSON.parse(${JSON.stringify(bound)});
@@ -144,6 +146,8 @@ export function isolatedWrapper(inner: string, b: IsolatedBindings, n: string, s
         if (typeof k === "symbol" || k === "then" || k === "toJSON") return undefined;
         if (k === "current") { if (__B.currentError) throw new Error(__B.currentError); if (__cur) return __cur; return __no(k); }
         if (k === "sh") return __sh ?? __no(k);
+        // A fresh copy each call, so a script that edits what it read changes nothing it reads next.
+        if (k === "settings") return __B.settings ? () => JSON.parse(JSON.stringify(__B.settings)) : __no(k);
         return k in t ? t[k] : __no(k);
     }, set() { return false; } });
     const state = (globalThis.__mlState ??= {});
@@ -353,6 +357,7 @@ export async function pageApproved(url: string): Promise<boolean> {
 const WHY: Record<ExecReason, string> = {
     "unapproved-page": "this site is not approved for window.ml",
     current: "it reads ml.current",
+    settings: "it reads ml.settings",
     sh: "it runs programs through ml.sh",
     pointer: "it reads pointer values",
     requested: "you asked for it",
@@ -377,9 +382,13 @@ export async function runIsolatedExec(o: {
     serve?: (req: unknown) => Promise<IsoAnswer>;
     /** `ml.sh` is bound: the server answers its calls for this exec's step. */
     sh?: boolean;
+    /** Reads `ml.settings()`'s entries for a script that names it, in a run the worker built (undefined: none). */
+    settings?: () => Promise<Record<string, unknown>>;
 }): Promise<{ result: string; renderIn: RenderDescriptor; renderOut?: RenderDescriptor }> {
     const renderIn = execCodeIn(o.js);
     const b: IsolatedBindings = { reads: o.reads, ...(o.sh && o.serve ? { sh: true } : {}) };
+    // Not read, not bound: a script whose settings cannot be read is told ml.settings is not available.
+    if (o.settings) b.settings = await o.settings().catch(() => undefined);
     if (o.current) {
         try {
             const c = currentForExec(await o.current(), true);

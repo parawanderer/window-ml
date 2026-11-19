@@ -177,6 +177,40 @@ test("a worker that dies between two cells of a run puts the reset line at the h
     assert.equal(third.answer.stdout, "three", "the notice is told once");
 });
 
+test("a cell refused as outside the dialect does not take the reset line: the cell that runs after it opens with it", async () => {
+    const first = await runCell({ principal: "run:loss-in", wire: { client: "mlw-i1", run: "loss-in" } }, { ...bench(["x"]), stdout: "one" });
+    first.w.onerror({ message: "out of memory" });
+    const tried = await runCell({ principal: "run:loss-in", wire: { client: "mlw-i2", run: "loss-in" }, inside: true }, { ok: false, stdout: "", notInDialect: "call on builtin_function_or_method (line 1)" });
+    assert.ok(!("nsReset" in tried.answer), "the refused try, whose result is discarded, is not told");
+    const ran = await runCell({ principal: "run:loss-in", wire: { client: "mlw-i3", run: "loss-in" } }, { stdout: "two" });
+    assert.match(ran.answer.stdout, /^namespace reset at .*: crashed\ntwo$/);
+});
+
+test("a cell that killed the interpreter is answered as the kernel's death, and the next cell opens with the reset line", async () => {
+    const first = await runCell({ principal: "run:loss-kd", wire: { client: "mlw-k1", run: "loss-kd" } }, { ...bench(["x"]), stdout: "one" });
+    const died = await runCell({ principal: "run:loss-kd", wire: { client: "mlw-k2", run: "loss-kd" } }, { ok: false, stdout: "", error: "Maximum call stack size exceeded", fatal: true });
+    assert.equal(died.answer.error, "The Python interpreter crashed (Maximum call stack size exceeded) and was restarted for the next cell; the same code crashes it again. Everything defined before in this run's Python (its variables, functions and imports) is gone: the next cell starts empty and must define or import again what it needs.");
+    assert.ok(!("fatal" in died.answer), "the worker's flag is not passed on");
+    assert.equal(died.w, first.w, "the control: the cell ran on the run's own worker");
+    assert.ok(died.w.terminated, "the dead worker is ended");
+    const next = await runCell({ principal: "run:loss-kd", wire: { client: "mlw-k3", run: "loss-kd" } }, { stdout: "two" });
+    assert.equal(next.spawned, 1, "the next cell ran in a fresh worker");
+    assert.match(next.answer.stdout, /^namespace reset at .*: the interpreter crashed\ntwo$/);
+});
+
+test("a kernel death's cause is one bounded line, the exception a traceback ends with, whatever length the cell gave it", async () => {
+    // Not a real death's shape (both answer one line): the text a Pyodide without the `on_fatal` hook falls back to, the
+    // cell's own answer, whose length the cell chooses (~60 KB at Python's 1,000-frame limit).
+    const frames = Array.from({ length: 1000 }, (_, i) => `  File "/lib/python3.13/site-packages/pkg/m.py", line ${i}, in f\n    f()\n`).join("");
+    const cause = `PythonError: Traceback (most recent call last):\n  File "<exec>", line 1, in <module>\n    import PIL._imagingtk\n${frames}RuntimeError: function signature mismatch\n`;
+    const died = await runCell({ principal: "run:loss-kd2", wire: { client: "mlw-k5", run: "loss-kd2" } }, { ok: false, stdout: "", error: cause, fatal: true });
+    const shown = died.answer.error.match(/^The Python interpreter crashed \((.*)\) and was restarted/s)?.[1];
+    assert.ok(shown, died.answer.error.slice(0, 200));
+    assert.ok(shown.length <= 300, `bounded: ${shown.length} characters`);
+    assert.ok(!/\n|\s\s/.test(shown), "one line, with no run of spaces");
+    assert.equal(shown, "RuntimeError: function signature mismatch", "the exception it ends with, and none of the cell's source lines");
+});
+
 test("a run whose only cell failed WITHOUT a scope manifest is still told its dict died with the worker", async () => {
     // The worker creates the dict before the cell runs, so a cell that returned no manifest still left one.
     const first = await runCell({ principal: "run:loss-b", wire: { client: "mlw-m1", run: "loss-b" } }, { ok: false, error: "boom" });

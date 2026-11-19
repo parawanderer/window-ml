@@ -1,10 +1,10 @@
 // pkg-install-fatal-worker.test.mjs — what a package that kills Pyodide at import leaves of the worker, in the real worker.
-// Measured: the cell NEVER ANSWERS. The fatal RangeError (a call chain too deep for the compiler) escapes as an unhandled
-// rejection, which a browser Worker does not report as `onerror`, so the offscreen document hears nothing; an install's
-// candidate is ended by its deadline (offscreen.ts installTest, rows in tests/pkg-install-offscreen.test.mjs), a run's
-// own cell by its timeout. The answer the offscreen rows and python-lease-offscreen's kernel-death todo rows expect,
-// the fatal error AS the cell's answer, is the todo row here. The worker runs in a child process
-// (tests/fixtures/fatal-worker-driver.mjs): the dead interpreter's leftover work outlives anything a test can contain.
+// The fatal RangeError (a call chain too deep for the compiler) escapes the cell as an unhandled rejection, which a browser
+// Worker does not report as `onerror`. Before ruling 26 the cell NEVER ANSWERED and an install's candidate was ended by its
+// deadline; the worker now hears the rejection on `self`, asks Pyodide whether it is dead, and answers the cell with the
+// fatal error and `fatal: true` (python-worker.ts), which installTest reports as a died candidate. The worker runs in a
+// child process (tests/fixtures/fatal-worker-driver.mjs): the dead interpreter's leftover work outlives anything a test
+// can contain.
 // Self-SKIPS without dist/pyodide.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -29,14 +29,15 @@ function measure() {
 
 // --- a package that kills the interpreter at import ---
 
-test("an import that kills Pyodide never answers: the fatal error escapes as an unhandled rejection", { skip, timeout: 180000 }, () => {
+test("an import that kills Pyodide is answered as the kernel's death, the fatal error still escaping as an unhandled rejection", { skip, timeout: 180000 }, () => {
     const m = measure();
     assert.equal(m.control.ok, true, `the control: the worker runs a cell (${JSON.stringify(m.control)})`);
-    assert.equal(m.killed, "no answer", `the cell answered: ${JSON.stringify(m.killed).slice(0, 300)}`);
+    assert.notEqual(m.killed, "no answer", "the cell answered");
+    assert.equal(m.killed.fatal, true, `answered as the kernel's death: ${JSON.stringify(m.killed).slice(0, 300)}`);
     assert.ok(m.rejections.some((e) => /Maximum call stack size exceeded/.test(e)), `the fatal error went to an unhandled rejection: ${JSON.stringify(m)}`);
 });
 
-test("an import that kills Pyodide answers with the fatal error", { skip, timeout: 180000, todo: "Pyodide loses a fatal error raised in a cell; the worker should answer it (async/kernel-death)" }, () => {
+test("an import that kills Pyodide answers with the fatal error", { skip, timeout: 180000 }, () => {
     const m = measure();
     assert.notEqual(m.killed, "no answer");
     assert.equal(m.killed.ok, false);
