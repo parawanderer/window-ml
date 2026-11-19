@@ -14,7 +14,7 @@ Each claim is marked:
 
 | Question | Recommendation | Item |
 | --- | --- | --- |
-| How a cell waits on `ml.table`: the fork's `Await`, or a synchronous call over JSPI | JSPI: `t = ml.table(src)` works on the pinned core with no rebuild (measured in Node; Chrome still to measure) | 1 |
+| How a cell waits on `ml.table`: the fork's `Await`, or a synchronous call over JSPI | JSPI: `t = ml.table(src)` works on the pinned core with no rebuild, measured in Chrome and under the real lockdown; nothing but the cell's own chain may run on its namespace while it waits | 1 |
 | What a Python cell gets: ruling 68's TableLike, or a pandas DataFrame | a DataFrame: the JS facade has four methods, less than the model has now | 1 |
 | `tables` on `python_exec` (and `ml.pythonExec`'s option): removed, or kept as shorthand for `name = ml.table(src)` | kept as shorthand: it injects nothing, and 623 of 647 table-fetch runs use it | 5 |
 | A computed Sheet in an approved cell, which the card did not hoist | a nested ask on the running step, its card naming the resolved id | 2 |
@@ -54,14 +54,49 @@ one the cell made and owns, and the same member exists in JS.
     from inside `restricted.run_cell` **[measured]**.
   - So the facade's `ml.table` can block on the wire answer and return the frame, and a cell writes `t = ml.table(src)`
     with no rebuild.
-  - What is not measured: Chrome's offscreen worker (JSPI ships enabled in current Chrome **[guess: not checked against
-    the pinned Chrome]**); the dialect's step budget and wall clock while suspended; and whether other webloop tasks
-    run during the suspension and can see the half-run cell (`spend-queue.ts:4` notes JSPI queues Python a second
-    time).
-  - **Recommendation: JSPI, after those three are measured in Chrome.** It needs no fork change and no Await rule, and
-    the facade gives one spelling inside and outside the dialect. Ruling 68 wrote `await ml.table`; under JSPI,
-    `await` is refused inside and harmless outside only if the member also returns an awaitable, so the spelling is
-    part of this decision.
+  - **Measured in Chromium 151.0.7922.34, in a module Worker** (mjspi/run.mjs) **[measured]**:
+    - `WebAssembly.Suspending` and `promising` are present, and `can_run_sync()` is True.
+    - Inside `restricted.run_cell`, an `allow_call`'d `f` that calls `run_sync` on a 200 ms promise returned in 207 ms,
+      and also through three nested Python frames.
+    - A 2 s suspension is not counted against the step budget (budget 1000, the cell succeeded), and the budget still
+      refuses a loop after the cell resumes.
+    - `worker.terminate()` ends a suspended worker in 2 ms. That is the 15 s wall-clock kill, the only bound on a
+      suspended cell.
+  - **Measured inside the real lockdown** (mjspi2/: the shipped `dist/python-worker.js`, and `lockdownReadonly` from
+    `lockdown.ts` run unmodified) **[measured]**:
+    - SES `lockdown()` and the cell gate run, and `WebAssembly` survives them (`lockdown.ts:55`, `ALLOWED_GLOBALS`).
+    - The same `run_cell` + `run_sync` cell returned in about 211 ms.
+    - In the shipped worker a cell cannot import `pyodide.ffi` (refused). A full cell's `asyncio.run(...)` and
+      `await ml.*` already suspend through the webloop's `run_until_complete` into `run_sync`: the same JSPI path,
+      230-237 ms with an `ml` answer after 200 ms.
+  - **A suspended cell is not atomic.** Three writers could run Python on its namespace while it waits:
+    - (1) An asyncio task scheduled before the call. It is not held: it woke 52 ms into a 200 ms suspension and wrote
+      the cell's globals, both in the shipped worker and under `lockdownReadonly`. It cannot reach an inside cell
+      today, though, for two reasons. Every task is spent and the loop's queue cut at each cell's end
+      (`docs/dev/python-sandbox.md`, the cancel order), so no task outlives a cell. And `asyncio` is not in the stdlib
+      manifest, so an inside cell cannot schedule one.
+    - (2) A second run message. It is held: every run, env, complete, library and reset message goes through
+      `runChain` (`src/python/python-worker.ts:416`, :604). In the shipped worker, a cell posted 100 ms into another
+      started only after the first returned. The one unchained branch, `mlAnswer` (:508), runs no Python of its own:
+      it resolves the pending wire promise, which resumes the suspended cell's own continuation.
+    - (3) A detached task's continuation. There is no separate one: a detached cell is the same cell, still on
+      `runChain` (`docs/spec/ASYNC_CALLS.md`, "busy and locked"). What can write is a callable the cell handed to JS
+      (`setTimeout`, `call_later`, a promise handle). It fires during the cell and is revoked at its end
+      (`src/python/cell-gate.ts:149-170`). An inside cell can hand JS none.
+  - **The requirement of the JSPI route:** while an inside cell is suspended in a member, nothing but the cell's own
+    awaited chain runs Python on its namespace.
+    - Today this holds for (2) by `runChain`, and for (1) and (3) by construction: no task outlives a cell, and an
+      inside cell can schedule none and hand no callable to JS.
+    - If a library or a manifest change ever admits a scheduler (asyncio, `call_later`, a JS member taking a
+      callback), the hold must be built first. The narrowest places are `spend-queue.ts`'s `enqueue` (:81), keyed on
+      the awaited chain, and the gate's `callPyObject*` wrappers.
+    - Rows owed by e3: each of the three writers tried during a suspension, with the inside cell's namespace
+      unchanged. For (1) and (3), the row also asserts that the scheduler is refused inside, so admitting one turns
+      the row red.
+  - **Recommendation: JSPI**, now that it is measured in Chrome and under the real lockdown, with the requirement
+    above. It needs no fork change and no Await rule, and the facade gives one spelling inside and outside the
+    dialect. Ruling 68 wrote `await ml.table`; under JSPI, `await` is refused inside and harmless outside only if the
+    member also returns an awaitable, so the spelling is part of this decision.
 - **Size.** A wire answer over `WIRE_VALUE_CAP` (1 MiB, `sw-ml-wire.ts:27`) comes back as a pointer **[code]**.
   Recommendation: `ml.table` answers with the table's bytes in the value store (the route `injectStoredTable` already
   uses, `python-runtime.ts:918`), read into the cell as `bytes`, never as a JSON row list.
