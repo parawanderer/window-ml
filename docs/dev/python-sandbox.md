@@ -318,9 +318,9 @@ worker drives with `autoApprovePython` on:
    `notebooks/python-dialect/data/`). It refuses to run anything inside on a core without `_restricted`, or one whose
    `_restricted.build()` reports specialization, tier 2 or a JIT. On such a core every cell asks. **The fork has no
    file gate**: `open` is a refused builtin, and a lifted leaf that opens a path itself is kept out only by the fork's
-   deny-list (`restricted._EFFECTFUL`) or by an entry check. A leaf the manifest marks `write(buffer arg) when <p>= is
-   given` (`DataFrame.to_string`, `Series.to_string`) is re-registered by `_ml_buffer_args` with a check that refuses
-   `<p>` bound to anything but None, so the call asks; `tests/python-dialect-buffer-args.test.mjs` enumerates every
+   deny-list (`restricted._EFFECTFUL`) or by an entry check. A leaf in `DIALECT_BUFFER_ARGS` (`DataFrame.to_string`,
+   `Series.to_string`, each marked `write(buffer arg) when buf= is given` in the manifest) is re-registered by
+   `_ml_buffer_args` with a check that refuses the parameter bound to anything but None, so the call asks; `tests/python-dialect-buffer-args.test.mjs` enumerates every
    admitted callable's path, file or buffer parameter.
 3. `wrapUserScript(…, inside)` runs the cell through `run_cell` (`INSIDE_CELL`, `python-dialect-run.ts`) in a COPY of the namespace that holds no `_` name.
    A bare trailing expression gets `return ` spliced in at its own column, so the value matches the full path.

@@ -178,6 +178,14 @@ def _ml_inside_run(_src, _g):
     return _v
 `;
 
+/** The lifted leaves that write the file or buffer one parameter names, as [module, kind, method, parameter]: refused
+ *  with that parameter bound to anything but None (`dialectSetup`). The manifest marks each `write(buffer arg) when
+ *  <parameter>= is given`; tests/python-dialect-buffer-args.test.mjs holds the two to each other. */
+export const DIALECT_BUFFER_ARGS: [string, string, string, string][] = [
+    ["pandas", "DataFrame", "to_string", "buf"],
+    ["pandas", "Series", "to_string", "buf"],
+];
+
 /**
  * Make the interpreter ready to run cells inside the dialect, once per worker: the fork's modules present, its build
  * gate off (no specialization, tier 2 or JIT), the whitelist and manifests written where `load_manifests` reads them,
@@ -202,36 +210,32 @@ def _ml_dialect_setup(_files):
     # What the gate admitted, kept for a library's shape rule: it judges imports by exactly these tables.
     import sys, types
     sys.modules.setdefault("_ml_libraries", types.SimpleNamespace(pins={})).admitted = restricted.load_manifests(_dir)["modules"]
-    _ml_buffer_args(_files, _restricted, restricted)
-    return ""
+    return _ml_buffer_args(_restricted, restricted)
 
-def _ml_buffer_args(_files, _restricted, restricted):
-    # A leaf the manifest marks "write(buffer arg) when <p>= is given" (DataFrame.to_string(buf=…)) writes the file or
-    # buffer <p> names, which the fork's own deny-list (restricted._EFFECTFUL) does not know. So it is re-registered
-    # with an entry check that refuses <p> bound to anything but None, by keyword or by position, and the call asks. A
-    # second lifted allow_call replaces the first's checker; the fork's own check still runs after this one.
-    import inspect, json, re
-    for _mod in ("numpy", "pandas"):
-        for _key, _row in json.loads(_files[f"manifest-{_mod}.json"]).get("leaves", {}).items():
-            _m = re.search(r"write\\(buffer arg\\) when (\\w+)= is given", _row.get("effects", ""))
-            if not _m:
+def _ml_buffer_args(_restricted, restricted):
+    # Each leaf in DIALECT_BUFFER_ARGS writes the file or buffer its parameter names, which the fork's own deny-list
+    # (restricted._EFFECTFUL) does not know. So it is re-registered with an entry check that refuses the parameter bound
+    # to anything but None, by keyword or by position, and the call asks. A second lifted allow_call replaces the
+    # first's checker; the fork's own check still runs after this one. A parameter the signature lacks is a reason.
+    import inspect
+    for _mod, _kind, _name, _p in ${JSON.stringify(DIALECT_BUFFER_ARGS)}:
+        _cls = restricted._kind_class(_mod, _kind)
+        for _c in (_cls if isinstance(_cls, tuple) else (_cls,) if _cls else ()):
+            _f = restricted._static_function(_c, _name)
+            if _f is None:
                 continue
-            _kind, _, _name = _key.partition(".")
-            _cls = restricted._kind_class(_mod, _kind)
-            for _c in (_cls if isinstance(_cls, tuple) else (_cls,) if _cls else ()):
-                _f = restricted._static_function(_c, _name)
-                if _f is None:
-                    continue
-                _p = _m.group(1)
-                _params = list(inspect.signature(_f).parameters)[1:]
-                _at = _params.index(_p) if _p in _params else None
-                _own = restricted.entry_check(_name, True, arguments=_name in restricted._ENTRY_CHECKED)
-                def _check(func, self, args, kwargs, _name=_name, _p=_p, _at=_at, _own=_own):
-                    _a = args if self is not None else args[1:]
-                    if (kwargs or {}).get(_p) is not None or (_at is not None and len(_a) > _at and _a[_at] is not None):
-                        raise restricted.NotInDialect(f"not in dialect: {_name}({_p}=…) writes to the file or buffer it is given")
-                    _own(func, self, args, kwargs)
-                _restricted.allow_call(_f, True, _check)
+            _params = list(inspect.signature(_f).parameters)[1:]
+            if _p not in _params:
+                return f"{_kind}.{_name} has no parameter {_p} in this pandas, so its buffer check cannot be placed"
+            _at = _params.index(_p) if inspect.signature(_f).parameters[_p].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD else None
+            _own = restricted.entry_check(_name, True, arguments=_name in restricted._ENTRY_CHECKED)
+            def _check(func, self, args, kwargs, _name=_name, _p=_p, _at=_at, _own=_own):
+                _a = args if self is not None else args[1:]
+                if (kwargs or {}).get(_p) is not None or (_at is not None and len(_a) > _at and _a[_at] is not None):
+                    raise restricted.NotInDialect(f"not in dialect: {_name}({_p}=…) writes to the file or buffer it is given")
+                _own(func, self, args, kwargs)
+            _restricted.allow_call(_f, True, _check)
+    return ""
 _ml_dialect_setup(${JSON.stringify(files)})
 `;
 

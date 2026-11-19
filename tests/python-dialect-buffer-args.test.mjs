@@ -11,7 +11,7 @@ import assert from "node:assert";
 import path from "node:path";
 import fs from "node:fs";
 import { wrapUserSetup, wrapUserScript } from "../src/python/python-runtime.ts";
-import { dialectSetup } from "../src/python/python-dialect-run.js";
+import { dialectSetup, DIALECT_BUFFER_ARGS } from "../src/python/python-dialect-run.js";
 
 const PYODIDE_DIR = path.resolve(import.meta.dirname, "../dist/pyodide");
 const DATA_DIR = path.resolve(import.meta.dirname, "../notebooks/python-dialect/data");
@@ -89,6 +89,22 @@ test("to_string with no buf, or buf=None, still runs inside and gives the string
         const r = await inside(code);
         assert.ok(r.value && /7/.test(r.value), `${code}: ${JSON.stringify(r)}`);
     }
+});
+
+// --- the hard-coded list and the manifest say the same thing, until the data form replaces both ---
+
+test("AGREE: every numpy/pandas leaf the manifest marks as a buffer write is in DIALECT_BUFFER_ARGS, and the reverse", () => {
+    // numpy and pandas only: theirs are the kinds load_manifests lifts. manifest-pil.json's Image.save is not a lifted kind.
+    const marked = [];
+    for (const mod of ["numpy", "pandas"]) {
+        for (const [key, row] of Object.entries(JSON.parse(FILES[`manifest-${mod}.json`]).leaves ?? {})) {
+            if (!/write\(buffer arg\)/.test(row.effects ?? "")) continue;
+            const m = /write\(buffer arg\) when (\w+)= is given/.exec(row.effects);
+            assert.ok(m, `${mod} ${key}: a buffer write must name its parameter ("write(buffer arg) when <p>= is given"): ${row.effects}`);
+            marked.push([mod, ...key.split("."), m[1]].join(" "));
+        }
+    }
+    assert.deepStrictEqual(marked.sort(), DIALECT_BUFFER_ARGS.map((r) => r.join(" ")).sort());
 });
 
 // --- ENUMERATED: every admitted callable's path, file or buffer parameter is probed or has a reason ---
