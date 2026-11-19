@@ -58,55 +58,85 @@ const STORED_WITHHELD = "[withheld: the registered secrets could not be read]";
 /**
  * A value the run STORES or shows beside what the model read (a tool's Out render, a pointer's fuller capture), with
  * every string scrubbed the way {@link forModel} scrubs a result, less the count line: the sidebar, both exports and a
- * later `@tool:` read then hold no more than the model saw. Image data is not scanned. Fails closed: when the
- * secrets cannot be read, every string is withheld.
+ * later `@tool:` read then hold no more than the model saw. Image data is not scanned. An object's keys are scrubbed as
+ * its values are. Fails closed: when the secrets cannot be read, every string is withheld, and every key but one shaped
+ * like a schema's own ({@link SCHEMA_KEY}), so the record keeps its shape.
  * @param value the render, or a text
  * @returns the value, copied where something changed
  */
 export async function forStored<T>(value: T): Promise<T> {
     let f: (s: string) => string;
+    let key: (k: string) => string;
     try {
         const secrets = await configSecrets();
         await registryReady();
         const subs = registrySubsNow();
         f = (s) => scrubRegistry(scrubSecrets(s, secrets), subs).text;
-    } catch { f = () => STORED_WITHHELD; }
-    return mapStrings(value, f, 8);
+        key = f;
+    } catch {
+        f = () => STORED_WITHHELD;
+        key = (k) => (SCHEMA_KEY.test(k) ? k : STORED_WITHHELD);
+    }
+    return mapStrings(value, f, key, 8);
 }
+
+/**
+ * A key kept when the secrets cannot be read: letters only, starting lowercase, at most 32 (`type`, `stdout`,
+ * `byColumn`). The residue, stated: a registered value of that shape used as a key survives that path.
+ */
+const SCHEMA_KEY = /^[a-z][A-Za-z]{0,31}$/;
 
 /** What a subtree deeper than the stored scrub reads becomes when it holds text. */
 export const DEPTH_WITHHELD = "[withheld: nested deeper than the scrub reads]";
 
-/** Whether a string is anywhere under `value`, but under an image key. */
-function holdsText(value: unknown): boolean {
+/** Whether a string is anywhere under `value` but under an image key, or a key `key` would change. */
+function holdsText(value: unknown, key: (s: string) => string): boolean {
     if (typeof value === "string") return true;
-    return value != null && typeof value === "object" && Object.entries(value).some(([k, v]) => !IMAGE_KEY.test(k) && holdsText(v));
+    // A key is text too, where the scrub would change it: a registered value used as a key.
+    return value != null && typeof value === "object"
+        && Object.entries(value).some(([k, v]) => key(k) !== k || (!IMAGE_KEY.test(k) && holdsText(v, key)));
 }
 
 /**
- * Every string in a value, through `f`, but those under an image key.
+ * Every string in a value through `f`, but the values under an image key, and every key through `key`.
  * @param value the value
  * @param f what each string becomes
+ * @param key what each key becomes
  * @param depth how deep to look
  * @returns the value, copied where something changed
  */
-function mapStrings<T>(value: T, f: (s: string) => string, depth: number): T {
+function mapStrings<T>(value: T, f: (s: string) => string, key: (k: string) => string, depth: number): T {
     if (typeof value === "string") return f(value) as T;
     if (value == null || typeof value !== "object") return value;
     // Deeper than the scrub reads: a subtree holding any text is withheld rather than kept as it is.
-    if (depth < 0) return (holdsText(value) ? DEPTH_WITHHELD : value) as T;
+    if (depth < 0) return (holdsText(value, key) ? DEPTH_WITHHELD : value) as T;
     if (Array.isArray(value)) {
         let changed = false;
-        const out = value.map((v) => { const s = mapStrings(v, f, depth - 1); if (s !== v) changed = true; return s; });
+        const out = value.map((v) => { const s = mapStrings(v, f, key, depth - 1); if (s !== v) changed = true; return s; });
         return (changed ? out : value) as T;
     }
-    let out: Record<string, unknown> | null = null;
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-        if (IMAGE_KEY.test(k)) continue;
-        const s = mapStrings(v, f, depth - 1);
-        if (s !== v) (out ??= { ...(value as Record<string, unknown>) })[k] = s;
-    }
-    return (out ?? value) as T;
+    const entries = Object.entries(value as Record<string, unknown>);
+    const keys = entries.map(([k]) => key(k));
+    let changed = keys.some((k, i) => k !== entries[i][0]);
+    const vals = entries.map(([k, v]) => {
+        if (IMAGE_KEY.test(k)) return v;
+        const s = mapStrings(v, f, key, depth - 1);
+        if (s !== v) changed = true;
+        return s;
+    });
+    if (!changed) return value;
+    // Two keys can scrub to one text (two values of one name, or every key when the registry is unreadable): the later
+    // ones are numbered, so no value is lost, and a key the scrub left alone keeps its name.
+    const taken = new Set(keys.filter((k, i) => k === entries[i][0]));
+    const named = keys.map((k, i) => {
+        if (k === entries[i][0]) return k;
+        let name = k;
+        for (let n = 2; taken.has(name); n++) name = `${k} (${n})`;
+        taken.add(name);
+        return name;
+    });
+    // fromEntries defines each key as data, so a "__proto__" key stays a key.
+    return Object.fromEntries(named.map((k, i) => [k, vals[i]])) as T;
 }
 
 /**
