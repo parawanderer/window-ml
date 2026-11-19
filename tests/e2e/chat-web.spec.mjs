@@ -1318,7 +1318,26 @@ test("phone (touch): a long press lifts a pinned row for a drag, and a quick swi
         expect(await pinnedKeys()).toEqual([CHAT, CAPPED, POINTERS]);
         const scrolls = await scroller.evaluate((e) => e.scrollHeight > e.clientHeight);
         if (scrolls) expect(await scroller.evaluate((e) => e.scrollTop)).toBeGreaterThan(top0);
+        // THE LIST MUST BE STILL before the press. A touch on a list the swipe's fling is still moving stops the fling
+        // and starts no press, in the browser as on a phone: measured, every lift came LONG_PRESS_MS (+1 to 3 ms) after
+        // the touch, a press during the fling never lifted at all, and the lift landed 4 of 10 times after the swipe
+        // against 10 of 10 without it. A fixed wait was a guess at when the fling ends; this waits for it, and fails
+        // if the list never comes to rest.
+        const still = () => scroller.evaluate((e) => new Promise((resolve) => {
+            const t0 = performance.now();
+            let top = e.scrollTop, since = t0;
+            const tick = () => {
+                const now = performance.now();
+                if (e.scrollTop !== top) { top = e.scrollTop; since = now; }
+                if (now - since >= 200) resolve(true);
+                else if (now - t0 >= 3000) resolve(false);
+                else requestAnimationFrame(tick);
+            };
+            requestAnimationFrame(tick);
+        }));
+        expect(await still(), "the list came to rest after the swipe").toBe(true);
         await scroller.evaluate((e) => { e.scrollTop = 0; });
+        expect(await still(), "the list is still at the top").toBe(true);
 
         // A LONG PRESS lifts the row, and the drag that follows moves it, not the list.
         const last = await box(POINTERS), first = await box(CHAT);
