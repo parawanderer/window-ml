@@ -12,16 +12,17 @@
 // script flag gave the program. Every row here names a shape the fixtures (tests/fixtures/program-calls/{sed,awk}.json)
 // do not carry, and every section keeps a free control: a checker that refused everything would pass the refusals alone.
 //
-// WHAT THIS FILE CANNOT ROW (named so the next reader does not look for it):
-//   - gawk: the awk manifest declares one flavour (`bsd`, macOS) and every other awk is refused as an implementation the
-//     manifest does not describe (`other` → unknown), so a shape that differs only in gawk's lexer cannot cost anything:
-//     the call asks before the program is read at all. Row "an awk its manifest does not describe" below.
-//   - a backslash-newline inside a keyword (`sys\<newline>tem("id")`, `prin\<newline>t "x" > "out"`): the substring check
-//     accepts it, since the raw text holds neither word. MEASURED on BSD awk 20200816 (this machine's awk, the flavour
-//     the manifest describes): it does not glue the keyword — `sys\<newline>tem(...)` stops at "calling undefined
-//     function tem", and `prin\<newline>t "X"` is an expression statement that prints nothing — so the acceptance is
-//     harmless on the only implementation this manifest describes. The row below holds the flavour refusal that keeps
-//     gawk out; the splice itself is not a row, it is this measurement.
+// WHAT THIS FILE CANNOT ROW AS A FLAVOUR REFUSAL (named so the next reader does not look for it):
+//   - an awk whose file is NAMED awk but is another implementation (a homebrew gawk, say): it is not `other`.
+//     `flavourOf` answers `other` only when the file's name is not the program's; a real file named `awk` outside the
+//     system dirs is left UNDETECTED, and an undetected flavour is described by the core grammar — so its program text
+//     is read, and a shape that differs only in gawk's lexer can cost something. The row below holds `other`; the
+//     undetected case is the next row.
+//   - a backslash-newline inside a keyword (`sys\<newline>tem("id")`, `prin\<newline>t "x" > "out"`): the raw text holds
+//     neither word, and gawk joins the continuation into the keyword. BSD awk 20200816 (this machine's awk, the one
+//     flavour the manifest names) does NOT join it — measured: the spliced `system` stops at "calling undefined function
+//     tem", the spliced `print` is an expression statement that prints nothing — which is why the splice is closed by the
+//     CHECK refusing the continuation, not by that measurement. Row "a line continuation cannot splice" below.
 //   - the awk program's OWN reading of a file through a path the argv names (an operand): that is a `read` the manifest
 //     reports, not an unnamed file.
 import { test } from "node:test";
@@ -143,6 +144,19 @@ test("RED TEAM: a program from a file (-f), and an awk its manifest does not des
     // gawk is `other`: the splice shapes below cannot be reached through it at all, which is what keeps them harmless.
     assertAsks(["awk", `{sys\\\ntem("id")}`, "a.txt"], awkManifest, "other");
     assertAsks(["awk", `{prin\\\nt "x" > "out"}`, "a.txt"], awkManifest, "other");
+});
+
+test("RED TEAM: a line continuation cannot splice a refused word into an awk whose flavour is undetected", T, () => {
+    // A real file NAMED awk outside the system dirs (a homebrew gawk) is undetected, not `other`, so its text is read by
+    // the core grammar — and gawk joins a backslash-newline inside a keyword. The check must close the splice itself; a
+    // measurement of one machine's awk is not what keeps a file write or a command out of a call that describes free.
+    for (const program of [
+        `{sys\\\ntem("id")}`,
+        `{prin\\\nt "x" > "out"}`,
+        `{get\\\nline line < "/etc/passwd"}`,
+        `{get\\\nline array_name < "/etc/passwd"}`,   // getline into an array is a gawk form; the same continuation
+        `{"id" | get\\\nline}`,                       // the | stays visible, so this one is already refused
+    ]) assertAsks(["awk", program, "a.txt"], awkManifest);
 });
 
 test("RED TEAM: the free control — a read-only awk program describes, and its program is not a path", T, () => {
