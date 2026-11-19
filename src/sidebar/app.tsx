@@ -44,6 +44,7 @@ import { exportSession, exportSessionJson, printSession } from "./export/export"
 import { applyTheme, applyFont, applyCodePrefs, applyFocus, initThemeStyle } from "./prefs";
 import { installMermaid } from "../mermaid/mermaid-client";
 import { DEFAULT_CODE_THEME } from "../code-themes";
+import { DetailSessionMenu } from "./session-menu";
 import { IconWarn, IconTimer, IconGear, IconExport, IconVram, IconBench, IconTools, IconBrain, IconClose, IconCollapse, IconMore } from "./icons";
 import { HousekeepingView } from "./housekeeping-log";
 import { Settings, openSettingsAt } from "./settings/settings";
@@ -378,6 +379,7 @@ function App() {
                 <span class="sp" />
                 {v.name === "detail" ? <Hash hash={v.hash} /> : null}
                 {v.name === "detail" ? <ExportMenu hash={v.hash} /> : null}
+                {v.name === "detail" ? <DetailSessionMenu key={v.hash} hash={v.hash} /> : null}
                 {/* Focus mode: read the transcript as a conversation. Only offered on a DETAIL view, because
                     it quiets things that only exist there. Nothing is removed from the session — every
                     disclosure still opens, the export is unchanged, and turning it off brings it all back. */}

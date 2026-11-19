@@ -11,6 +11,7 @@ import { residentNow } from "./resource/panel-facts";
 import { downloadBlob } from "./export/download";
 import { printInFrame } from "./export/print-frame";
 import { toHost } from "./parent-channel";
+import { SESSIONS_PORT } from "../session/session-server";
 
 
 /** A utility-model call through the background's `FETCH_LLM`, tagged as a side task about the session. */
@@ -108,6 +109,7 @@ export const extensionServices: SidebarServices = {
         try { chrome.runtime.sendMessage({ type: "PRICE_CALLS", payload: { calls } }, (resp: { data?: import("../spend/price-book").CallCost[] } | undefined) => resolve(Array.isArray(resp?.data) ? resp.data : null)); }
         catch { resolve(null); }
     }),
+    connectSessions: () => chrome.runtime.connect({ name: SESSIONS_PORT }),
     // Loaded on the click, not with this file: Settings is the whole settings view, and what loads the services
     // (the code-block tools under Node, among others) must not pull it in.
     findSetting: (query) => { void import("./settings/settings").then((m) => { m.searchSettings(query); view.value = { name: "settings" }; }); },

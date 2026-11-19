@@ -32,7 +32,7 @@ import { useReorder } from "./pin-reorder";
 const DOT: Record<SessionStatus, Status> = { running: "pending", waiting: "pending", done: "ok", capped: "err", error: "err", cancelled: "err", interrupted: "err" };
 
 /** What each status says in a list, where the dot alone would not tell a waiting run from a working one. */
-const STATUS_LABEL: Partial<Record<SessionStatus, string>> = { waiting: "waiting on you", capped: "stopped at its step cap", cancelled: "cancelled", interrupted: "interrupted", error: "failed" };
+export const STATUS_LABEL: Partial<Record<SessionStatus, string>> = { waiting: "waiting on you", capped: "stopped at its step cap", cancelled: "cancelled", interrupted: "interrupted", error: "failed" };
 
 /** A session's pending approvals, as the one badge that replaces the `waiting` label. PENDING rather than a bare
  *  count, because "1" beside a title reads as a fact about the run rather than as something waiting on the reader —

@@ -124,6 +124,11 @@ export interface SidebarServices {
      * client does not. A null answer is "cannot price here", never "free".
      */
     priceCalls: ((calls: import("../spend/price-book").CallToPrice[]) => Promise<import("../spend/price-book").CallCost[] | null>) | null;
+    /** Open a port to this browser's session server (`SESSIONS_PORT`), for a view that needs the session index and
+     *  its commands where the surface holds no `ChatStore` (the detail header's per-session menu,
+     *  docs/spec/SESSION_SUMMARY.md). NULL where the surface already has a store of its own (the chat page, a phone)
+     *  or reaches no worker. The caller owns the port and closes it. */
+    connectSessions: (() => import("../session/session-server").PortLike) | null;
     /** Open this client's Settings filtered to a field ("Electricity price"), for a warning that names what to set.
      *  Null where these settings are not this surface's to change. */
     findSetting: ((query: string) => void) | null;
@@ -198,6 +203,7 @@ const UNAVAILABLE: SidebarServices = {
     hostAccess: null,
     sheetTitle: async () => null,
     priceCalls: null,
+    connectSessions: null,
     findSetting: null,
     openAddress: null,
     savePref() {},
