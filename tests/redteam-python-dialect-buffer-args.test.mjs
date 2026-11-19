@@ -135,11 +135,12 @@ const SINK_PARAMS = ["buf", "path", "file", "fname", "fp", "path_or_buf", "path_
 const REASONS = {
     "DataFrame.to_string": "in DIALECT_BUFFER_ARGS; the route rows above",
     "Series.to_string": "in DIALECT_BUFFER_ARGS; the route rows above",
-    "ndarray.any": "out= must be an ndarray (probed below)",
-    "ndarray.max": "out= must be an ndarray (probed below)",
-    "ndarray.mean": "out= must be an ndarray (probed below)",
-    "ndarray.round": "out= must be an ndarray (probed below)",
-    "ndarray.sum": "out= must be an ndarray (probed below)",
+    // A C method's out= is not in DIALECT_OUT_ARGS (that lists module functions, whose checker survives * and **); it
+    // takes an ndarray, so a path raises TypeError, probed below. ndarray.round is no longer lifted (#1993, UNLISTED).
+    "ndarray.any": "out= takes an ndarray, so a path raises TypeError (probed below)",
+    "ndarray.max": "out= takes an ndarray, so a path raises TypeError (probed below)",
+    "ndarray.mean": "out= takes an ndarray, so a path raises TypeError (probed below)",
+    "ndarray.sum": "out= takes an ndarray, so a path raises TypeError (probed below)",
 };
 
 /** Every lifted method of a pandas or numpy kind whose signature has a sink parameter, by name, from the gate's own tables.
