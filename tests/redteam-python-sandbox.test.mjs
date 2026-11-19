@@ -730,7 +730,7 @@ test("P2-bound: a finally that runs after the bound stopped its task is stopped 
 // in child processes, so the hung one is killed rather than left in the suite.
 test("P2-bound property (pin 18): the raising-settrace case is stopped at the finally's first line, and bound off it hangs (child processes)", { skip, timeout: 300000 }, async () => {
     const case4s = AFTER_LATE(`            _m.log.append("finally ran")\n            import time\n            t0 = time.monotonic()\n            while time.monotonic() - t0 < 4: pass`);
-    const [bounded, unbounded] = await Promise.all([childCell(case4s, "host", 10000), childCell(case4s, "wrapper", 10000)]);
+    const [bounded, unbounded] = await Promise.all([childCell(case4s, "host", 45000), childCell(case4s, "wrapper", 10000)]);
     assert.ok(bounded.done && STOPPED.test(bounded.out), `the bound stops the case and refuses the cell: ${bounded.out.slice(-400)}`);
     assert.equal(unbounded.done, false, "the bound off (the wrapper's unbounded spend): the case hangs in its two-line busy loop");
 });
@@ -785,7 +785,7 @@ async def _left():
         raise
 asyncio.ensure_future(_left()).set_name("leftover")
 await asyncio.sleep(0)
-"x"`, "host", 10000);
+"x"`, "host", 45000);
     assert.ok(r.done, `the spend returned: ${r.out.slice(-400)}`);
     assert.match(r.out, /left a sys\.monitoring tool registered: cell-tool \(id 3\)/);
 });
@@ -1026,7 +1026,7 @@ test("P2-bound inside the dialect: a cell's rebind of the wrapper's revoke hook 
     assert.deepEqual(seen["_ml_cell_revoke = None"], { refused: null, unchanged: true }, "a bare assignment runs, in the dialect's copy of the namespace, and binds nothing the wrapper reads");
 });
 
-/** One cell in a CHILD process (lockdown included), given `limitMs` once the cell starts; whether it finished. */
+/** One cell in a CHILD process (lockdown included), given `limitMs` once the runtime is READY; whether it finished. */
 function childCell(code, cancel, limitMs) {
     const script = `
 import { loadPyodide } from ${JSON.stringify(path.join(PYODIDE_DIR, "pyodide.mjs"))};
@@ -1037,7 +1037,7 @@ await py.loadPackage(["numpy", "pillow", "pandas"]);
 const held = await lockdownReadonly(py, {});
 rt.injectInputs(py.globals, null, null, held.harness);
 const script = rt.wrapUserCode(${JSON.stringify(code)}, true, false, ${JSON.stringify(cancel)});
-console.log("START");
+console.log("READY");
 const r = ${JSON.stringify(cancel)} === "host" ? await rt.hostRunScript(held.harness, script, py.globals) : await py.runPythonAsync(script);
 console.log("DONE " + JSON.stringify(r ?? null));
 process.exit(0);
@@ -1046,9 +1046,11 @@ process.exit(0);
         const child = spawn(process.execPath, ["--import", "tsx", "--import", NO_CDN_URL, "--input-type=module", "-e", script], { stdio: ["ignore", "pipe", "pipe"] });
         let out = "";
         let timer = setTimeout(() => child.kill("SIGKILL"), 120000);   // the boot's own bound
+        // READY is printed after the packages and the lockdown, so the load never counts against `limitMs`; a loaded
+        // 2-core runner took ~13 s just to boot a child (#2013).
         child.stdout.on("data", (d) => {
             out += d;
-            if (out.includes("START") && timer) { clearTimeout(timer); timer = null; setTimeout(() => child.kill("SIGKILL"), limitMs); }
+            if (out.includes("READY") && timer) { clearTimeout(timer); timer = null; setTimeout(() => child.kill("SIGKILL"), limitMs); }
         });
         child.on("exit", () => resolve({ done: out.includes("DONE "), out }));
     });
@@ -1059,8 +1061,11 @@ test("P2-bound mutation and the C-function path, in child processes", { skip, ti
     const cLoop = `import asyncio, collections, itertools\nasync def _left():\n    try:\n        await asyncio.sleep(10)\n    except BaseException:\n        collections.deque(itertools.count(), maxlen=0)\nasyncio.ensure_future(_left()).set_name("leftover")\nawait asyncio.sleep(0)\n"x"`;
     // A finally that spins after the bound stopped its task: with a hook CPython took down at the first raise, only the kill ended it.
     const finallySpin = AFTER_LATE("            while True: pass");
-    // The two that must finish run apart from the two that spin for their whole limit, so neither shares the CPU with a spinner.
-    const [bounded, afterLate] = await Promise.all([childCell(spin, "host", 10000), childCell(finallySpin, "host", 10000)]);
+    // The two that must finish run apart from the two that spin for their whole limit, ONE AFTER THE OTHER: a loaded
+    // 2-core runner killed the control 10 s after READY, before its bound could refuse it (#2013). The limit is the
+    // margin for a stop, not for a load, so it is generous, and the finishers never share the CPU with each other.
+    const bounded = await childCell(spin, "host", 45000);
+    const afterLate = await childCell(finallySpin, "host", 45000);
     const [unbounded, inC] = await Promise.all([childCell(spin, "wrapper", 10000), childCell(cLoop, "host", 10000)]);
     assert.ok(bounded.done && STOPPED.test(bounded.out), `control: with the bound the cell finishes, refused: ${bounded.out.slice(-400)}`);
     assert.equal(unbounded.done, false, "the bound off (the wrapper's unbounded spend): the same cell never finishes");
