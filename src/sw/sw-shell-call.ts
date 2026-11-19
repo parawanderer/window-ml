@@ -14,7 +14,7 @@ import type { EffectsData } from "../effects";
 import type { ShCallSpan, ShUnasked } from "../contract";
 import type { TokenStore } from "../pointers/token-pipe";
 import { bytesOf, HostError, hostTakesEnvelope, READ_CHUNK, type HostClient, type HostPutFacts, type HostEnvelope, type HostFacts, type HostStream } from "../shell/host-protocol";
-import { credentialFor, envelopeFor, envelopeMismatch, envelopeText, manifestFor, manifestsFor, parseShRun, planSpawn, protectedChangesText, shFacts, shOut, shOutcome, shResult, wireCodeOf, REVEALS_CAUSE, revealsAllowOf, revealsListed, ShRefused, SH_HEAD_BYTES, SH_HOST_TIMEOUT_MS, SH_LEASE_MS, type ShFacts, type ShOut, type ShResult, type ShRunRequest } from "../shell/sh-call";
+import { credentialFor, envelopeFor, isShipped, factsFlavour, flavourReplan, envelopeMismatch, envelopeText, manifestFor, manifestsFor, parseShRun, planSpawn, protectedChangesText, shFacts, shOut, shOutcome, shResult, wireCodeOf, REVEALS_CAUSE, revealsAllowOf, revealsListed, ShRefused, SH_HEAD_BYTES, SH_HOST_TIMEOUT_MS, SH_LEASE_MS, type ShFacts, type ShOut, type ShResult, type ShRunRequest } from "../shell/sh-call";
 import { OUTPUT_CAP } from "../contract/contract-pointers";
 import { detachedCapMs, detachTask, type TailAnswer, type TaskOutcome } from "./sw-tasks";
 import { toolToken } from "../util";
@@ -29,9 +29,11 @@ import { recordRunLog } from "./sw-run-log";
 import { MAX_DETAIL_STRING } from "../log/housekeeping";
 import { ASKED_TAIL_CHARS, PEEK_DEFAULT_BYTES, peekBytesFor, peekDetail } from "../shell/sh-tail";
 import { forModel } from "./sw-scrub";
+import { registryReady, registrySubsNow } from "./sw-secret-registry";
+import { heldTail, margin, scrubRange, type RegistrySub } from "../secret-registry";
 import { holdOutput, shellHost, ShellUnavailable, withShell, type ShellHost } from "./sw-shell";
 import { manifestsReady, storedManifests } from "./sw-manifests";
-import { revealingName, type ProgramManifest } from "../shell/program-manifest";
+import { flavourOf, revealingName, type ProgramManifest } from "../shell/program-manifest";
 import { operandArgs, operandChanges, type RanCall } from "../shell/manifest-proposal";
 
 /** The step a call is made from, as the worker knows it: never anything the script said. */
@@ -314,7 +316,9 @@ async function runCall(ctx: ShCallContext, req: ShRunRequest, started: (h: Shell
             const revealsAllow = await revealsAllowList();
             // No session mounts an uploads folder yet (FILE_ATTACHMENTS.md H16), so no call passes `files` and `/files`
             // stays the browser sandbox's; once one does, `hostMapsFiles(h.hello)` gates it.
-            const plan = planSpawn(req, { cwd, roots, stored, tilde: h.hello.tilde === true });
+            const session = { cwd, roots, stored, tilde: h.hello.tilde === true };
+            const place = { roots, stored, platform: h.hello.platform, revealsAllow };
+            let plan = planSpawn(req, session);
             if (plan.filesRefusal) return refuse("Refused", plan.filesRefusal);
             // A credential the host injects, only when its hello lists the provider (an older host would ignore it).
             const credential = await credentialFor(plan, h);
@@ -325,9 +329,27 @@ async function runCall(ctx: ShCallContext, req: ShRunRequest, started: (h: Shell
             let done;
             let asked: HostEnvelope | undefined;
             for (let attempt = 0; ; attempt++) {
-                const id = facts.id;
+                let id = facts.id;
                 const discard = () => h.client.discard(id).catch(() => { /* expired or gone: nothing to start either way */ });
-                try { f = shFacts(facts, await versionOf(ctx, h, facts, manifestsFor(stored, roots).list, revealsAllow), { roots, stored, revealsAllow }); }
+                try {
+                    const version = await versionOf(ctx, h, facts, manifestsFor(stored, roots).list, revealsAllow);
+                    // The flavour the facts show may add hardening or a path to resolve that the first plan, made before
+                    // any facts, could not know: discard, spawn the flavour's plan, and describe ITS facts, from the same
+                    // program file only (PROGRAM_MANIFEST.md, "Flavours": where hardening is inserted).
+                    const again = attempt === 0 ? flavourReplan(req, session, plan, factsFlavour(facts, version, place)) : null;
+                    if (again) {
+                        await discard();
+                        const was = facts.program.fingerprint;
+                        plan = again;
+                        facts = await spawn();
+                        id = facts.id;
+                        if (!was || facts.program.fingerprint !== was) {
+                            await discard();
+                            return refuse("Denied", `ml.sh: ${facts.program.path} changed while its flavour was read: not run`);
+                        }
+                    }
+                    f = shFacts(facts, version, place);
+                }
                 catch (e) { await discard(); throw e; }
                 const v = await decide(ctx, f);
                 if ("refused" in v) { await discard(); return refuse("Denied", v.refused); }
@@ -470,7 +492,11 @@ export async function revealsAllowList(): Promise<readonly string[]> {
  */
 export async function versionOf(ctx: Pick<ShCallContext, "runId" | "seq" | "signal">, h: ShellHost, facts: HostFacts, manifests?: readonly ProgramManifest[], revealsAllow: readonly string[] = []): Promise<string | null> {
     const m = manifestFor(facts.argv, undefined, manifests);
-    if (!m?.version || m.version.range === "*" || !m.version.args.length) return null;
+    // A flavoured manifest reads its gnu probe, and only when nothing cheaper told the flavour (an in-root program, a
+    // file of another name, the macOS system program: flavourOf); any other manifest reads its version range's.
+    const spec = m?.flavours ? (flavourOf(m, facts.program, h.hello.platform, undefined, isShipped(m)).probe ? m.flavours.gnu!.probe : null)
+        : m?.version && m.version.range !== "*" && m.version.args.length ? m.version : null;
+    if (!m || !spec) return null;
     const fp = facts.program.fingerprint;
     const log = (reason: string, version?: string | null) => recordRunLog(ctx.runId, { subsystem: "shell", kind: "version-probe", reason, detail: { program: facts.program.path, ...(version !== undefined ? { version: version ?? "unread" } : {}) } });
     // Refused BEFORE the cache: a hard link inside a root to a probed program shares its fingerprint, and must not
@@ -481,7 +507,7 @@ export async function versionOf(ctx: Pick<ShCallContext, "runId" | "seq" | "sign
     if (versions.has(fp)) return versions.get(fp) ?? null;
     // Nothing starts after a cancel, the probe included (finding B).
     if (ctx.signal.aborted) return null;
-    const probe = await h.client.spawn({ argv: [facts.program.path, ...m.version.args], cwd: facts.cwd.path, mode: "host", timeoutMs: PROBE_TIMEOUT_MS, owner: ownerOf(ctx) });
+    const probe = await h.client.spawn({ argv: [facts.program.path, ...spec.args], cwd: facts.cwd.path, mode: "host", timeoutMs: PROBE_TIMEOUT_MS, owner: ownerOf(ctx) });
     const drop = () => h.client.discard(probe.id).catch(() => { /* gone */ });
     // The same file the call resolved, under the same enforcer: otherwise its answer is not this program's.
     if (probe.program.fingerprint !== fp || probe.placement !== "host-sandbox") { await drop(); log("changed"); return null; }
@@ -505,7 +531,7 @@ export async function versionOf(ctx: Pick<ShCallContext, "runId" | "seq" | "sign
             if (s === done.stdout && done.code === 0 && s.size) {
                 const r = await h.client.read(s.ptr, 0, PROBE_BYTES);
                 const bytes = bytesOf(r.data);
-                if (!binaryKind(bytes)) version = new RegExp(m.version.pattern, "m").exec(new TextDecoder().decode(bytes))?.[1] ?? null;
+                if (!binaryKind(bytes)) version = new RegExp(spec.pattern, "m").exec(new TextDecoder().decode(bytes))?.[1] ?? null;
             }
             await h.client.release(s.ptr).catch(() => { /* gone with the session */ });
         }
@@ -528,7 +554,7 @@ async function keep(ctx: ShCallContext, h: ShellHost, s: HostStream, f: ShFacts)
     const head = s.size ? bytesOf((await h.client.read(s.ptr, 0, Math.min(SH_HEAD_BYTES, READ_CHUNK))).data) : new Uint8Array();
     // Its own seed, so it never collides with the loop's per-step ids.
     const id = toolToken(`${ctx.runId}:sh:${crypto.randomUUID()}`, ctx.seq);
-    const out = shOut(s, `@tool:${id}`, head);
+    const out = await scrubbedHead(shOut(s, `@tool:${id}`, head), head, s.size);
     ctx.tokens.note({ id, tool: "ml.sh", kind: "text", out: out.text, in: JSON.stringify(f.argv), t: Date.now(), step: ctx.local.step, seq: ctx.local.seq });
     if (head.length >= s.size) { await h.client.release(s.ptr).catch(() => { /* gone */ }); return out; }
     held.set(id, { runId: ctx.runId, ptr: s.ptr, size: s.size, client: h.client });
@@ -537,6 +563,47 @@ async function keep(ctx: ShCallContext, h: ShellHost, s: HostStream, f: ShFacts)
     const mine = [...held].filter(([, x]) => x.runId === ctx.runId);
     for (const [old] of mine.slice(0, Math.max(0, mine.length - SH_HELD_PER_RUN))) releaseOne(old);
     return out;
+}
+
+/**
+ * A stream's head as it crosses into the script: the config's and the registered secrets taken out (`forModel`), and,
+ * when the head is cut, any tail that begins a registered value held back, so the script never holds a secret or the
+ * front of one. The run's token store keeps this text, never the raw head. A binary head is a note, with nothing to take.
+ * @param out the stream as `shOut` shaped it
+ * @param head the head's bytes
+ * @param size the stream's whole size
+ * @returns the stream with its text scrubbed
+ */
+async function scrubbedHead(out: ShOut, head: Uint8Array, size: number): Promise<ShOut> {
+    if (out.error !== undefined || !head.length || binaryKind(head)) return out;
+    const whole = head.length >= size;
+    let text = (await forModel(new TextDecoder("utf-8", { fatal: false }).decode(head))).text;
+    if (!whole) {
+        text = text.slice(0, text.length - heldTail(text, registrySubsNow()));
+        text = `${text}… [first ${head.length} of ${size} bytes]`;
+    }
+    return { ...out, text };
+}
+
+/**
+ * A byte string as one character per byte, so a byte range maps to a character range exactly.
+ * @param b the bytes
+ * @returns the latin-1 string
+ */
+function latin1(b: Uint8Array): string {
+    let s = "";
+    for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode(...b.subarray(i, i + 0x8000));
+    return s;
+}
+
+/**
+ * The registry's substitutions as latin-1 strings of their UTF-8 bytes, for scrubbing bytes through {@link latin1}.
+ * @param subs the substitutions
+ * @returns the same, byte for byte
+ */
+function bytewise(subs: readonly RegistrySub[]): RegistrySub[] {
+    const enc = new TextEncoder();
+    return subs.map((x) => ({ ...x, find: latin1(enc.encode(x.find)), put: latin1(enc.encode(x.put)) }));
 }
 
 /** Release one held output (the host deletes it). */
@@ -584,10 +651,38 @@ export async function shRead(ctx: ShCallContext, args: readonly unknown[]): Prom
     try {
         const h = await shellHost();
         if (h.client !== x.client) { forgetClient(x.client); return refuse("Refused", `${ref}: the process host restarted, and the output went with it`); }
-        const r = await h.client.read(x.ptr, offset, Math.min(length, SH_READ_MAX));
-        const bytes = bytesOf(r.data);
-        const base = { offset: r.offset, length: bytes.length, size: r.size, eof: r.eof };
-        return { ok: binaryKind(bytes) ? { ...base, bytes: r.data } : { ...base, text: new TextDecoder("utf-8", { fatal: false }).decode(bytes) } };
+        await registryReady();
+        const subs = registrySubsNow();
+        // Widened by the longest registered form on each side, so a value the range cuts is still seen whole and
+        // replaced where it overlaps (SECRET_HANDLES.md, "A cut never lets a prefix through"); the range shrinks to keep
+        // the widened read inside the host's cap.
+        const m = margin(subs), want = Math.min(length, SH_READ_MAX - 2 * m);
+        const lo = Math.max(0, offset - m);
+        const r = await h.client.read(x.ptr, lo, want + (offset - lo) + m);
+        const win = bytesOf(r.data);
+        const bytes = win.subarray(offset - lo, Math.min(win.length, offset - lo + want));
+        const eof = r.eof && offset - lo + want >= win.length;
+        const base = { offset, length: bytes.length, size: r.size, eof };
+        if (binaryKind(bytes)) {
+            if (!m) return { ok: { ...base, bytes: r.data } };
+            const sc = scrubRange(latin1(win), offset - lo, offset - lo + bytes.length, bytewise(subs));
+            const n = Object.values(sc.counts).reduce((a, b) => a + b, 0);
+            const out = Uint8Array.from(sc.text, (c) => c.charCodeAt(0));
+            return { ok: { ...base, bytes: { $bytes: base64Of(out) }, ...(n ? { scrubbed: n } : {}) } };
+        }
+        const dec = (b: Uint8Array): string => new TextDecoder("utf-8", { fatal: false }).decode(b);
+        // Both ends are taken to a character boundary of the ONE decoded window (the start back, the end forward): a
+        // range that starts inside a multi-byte character would otherwise count its continuation bytes as replacement
+        // characters and end that many characters past the range, in the margin, where a form cut by the window's edge
+        // is never matched.
+        const cont = (i: number): boolean => i < win.length && (win[i] & 0xc0) === 0x80;
+        let a = offset - lo, b = a + bytes.length;
+        while (a > 0 && cont(a)) a--;
+        while (cont(b)) b++;
+        const from = dec(win.subarray(0, a)).length, to = dec(win.subarray(0, b)).length;
+        const sc = scrubRange(dec(win), from, to, subs);
+        const n = Object.values(sc.counts).reduce((a, b) => a + b, 0);
+        return { ok: { ...base, text: (await forModel(sc.text)).text, ...(n ? { scrubbed: n } : {}) } };
     } catch (e) { return failure(e); }
 }
 

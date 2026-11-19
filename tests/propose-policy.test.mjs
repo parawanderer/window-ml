@@ -67,6 +67,14 @@ async function workerRun(calls, { answer = () => true } = {}) {
     return { bg, cards, results, fetched, steps };
 }
 
+// --- which consumers a proposal may name ---
+
+test("a proposal for consumer setting is refused until propose_policy gains setting rows (MODEL_SETTINGS.md, open question 10)", () => {
+    const r = PP.checkProposal({ consumer: "setting", effect: "allow", when: '(c) => c.key === "theme"', label: "Theme follows the model" });
+    assert.match(r.error, /"consumer" must be "fetch" or "act"/);
+    assert.ok(!("proposal" in r));
+});
+
 // --- the measure: what a proposal matches, from the run's own calls and a probe ---
 
 test("checkProposal refuses what is not a runnable fetch policy, and keeps the strings it checked", () => {

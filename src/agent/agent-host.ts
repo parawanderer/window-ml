@@ -64,6 +64,10 @@ export interface RunAgentHostDeps {
     delegateTool(name: string, args: Record<string, unknown>, onStream?: (text: string, ts?: number) => void, call?: { seq: number; step: number; person?: boolean }): Promise<ToolRunResult>;
     /** A step's result as the model may read it (agent-loop.ts `forModel`; sw-scrub.ts takes the config's secrets out). */
     forModel?: AgentLoopDeps["forModel"];
+    /** The same crossing for a live output's view and the loop's appended lines (agent-loop.ts `scrubText`). */
+    scrubText?: AgentLoopDeps["scrubText"];
+    /** The same crossing for the Out render and a pointer's fuller capture (agent-loop.ts `scrubStored`). */
+    scrubStored?: AgentLoopDeps["scrubStored"];
     // Self-introspection (chat_metadata): the run's model + its context window + capability list, from the
     // SW's caches. The loop supplies the token/message counts; this only adds the model facts. Optional.
     chatMeta?(): Promise<{ model: string | null; contextWindow: number | null; capabilities: string[] | null } | null>;
@@ -110,6 +114,10 @@ export interface RunAgentHostDeps {
      *  the page resolves for it: a `deny` refuses it without a card, an `allow` skips the card, an `ask` shows it. Undefined when
      *  none decides. */
     actPolicy?(tool: string, args: Record<string, unknown>): Promise<{ decision: "allow" | "deny" | "ask"; label: string; text?: string } | undefined>;
+    /** What the worker says of a `change_setting` call before any card (docs/spec/MODEL_SETTINGS.md): `refused` when the
+     *  key or value is refused, the key was declined earlier in the run, or a `deny` policy covers it; `allow` (the policy's
+     *  label) when an `allow` frees an ordinary key's change; undefined when the person is asked. */
+    settingPolicy?(args: Record<string, unknown>): Promise<{ refused: string } | { allow: string } | undefined>;
     /** The model's text when the run is held on a page a `deny` policy denies (sw/nav-arrival.ts): every call is refused
      *  with it, without a card; undefined when the run may act on its page. */
     arrivalRefused?(): string | undefined;
@@ -201,6 +209,8 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         runTool: (name, args, onStream, call) => deps.delegateTool(name, args, onStream, call),
         tryReadonly: deps.tryReadonly,
         forModel: deps.forModel,
+        scrubText: deps.scrubText,
+        scrubStored: deps.scrubStored,
         renderFor: deps.renderFor,
         precheck: deps.precheck,
         approve: deps.approve,
@@ -224,6 +234,13 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
                 return (deps.actPolicy?.(name, args) ?? Promise.resolve(undefined)).then((pol) => {
                     if (pol?.decision === "deny") return { approval: "denied" as const, refused: pol.text ?? `Refused by the policy "${pol.label}", without asking: the ${name} was not made. Do not retry it; the person set this rule.` };
                     return pol?.decision === "allow" ? { approval: "consented" as const, reused: [{ kind: "policy" as const, detail: pol.label }] } : null;
+                });
+            }
+            // change_setting: the `setting` consumer. Refused without a card, freed by an `allow` (ordinary keys only), or asked.
+            if (name === "change_setting") {
+                return (deps.settingPolicy?.(args) ?? Promise.resolve(undefined)).then((v) => {
+                    if (v && "refused" in v) return { approval: "denied" as const, refused: v.refused };
+                    return v ? { approval: "consented" as const, reused: [{ kind: "policy" as const, detail: v.allow }] } : null;
                 });
             }
             // navigate: the interactive mode of a fetch as you (docs/spec/POLICIES.md, "Navigate is a fetch"). A POLICY first,

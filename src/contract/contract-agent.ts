@@ -282,10 +282,12 @@ export interface ApprovalRequest {
  *  `source` records WHO decided — "user" (a browser UI surface), "external"
  *  (the __mlApprovals IPC channel: an orchestrator / policy driver) or "policy" (a
  *  policy that changed while the card was showing, sw-policies.ts; only the worker
- *  sets it) — so a denial reads back accurately to the model. Absent → treated as "user". */
+ *  sets it) or "worker" (the worker closed the card because what it asked about changed elsewhere: a setting
+ *  `change_setting` asked to change; always a denial) — so a denial reads back accurately to the model. Absent →
+ *  treated as "user". */
 export type ApprovalDecision =
     | boolean
-    | { approved: boolean; feedback?: string; arguments?: Record<string, unknown>; source?: "user" | "external" | "policy";
+    | { approved: boolean; feedback?: string; arguments?: Record<string, unknown>; source?: "user" | "external" | "policy" | "worker";
         /** button #3: ALSO persist this call's statically-known egress grants (its `ml.fetch` literal URLs)
          *  for the rest of the session, so a later call to the same URL auto-approves. Only ever set on a
          *  positive decision; the grants themselves are re-derived background-side (never trusted from here). */

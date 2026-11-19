@@ -11,7 +11,7 @@
 
 import { hostTakesEnvelope, type HostFacts } from "../shell/host-protocol";
 import { callsOfDraft, draftArgvs, draftNote, draftRequest, parseDraft, type DraftReading } from "../shell/manifest-proposal";
-import { envelopeFor, envelopeMismatch, manifestsFor, planSpawn, shFacts, SHIPPED_MANIFESTS } from "../shell/sh-call";
+import { envelopeFor, envelopeMismatch, factsFlavour, flavourReplan, manifestsFor, planSpawn, shFacts, SHIPPED_MANIFESTS } from "../shell/sh-call";
 import { manifestKey, storeRefusal, type ManifestOrigin, type ManifestRequest, type StoredManifest } from "../shell/stored-manifests";
 import { addManifest, manifestsReady, markEvidence, storedManifests } from "./sw-manifests";
 import { judgeCall } from "./sw-policies";
@@ -169,10 +169,24 @@ export async function evidenceRun(step: ProposalStep, entry: StoredManifest): Pr
             for (const call of callsOfDraft(entry, ranCalls(step.runId), roots)) {
                 if (call.env.set.length) continue;
                 if (step.signal.aborted) { log("cancelled"); return "The run was cancelled before its evidence run finished: it describes calls only under the sandbox."; }
-                const plan = planSpawn({ argv: call.argv, cwd: call.cwd.path, env: {} }, { cwd: call.cwd.path, roots, stored: [entry] });
-                const facts = await h.client.spawn({ ...plan.spawn, timeoutMs: PROBE_TIMEOUT_MS, owner: { run: step.runId, seq: step.seq } });
+                const req = { argv: call.argv, cwd: call.cwd.path, env: {} };
+                const session = { cwd: call.cwd.path, roots, stored: [entry] };
+                const place = { roots, stored: [entry], platform: h.hello.platform, revealsAllow };
+                let plan = planSpawn(req, session);
+                const spawn = () => h.client.spawn({ ...plan.spawn, timeoutMs: PROBE_TIMEOUT_MS, owner: { run: step.runId, seq: step.seq } });
+                let facts = await spawn();
                 const drop = () => h.client.discard(facts.id).catch(() => { /* gone */ });
-                const f = shFacts(facts, await versionOf(step, h, facts, list, revealsAllow), { roots, stored: [entry], revealsAllow });
+                const version = await versionOf(step, h, facts, list, revealsAllow);
+                // The draft's flavour hardening runs here as in a call (sw-shell-call.ts): what is judged is what runs.
+                const again = flavourReplan(req, session, plan, factsFlavour(facts, version, place));
+                if (again) {
+                    const was = facts.program.fingerprint;
+                    await drop();
+                    plan = again;
+                    facts = await spawn();
+                    if (!was || facts.program.fingerprint !== was) { await drop(); continue; }
+                }
+                const f = shFacts(facts, version, place);
                 // Only what the entry makes free is re-run: the evidence run does nothing the approved entry would not allow.
                 if (!f.described || f.placement !== "host-sandbox" || judgeCall(step.runId, "sh", f as never, f.placement).decision !== "allow") { await drop(); continue; }
                 const asked = envelopeFor(f);

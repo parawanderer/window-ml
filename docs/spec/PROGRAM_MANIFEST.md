@@ -128,6 +128,89 @@ SHIPPED manifest's probe entry is used, never arguments from a script. The resul
 the card and written to the log. A sweep of every manifest's program at configure time was rejected: it runs binaries the
 person may never call.
 
+## Flavours: which implementation runs (BSD and GNU, ruled 2026-11-17)
+
+A flag can mean one thing to GNU and another to BSD, or exist in only one of them (GNU `sed -i` takes an attached
+suffix, BSD `sed -i` a separate one; `ln -T` is GNU's alone), and the order of options and operands is the PROGRAM's
+choice, not the platform's (macOS `grep` and `sort` permute, macOS `sed` and `ls` stop at the first operand). A manifest
+that declares `flavours` describes each implementation it can tell apart; one without them is read exactly as before,
+whatever the facts say (the upgrade: every vector under `tests/fixtures/program-calls/` describes identically under
+every flavour, `tests/program-manifest.test.mjs`).
+
+**Which flavour runs** (`flavourOf`, `src/shell/program-manifest.ts`; pure, read from the host's facts), in this order:
+
+1. A program inside a workspace root is never flavoured: it is undetected and never probed. (Main already refuses a
+   shipped manifest for such a program, `shFacts`, ruled 2026-10-22; only the workspace's own stored manifest can
+   describe one, and it then reads the core alone.)
+2. A program whose resolved file has another name than the manifest's `program` (busybox, mawk behind an alternatives
+   link, `gsed` behind Homebrew's `gnubin`, a multicall binary) is `other`: there is positive evidence of an
+   implementation nobody described, so nothing of the manifest applies, not even the core, and the card warns.
+3. On `hello.platform` `macos`, a program whose resolved file is in `/bin`, `/usr/bin`, `/sbin` or `/usr/sbin` (the
+   sealed system volume) is `bsd` when the manifest declares it. Nothing runs, so this is the one detection that also holds on the plain host.
+4. For a SHIPPED manifest only, a `gnu` flavour is detected by its probe: an ordinary call of `flavours.gnu.probe.args`, judged and run exactly as
+   the version probe above is (under the OS sandbox only, never for an in-root program, cached by fingerprint), whose
+   stdout on exit 0 matches `pattern` with group 1 inside `range`. The pattern must start with `^` (the validator
+   refuses one that does not), and it is matched per line (`m`), so busybox's "This is not GNU sed" fails `^sed \(GNU
+   sed\)`. What it is matched against is the version probe's bound: the first 4 KiB of stdout (`PROBE_BYTES`), read only
+   on exit 0 within 2 s and only when it is not binary. On the plain host the probe is never raised, so a GNU-only flag
+   is never free there. A stored or proposed manifest's probe is never run (ruled 2026-11-18, red-team #1963): its
+   author chose both the probe's arguments and the program, so what it prints is the author's claim, not a measurement
+   of the program. Filtering the output instead (dropping a line that equals or contains a probe argument) does not
+   hold: `printf '\164ool (GNU tool) 4.9\n'` prints `tool (GNU tool) 4.9` from octal escapes, a line no argument
+   contains (`tests/program-manifest.test.mjs`). Such a manifest's flavour comes only from the facts above, which its
+   author does not choose; `flavours` stays allowed in it.
+5. Anything else is undetected.
+
+**The shape.** At the top level, `flavours: { gnu: { probe: { args, pattern, range } }, bsd: { system: "macos" } }`
+(either or both), only with `version.range` `"*"`: the command's own `flags` are the CORE, flags with the same arity
+and effects in every flavour that accepts them, with the union of the effects where they differ. A command may add
+`flavour: { gnu: {…}, bsd: {…} }`, one overlay per declared flavour:
+
+- `flags`: flags only that flavour accepts with that meaning. Overlays only ADD: a flag in both the core and an overlay
+  is a validator error, so no rule decides which entry wins.
+- `argOrder`: `"permute"` reads an argument starting with `-` after an operand as a flag; `"stop"` reads it, and
+  everything after the first operand, `--` included, as an operand (BSD getopt). Absent, the core's `optionsFirst`.
+  Under `stop`, an argument after the first operand that spells a declared flag (core or overlay; `--name`,
+  `--name=v`, a whole `-name`, or any letter of a `-abc` cluster) whose meaning is more than a read (an effect other
+  than `read`, a written path value, a directory value, a runner, an echo, a walk, a `pathsFrom`) makes the call ask
+  (`stopShadow`): read as a file name it would drop the write the manifest declares for it, so a misread argument order
+  would run a writer free. This holds for every manifest, and both describers apply it: window-ml and window-ml-host's
+  `manifest.rs` agree that `tool f.txt --write-all` is not described. A cluster asks when any of its letters is such a
+  flag, declared or not the rest (`-xw` with `-w` writing). After an operand, `--` is itself a file name under `stop`,
+  so `tool f.txt -- --write-all` asks too; a `--` the command honours, given BEFORE any operand, ends the options for
+  every implementation, so what follows it stays an operand (`tool -- f.txt --write-all` reads two files). A read-only
+  flag after an operand stays a file name. The
+  approval card of a flavoured draft states each overlay's `argOrder` in words, per flavour and subcommand, whatever is
+  detected (`argOrderText`). A subcommand's name is the manifest's own text, so the card quotes it only when it is a
+  plain word (`^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$`); any other name, and what lies beneath it, is counted ("2
+  subcommands whose name is not a plain word, not described here"), so a name cannot write a sentence the person reads
+  as the card's, or break its line (red-team #1963). At most six readings are listed, then "and N more".
+- `harden`: that flavour's hardening, after the core's (GNU `--sandbox`; `-safe` passed to gawk would parse as other
+  options, so hardening cannot be shared). Each argument is a flag of the core or of that overlay.
+
+A detected flavour reads the core and its overlay; undetected reads the core with `optionsFirst` forced; `other` reads
+nothing. No two overlays are ever merged, so no read-only reading is the union of two flavours'.
+
+**Where hardening is inserted.** `planSpawn` plans the call before any facts exist, so it hardens with the core alone.
+Once the facts arrive the worker reads the version probe and the flavour (`factsFlavour`); when that flavour's plan
+sends something else (its hardening, or an overlay flag whose value is a path the host must resolve),
+`flavourReplan` returns it, the worker DISCARDS the first call, spawns the new plan, requires the same program file
+(fingerprint; a file that changed in between is refused, not run) and describes the NEW facts. So the argv the card
+shows (`facts.argv`) is the hardened one and is what starts (`tests/ml-sh.test.mjs`, condition b). A draft's evidence
+run does the same (`sw-manifest-proposal.ts`).
+
+**The facts and the card.** `ShFacts.flavour` is `{ name, how }` (`name` null when undetected), or null for a manifest
+without flavours; the card's Program line adds `how` ("/usr/bin/sed, BSD (the macOS system program)").
+
+**The process host.** window-ml-host's `manifest.rs` refuses unknown fields, so it reads no manifest that carries
+`flavours` until its reader is ported (a PR labelled `@host-compat`, with its window-ml-host twin). No shipped manifest
+declares flavours in this change; a vector that does is copied to the host only after the host's port has merged.
+
+**Considered and not done.** A metadata-only walk: `du` and `ls -R` read only names and sizes beneath a directory, so a
+secret file beneath it is not read, and they could skip the walk's secret check (`du -sh .` in a repository with a
+`.env` asks today). Kept strict (ruled 2026-11-17, Q3): every walking reader takes the same check. The per-program
+opt-in for programs that reveal other processes (`ps`, `lsof`, `top`, ruling 31) is its own change.
+
 ## Trust
 
 As for library manifests: shipped with the extension or installed by the person; never from a page, never from the
@@ -290,8 +373,14 @@ rejects unknown fields, so a manifest with one is for this extension only.
 
 - **A lone `-` for `head`, `tail` and `wc` is judged as a path on every platform** (2026-11-18). macOS opens a file named
   `-`; GNU reads stdin. Claiming the path is the stricter reading: on GNU a call such as `head -` asks or names a path
-  that does not exist, where reading stdin needs neither. It stays so until a manifest can tell the implementations
-  apart, when the GNU reading moves into that implementation's own description.
+  that does not exist, where reading stdin needs neither. Flavours (above) can now tell the implementations apart; it
+  stays so until `head`, `tail` and `wc` declare them, when the GNU reading moves into the `gnu` overlay.
+- **A stored or proposed manifest's version probe is still run** (2026-11-18). Its `version.args` are spawned as the
+  version probe for a ranged manifest, as a shipped one's are (the probe rules above: sandbox only, never in-root,
+  judged), so its author chooses the argv and can steer what it prints into the range, which is the reason the
+  `gnu` probe is shipped-only. The sentence under "When the version is learned" that only a shipped manifest's probe
+  entry is used holds for flavours, not yet for `version`. The follow-up gives `version` the same rule: a stored
+  manifest's version comes from its pin (B4) and its probe is never run.
 
 - **A copy of a revealing program under another name is not recognised** (2026-11-18). `REVEALING_PROGRAMS` matches the
   manifest's `program` and the realpath's basename, so a symlink is caught, but a copy or a hard link (`cp /bin/ps

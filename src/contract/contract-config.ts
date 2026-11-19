@@ -545,7 +545,7 @@ const layout = {
     advanced: { label: "Advanced", sections: {
         servertools: "Server-side tools", javascript: "JavaScript", pointers: "Output pointers", python: "Sandboxed Python",
         fetch: "Fetching (fetch_url / ml.fetch)", focus: "Where you are (chat_metadata)", shell: "Programs (ml.sh)",
-        manifests: "Program manifests (ml.sh)", libraries: "Python libraries (read-only dialect)",
+        manifests: "Program manifests (ml.sh)", secrets: "Secrets", libraries: "Python libraries (read-only dialect)",
         introspection: "The agent reading its own run (ml.current)", protostream: "Streaming wire format",
         shadow: "Shadow DOM", cdp: "Debugger-based actions and user scripts" } },
     permissions: { label: "Permissions", sections: {

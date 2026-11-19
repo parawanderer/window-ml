@@ -1126,6 +1126,47 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
 - **The UI batch, #1971 (small-fixes), went to a janitor**, not ruling 13: it changes placement logic, narrows one
   end-to-end assertion and adds an eye toggle on secret fields. Janitor-2 found the toggle stayed on when the
   saved key changed from outside; repaired, the head 8b07ea57 is with janitor-2.
+- **Shane's ruling 50 (2026-11-18, confirmed in the coordinator's session): what the Session summary page holds.**
+  The page opens from the "..." menu, the home tab is the summary, and on a phone it is the same page as a
+  dismissable overlay; hovering gives a short form. Summary: title and hash, state (running, paused, waiting on an
+  ask, idle), kernel loaded and the time left before a pause or a kill, last message time, context size against
+  the model's window and history size, agent or not, model and runtime, current page, capabilities, start time,
+  open asks, tokens and cost so far, the fork's parent. Resources: the session's slice of the resource panel.
+  Files: count, bytes against the quota (ruling 48), what the archive leaves out by size (ruling 47), the list.
+  Access: the policies in effect, the host attached and its roots, the programs listed to show processes, hide
+  and show entries (ruling 34), secret handles by name only, whether the page's origin is approved, Python
+  network open or closed, installed Python packages. The list is open: Shane adds and cuts as things come up.
+  Coordinator's calls under it: small-fixes builds the shell, the summary tab and the resources tab (Chat Page is
+  halted); files-host the files tab after its scrub chain; the access tab ships alone first (PR B); session-store
+  stays halted, so the first version draws only what a store answers today and a field with no source draws
+  nothing. Order: a spec, docs/spec/SESSION_SUMMARY.md, from small-fixes with a have or needs-new-data mark per
+  field (the coordinator reviews it); PR B; the shell; resources; files; new fields when session-store resumes.
+- **One describer for an `ml.sh` call: open with Shane, investigation approved (2026-11-18).** The manifest lane
+  proposes replacing the extension's describer and the host's with the host's Rust compiled to WebAssembly. Shane:
+  undecided, the lane may investigate; two copies of one thing drift, and `riskyRegex` (the extension's and the
+  Python fork's port) is a second case. Approved: a spike after sed and awk land that runs the Rust describer
+  over the shared vectors and lists every difference, changing nothing shipped. It must answer what a call does
+  before the module has loaded after a worker wake, the pin and a loud absence, what replaces the cross-check two
+  implementations give, the size, and whether the approach serves `riskyRegex`.
+- **sed and awk manifests (coordinator's calls).** awk declares only the BSD flavour, so a Linux awk (gawk, mawk,
+  busybox) asks; flavours for those are a named follow-up. The host gets a lockstep PR from the lane's own host
+  clone (the script key, both sed scanners, the awk check, the vector pin); both heads come to the coordinator
+  together and the host's merges first. The lane's account: the two sed delimiter scanners agree on 1,735
+  measured regexes, and GNU sed truncates a `w` file at parse time, so a `w` command is never free.
+- **Merged 2026-11-18, each verified:** #1970 (34534127, the host gate's repair), #1934 (1c1f0507, the packages
+  platform scan), #1971 (f3ef4728, the UI batch), #1980 (a2d24bdb, a leaked timer in the orphan-cleanup test),
+  #1981 (ee67a765, the root README's figures at November 18).
+- **In review, 2026-11-18.** #1975 (access tab, PR A): janitor-3 found no fallback when a registered order throws
+  or contradicts itself; the coordinator's call, now in the spec: strictness for that pair, every removal in the
+  view classed `widens`, the read always answers; repaired at d7a960dc. #1976 (the kernel-death listener, ruling
+  26): janitor-2 and e3 both found the crash line carries the worker's error text unbounded; packages repairs, and
+  adds the row #1934 left (an install approved with a signal already aborted). #1977 (ruling 31's gate): the three
+  revealing programs are matched by manifest name and by the resolved file's name, a draft gets the marker forced
+  and a stored manifest without it is refused; `pgrep`, `htop` or a renamed copy are marked only by their author
+  (a stated limit); the version probe of a revealing program is judged with the marker; refusing a stored probe's
+  arguments outright is a follow-up. #1963 (manifest flavours): subcommand names are shown only when they are
+  plain words, others are counted, not quoted (accepted); e3's rows are green at 02c6942d. #1948 (the scrub) is
+  back with janitor-2 at 91e24caa; #1979 (the test-timings false positive) is with janitor-3.
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
