@@ -63,7 +63,8 @@ export interface CodeRevision {
     ref: string;
     /** Which tool made the earlier call. */
     tool: string;
-    /** The step seq to scroll to, when the earlier call still has one. */
+    /** The revised step's stored seq (the one a stored step carries, multi-turn offset included), when the
+     *  earlier call still has one. An export written before this held the turn-local value: resolve by `ref`. */
     seq?: number;
     /** The model's own name for that output, if it labelled it. */
     label?: string;
