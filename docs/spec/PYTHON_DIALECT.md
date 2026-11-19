@@ -321,7 +321,7 @@ survey could not do and which answers the manifest spec's "granularity of a refu
    namespace holds data and handles, never capabilities.
 2. **What the injected names mean on the second call.** `img` becomes an ordinary assignment at the top of the cell
    that passes it, and nothing resets it (`df` and `tables` are no longer injected: a cell reads a table with
-   `ml.table`, [`ML_TABLE.md`](ML_TABLE.md), rulings 79 and 87). A later cell without the parameter sees the earlier table,
+   `ml.table`, [`ML_TABLE.md`](ML_TABLE.md), rulings 79 and 87). A later cell without the parameter sees the earlier `img`,
    which is what a notebook does and what models assume. The tool's text says so, once, in place of the two sentences
    that contradict each other today.
 3. **Lifetime and loss.** The next cell's result opens with "namespace reset at <time>: <reason>" from the housekeeping
@@ -418,7 +418,8 @@ running a Python script via `ml.sh.run(["python3", "script.py", ...])` do not sh
   for native leaves). It has no `open()`, `os`, `sys`, `argparse` or `subprocess`, and halts within the step budget with
   write-barrier rollback on failure. RULED 2026-10-28 (for `FILE_ATTACHMENTS.md` slice 3): an attached file reaches a cell
   the way a stored table does, as an injected value (`files: { name: "@file:…" }` giving the bytes; a tabular one through
-  `ml.table`, [`ML_TABLE.md`](ML_TABLE.md)), never as a path under a mounted directory; the `read_csv` redirect is
+  `ml.table`, [`ML_TABLE.md`](ML_TABLE.md)), never as a path under a mounted directory (superseded for `ml.table` and the served `read_csv`, which read a
+  `/files/` path through ML_TABLE.md's source table); the `read_csv` redirect is
   replaced by ML_TABLE.md's served `read_csv`. A paged document (a PDF) is injected as its pages:
   each page's `text`, `kind` and `measure`, and `png(scale)`, a bounded on-demand render through the offscreen
   document, beside the bytes (`FILE_ATTACHMENTS.md`, "Python"). REOPENED 2026-11-12 (Shane, in the coordinator's

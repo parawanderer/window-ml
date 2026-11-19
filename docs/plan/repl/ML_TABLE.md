@@ -261,7 +261,8 @@ A JS `Table` keeps none of the source text **[code]**:
 Recommendation: the bytes are the original, and the table is a view of them.
 
 - `ml.table(src, raw=…, delimiter=…, header=…)` makes a view; `raw` keeps every cell a string.
-- `ml.table(src).source` (the kept bytes) stays reachable, in Python as `bytes`, in JS as text or a Uint8Array.
+- `t.attrs["source"]` names the kept bytes; the bytes themselves are not handed to a Python cell, so its heap never
+  holds both them and the frame. `ml.fs.cp` is the byte-exact copy (the spec, "What a table keeps of its source").
 - In Python, pandas' own casting replaces ours (item 4). `dtype=str` is the lossless read pandas users already know.
 
 ## 7. A cell writes its own folder (rulings 69, 75, 76, 81, 86)

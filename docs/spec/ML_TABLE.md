@@ -16,6 +16,12 @@ owns (ruling 68).
   - It returns a pandas DataFrame (ruling 78), built in the cell from the table's bytes. The source facts go on
     `t.attrs`: `source`, `delimiter`, `truncated` and `headerless`.
   - Past the materialise cap, it returns the lazy table instead ("Tables too large to load").
+- **The materialise cap is 100 MiB of source bytes** (`MATERIALISE_CAP_BYTES`, one constant in the Python facade's
+  module, read by both members and by the lazy table's `to_pandas()`). It is derived, not measured: an inside cell may
+  add `_restricted.DEFAULT_MEMORY` (256 MiB, read from the pinned core) to the heap, and a parsed CSV grows the heap
+  about 2 bytes per source byte, which leaves about 50 MiB for the cell's own work. The same value applies outside the
+  dialect, so the model reads one rule. **Provisional:** it moves when a materialise is measured under the fork's cap
+  in Chrome, or when the core's `DEFAULT_MEMORY` changes.
 - **Python: `ml.fetch(url, …)`**, the same synchronous form. Its answer enters the run's fetch cache as a `fetch_url`
   result does.
 - **JS: `ml.table(src, opts)`**, on `window.ml` and in the exec dialect's `mlFacade`. It returns the `Table` facade
@@ -118,6 +124,9 @@ pandas parses the kept bytes, and the cell owns the frame. A URL the run did not
 - The bytes are the original, and a table is a view of them.
 - `raw=True` keeps every cell a string. `delimiter` and `header` override the reader's discovery.
 - `t.attrs["source"]` names the bytes. The byte-exact copy of them is `ml.fs.cp` ("Writing files").
+- The bytes themselves are not handed to the cell. They cross once, the frame is built from them, and they are let go,
+  so the heap never holds both: a frame already costs about 2 bytes per source byte, and a second copy of the bytes
+  would move the materialise cap. A cell that needs them byte for byte copies them with `ml.fs.cp` and reads the file.
 
 ## A fetched table (rulings 82, 83)
 
@@ -187,10 +196,15 @@ where.
   `/files/` or the fetch cache's value store, so a file is never loaded whole.
 - **A large CSV is converted once to Parquet** in `/files/agent/` and queried there. Parquet scans stayed within
   24 MiB of baseline on 11.7 million rows. A CSV groupby did not: it reached 443 MiB.
+  - **Conditional.** The conversion's own memory bound is unmeasured: the writer reached 745 MiB at 16 MB blocks, and
+    a small block size was not tried. Until it is measured, a CSV past the materialise cap is answered with pandas
+    `chunksize` (130-155 MiB at 200,000 rows) or refused. The measurement is owed before the lazy-table PR, and that
+    PR does not convert without it.
 - **The lazy table answers in one pass:** `shape`, `columns`, `dtypes`, `head`, column selection, a filter of
   column-operator-literal, `groupby` with sum, count, min, max or mean, `value_counts`, and a merge against a small
   table.
-  - Groups are capped (proposed 100,000).
+  - Groups are capped at 100,000 (`LAZY_GROUP_CAP`). **Provisional:** chosen, not measured. It moves when a groupby's
+    partials are measured per group on the 11.7-million-row file under the fork's cap.
   - `to_pandas()` is refused past the materialise cap, with the size in the message.
 - **Refused, with the reason and what to do:** sort, a join of two large tables, an exact quantile, and an exact
   distinct count past the cap. An approximation exists only under a name that says so (`approx_quantile`).
