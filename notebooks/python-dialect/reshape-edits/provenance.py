@@ -8,8 +8,8 @@ A run.json sits at `<sweep>/<task id>/<combo>/<rep>/run.json`; the task id is `r
 `staged-hint` or `neutral` (no hint). Each run is also classified by the ROUTE its first python_exec cell took to the
 files: `tables-url` (a `tables` source that is a full URL), `tables-path` (one that is not: a site path, a selector),
 `read_csv-fetched` (no `tables`; a read_csv of a URL or path fetch_url read earlier in the run), `read_csv-unfetched`
-(one it did not), `other` (neither), `no-python`. Edits are read only within `tables-url` runs: on any other route the
-first refusal is the file's, not an edit's. The cells are the run's python_exec steps in order; one is INSIDE when its approval is "sandbox" (the worker's
+(one it did not), `other` (neither), `no-python`. Edits are counted only within `tables-url` and `tables-path` runs, the
+two routes the notebook counts: on any other route the first refusal is the file's, not an edit's. The cells are the run's python_exec steps in order; one is INSIDE when its approval is "sandbox" (the worker's
 inside try finished it) and refused when its result carries the sentence `pythonOutsideWhy` writes ("This cell asked
 because it is outside the read-only Python dialect (<reason>)"). A mutation refusal is one of the fork's three:
 
@@ -24,7 +24,9 @@ before that line (a name for a value the cell did not make: `y = df`), else the 
 top level, `inside` or `full` by that cell's outcome, and `unknown` when none did. Syntactic, so a binding in a branch
 that never ran counts. An `alias` is followed to what it names (`alias_of`): the root of the right-hand side of the cell's
 last plain assignment to it before the line, read the same way (`injected`, `inside`, `full`, `unknown`), so `y = df` is an
-alias of the injected table and `y = kept` one of an earlier cell's value.
+alias of the injected table and `y = kept` one of an earlier cell's value. An earlier cell whose last plain assignment to
+the name is a bare name (`y = df` in one cell, `y['a'] = 1` in the next) is followed the same way across cells, so that edit
+is an `alias` of `injected`, not `inside`; any other right-hand side (`y = df.copy()`) is a value that cell made.
 
 Writes features only (run hash, model, arm, route, cell index, outcome, refusal kind, maker, alias_of), never a cell's code.
 """
@@ -119,7 +121,13 @@ def origin(cells, i, name, line, tree, depth=0):
     if name in cells[i]["injected"]: return "injected", None
     for j in range(i - 1, -1, -1):
         t = parse(cells[j]["code"])
-        if t is not None and name in binds(t): return ("inside" if cells[j]["inside"] else "full"), None
+        if t is None or name not in binds(t): continue
+        made = "inside" if cells[j]["inside"] else "full"
+        src, at = alias_rhs(t, name, None)
+        rhs = next((a.value for a in ast.walk(t) if isinstance(a, ast.Assign) and a.lineno == at), None)
+        if depth > 8 or src is None or not isinstance(rhs, ast.Name): return made, None
+        m, a = origin(cells, j, src, at, t, depth + 1)
+        return "alias", a if m == "alias" else m
     return "unknown", None
 
 

@@ -83,11 +83,15 @@ test("reshapeRight: the amount with any grouping or currency mark and the manage
     assert.ok(reshapeRight(`EUR ${grouped} short, managed by ${manager}`));
 });
 
-test("reshapeRight: refuses a cent off, a rounded amount, another manager, or either half alone", () => {
+test("reshapeRight: refuses a cent off, a rounded amount, an extra digit either side, another manager, or either half alone", () => {
     const { cents, amount, manager } = reshapeAnswer();
     assert.ok(!reshapeRight(`${manager} missed by ${((cents + 1) / 100).toFixed(2)}`), "a cent over");
     assert.ok(!reshapeRight(`${manager} missed by ${((cents - 1) / 100).toFixed(2)}`), "a cent under");
     assert.ok(!reshapeRight(`${manager} missed by ${Math.round(cents / 100)}`), "rounded to whole units");
+    const grouped = Number(amount).toLocaleString("en-US", { minimumFractionDigits: 2 });
+    assert.ok(!reshapeRight(`${manager} missed by 1,${grouped}`), "a leading extra digit");
+    assert.ok(!reshapeRight(`${manager} missed by 1${amount}`), "a leading extra digit, ungrouped");
+    assert.ok(!reshapeRight(`${manager} missed by ${amount}1`), "a trailing extra digit");
     assert.ok(!reshapeRight(`${MANAGERS.south} missed by ${amount}`), "the other region's manager");
     assert.ok(!reshapeRight(`missed by ${amount}`) && !reshapeRight(manager));
 });

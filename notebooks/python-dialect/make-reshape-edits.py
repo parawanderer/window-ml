@@ -84,7 +84,8 @@ pd.DataFrame(smoke)
 md("""
 An alias is followed to what it names, since ruling 64 counts an alias of an earlier cell's value and not one of the
 injected table: `y = df` then `y['a'] = 1` is an alias of `injected`; `z = kept` then `z.append(1)` after an inside cell
-made `kept` is an alias of `inside`; `w = z` before that is followed through `z`.
+made `kept` is an alias of `inside`; `w = z` before that is followed through `z`. Across cells too: `y = df` in one cell
+and `y['a'] = 1` in the next is an alias of `injected`, while `y = df.copy()` there is a value the earlier cell made.
 """)
 
 code("""
@@ -95,10 +96,15 @@ ALIASES = [
     ("y = df\\ny['a'] = 1", False, ITEM),
     ("z = kept\\nz.append(1)", False, APPEND.format(2)),
     ("z = kept\\nw = z\\nw.append(1)", False, APPEND.format(3)),
+    ("y = df", True, None),
+    ("y['a'] = 1", False, ITEM.replace("line 2", "line 1")),
+    ("c = df.copy()", True, None),
+    ("c['a'] = 1", False, ITEM.replace("line 2", "line 1")),
 ]
 aliases = prov.rows_of([{"code": c, "inside": ok, "reason": r, "injected": prov.injected_names(None)} for c, ok, r in ALIASES])
 got = [(r["maker"], r["alias_of"]) for r in aliases]
-assert got == [(None, None), ("alias", "injected"), ("alias", "inside"), ("alias", "inside")], got
+assert got == [(None, None), ("alias", "injected"), ("alias", "inside"), ("alias", "inside"),
+               (None, None), ("alias", "injected"), (None, None), ("inside", None)], got
 pd.DataFrame(aliases)
 """)
 

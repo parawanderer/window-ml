@@ -33,9 +33,12 @@ const ANSWER = reshapeAnswer();
 /** An answer with its digit grouping and currency marks taken out, for matching an exact number. */
 const digits = (answer: string): string => answer.replace(/[\s,$€]|EUR/g, "");
 
+/** The amount as a whole number: no digit or point before it, no digit after, so 1,123,171.53 is not 123,171.53. */
+const AMOUNT = new RegExp(`(?<![\\d.])${ANSWER.amount.replace(".", "\\.")}(?!\\d)`);
+
 /** Right when it names the manager and the amount to the cent. The manager fixes only the region, not the product; the
  *  exact amount is what singles out the pair. */
-export const reshapeRight = (answer: string): boolean => digits(answer).includes(ANSWER.amount) && answer.toLowerCase().includes(ANSWER.manager.toLowerCase());
+export const reshapeRight = (answer: string): boolean => AMOUNT.test(digits(answer)) && answer.toLowerCase().includes(ANSWER.manager.toLowerCase());
 
 /** The two wordings of the one question. */
 export const WORDINGS = {
