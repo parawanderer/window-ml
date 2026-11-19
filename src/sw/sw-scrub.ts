@@ -211,8 +211,8 @@ export async function forModelHistory(messages: NeutralMessage[]): Promise<numbe
 
 /**
  * A session row as it leaves the worker (the session server's index updates and snapshot, the hub's list, `session.list`,
- * the HUD's bring-here list): every registered value in its text as `[REDACTED:<NAME>]`, exempt or not (the
- * coordinator's reading of ruling 39, SECRET_HANDLES.md). Synchronous, since the index is sent from synchronous code;
+ * the HUD's bring-here list): every registered value in its text as `[REDACTED:<NAME>]`, exempt or not (ruling 61,
+ * SECRET_HANDLES.md). Synchronous, since the index is sent from synchronous code;
  * fails closed: before the registry's first read, the row's text is withheld (`onRegistryChanged` sends it again once it
  * can be scrubbed). By registered value only.
  * @param row the row
