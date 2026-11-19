@@ -558,10 +558,10 @@
       "why": "may share memory with the receiver (measured: shared)"
     },
     "DataFrame.to_string": {
-      "effects": "pure",
-      "returns": "fresh",
+      "effects": "pure; write(buffer arg) when buf= is given",
+      "returns": "fresh; None when buf= is given",
       "cost": "cells",
-      "why": "a new string"
+      "why": "a new string; given buf (a path or a buffer) it writes there instead"
     },
     "DataFrame.unstack": {
       "effects": "pure",
@@ -990,10 +990,10 @@
       "why": "may share memory with the receiver (measured: shared)"
     },
     "Series.to_string": {
-      "effects": "pure",
-      "returns": "fresh",
+      "effects": "pure; write(buffer arg) when buf= is given",
+      "returns": "fresh; None when buf= is given",
       "cost": "size",
-      "why": "a new string"
+      "why": "a new string; given buf (a path or a buffer) it writes there instead"
     },
     "Series.tolist": {
       "effects": "pure",

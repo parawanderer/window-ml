@@ -318,7 +318,12 @@ worker drives with `autoApprovePython` on:
    marked `inside` (`grantRunPython`). `runPython` passes `inside` to the worker only for a `runGated` caller.
 2. The worker loads the allow tables once (`dialectSetup` in `python-dialect-run.ts`, from `dialect-data.ts`, which bundles
    `notebooks/python-dialect/data/`). It refuses to run anything inside on a core without `_restricted`, or one whose
-   `_restricted.build()` reports specialization, tier 2 or a JIT. On such a core every cell asks. **A C callee's write
+   `_restricted.build()` reports specialization, tier 2 or a JIT. On such a core every cell asks. **The fork has no
+   file gate**: `open` is a refused builtin, and a lifted leaf that opens a path itself is kept out only by the fork's
+   deny-list (`restricted._EFFECTFUL`) or by an entry check. A leaf in `DIALECT_BUFFER_ARGS` (`DataFrame.to_string`,
+   `Series.to_string`, each marked `write(buffer arg) when buf= is given` in the manifest) is re-registered by
+   `_ml_buffer_args` with a check that refuses the parameter bound to anything but None, so the call asks; `tests/python-dialect-buffer-args.test.mjs` enumerates every
+   admitted callable's path, file or buffer parameter. **A C callee's write
    is invisible to the ownership check**, which sees only the interpreter's own store sites (an item assignment, an
    in-place operator, a listed mutator read off an unowned value). So a module function or ufunc taking `out` is in
    `DIALECT_OUT_ARGS`, re-registered with a check that refuses `out` bound to anything but None. A C method with an
