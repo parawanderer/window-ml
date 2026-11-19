@@ -7,7 +7,7 @@
 // write. numpy's data allocator is outside the memory cap's count, so the undo copies (`_ml_snapshots`) are totalled in
 // bytes against the cap, and a write whose copy would pass it is refused before the copy. Self-SKIPS without the fork
 // core in dist/pyodide, as python-dialect-inside.test.mjs does.
-import { test, before } from "node:test";
+import { test } from "node:test";
 import assert from "node:assert";
 import path from "node:path";
 import fs from "node:fs";
@@ -25,14 +25,15 @@ const hasPyodide = fs.existsSync(path.join(PYODIDE_DIR, "pyodide.mjs"));
 let py = null;
 let skip = hasPyodide ? false : "no dist/pyodide — run `npm run fetch-pyodide` to enable";
 
-before(async () => {
+// Loaded before any test is defined, so no row's time includes the boot (a file-level before() is charged to the first).
+await (async () => {
     if (!hasPyodide) return;
     const { loadPyodide } = await import(path.join(PYODIDE_DIR, "pyodide.mjs"));
     py = await loadPyodide({ indexURL: PYODIDE_DIR });
     if (py.runPython(`import importlib.util; importlib.util.find_spec("_restricted") is None`)) { skip = "dist/pyodide is the stock core, not the restricted-mode fork"; return; }
     await py.loadPackage(["numpy", "pandas", "pillow"]);
     assert.strictEqual(String(await py.runPythonAsync(dialectSetup(FILES))), "");
-}, { timeout: 240000 });
+})();
 
 /** A run's namespace, kept across its cells as the worker keeps it, holding `b` (an ndarray) the cells did NOT make. */
 function namespace() {
