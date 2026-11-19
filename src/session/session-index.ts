@@ -226,6 +226,7 @@ export class SessionIndex {
             // missed (an off-mode tab whose page bus woke mid-run). The row fills in as more arrives. A hash seen
             // before continues its generation, so a replacement's epoch differs from the one it replaced.
             s = this.create(ev, hash, src, this.gens.get(hash) ?? 0);
+            this.noteFork(s, ev, src);
         }
         if (src.page && !s.summary.page) s.summary.page = { ...src.page, ...(s.owner != null ? { tabId: s.owner } : {}) };
 
@@ -233,7 +234,7 @@ export class SessionIndex {
         // A resume MOVES the session's page, which the fill above never does once a row has one: `pageGone` left it
         // the closed tab's url with no `tabId`, and `resumableHere` kept offering the resume. The worker's word only;
         // a page's copy of a note is its own claim about a url. The old title belonged to the old page.
-        if (ev.kind === "session-resumed" && src.trusted && src.tabId != null) s.summary.page = { url: ev.url, tabId: src.tabId };
+        if (ev.kind === "session-resumed" && src.trusted && src.tabId != null) { s.summary.page = { url: ev.url, tabId: src.tabId }; delete s.summary.currentPage; }
         this.fold(s, ev);
         this.coalesce(s, ev);
 
@@ -249,6 +250,39 @@ export class SessionIndex {
         s.summary.lastTs = this.now();
         const evicted = this.enforceCaps(s);
         return { accepted: true, session: s.id, cursor, epoch: this.epochOf(hash), event: ev, summary: this.refreshSummary(s), reset, evicted, pos };
+    }
+
+    /**
+     * A FORK's parent, from its first event's `session.forkOf`: a page's claim, kept only when the parent is a session
+     * this index holds on the SAME tab as the fork (a page forks its own handle). A claim naming another tab's session,
+     * one the index does not hold, or the fork itself is dropped: the fork is listed with no parent, which reads as
+     * "not known", never as a parent the page chose.
+     */
+    private noteFork(s: Indexed, ev: MlDebugEvent, src: IngestSource): void {
+        const parent = (ev.session as { forkOf?: unknown } | undefined)?.forkOf;
+        if (typeof parent !== "string" || !HASH_RE.test(parent) || parent === s.id.hash) return;
+        const p = this.sessions.get(parent);
+        if (!p || p.owner == null || src.tabId == null || p.owner !== src.tabId) return;
+        s.summary.forkedFrom = { ...p.id };
+    }
+
+    /**
+     * A tab's top frame moved to `url` (the browser's report): every worker-hosted session still going on that tab is
+     * on that page now. Returns the rows that changed. A page-hosted session's page went with its document, and a run
+     * that has ended is not "on" a page, so neither moves.
+     */
+    pageMoved(tabId: number, url: string): SessionSummary[] {
+        const changed: SessionSummary[] = [];
+        for (const s of this.sessions.values()) {
+            if (s.owner !== tabId || s.hostedBy !== "background" || s.ended) continue;
+            const was = s.summary.currentPage?.url;
+            if (url === s.summary.page?.url) delete s.summary.currentPage;
+            else s.summary.currentPage = { url };
+            if (s.summary.currentPage?.url === was) continue;
+            const row = this.refreshSummary(s);
+            if (row) changed.push(row);
+        }
+        return changed;
     }
 
     private create(ev: MlDebugEvent, hash: string, src: IngestSource, gen: number): Indexed {

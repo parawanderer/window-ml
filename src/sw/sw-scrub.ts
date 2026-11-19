@@ -3,7 +3,7 @@
 import { getConfig } from "./sw-llm";
 import { mapErrorStrings, mergeSecrets, scrubSecrets, secretsOf, type SecretSub } from "../secret-scrub";
 import type { MlConfig } from "../contract/contract-config";
-import type { NeutralMessage } from "../contract/contract-chat";
+import type { NeutralMessage, ToolCall } from "../contract/contract-chat";
 import { heldTail, redactedLine, scrubRegistry, type RegistrySub } from "../secret-registry";
 import { registryIsReady, registryReady, registrySubsNow } from "./sw-secret-registry";
 import { rowForEgress, textForEgress } from "../session/session-row-scrub";
@@ -116,6 +116,34 @@ export async function forModel(text: string): Promise<{ text: string; changed: b
 }
 
 /**
+ * The messages of a model call the worker composes itself (the utility profile's titles and `side.call`), scrubbed the
+ * way {@link forModel} scrubs a result, in every role: a person's task or a sidebar's excerpt can hold a registered
+ * value. Copies, so the asker's array is left as it was. Fails closed by THROWING, so the call is never sent.
+ * @param messages the call's messages
+ * @returns the messages the backend may get
+ * @throws when the config or the registry cannot be read, with nothing of either in the message, or when a message's
+ *  content is not text
+ */
+export async function forModelMessages(messages: NeutralMessage[]): Promise<NeutralMessage[]> {
+    let secrets: SecretSub[];
+    try { secrets = await configSecrets(); await registryReady(); } catch { throw new Error("The request was not sent: the registered secrets could not be read to check it."); }
+    const subs = registrySubsNow();
+    // A message is text or nothing (NeutralMessage). Content of any other shape (an array of parts an asker built) is
+    // refused rather than sent unread: the scrub reads only strings.
+    if (messages.some((m) => m.content != null && typeof m.content !== "string")) throw new Error("The request was not sent: a message's content was not text.");
+    const scrub = (t: string): string => scrubRegistry(scrubSecrets(t, secrets), subs).text;
+    // The content, and an assistant turn's thinking, which a backend that asks for it is sent too.
+    // An assistant turn's calls carry their arguments as text (or an object whose string leaves are text) too.
+    const deep = (v: unknown): unknown => typeof v === "string" ? scrub(v) : Array.isArray(v) ? v.map(deep) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, deep(x)])) : v;
+    return messages.map((m) => ({
+        ...m,
+        ...(typeof m.content === "string" && m.content ? { content: scrub(m.content) } : {}),
+        ...(m.reasoning ? { reasoning: scrub(m.reasoning) } : {}),
+        ...(Array.isArray(m.tool_calls) ? { tool_calls: m.tool_calls.map((tc) => tc && typeof tc === "object" ? { ...tc, arguments: deep(tc.arguments) as ToolCall["arguments"] } : tc) } : {}),
+    }));
+}
+
+/**
  * The line a tool result ends with when registered values were taken out of it: names and a count, never a value, so
  * the model does not conclude the value was absent.
  * @param counts from {@link forModel}
@@ -181,15 +209,37 @@ export async function forBackendFromPage<T>(payload: T): Promise<T> {
         let out = m as Record<string, unknown>;
         if (typeof c === "string") out = { ...out, content: scrub(c) };
         else if (Array.isArray(c)) out = { ...out, content: c.map((part) => part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string" ? { ...part, text: scrub((part as { text: string }).text) } : part) };
-        // An assistant turn the page wrote carries its calls' arguments as text too.
+        // An assistant turn carries its calls' arguments as text too: in the neutral shape every sender here builds
+        // (`{ id, name, arguments }`, a string or an object, which API_FORMATS converts at send time), and in OpenAI's
+        // wire shape (`function.arguments`) a page may send as it is.
         const calls = (m as { tool_calls?: unknown }).tool_calls;
         if (Array.isArray(calls)) out = { ...out, tool_calls: calls.map((tc) => {
-            const f = tc && typeof tc === "object" ? (tc as { function?: { arguments?: unknown } }).function : undefined;
-            return f && typeof f.arguments === "string" ? { ...tc, function: { ...f, arguments: scrub(f.arguments) } } : tc;
+            if (!tc || typeof tc !== "object") return tc;
+            let call = tc as Record<string, unknown>;
+            if ("arguments" in call) call = { ...call, arguments: scrubArgs(call.arguments, scrub) };
+            const f = call.function as { arguments?: unknown } | undefined;
+            if (f && typeof f === "object" && "arguments" in f) call = { ...call, function: { ...f, arguments: scrubArgs(f.arguments, scrub) } };
+            return call;
         }) };
         return out;
     });
     return changed ? { ...payload, messages: next } : payload;
+}
+
+/**
+ * A tool call's arguments, scrubbed: a string as text, an object through its JSON (keys included) and back. A scrubbed
+ * JSON that no longer parses is sent as the scrubbed text, which holds no value either.
+ * @param args the arguments, a string or an object
+ * @param scrub the text scrub
+ * @returns the arguments, the same value when nothing changed
+ */
+function scrubArgs(args: unknown, scrub: (t: string) => string): unknown {
+    if (typeof args === "string") return scrub(args);
+    if (!args || typeof args !== "object") return args;
+    const text = JSON.stringify(args);
+    const out = scrub(text);
+    if (out === text) return args;
+    try { return JSON.parse(out); } catch { return out; }
 }
 
 /**

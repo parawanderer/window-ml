@@ -3863,17 +3863,29 @@ button.ui-step-now:hover { background: var(--panel-2); color: var(--fg); }
    the block would make the reader parse one thing as two. */
 .r-diff { margin: 0 0 6px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .r-diff-head { display: flex; align-items: center; gap: 6px; padding: 4px 8px; background: var(--panel); flex-wrap: wrap; }
-.r-diff-tri { background: none; border: 0; padding: 0; cursor: pointer; color: var(--fg-faint); display: flex; }
-.r-diff-tri svg { transition: transform 0.15s ease; }
-.r-diff-tri.open svg { transform: rotate(90deg); }
+/* The header's right end: the view switch (code | diff | split) and the maximise button. `auto` margin pushes
+   the pair to the edge; when the row wraps in a narrow panel they wrap together. */
+.r-diff-tools { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.r-diff-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.r-diff-segbtn {
+    font: inherit; font-size: 0.78em; line-height: 1; padding: 3px 8px; cursor: pointer;
+    color: var(--fg-dim); background: var(--bg); border: 0;
+}
+.r-diff-segbtn + .r-diff-segbtn { border-left: 1px solid var(--border); }
+.r-diff-segbtn:hover { color: var(--fg); }
+.r-diff-segbtn.on { color: var(--fg); background: color-mix(in srgb, var(--accent) 22%, var(--panel)); }
+/* Below the width where two columns fit, `split` is drawn as `diff` (SPLIT_MIN_PX): its button stays, dimmed, so the choice is still visible. */
+.r-diff-segbtn[data-fallback]:not(.on) { opacity: 0.6; }
+.r-diff-max { padding: 1px 3px; }
+.r-diff-max svg { width: 13px; height: 13px; }
 .r-diff-lbl { font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-faint); }
 /* The chrome comes from `.tok-chip` (the shared PointerChip) — it IS a pointer, so it must not read as a
    different kind of thing here. Only the things specific to sitting in a header row are set locally. */
 .r-diff-ref { padding: 1px 8px; }
-.r-diff-stat { margin-left: auto; font-size: 0.82em; font-variant-numeric: tabular-nums; }
+.r-diff-stat { font-size: 0.82em; font-variant-numeric: tabular-nums; }
 .r-diff-add { color: var(--ok); }
 .r-diff-del { color: var(--err); }
-.r-diff-same { margin-left: auto; font-size: 0.82em; color: var(--fg-faint); font-style: italic; }
+.r-diff-same { font-size: 0.82em; color: var(--fg-faint); font-style: italic; }
 /* The model's CLAIM. It shares the HEADER's ground and its quiet grey, because it is part of the same
    band — the header says what this diff is, the claim says what the model thinks it did, and giving the
    second its own colour made it read as a warning about the step rather than as a caption. Its TAG carries
@@ -3883,6 +3895,31 @@ button.ui-step-now:hover { background: var(--panel-2); color: var(--fg); }
 .r-diff-claim { padding: 4px 8px; font-size: 0.9em; color: var(--fg-dim); background: var(--panel); border-top: 1px solid var(--border); }
 .r-diff-claim-tag { font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-faint); margin-right: 4px; }
 .r-diff-body { margin: 0; border-top: 1px solid var(--border); border-radius: 0; }
+/* The code view sits in the same box under the header; its own block has no frame to double up. */
+.r-diff > .code-body, .r-diff > .code-block { border-top: 1px solid var(--border); }
+.r-diff-view { min-width: 0; }
+/* SPLIT: one row per pair of cells, a grid of two equal columns so a wrapped cell stretches its partner and the
+   two sides stay row for row. A filler cell is blank ground, tinted like nothing, which says "no line here". */
+.dsplit .sline { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.dsplit .sline-gap { display: block; color: var(--fg-faint); font-style: italic; text-align: center; }
+.scell { display: flex; align-items: stretch; min-width: 0; }
+.scell-new { border-left: 1px solid var(--border); }
+.scell-del { background: color-mix(in srgb, var(--err) 13%, transparent); }
+.scell-add { background: color-mix(in srgb, var(--ok) 13%, transparent); }
+.scell-del .dsign { color: var(--err); }
+.scell-add .dsign { color: var(--ok); }
+.scell-fill { background: color-mix(in srgb, var(--fg-faint) 8%, transparent); }
+/* One number column per side (the pair's own old/new), not the unified view's two. */
+.scell .dno { border-right: 1px solid var(--border); margin-right: 8px; }
+/* THE MAXIMISED VIEW, in the shared modal (dialog.tsx): the card grows to the room the panel has and scrolls inside. */
+.chat-dialog:has(.r-max) { width: min(1200px, 100%); max-height: calc(100vh - 32px); overflow: auto; padding: 12px; }
+/* The maximised revises view's title row: what is shown, and the close button. */
+.r-max-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.r-max-head h2 { margin: 0; font-size: 0.95em; font-weight: 600; word-break: break-word; }
+/* The content of the maximised revises view (the code, the diff or the split) in the shared modal: the claim keeps its frame. */
+.r-max .r-diff-claim { margin-bottom: 8px; border: 1px solid var(--border); border-radius: 6px; }
+/* The maximised view itself, flush in the modal card. */
+.r-max-body pre.code { margin: 0; }
 /* ONE ROW OF A DIFF — the gutter's two line numbers, the +/- sign, then the text. A flex row so the
    numbers stay put when the text wraps, which is what lets a diff row, a margin note and a failure mark
    all name the same line and be read straight down. */

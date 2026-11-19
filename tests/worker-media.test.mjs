@@ -505,3 +505,36 @@ test("python_exec offers keep only where names persist, and passes it on", T, as
     await worker.run({ code: "x" });
     assert.deepEqual(calls.map((o) => o.keep), [true, undefined]);
 });
+
+// --- a worker-built run's utility call (fetch_url's reader, python's ml.chat) carries no registered value ---
+
+const UTIL_SECRET = { name: "PLUG_PASSWORD", value: "REALSECRET-4b1d-77" };
+const utilConfig = { ...config, utilityModel: "tiny" };
+
+/** A worker with a utility model, a registry, and the bodies the backend got; the run `run-u` has worker-tool state. */
+function utilityRunWorld(local) {
+    const bodies = [];
+    const bg = loadBackground({
+        config: utilConfig, local,
+        onFetch: (call) => { if (call.body) bodies.push(JSON.stringify(call.body)); return jsonResponse({ choices: [{ message: { content: "ok" } }] }); },
+    });
+    bg.context.__mlWorkerVisionForTest.seedRun("run-u", 3);
+    return { bg, bodies };
+}
+
+test("a worker run's utility call (runChat, extend utility) sends the marker, not the registered value, and leaves the asker's messages alone", T, async () => {
+    const { bg, bodies } = utilityRunWorld({ ml_secret_registry: [UTIL_SECRET] });
+    const messages = [{ role: "user", content: `answer from this page text: password ${UTIL_SECRET.value}` }];
+    const sent = structuredClone(messages);
+    assert.equal(await bg.context.__mlWorkerVisionForTest.runChat("run-u", { messages, extend: "utility", think: false }), "ok");
+    const body = bodies.find((b) => b.includes("answer from this page text"));
+    assert.ok(body.includes(`[REDACTED:${UTIL_SECRET.name}]`), body);
+    assert.ok(!bodies.some((b) => b.includes(UTIL_SECRET.value)), "no request carried the value");
+    assert.deepEqual(plain(messages), sent);
+});
+
+test("a worker run's utility call is not sent at all when the registry cannot be read", T, async () => {
+    const { bg, bodies } = utilityRunWorld({ ml_secret_registry: () => {} });
+    await assert.rejects(bg.context.__mlWorkerVisionForTest.runChat("run-u", { messages: [{ role: "user", content: `x ${UTIL_SECRET.value}` }], extend: "utility" }), (e) => !e.message.includes(UTIL_SECRET.value));
+    assert.deepEqual(bodies, [], "nothing reached the backend");
+});

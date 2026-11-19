@@ -22,7 +22,7 @@ import { browserInfo, cropDataUrl } from "./util";   // the fork's settings sche
 import { workerRaster } from "./raster";
 import { ensureDebuggerAttached, releaseDebugger, cdpClick, cdpScreenshot, cdpShadowResolve } from "./sw/sw-cdp";   // CDP/debugger layer (strict-CSP exec, trusted click/type, host-grant-free screenshot)
 import { CAPTURE_RETRIES, CAPTURE_RETRY_MS, captureOwnTab, NOT_SHOWING } from "./sw/sw-capture";
-import { buildWorkerTools, workerSpend } from "./sw/worker-tools";
+import { buildWorkerTools, workerSpend, runChat } from "./sw/worker-tools";
 import { captureRunTab, workerShot, workerVisionChat, dropAllVisionMemory } from "./sw/worker-vision";   // the worker's vision pieces, test-only until a tool uses them
 import { workerVisionHost, onWorkerHost, useRasterForTest } from "./sw/worker-vision-host";   // the worker's vision host: the verify uses it; the hook below drives it directly
 import { workerAnswerMedia, workerMint, workerPythonImage } from "./sw/worker-media";   // the answer's media and python's image in the worker: the hook below drives them
@@ -33,7 +33,7 @@ import { fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw/sw-f
 import { executeServerTool, serverToolResult } from "./sw/sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw/sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw/sw-events";
-import { configureSessionCommands, handleSessionTitle, ingestSessionEvent, keepSession, liveHeldSessions, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw/sw-sessions";   // the cross-tab session index the chat page reads
+import { configureSessionCommands, handleSessionTitle, ingestSessionEvent, sessionPageMoved, keepSession, liveHeldSessions, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw/sw-sessions";   // the cross-tab session index the chat page reads
 import { backupAction, backupFailure } from "./sw/sw-backup";   // backup and restore, for Settings
 import { folderAction } from "./sw/sw-archive";   // the session archive's folder, for Settings
 import { ensureHubRuntime, hubDevices, hubLog, hubState, revokeHubDevice, stopHubRuntime } from "./sw/sw-hub";   // this browser as a runtime on a hub
@@ -197,7 +197,7 @@ startValueSweeps(liveHeldSessions);   // its first pass releases held rows no se
 // state its sub-call spend is counted in; `spend` reads it back.
 (globalThis as unknown as { __mlWorkerVisionForTest?: unknown }).__mlWorkerVisionForTest = {
     captureRunTab, workerShot, workerVisionChat, workerVisionHost, onWorkerHost, spend: workerSpend, checkVerifyRequest, workerLook, workerLocate,
-    workerAnswerMedia, workerPythonImage, workerMint,
+    workerAnswerMedia, workerPythonImage, workerMint, runChat,
     // A vm has no OffscreenCanvas: a test draws the worker's crops with a recorder of its own.
     useRaster: useRasterForTest,
     seedRun: (runId: string, tabId: number) => { buildWorkerTools(runId, tabId, () => "", ["fetch_url"]); },
@@ -206,6 +206,8 @@ startValueSweeps(liveHeldSessions);   // its first pass releases held rows no se
 if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
     chrome.webNavigation.onCommitted.addListener((d) => {
         if (d.frameId === 0) tabPageUrl.set(d.tabId, d.url);
+        // A worker-hosted run on the tab is on this page now (SessionSummary.currentPage).
+        if (d.frameId === 0) sessionPageMoved(d.tabId, d.url);
         // Its side panel follows the new document's presence (sw-side-panel.ts), and so does where a run's UI goes.
         if (d.frameId === 0) void notePage(d.tabId, d.url);
         // The old document is gone and any page-hosted run in it with it: drop what that tab was entitled to read.
@@ -222,7 +224,7 @@ if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
         // After noteNavigating, which takes the document being left from the barrier: a re-adopt from it is refused.
         if (d.frameId === 0 && typeof d.documentId === "string") navBarrier.noteDocument(d.tabId, d.documentId);
     });
-    chrome.webNavigation.onHistoryStateUpdated?.addListener((d) => { if (d.frameId === 0) tabPageUrl.set(d.tabId, d.url); });
+    chrome.webNavigation.onHistoryStateUpdated?.addListener((d) => { if (d.frameId === 0) { tabPageUrl.set(d.tabId, d.url); sessionPageMoved(d.tabId, d.url); } });
 }
 // A site taken off the approved set while a run its own page built is going (owner's decision 2026-10-12): the run is the
 // worker's from here, as when it navigates onto a site that may not use window.ml (nav-handover.ts). Every path that
@@ -1138,7 +1140,8 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // A page's call is its own: it may not file its generation under a run the worker built (sw-runs.ts).
         // A page's request leaves for the backend with no registered secret in any message, and nothing about it said back.
         const fromPage = !!sender.tab && !isExtensionSender(sender);
-        (fromPage ? forBackendFromPage(withoutWorkerSession(message.payload)) : Promise.resolve(sender.tab ? withoutWorkerSession(message.payload) : message.payload))
+        // The utility profile's calls (an extension frame's HUD summary included) leave with no registered secret too.
+        (fromPage || message.payload?.extend === "utility" ? forBackendFromPage(withoutWorkerSession(message.payload)) : Promise.resolve(sender.tab ? withoutWorkerSession(message.payload) : message.payload))
             .then((payload) => fetchLLM(payload, ctl.signal))
             // raw (ml.step) returns { content, tool_calls } as data; normal chat
             // returns the content string, with sources alongside only when present.
@@ -1498,7 +1501,7 @@ chrome.runtime.onConnect.addListener((port) => {
         const refusal = port.sender ? await pageRefusal("FETCH_LLM", port.sender) : null;
         if (refusal) { if (!closed) port.postMessage({ type: "error", error: refusal }); return; }
         const fromPage = !!port.sender?.tab && !isExtensionSender(port.sender);
-        (fromPage ? forBackendFromPage(withoutWorkerSession(message.payload)) : Promise.resolve(port.sender?.tab ? withoutWorkerSession(message.payload) : message.payload))
+        (fromPage || message.payload?.extend === "utility" ? forBackendFromPage(withoutWorkerSession(message.payload)) : Promise.resolve(port.sender?.tab ? withoutWorkerSession(message.payload) : message.payload))
             .then((payload) => streamLLM(payload, (delta) => { if (!closed) port.postMessage({ type: "chunk", delta }); }, ctl.signal))
             .then(({ content, sources, model, reasoning, usage }) => { if (!closed) port.postMessage({ type: "done", content, sources, model, reasoning, usage }); })
             .catch((err) => {
