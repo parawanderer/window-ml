@@ -428,6 +428,14 @@ allowed it (the policy by its label, or the built-in default) and what it report
 
 So the manifest blocks only the free tier. A first build where every call asks is useful, and correct, without it.
 
+**A survey that has started a program is never run again (ruled 2026-11-17).** The worker's survey runs a script of reads and
+`ml.sh.run`/`ml.sh.read` calls without asking about the script, and each call is judged when it is made. If the survey then
+reaches something it cannot answer in the worker (the page, a member outside the dialect, an error), the exit that would normally
+hand the script to the page or the person's approval, and so RUN IT AGAIN, is instead the step's final result: an error naming the
+calls it started (program and outcome) and saying it was stopped there and not run again. A call counts as started when it is made,
+before the judge or the ask. A page read before any call falls through as before. Detail: `docs/dev/readonly-exec.md`,
+"ml.sh in the worker's survey".
+
 ## Policies: what a shell call gives one
 
 "Run this without asking me" is a POLICY: a function over the call in the read-only dialect, answering `allow`, `deny`
@@ -615,13 +623,16 @@ What follows from it:
   design, and the person decides what to do with the report.
 - **No secret crosses into a process by the script's hand**: the backend URL and API key never reach the host; the
   host's environment is scrubbed to a whitelist, and a container sees only its mounts. A credential a process NEEDS
-  (`git push`, `gh`, a cloud CLI) arrives as a handle ([`SECRET_HANDLES.md`](SECRET_HANDLES.md), "Processes as a
-  sink"): the script names `ml.secret("github")` in `env`, the policy sees the name, and the host injects the value at
-  spawn, into the environment or a credential helper, for a program whose manifest may receive that secret. The
-  process's output is a host-held pointer, and the host scrubs the registered values from it BEFORE anything crosses or
-  a pipe runs over it; a program whose manifest says it echoes its environment is refused with a secret present. In
-  host mode the person's own credential files are on disk: a path flagged secret is never free to read, and the
-  environment the child gets is the scrubbed base, never the login session's.
+  (`git push`, `gh`, a cloud CLI) arrives as a handle ([`SECRET_HANDLES.md`](SECRET_HANDLES.md), "Processes as a sink"):
+  the script names `ml.secret("github")` in `env`, the policy sees the name, and the host injects the value at spawn,
+  into the environment or a credential helper, for a program whose manifest may receive that secret. The process's
+  output is a host-held pointer, and the registered values are scrubbed from it before any script or model reads it: by
+  the worker, where it crosses into the script (AMENDED 2026-11-17, the coordinator's call under ruling 18's order;
+  SECRET_HANDLES.md, "The scrub as built"), so a value can pass between pipe stages on the host and the host's `sha256`
+  and `size` are over the raw bytes; a program whose manifest says it echoes its environment is refused with a secret
+  present, once the handles slice lets a secret reach a process. In host mode the person's own credential files are on
+  disk: a path flagged secret is never free to read, and the environment the child gets is the scrubbed base, never the
+  login session's.
 - **Approval is on the argv that runs**, never on a description of it (tier 2), and every call is logged with its argv,
   env changes, cwd, exit code and output hashes (the run log, and the provenance a signed notebook would cite).
 

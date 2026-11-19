@@ -129,6 +129,10 @@ export function protocVersion() {
     try { return execFileSync("protoc", ["--version"], { encoding: "utf8" }).trim(); } catch { return null; }
 }
 
+/** Generated source without its header's protoc version line, for comparing two copies: another protoc release (35.1
+ *  and 36.2) generates the same code under a different line, which is not staleness. */
+export const withoutProtocVersion = (src) => src.replace(/^\/\/ +protoc +v\S+$/m, "//   protoc");
+
 /** Generate into a directory and hand back the source text, without touching the checked-in file. */
 export function generate(intoDir, target = "chat") {
     if (!protocVersion()) throw new Error("protoc is not installed");

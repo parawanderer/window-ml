@@ -715,7 +715,9 @@ report one resume. A note identified by the session would mean a session that mo
 for both, with the second silently dropped.
 
 **The index rebinds itself.** A resumed run's events reach the worker trusted and carry the new tab, and a
-background-hosted session takes its owner from a trusted event, so nothing has to move the binding by hand.
+background-hosted session takes its owner from a trusted event, so nothing has to move the binding by hand. The
+worker's own note (trusted, from the tab that holds the run) also sets the row's `page` to the new url and tab, which
+is what clears the resume bar below; a page's copy of a note moves no row.
 
 **Where the page offers it.** `resumableHere` (grants.ts) decides, and the condition that matters is
 `page.tabId` being absent — the index drops it when a tab closes and keeps the url, so that is the tell that the

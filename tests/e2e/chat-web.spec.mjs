@@ -1139,6 +1139,8 @@ test("the ⋮ and the approval bar share the corner without landing on each othe
     // The bar's whole condition is the gate being out of reach, and the view opens parked on it — so scroll back to
     // the top of the run, which is what a person reading what it did before the gate would do.
     await page.locator(".astep-approve").waitFor();
+    // The card opens from nothing over its entrance and the view follows it down while it does: scroll back once it has settled.
+    await page.waitForFunction(() => document.querySelector(".astep-approve").getAnimations().every((a) => a.playState !== "running"));
     await page.evaluate(() => { document.querySelector(".chat-transcript").scrollTop = 0; });
     await page.locator(".chat-waiting").waitFor();
     const seen = await page.evaluate(() => {
@@ -2135,10 +2137,10 @@ test("phone (touch): the tab picker opens without raising the keyboard, and stay
 });
 
 // THE MODEL'S OWN ACCOUNT OF A CALL — the reserved `title` argument — and WHERE it is allowed to be drawn. It is
-// in the tool name's tip everywhere, and inline in exactly one place: inside an OPEN group in the reading view,
-// because expanding a folded run is the gesture that means "I am investigating what happened". Everywhere else it
-// would be one more thing per row, and in the busy view the row already carries the value the call returned.
-test("a call's own title: in the tip always, inline only inside an open group in the reading view", async () => {
+// in the tool name's tip everywhere, and inline in the reading view in two places: inside an OPEN group, because
+// expanding a folded run is the gesture that means "I am investigating what happened", and on a row no group holds,
+// where nothing else says what the call was for. In the busy view the row already carries the value the call returned.
+test("a call's own title: in the tip always, inline in the reading view on a lone row and inside an open group", async () => {
     const { page, errors } = await open(DESKTOP, "", ORDINARY_FOLD);
     await page.evaluate(() => {
         const key = "laptop:5e6f7a80", hash = "5e6f7a80", now = Date.now();
@@ -2149,13 +2151,20 @@ test("a call's own title: in the tip always, inline only inside an open group in
                 arguments: { js: `${i}`, title: `Read fare ${i}` }, result: `${i}`,
             });
         }
+        // …and one call of another tool, which no group holds.
+        globalThis.__chatFake.emit(key, {
+            kind: "agent-step", id: `${hash}-lone`, ts: now + 9, save: true, session: { hash, turn: 0 },
+            step: 70, seq: 700, tool: "fetch_url", toolMs: 90,
+            arguments: { url: "https://example.com/fares", title: "Open the fares page" }, result: "ok",
+        });
     });
     await page.goto(`${server.url}#s=laptop%3A5e6f7a80`);
     const streak = page.locator(".astreak").filter({ hasText: "exec" }).first();
     await expect(streak).toBeVisible();
 
-    // FOLDED: nothing inline — the rows are not even drawn.
-    await expect(page.locator(".astep-said")).toHaveCount(0);
+    // FOLDED: nothing inline for the group's rows (they are not even drawn); the row no group holds says its own.
+    await expect(streak.locator(".astep-said")).toHaveCount(0);
+    await expect(page.locator('[data-astep-seq="700"] .astep-said')).toHaveText("“Open the fares page”", { useInnerText: true });
 
     await streak.locator(".astreak-head").click();
     const said = page.locator('[data-astep-seq="601"] .astep-said');
@@ -2171,6 +2180,7 @@ test("a call's own title: in the tip always, inline only inside an open group in
     await calmRow(page).click();
     await expect(page.locator('[data-astep-seq="601"]')).toBeVisible();   // the row is back, unfolded
     await expect(page.locator('[data-astep-seq="601"] .astep-said')).toBeHidden();
+    await expect(page.locator('[data-astep-seq="700"] .astep-said')).toBeHidden();
     expect(errors).toEqual([]);
     await page.close();
 });
@@ -3262,7 +3272,8 @@ test("a call being written keeps its progress line in the reading view, and a pu
     await page.goto(server.url + `#s=${encodeURIComponent(WATCHED)}`);
     await page.locator(".chat-transcript").waitFor();
     expect(await page.evaluate(() => document.documentElement.hasAttribute("data-focus")), "the reading view quiets previews").toBe(true);
-    const args = JSON.stringify({ code: "import math\nfor i in range(3):\n    print(math.sqrt(i))" });
+    // Unfinished: a call whose arguments are complete is written, and a written call has nothing more due, so no quiet clock.
+    const args = JSON.stringify({ code: "import math\nfor i in range(3):\n    print(math.sqrt(i))" }).slice(0, -12);
     await page.evaluate(([k, a]) => globalThis.__chatFake.emit(k, {
         kind: "agent-stream", id: k.split(":").pop(), ts: Date.now(), save: false,
         session: { hash: k.split(":").pop(), turn: 9 }, step: 9, localStep: 9,
@@ -3509,9 +3520,12 @@ test("an embedded output's rail folds it to one row naming it, without jumping t
     await expect(folded).toBeInViewport();
     await expect(page.locator(".astep.tool.open")).toHaveCount(0);
 
+    // The row leaves over the calm view's collapse beat before the body comes back, and the body's open lasts a fraction of a
+    // second: a poll can fall either side of it, so a frame watcher records that it was ever there.
+    await page.evaluate(() => { window.__opened = false; const f = () => { if (document.querySelector(".tok-body.opening")) window.__opened = true; else if (!window.__opened) requestAnimationFrame(f); }; f(); });
     await folded.click();
     await expect(answer.locator(".r-df-table")).toHaveCount(1);
-    await expect(answer.locator(".tok-body.opening")).toHaveCount(1);
+    await page.waitForFunction(() => window.__opened === true);
     // …and by keyboard, which the rail is not: the folded row is a button of its own.
     await answer.locator(".tok-block .fold-rail").first().click();
     await answer.locator(".tok-folded").focus();

@@ -106,6 +106,16 @@ test("a string with something hidden from its row is a hover card, and one that 
     assert.equal(host.querySelectorAll(".hc").length, 2, "and cut again, it has");
 });
 
+test("the card of a string that ends in a newline does not end in a blank line", async () => {
+    await mountTree({ script: "echo a\necho b\n", crlf: "x\r\n" });
+    const [a, b] = [...host.querySelectorAll(".hc")];
+    for (const [t, want] of [[a, "echo a\necho b"], [b, "x"]]) {
+        fire(t, "pointerenter"); await wait(450);
+        assert.equal(card(t)?.textContent, want, "one closing newline is not drawn; the ones inside are");
+        fire(t, "pointerleave"); await wait(450);
+    }
+});
+
 // --- the hover card's timing ---
 const card = (el) => el.querySelector(".hc-card");
 const mountCard = async (inMs = 30, outMs = 60) => {

@@ -8,11 +8,12 @@ import { runBackgroundAgent } from "../agent/agent-host";
 import { pythonCellInDialect, pythonOutsideWhy } from "../agent/python-dialect";
 import { namesJsBridge } from "../python/bridge-names";
 import { evalReadonlyInWorker } from "./sw-readonly";
+import { surveySh, guardSurvey } from "./sw-survey-sh";
 import { endPythonTurn, markPythonBridged, pythonRunBridged } from "./sw-python";
 import { workerReadonlyMl, derefWhole } from "./worker-readonly-ml";
 import { pipeStages } from "../pointers/token-pipe";
 import { recordRunLog, runLog } from "./sw-run-log";
-import { forModel, forModelHistory, forPage } from "./sw-scrub";
+import { forModel, forModelHistory, forPage, forLive, forPerson, forStored, redactedNote } from "./sw-scrub";
 import { eventsForRun, type RunLogEvent } from "../log/run-log";
 import { execCodeIn, expandPointers } from "../pointers/pointer-macro";
 import { namedReads, type PreRead } from "../pointers/named-reads";
@@ -34,7 +35,8 @@ import { sealedDescribe } from "../tools/tools";
 import { extractGrants, fetchUrlLiterals, tabGrantsForCall } from "./grant-extract";
 import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
-import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, grantOnceFetch, consentFetch, fetchConsent } from "./sw-consent";
+import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, grantOnceFetch, consentFetch, fetchConsent, resolveApproval } from "./sw-consent";
+import { settingBeforeCard, settingCard, settingFacts, holdSettingChange, releaseSettingChange, noteSettingDeclined, watchSetting, settingEntries, settingChangedElsewhere, type SettingChange } from "./sw-change-setting";
 import { ASK_POLICY_CAUSE, navOnlyWhy, startLeftWhy, judgeCall, fetchFacts, navigateFacts, actFacts, noteAct, dropActs, actsOf, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
 import { checkProposals, recordedFetches, measureBreadth, breadthNote, measureActBreadth, actBreadthNote, type PolicyProposal } from "./policy-proposal";
 import { approveManifest, checkManifestProposal, draftCardNote, type CheckedManifest } from "./sw-manifest-proposal";
@@ -63,7 +65,7 @@ import { grantRunFetch, grantRunOrigin, runOriginGranted, runOrigins, runFetchCo
 import { autoApprovePython } from "../agent/auto-approve";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
 import { takeMovedNote } from "./move-run";
-import { PROPOSAL_TOOLS, withoutProposals, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, keptOnRebuild, turnTabCells, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
+import { WORKER_ONLY_TOOLS, withoutWorkerOnly, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, keptOnRebuild, turnTabCells, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { drawStoredPages } from "./sw-attach";
 import { claimValue, runMayClaim, valueHolders, readStoredBytes, readStoredColumns, readStoredText, withHeldValuesOnly } from "./sw-values";
@@ -376,7 +378,7 @@ export function pageStartPayload(payload: unknown, sender: chrome.runtime.Messag
     rest.selfIntrospection = rest.selfIntrospection !== false && cfg.selfIntrospection !== false;
     // propose_policy and propose_manifest are the worker's to offer: a page naming one would turn its own run into a way to
     // ask for policies or manifests.
-    if (Array.isArray(rest.tools)) rest.tools = rest.tools.filter((t) => !(t && typeof t === "object" && PROPOSAL_TOOLS.has(t.name)));
+    if (Array.isArray(rest.tools)) rest.tools = rest.tools.filter((t) => !(t && typeof t === "object" && WORKER_ONLY_TOOLS.has(t.name)));
     if (Array.isArray(rest.tools)) rest.tools = rest.tools.map((t) => (t && typeof t === "object" && (GATED_TOOL_NAMES.has(t.name) || t.remote) ? { ...t, requiresApproval: true } : t));
     const url = sender.url ?? sender.tab?.url;
     const g = grantableOrigin({ origin: sender.origin, url, frameId: sender.frameId });
@@ -541,12 +543,14 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     /** Whether this run may ask the person to install a Python package (`python_install`): one the worker built, whose
      *  tools offer it (`OFFER_PYTHON_INSTALL`, sw-run-start.ts). */
     const offersInstall = (): boolean => p.builtBy === "worker" && byWorker() && runsInWorker(p, "python_install");
+    /** Whether this run may ask to change a setting (`change_setting`): one the worker built, whose tools offer it. */
+    const offersSetting = (): boolean => p.builtBy === "worker" && byWorker() && runsInWorker(p, "change_setting");
     /** `p` as the run is stored for a later turn or a worker restart: a run handed to the worker during this turn
      *  (`makeWorkerRun`) stays the worker's. `p` is the turn's start payload, written before the hand-over, and storing
      *  it as it is would give the run back to the page that built it, whose RESUME_RUN would then be honoured. Its tools
      *  lose `propose_policy` as `markWorkerRun`'s copy does, or this write would put it back. */
     const storedP = (): StartRunPayload => (p.builtBy !== "worker" && isWorkerRun(runId)
-        ? { ...p, builtBy: "worker", tools: withoutProposals(p.tools), ...(p.rebuild ? { rebuild: { ...p.rebuild, builtBy: "worker" } } : {}) } : p);
+        ? { ...p, builtBy: "worker", tools: withoutWorkerOnly(p.tools), ...(p.rebuild ? { rebuild: { ...p.rebuild, builtBy: "worker" } } : {}) } : p);
     const tabUrlNow = (): string => tabPageUrl.get(tabId) || p.pageUrl || "";
     /** `url` as the browser resolves it on the page the run's tab is on now: the one rule the navigate and fetch_url gates
      *  judge an origin by. A scheme-relative URL takes the page's scheme, and https only when there is no page. Throws on
@@ -1211,11 +1215,15 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 },
                 // Every result crosses into the model's context here, without the config's secrets; the text as the tool
                 // wrote it goes to the execution log's `key`, which the person reads and the model never does.
+                // The `key` keeps the backend's own secrets for the person, never a registered value (forPerson).
                 forModel: async (name, result) => {
                     const r = await forModel(result);
-                    if (r.changed) recordRunLog(runId, { level: "warn", subsystem: "tool", kind: "scrubbed", reason: "config-secret", key: result, detail: { tool: name } });
-                    return r.text;
+                    const registered = Object.keys(r.counts).length > 0;
+                    if (r.changed) recordRunLog(runId, { level: "warn", subsystem: "tool", kind: "scrubbed", reason: registered ? "registered-secret" : "config-secret", key: forPerson(result), detail: { tool: name, ...(registered ? { names: Object.keys(r.counts).sort().join(",") } : {}) } });
+                    return r.text + redactedNote(r.counts);
                 },
+                scrubText: (text, live) => live ? forLive(text) : forPerson(text),
+                scrubStored: forStored,
                 // A call routed for the page-built run it was, whose run is handed to the worker before it is sent (a revoke while
                 // it was being built, nav-handover.ts), is built again as the worker's run: never sent to the page as it was.
                 // A page the run is held on (nav-arrival.ts) runs nothing of it: the call is answered by the hold, or waits for
@@ -1268,6 +1276,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                 // What the world may ask for while it runs: re-pipes of what it was sent, those stored tables, and ml.sh.
                                 serve: isoServer(runId, reads, { deref: wholeDerefFor(runId), holders: valueHolders, columns: readStoredColumns, ...(sh ? { sh } : {}) }),
                                 // Made only for a script that names it, as a survey's is (tryReadonly below).
+                                // The person's settings, read now, for a script that names them in a run the worker built.
+                                ...(p.builtBy === "worker" && execNames(js).settings ? { settings: async () => settingEntries(await getConfig()) } : {}),
                                 ...(snap && execNames(js).current ? { current: async () => withTasks(withPolicies(withRuntime(await withEnv(await withUserWatches(snap({ model: modelNow(), log: eventsForRun(await runLog.all(), runId) })), tabId, !!p.autoApproveReadonly, !byWorker())), runId), runId) } : {}),
                             });
                             // A reading taken after a wait for the person is not simultaneous with one taken before: say so.
@@ -1637,7 +1647,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 readText: (key) => readStoredText(key, runId),
                 // Pages of an attached PDF this run holds, drawn for `look` at a document. Only a value this run holds.
                 renderPages: async (key, pages) => drawStoredPages(await readStoredBytes(key, runId), pages),
-                tryReadonly: p.autoApproveReadonly || p.autoApprovePython ? async (name, args, live) => {
+                tryReadonly: p.autoApproveReadonly || p.autoApprovePython ? async (name, args, live, call) => {
                     // A run held on its page (nav-arrival.ts) surveys nothing there, and runs no cell: the call goes on to its hold.
                     await arrivalSettled(tabId);
                     if (arrivalHold(runId)) return null;
@@ -1680,12 +1690,22 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         recordRunLog(runId, { level: "warn", subsystem: "routing", kind: "current-failed", reason: e instanceof Error ? e.message || e.name : String(e), detail: { tool: name } });
                         return null;
                     }
-                    const w = await evalReadonlyInWorker(args, {
+                    // ml.sh, for a script that names it: bound to THIS run and the step it runs in, never to anything the script says (the
+                    // isolated route's binding, above). A script that has STARTED a program is never run again on any leg: see `stoppedAfterCalls`.
+                    // Only for a run the worker built (as the isolated route is): a page-built run keeps its page leg, where there is no ml.sh.
+                    const sh = typeof args.js === "string" && call && byWorker() && execNames(args.js).sh
+                        ? surveySh({ runId, seq: seqBase + call.seq, local: call, signal: abortCtl.signal, tokens: sessionTokens(runId), origin: () => turnByRun.get(runId)?.()?.origin })
+                        : undefined;
+                    const w = await guardSurvey(sh, () => evalReadonlyInWorker(args, {
                         ...(snap ? { current: () => current ?? snap({ model: modelNow(), log }) } : {}),
-                        ml: workerReadonlyMl(tabPageUrl.get(tabId) ?? "", derefByRun.get(runId), runId),
+                        ml: { ...workerReadonlyMl(tabPageUrl.get(tabId) ?? "", derefByRun.get(runId), runId), ...(sh ? { sh: sh.host } : {}) },
                         live,
                         signal: abortCtl.signal,
-                    });
+                    }));
+                    if (w.kind === "stopped") {
+                        recordRunLog(runId, { subsystem: "routing", kind: "readonly-sh-stopped", reason: w.why, detail: { tool: name, calls: sh?.started.length ?? 0 } });
+                        return { ...w.result, renderIn: execCodeIn(args.js as string), renderOut: { type: "exec-out", error: w.result.result.replace(/^Error: /, "") } };
+                    }
                     if (w.kind !== "needs-page") {
                         recordRunLog(runId, { subsystem: "routing", kind: "readonly-worker", reason: w.kind === "answered" ? "no-page-reads" : "out-of-dialect", detail: { tool: name } });
                         return w.kind === "answered" ? { result: w.result, renderIn: w.renderIn, renderOut: w.renderOut } : null;
@@ -1832,6 +1852,14 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         }
                         if (!pkg) renderIn = { type: "code", text: "", lang: "json", note: "This package cannot be checked: the core's lock could not be read." };
                     }
+                    // change_setting's card is the worker's: checked again here, drawn from the facts and the Settings text,
+                    // and the change held as the one the person answers. One that no longer passes never becomes a card.
+                    let setting: SettingChange | undefined;
+                    if (tool === "change_setting") {
+                        const c = offersSetting() ? await settingCard(runId, args) : { error: "Error: change_setting is not offered in this run." };
+                        if ("error" in c) return { approved: false, source: "worker", feedback: c.error.replace(/^Error: /, "") };
+                        setting = c.change; renderIn = c.card;
+                    }
                     if (!renderIn) try {
                         const env = await sendTool({ runId, name: tool, args, renderOnly: true }) as { renderIn?: unknown };
                         renderIn = env?.renderIn;
@@ -1865,9 +1893,13 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // A worker tool's approval is granted to the run's state in this worker (worker-tools.ts), rebuilt here
                     // if an eviction took it, so the decision below has somewhere to put it.
                     if (byWorker() && runsInWorker(p, tool)) await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "", pyMedia).catch(() => { /* nothing granted: fails closed */ });
+                    // A setting's card closes when the setting changes anywhere else first: the answer would be to a change
+                    // the card no longer shows.
+                    let stopWatch: (() => void) | undefined;
                     return new Promise<ApprovalDecision>((resolve) => {
                         pendingApprovals.set(key, {
                             resolve: (decision) => {
+                                stopWatch?.();
                                 // A package card stands only on the rows it showed: anything else approving it is a denial.
                                 if (tool === "python_install" && (decision === true || (typeof decision === "object" && !!decision && decision.approved && !decision.cancelled))) {
                                     const j = pkg && offersInstall() ? judgeAnswer(pkg, typeof decision === "object" ? decision.files : undefined) : { ok: false as const, reason: "no-check", why: "the run does not offer python_install, or its card could not be checked" };
@@ -1877,7 +1909,15 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                         decision = { approved: false, source: "user", feedback: "The approval did not carry the files the card showed, so it counts as a denial." };
                                     }
                                 }
-                                const ok = decision === true || (typeof decision === "object" && !!decision && decision.approved);
+                                const ok = decision === true || (typeof decision === "object" && !!decision && decision.approved && decision.source !== "worker");
+                                // A setting change not approved is not written; a guarded one the PERSON declined is not asked again this run.
+                                if (setting && ok && typeof decision === "object" && decision.source === "policy") holdSettingChange(runId, setting, "policy");
+                                if (setting && !ok) {
+                                    releaseSettingChange(runId, setting.key);
+                                    const d = typeof decision === "object" && decision ? decision : undefined;
+                                    if (setting.class === "guarded" && !d?.cancelled && d?.source !== "worker" && d?.source !== "policy") void noteSettingDeclined(runId, setting.key);
+                                    if (d?.source === "worker") recordRunLog(runId, { subsystem: "setting", kind: "card-closed", reason: "worker", detail: { key: setting.key } });
+                                }
                                 // What a decision remembers (consents, grants) is read from the model's arguments, which can be
                                 // anything: a throw there must not leave the gate hanging, so the decision is still delivered.
                                 // A grant that was not minted fails closed: the call it was for is refused.
@@ -1952,6 +1992,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                 // is judged again when one changes (`rejudgePending`): its facts, resolved here.
                                 tool === "fetch_url" && !(args as { credentials?: unknown }).credentials && byWorker() && runsInWorker(p, "fetch_url")
                                     ? { ...base, consumer: "fetch" as const, facts: fetchFacts(String((args as { url?: unknown }).url ?? ""), { rendered: !!(args as { rendered?: unknown }).rendered }) }
+                                    // An ordinary setting's card too; a guarded one's is the person's alone (no facts, never judged again).
+                                    : setting?.class === "ordinary" ? { ...base, consumer: "setting" as const, facts: settingFacts(setting) }
                                     : base)({ key, runId, seq: gateSeq ?? -1, step: step ?? -1, tool, arguments: args, ts: Date.now(), routing: p.approvalRouting || "ui" }),
                         });
                         // Patch the pending step to show approve/deny (awaitingApproval) + the In preview. ALL
@@ -1961,6 +2003,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         // the same origin-authed SET_APPROVAL, so the gate is unforgeable across every surface.
                         // approvalRouting "external" SUPPRESSES the UI buttons (the gate still blocks — only the
                         // __mlApprovals channel resolves it); "ui"/"both" show them as before.
+                        if (setting) { const k = setting.key; stopWatch = watchSetting(k, () => { resolveApproval(key, { approved: false, source: "worker", feedback: settingChangedElsewhere(k) }); }); }
                         emitStep({ step, seq, pending: true, awaitingApproval: p.approvalRouting !== "external", approvalExternal: p.approvalRouting === "external" || undefined, tool, arguments: args, renderIn, grants: grants.length ? grants : undefined, askWhy });
                     });
                 },
@@ -1975,6 +2018,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 },
                 // A click or a type is the `act` consumer, judged on the element the page resolves for it (docs/spec/POLICIES.md,
                 // "Acting on a page is a consumer"). The self-approval list is the builtin `allow`, and any row beats it.
+                // change_setting: checked, then judged as the `setting` consumer, before any card (sw-change-setting.ts).
+                settingPolicy: (a) => offersSetting() ? settingBeforeCard(runId, a) : Promise.resolve({ refused: "Error: change_setting is not offered in this run." }),
                 actPolicy: async (name, a) => {
                     const v = await judgeAct(name, a);
                     // An answer that decides ends the call before its precheck runs: nothing is left for a later, identical call to reuse.

@@ -15,7 +15,7 @@ const SLOT = path.join(ROOT, "scripts", "test-slot.mjs");
 // The bench's ledger, which a granted job joins: this file's own, set before the import reads it.
 process.env.BENCH_LEDGER_FILE = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "test-slot-ledger-")), "ledger.json");
 const { ledger, register, unregister } = await import("../tests/e2e/bench/memory-budget.mjs");
-const { jobsFor, capFor, skipReason, submit, finish, look, cancel, waitFor, acquire, waitingLine, jobEnv, procLive, startTime, perWorkerFor, admit, minWorkersFor, maxWorkersFor, promisedBy, MAX_RUNS, BATCH_OVERRUN_MS, BATCH_MAX_WORKERS, batchRefusal, usualMsFor, timeCapFor, enforceCap, parseMaxTime, TIME_CAP_MIN_MS, TIME_CAP_FACTOR, KILL_GRACE_MS, MAX_TIME_MAX_MIN } = await import(SLOT);
+const { jobsFor, capFor, skipReason, submit, finish, look, cancel, waitFor, acquire, waitingLine, jobEnv, procLive, startTime, priceFor, classOf, priceIn, priceAt, priceOfSizing, fitIn, shapeOf, SHAPE_MAX, BASE_DEFAULT, SLOPE_DEFAULT, SLOPE_MIN, SLOPE_MAX, grantLine, admit, minWorkersFor, maxWorkersFor, promisedBy, MAX_RUNS, BATCH_OVERRUN_MS, BATCH_MAX_WORKERS, batchRefusal, usualMsFor, timeCapFor, enforceCap, parseMaxTime, TIME_CAP_MIN_MS, TIME_CAP_FACTOR, KILL_GRACE_MS, MAX_TIME_MAX_MIN } = await import(SLOT);
 
 process.env.TEST_SLOT_POLL_MS = "50";
 process.env.TEST_SLOT_MAX_RUNS = "1";
@@ -36,20 +36,23 @@ async function until(pred, ms = 10_000, what = "condition") {
 
 // --- how many workers a run gets ---
 
-test("jobsFor: free memory above the 25% reserve, per worker, between 1 and the cap", () => {
+test("jobsFor: free memory above the 25% reserve, at base + slope a worker, between 1 and the cap", () => {
     const total = 32 * GB;
-    // Enumerated over available × perWorker × cap, against the formula written out.
+    // Enumerated over available × base × slope × cap, against the formula written out.
     for (const available of [0, 4 * GB, 8 * GB, 8.5 * GB, 12 * GB, 20 * GB, 32 * GB]) {
-        for (const perWorker of [0.5 * GB, GB, 1.7 * GB, 4 * GB]) {
-            for (const cap of [1, 3, 8]) {
-                const want = Math.max(1, Math.min(cap, Math.floor((available - 8 * GB) / perWorker)));
-                assert.equal(jobsFor({ available, total, perWorker, cap }), want, `${available / GB} GB free, ${perWorker / GB} GB each, cap ${cap}`);
+        for (const base of [0, GB, 2.5 * GB]) {
+            for (const slope of [0.5 * GB, GB, 1.7 * GB]) {
+                for (const cap of [1, 3, 8]) {
+                    const want = Math.max(1, Math.min(cap, Math.floor((available - 8 * GB - base) / slope)));
+                    assert.equal(jobsFor({ available, total, base, slope, cap }), Math.max(1, want < 0 ? 1 : want), `${available / GB} GB free, ${base / GB} + ${slope / GB} a worker, cap ${cap}`);
+                }
             }
         }
     }
     assert.equal(jobsFor({ available: 0, total, cap: 8 }), 1, "a machine under pressure still gets one worker");
     assert.equal(jobsFor({ available: total, total, cap: 8 }), 8, "the cap holds with room to spare");
-    assert.equal(jobsFor({ available: 11 * GB, total, cap: 8 }), 3, "the default per-worker figure is 1 GB");
+    assert.equal(jobsFor({ available: 11 * GB, total, cap: 8 }), 5, "the default price is 1 GB + 0.4 GB a worker: 3 GB of room is 5 workers");
+    assert.deepEqual([BASE_DEFAULT, SLOPE_DEFAULT], [GB, 0.4 * GB]);
 });
 
 test("capFor: test.mjs's cores − 2 at most 8, Playwright's half the cores, never 0", () => {
@@ -57,21 +60,263 @@ test("capFor: test.mjs's cores − 2 at most 8, Playwright's half the cores, nev
     assert.deepEqual([1, 2, 4, 10, 16].map((c) => capFor("e2e", c)), [1, 1, 2, 5, 8]);
 });
 
-test("perWorkerFor: the p90 of the kind's last measured runs, else 1 GB", () => {
+test("priceIn: reads the footprints file, skipping lines that do not parse and other kinds", () => {
     const dir = tmpDir();
-    assert.deepEqual(perWorkerFor("unit", dir), { bytes: GB, measured: 0 });
-    const lines = [...Array(10)].map((_, i) => ({ kind: "unit", perWorker: (i + 1) * 100 })).concat([{ kind: "e2e", perWorker: 9e9 }]);
+    assert.deepEqual(priceIn("unit", null, dir), { base: GB, slope: 0.4 * GB, measured: 0, from: "default" });
+    const lines = [...Array(10)].map((_, i) => ({ kind: "unit", jobs: 2, peakRss: (i + 1) * 100 })).concat([{ kind: "e2e", jobs: 2, peakRss: 9e9 }]);
     fs.writeFileSync(path.join(dir, "footprints.jsonl"), `${lines.map((l) => JSON.stringify(l)).join("\n")}\nnot json\n`);
-    assert.deepEqual(perWorkerFor("unit", dir), { bytes: 900, measured: 10 });
-    assert.deepEqual(perWorkerFor("e2e", dir), { bytes: 9e9, measured: 1 });
+    // One worker count: the default slope; the base is the p90 of max(0, peak − 0.4 GB × 2): all under it.
+    assert.deepEqual(priceIn("unit", null, dir), { base: 0, slope: 0.4 * GB, measured: 10, from: "kind" });
+    assert.deepEqual(priceIn("e2e", null, dir), { base: 9e9 - 0.8 * GB, slope: 0.4 * GB, measured: 1, from: "kind" });
+});
+
+// --- the price: base + slope × workers, fitted from the footprints ---
+
+/** A footprint line: a kind's run of `jobs` workers that peaked at `peak` bytes, of command shape `shape` when given. */
+const fp = (kind, jobs, peak, shape) => ({ kind, jobs, peakRss: peak, perWorker: Math.round(peak / jobs), ...(shape ? { shape } : {}) });
+/** Eight-plus points on a line: peak = 1 GB + `slope` × jobs over 2, 4, 6 and 8 workers, twice each. */
+const onLine = (kind, slope, shape, base = GB) => [2, 4, 6, 8, 2, 4, 6, 8].map((j) => fp(kind, j, base + slope * j, shape));
+
+test("priceFor: the shape's footprints win from three on; fewer fall back to the kind's, then to the defaults", () => {
+    const core = "scripts/test.mjs core", all = "scripts/test.mjs";
+    const lines = [...onLine("unit", 0.2 * GB, all, 3 * GB), fp("unit", 2, 0.5 * GB, core), fp("unit", 2, 0.5 * GB, core), fp("unit", 2, 0.5 * GB, core), fp("e2e", 2, 9 * GB, core)];
+    const shaped = priceFor(lines, { kind: "unit", shape: all });
+    assert.deepEqual([shaped.from, shaped.measured], ["shape", 8]);
+    assert.ok(Math.abs(shaped.slope - 0.2 * GB) < 1 && Math.abs(shaped.base - 3 * GB) < 1, "the full suite's own line: 3 GB + 0.2 GB a worker");
+    assert.deepEqual([priceFor(lines, { kind: "unit", shape: core }).from, priceFor(lines, { kind: "unit", shape: core }).measured], ["shape", 3], "three is enough");
+    assert.ok(priceFor(lines, { kind: "unit", shape: core }).base < GB, "the one-file shape is priced by its own runs, not the suite's");
+    // Two of a shape are not enough: the kind's 11 unit lines price it.
+    const two = priceFor([...lines.slice(0, 8), fp("unit", 2, GB, "other"), fp("unit", 2, GB, "other")], { kind: "unit", shape: "other" });
+    assert.deepEqual([two.from, two.measured], ["kind", 10]);
+    assert.equal(priceFor(lines, { kind: "unit", shape: "never run" }).from, "kind");
+    assert.equal(priceFor(lines, { kind: "unit" }).from, "kind", "no shape asked for");
+    // A line from before shapes counts at kind level only, even for a null shape.
+    assert.equal(priceFor(onLine("unit", 0.2 * GB), { kind: "unit", shape: "x" }).from, "kind");
+    assert.deepEqual(priceFor([], { kind: "unit", shape: "x" }), { base: BASE_DEFAULT, slope: SLOPE_DEFAULT, measured: 0, from: "default" });
+    assert.deepEqual(priceFor([fp("e2e", 2, GB)], { kind: "unit" }), { base: BASE_DEFAULT, slope: SLOPE_DEFAULT, measured: 0, from: "default" }, "another kind's lines never count");
+    assert.equal(priceFor([{ kind: "unit", jobs: 2 }, { kind: "unit", peakRss: 5 }, null], { kind: "unit" }).from, "default", "lines without a peak or workers are not footprints");
+});
+
+test("priceFor: the kind's sample is its last 40; the shape's is its last 40", () => {
+    const old = [...Array(30)].map(() => fp("unit", 2, 9 * GB, "s")), fresh = [...Array(40)].map(() => fp("unit", 2, GB, "s"));
+    const got = priceFor([...old, ...fresh], { kind: "unit", shape: "s" });
+    assert.deepEqual([got.measured, got.base < 1.2 * GB], [40, true], "the 30 old 9 GB runs fell out of the window");
+    assert.equal(priceFor([...old, ...fresh], { kind: "unit" }).measured, 40);
+});
+
+test("priceFor: the slope is least squares, clamped to [0.1 GB, 1.5 GB]; a default with under 8 points or one worker count", () => {
+    assert.deepEqual([SLOPE_MIN, SLOPE_MAX], [0.1 * GB, 1.5 * GB]);
+    for (const slope of [0.2 * GB, 0.7 * GB, 1.2 * GB]) {
+        const got = priceFor(onLine("unit", slope), { kind: "unit" });
+        assert.ok(Math.abs(got.slope - slope) < 1, `fitted ${slope / GB} GB`);
+        assert.ok(Math.abs(got.base - GB) < 1, "the base is what the line leaves");
+    }
+    assert.equal(priceFor(onLine("unit", 0), { kind: "unit" }).slope, 0.1 * GB, "a flat sample is clamped up, not free");
+    assert.equal(priceFor(onLine("unit", -0.3 * GB, undefined, 4 * GB), { kind: "unit" }).slope, 0.1 * GB, "a falling line is clamped up too");
+    assert.equal(priceFor(onLine("unit", 3 * GB), { kind: "unit" }).slope, 1.5 * GB, "a steep one is clamped down");
+    // Seven points on a line: too few to fit, so the default slope.
+    assert.equal(priceFor(onLine("unit", 0.9 * GB).slice(0, 7), { kind: "unit" }).slope, 0.4 * GB);
+    // Many points, one worker count: nothing to fit a slope to.
+    const same = [...Array(12)].map((_, i) => fp("unit", 4, (2 + i * 0.1) * GB));
+    assert.equal(priceFor(same, { kind: "unit" }).slope, 0.4 * GB);
+});
+
+test("priceFor: the base is the p90 of what the slope leaves of each peak, never below 0", () => {
+    // One worker count (default slope 0.4 GB): residuals peak − 0.8 GB for jobs = 2, over ten runs of 1..10 GB.
+    const lines = [...Array(10)].map((_, i) => fp("unit", 2, (i + 1) * GB));
+    const got = priceFor(lines, { kind: "unit" });
+    assert.equal(got.base, 9 * GB - 0.8 * GB, "nearest-rank p90 of ten is the ninth");
+    assert.equal(priceFor([fp("unit", 4, 0.5 * GB)], { kind: "unit" }).base, 0, "a peak under the slope's share leaves 0");
+    assert.equal(priceFor([...lines, fp("unit", 2, 500 * GB)], { kind: "unit" }).base, 10 * GB - 0.8 * GB, "eleven runs: the p90 is the tenth, so one huge outlier moves it to the next rank only");
+});
+
+test("the ratchet: the price barely depends on the workers a run was granted, and a 2-worker run does not raise the next price", () => {
+    // Peak flat in the workers (1.7 GB at 2 or at 8), as measured on 536 unit footprints: the old per-worker figure
+    // would have been 0.85 GB at 2 workers and 0.21 GB at 8.
+    const flat = (jobs) => fp("unit", jobs, 1.7 * GB + 0.01 * GB * (jobs % 3), "scripts/test.mjs");
+    const history = [2, 8, 4, 6, 8, 2, 8, 4, 6, 2, 8, 4].map(flat);
+    const p = priceFor(history, { kind: "unit", shape: "scripts/test.mjs" });
+    assert.equal(p.slope, 0.1 * GB, "flat: the clamp floor");
+    assert.ok(priceAt(p, 8) - priceAt(p, 2) < 6 * 0.1 * GB + 1, "8 workers cost 6 slopes more than 2, nothing like 4x");
+    // Feed it back its own 2-worker grants again and again: the price must not climb.
+    let lines = history;
+    const prices = [];
+    for (let i = 0; i < 30; i++) {
+        const q = priceFor(lines, { kind: "unit", shape: "scripts/test.mjs" });
+        prices.push(priceAt(q, 2));
+        lines = [...lines, flat(2)];
+    }
+    assert.ok(Math.max(...prices) - prices[0] < 0.1 * GB, `30 runs granted 2 workers each moved the 2-worker price by ${(Math.max(...prices) - prices[0]) / GB} GB`);
+    // The old model on the same lines, for the record: the p90 of peak / jobs after only 2-worker runs is 0.85 GB a worker.
+    const old = (ls) => { const v = ls.map((l) => l.perWorker).sort((a, b) => a - b); return v[Math.ceil(0.9 * v.length) - 1]; };
+    assert.ok(old(lines.slice(-20)) > 0.8 * GB, "per-worker division would have quadrupled the figure");
+    // And a whole queue of them grants more than 2 workers on a roomy machine.
+    const dir = tmpDir();
+    fs.writeFileSync(path.join(dir, "footprints.jsonl"), lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+    const deps = { memory: () => ({ available: 20 * GB, coming: 0, total: 24 * GB, cores: 15 }), maxRuns: 3, resident: () => 0, startTime: () => startTime(process.pid) };
+    const t = submit({ cmd: ["scripts/test.mjs"], mode: "attached", dir, deps, tree: { clone: "/c", head: "a", dirty: null } }).ticket;
+    const job = look(t, { dir, deps }).job;
+    assert.equal(job.jobs, 8, "14 GB of room less a ~1.7 GB base: the cap of 8 workers");
+    assert.equal(job.sizing.from, "shape", "the ticket's command is the history's shape");
+});
+
+test("classOf: the runner is a suite (by genre), named test files are files, anything else is nothing", () => {
+    const table = [
+        // From the queue's own records and the test-slot skill.
+        ["node scripts/test.mjs", "suite"],
+        ["node scripts/test.mjs core", "suite:core"],
+        ["node scripts/test.mjs runner", "suite:runner"],
+        ["node scripts/test.mjs --jobs 4", "suite"],
+        ["node scripts/test.mjs --jobs 4 core", "suite:core"],
+        ["npm test", "suite"],
+        ["npm run test:core", "suite:core"],
+        ["npm run test:python", "suite:python"],
+        ["node --import tsx --test tests/test-slot.test.mjs", "files"],
+        ["node --import tsx --test tests/cdp-stream.test.mjs tests/exec-page-label.test.mjs", "files"],
+        ["node --import tsx --test --test-reporter=spec --test-reporter-destination=/dev/null --test-reporter=scripts/test-times-reporter.mjs --test-reporter-destination=/s/cdp.jsonl tests/cdp-stream.test.mjs tests/exec-page-label.test.mjs", "files"],
+        ['node --import tsx --test "tests/a b.test.mjs"', "files"],
+        ["node --import tsx --test tests/foo.test.ts", "files"],
+        ["node scripts/test-slot.mjs status", null],
+        ["node --import tsx --test", null],
+        ["npm run build", null],
+        ["npx playwright test", null],
+        ["node scripts/probe.mjs --url x", null],
+        [null, null],
+        ["", null],
+    ];
+    for (const [shape, want] of table) assert.equal(classOf(shape), want, String(shape));
+    assert.equal(classOf(shapeOf([process.execPath, "/w/clone/scripts/test.mjs", "core"], "/w/clone")), "suite:core", "from a real command in any clone");
+});
+
+test("priceFor: a run naming test files gets the defaults, not the kind's suite-heavy history, until files-class history exists", () => {
+    const suites = [...onLine("unit", 0.2 * GB, "node scripts/test.mjs", 4 * GB)];
+    const files = (n, peak) => [...Array(n)].map((_, i) => fp("unit", 2, peak + i * 0.01 * GB, `node --import tsx --test tests/f${i}.test.mjs`));
+    const ask = "node --import tsx --test tests/a.test.mjs tests/b.test.mjs";
+    assert.ok(priceFor(suites, { kind: "unit" }).base > 3.5 * GB, "the kind alone is priced as a suite");
+    const none = priceFor(suites, { kind: "unit", shape: ask });
+    assert.deepEqual(none, { base: BASE_DEFAULT, slope: SLOPE_DEFAULT, measured: 0, from: "default" }, "no class history: the defaults, 1 GB + 0.4 GB a worker");
+    assert.equal(priceFor([...suites, ...files(2, 0.5 * GB)], { kind: "unit", shape: ask }).from, "default", "two files-class lines are not enough");
+    // Three distinct file sets (no shape repeats) are enough, and the suites do not leak in.
+    const three = priceFor([...suites, ...files(3, 0.5 * GB)], { kind: "unit", shape: ask });
+    assert.deepEqual([three.from, three.measured], ["class", 3]);
+    assert.ok(three.base < GB, `priced from the three small runs, not the suites: ${three.base / GB} GB`);
+    // The same shape three times wins over the class.
+    const same = [...Array(3)].map(() => fp("unit", 2, 3 * GB, ask));
+    assert.equal(priceFor([...files(5, 0.5 * GB), ...same], { kind: "unit", shape: ask }).from, "shape");
+    // A footprint with a recorded class and no shape counts too; suites of another genre do not mix with this genre's.
+    const rec = [...Array(3)].map(() => ({ ...fp("unit", 2, 0.6 * GB), class: "files" }));
+    assert.equal(priceFor(rec, { kind: "unit", shape: ask }).from, "class");
+    const core = [...Array(4)].map(() => fp("unit", 2, 2 * GB, "node scripts/test.mjs core"));
+    assert.deepEqual([priceFor([...core, ...suites], { kind: "unit", shape: "node scripts/test.mjs core" }).from, priceFor(core, { kind: "unit", shape: "node scripts/test.mjs panel" }).from], ["shape", "kind"], "a suite genre with no history of its own falls back to the kind");
+    assert.equal(priceFor([...suites, ...core], { kind: "unit", shape: "node scripts/test.mjs core --jobs 3" }).from, "class", "a flag makes a new shape but the same class");
+});
+
+test("shapeOf: the clone's path made relative, so the same command in two clones is one shape", () => {
+    const a = shapeOf([process.execPath, "/Users/sb/git/window-ml-x/scripts/test.mjs", "core"], "/Users/sb/git/window-ml-x");
+    const b = shapeOf([process.execPath, "/Users/sb/git/window-ml-queue/scripts/test.mjs", "core"], "/Users/sb/git/window-ml-queue");
+    assert.equal(a, "node scripts/test.mjs core");
+    assert.equal(a, b);
+    assert.equal(shapeOf(["node", "--import", "tsx", "--test", "/c/tests/a b.test.mjs"], "/c"), 'node --import tsx --test "tests/a b.test.mjs"');
+    assert.equal(shapeOf(["x", "/c"], "/c"), "x .", "the clone itself is a dot");
+    assert.equal(shapeOf(["x", "/cc/y"], "/c"), "x /cc/y", "a sibling directory with the clone as a prefix is left alone");
+});
+
+test("shapeOf: a long command keeps whole arguments and names what it dropped, so two that differ at the end are two shapes", () => {
+    // Review of #1953: a character cut made the 267- and 283-character commands below one shape, and cut through an argument.
+    const head = ["node", "--import", "tsx", "--test", "--test-reporter=spec", "--test-reporter-destination=/dev/null", "--test-reporter=scripts/test-times-reporter.mjs", "--test-reporter-destination=/s/cdp.jsonl"];
+    const a = shapeOf([...head, "tests/cdp-stream.test.mjs", "tests/exec-page-label.test.mjs", "tests/a.test.mjs"], "/c");
+    const b = shapeOf([...head, "tests/cdp-stream.test.mjs", "tests/exec-page-label.test.mjs", "tests/a-much-longer-name.test.mjs", "tests/b.test.mjs"], "/c");
+    for (const s of [a, b]) {
+        assert.ok(s.length <= SHAPE_MAX, `${s.length} characters`);
+        assert.match(s, / …\+\d+ #[0-9a-f]{8}$/);
+        const kept = s.replace(/ …\+\d+ #[0-9a-f]{8}$/, "").split(" ");
+        assert.deepEqual(kept, [...head, "tests/cdp-stream.test.mjs", "tests/exec-page-label.test.mjs"].slice(0, kept.length), "only whole arguments, in order");
+    }
+    assert.notEqual(a, b);
+    assert.equal(shapeOf([...head, "tests/x.test.mjs"], "/c", Infinity), [...head, "tests/x.test.mjs"].join(" "), "uncapped, it is the whole command");
+    assert.equal(shapeOf(["node", "scripts/test.mjs"], "/c"), "node scripts/test.mjs", "a short command is unchanged");
+});
+
+test("a job's class is read from its WHOLE command, so a long file run whose paths fell past the cap is still `files`", () => {
+    const dir = tmpDir();
+    fs.writeFileSync(path.join(dir, "footprints.jsonl"), [...onLine("unit", 0.2 * GB, "node scripts/test.mjs", 4 * GB)].map((l) => JSON.stringify(l)).join("\n") + "\n");
+    const flags = [...Array(3)].flatMap((_, i) => [`--test-reporter=scripts/reporter-number-${i}.mjs`, `--test-reporter-destination=/private/tmp/some/long/scratch/dir/out-${i}.jsonl`]);
+    const cmd = ["node", "--import", "tsx", "--test", ...flags, "tests/a.test.mjs", "tests/b.test.mjs"];
+    assert.equal(classOf(shapeOf(cmd, "/c")), null, "the capped shape has lost the test paths");
+    const real = { memory: () => ({ available: 20 * GB, coming: 0, total: 24 * GB, cores: 10 }), maxRuns: 3, resident: () => 0, startTime: () => startTime(process.pid) };
+    const t = submit({ cmd, mode: "attached", dir, deps: real, tree: { clone: "/c", head: "h", dirty: null } }).ticket;
+    const job = look(t, { dir, deps: real }).job;
+    assert.equal(job.class, "files");
+    assert.equal(job.sizing.from, "default", "priced as a file run with no history, not from the suites");
+});
+
+test("the worker cap follows the reading's cores, not the machine the queue runs on", () => {
+    // Review of #1953: the grant took its cap from os.cpus(), so a 15-core reading got 2 workers on a 4-vCPU runner.
+    for (const cores of [1, 2, 3, 4, 8, 10, 15, 32]) {
+        const dir = tmpDir();
+        const deps = { memory: () => ({ available: 40 * GB, coming: 0, total: 48 * GB, cores }), maxRuns: 3, resident: () => 0, startTime: () => startTime(process.pid) };
+        const t = submit({ cmd: ["scripts/test.mjs"], mode: "attached", dir, deps, tree: { clone: "/c", head: "h", dirty: null } }).ticket;
+        assert.equal(look(t, { dir, deps }).job.jobs, Math.min(8, Math.max(1, cores - 2)), `${cores} cores`);
+        assert.equal(capFor("e2e", cores), Math.max(1, Math.floor(cores / 2)));
+    }
+});
+
+test("a footprint records the shape of its command, and the next grant is priced from that shape", () => {
+    const dir = tmpDir(), deps = laptop(20 * GB, { cap: 2 });
+    const backdate = (t) => edit(dir, t, (j) => { j.grantedAt = new Date(Date.now() - 60_000).toISOString(); });
+    const run = (cmd, peak) => { const t = submit({ cmd, mode: "attached", dir, deps, tree: { clone: "/work/clone-a", head: "h", dirty: null } }).ticket; backdate(t); finish(t, 0, { dir, deps, peak }); return t; };
+    const t = run(["/work/clone-a/scripts/test.mjs", "core"], 3 * GB);
+    const line = JSON.parse(fs.readFileSync(path.join(dir, "footprints.jsonl"), "utf8").trim());
+    assert.equal(line.shape, "scripts/test.mjs core");
+    assert.equal(line.class, "suite:core", "the class is recorded too");
+    assert.equal(line.ticket, t);
+    assert.equal(line.perWorker, 1.5 * GB, "the old field is still written");
+    run(["/work/clone-a/scripts/test.mjs", "core"], 3 * GB);
+    run(["/work/clone-a/scripts/test.mjs", "core"], 3 * GB);
+    run(["/work/clone-a/scripts/other.mjs"], 0.5 * GB);
+    // Measured, not injected: the real sizing path reads the file. Another clone's same command is the same shape.
+    const real = { memory: deps.memory, maxRuns: 3, resident: () => 0, startTime: deps.startTime };
+    const a = submit({ cmd: ["/work/clone-b/scripts/test.mjs", "core"], mode: "attached", dir, deps: real, tree: { clone: "/work/clone-b", head: "h", dirty: null } }).ticket;
+    const j = look(a, { dir, deps: real }).job;
+    assert.deepEqual([j.shape, j.sizing.from, j.sizing.measured], ["scripts/test.mjs core", "shape", 3]);
+    assert.deepEqual([j.sizing.slope, j.sizing.base], [0.4 * GB, 3 * GB - 0.8 * GB], "three 2-worker runs at 3 GB: the default slope, the rest is base");
+});
+
+test("the upgrade: a running job with only sizing.perWorker still counts its plan, and a footprints file with no shape prices at kind level", () => {
+    // The record an older copy wrote: perWorker, no base, slope or from.
+    const dir = tmpDir(), deps = { ...laptop(20 * GB), resident: () => 0 };
+    const oldJob = holder(process.pid, startTime(process.pid), { jobs: 6, sizing: { available: 20 * GB, coming: 0, total: 24 * GB, perWorker: 1.5 * GB, runs: 1, workers: 6 } });
+    writeQueue(dir, [oldJob]);
+    assert.deepEqual(priceOfSizing(oldJob.sizing), { base: 0, slope: 1.5 * GB });
+    assert.equal(promisedBy([oldJob], () => 0), 9 * GB, "6 workers at 1.5 GB each, as it was granted");
+    assert.deepEqual(priceOfSizing({}), { base: GB, slope: 0.4 * GB });
+    assert.deepEqual(priceOfSizing({ base: 2 * GB, slope: 0.3 * GB }), { base: 2 * GB, slope: 0.3 * GB });
+    assert.match(grantLine({ jobs: 6, sizing: oldJob.sizing }), /^test-slot: 6 workers \(~9\.0 GB for the run: 1\.5 GB a worker; 20\.0 GB available, 6\.0 GB reserved\)$/);
+    // The next job is admitted against that plan: 20 GB - 6 reserved - 9 planned = 5 GB of room.
+    const b = submit({ cmd: ["b"], mode: "attached", dir, deps, tree: tree() });
+    assert.equal(look(b.ticket, { dir, deps }).job.jobs, 5, "5 GB of room at 1 GB a worker");
+    // A footprints file written before shapes: no shape field anywhere, 12 lines. It prices the kind and every shape alike.
+    const old = tmpDir();
+    fs.writeFileSync(path.join(old, "footprints.jsonl"), onLine("unit", 0.3 * GB).map((l) => JSON.stringify({ at: "2026-11-10T00:00:00Z", runs: 1, durationMs: 60_000, ticket: "t", ...l })).join("\n") + "\n");
+    const got = priceIn("unit", "scripts/test.mjs", old);
+    assert.deepEqual([got.from, got.measured], ["kind", 8]);
+    assert.ok(Math.abs(got.slope - 0.3 * GB) < 1 && Math.abs(got.base - GB) < 1);
+});
+
+test("the grant line names the run's price, where it came from and the reading", () => {
+    const sizing = { available: 18.2 * GB, coming: 0, total: 24 * GB, base: 1.6 * GB, slope: 0.2 * GB, from: "shape", measured: 12, runs: 1, workers: 5 };
+    assert.equal(grantLine({ jobs: 5, sizing }), "test-slot: 5 workers (~2.6 GB for the run: 1.6 GB + 205 MB a worker, from 12 runs of this command; 18.2 GB available, 6.0 GB reserved)");
+    assert.match(grantLine({ jobs: 1, sizing: { ...sizing, from: "kind", measured: 1, coming: 2 * GB, runs: 2, workers: 7 } }), /^test-slot: 1 worker \(~1\.8 GB for the run: 1\.6 GB \+ 205 MB a worker, from 1 run of this kind; 18\.2 GB available, 2\.0 GB of it promised to bench browsers and other test runs starting up, 6\.0 GB reserved; run 2 at once, 7 workers between them\)$/);
+    assert.match(grantLine({ jobs: 2, sizing: { ...sizing, from: "class", measured: 3 } }), /, from 3 runs of commands like this one;/);
+    assert.match(grantLine({ jobs: 2, sizing: { ...sizing, from: "default", measured: 0 } }), /, unmeasured: the defaults;/);
 });
 
 // --- admission: a few runs at once under the budget ---
 
 /** This laptop's shape: 24 GB, 15 cores (13 workers between runs), `available` free; a fixed per-worker figure. */
-const laptop = (available, { perWorker = GB, cap = 8, e2e = {} } = {}) => ({
+const laptop = (available, { perWorker = GB, price = null, cap = 8, e2e = {} } = {}) => ({
     memory: () => ({ available, coming: 0, total: 24 * GB, cores: 15 }),
-    kind: (k) => (k === "e2e" ? { perWorker, cap: 7, ...e2e } : k === "batch" ? { perWorker, cap: 1 } : { perWorker, cap }),
+    kind: (k) => (k === "e2e" ? { perWorker, price, cap: 7, ...e2e } : k === "batch" ? { perWorker, price, cap: 1 } : { perWorker, price, cap }),
     maxRuns: MAX_RUNS, resident: () => 0, startTime: () => startTime(process.pid),
 });
 const states = (dir, tickets, deps) => tickets.map((t) => look(t, { dir, deps }).job.state);
@@ -82,10 +327,10 @@ test("admit: the rule written out, enumerated over runs, workers, room and kind"
         for (const running of [0, 1, 2, 3, 4]) {
             for (const workers of [0, 5, 11, 12, 13]) {
                 for (const room of [-2 * GB, 0, 0.9 * GB, 1.5 * GB, 2 * GB, 6.5 * GB, 30 * GB]) {
-                    const perWorker = GB, cap = 8, min = kind === "e2e" ? 1 : 2, left = maxWorkers - workers, fit = Math.floor(room / perWorker);
+                    const price = { base: 0, slope: GB }, cap = 8, min = kind === "e2e" ? 1 : 2, left = maxWorkers - workers, fit = Math.floor(room / GB);
                     const want = running === 0 ? Math.max(1, Math.min(cap, left, fit))
                         : running >= 3 || left < min || fit < min ? 0 : Math.min(cap, left, fit);
-                    const got = admit({ kind, running, workers, room, perWorker, cap, maxWorkers });
+                    const got = admit({ kind, running, workers, room, price, cap, maxWorkers });
                     assert.equal(got.jobs, want, `${kind}, ${running} running with ${workers} workers, ${room / GB} GB room`);
                     assert.equal(!!got.why, want === 0);
                 }
@@ -93,14 +338,38 @@ test("admit: the rule written out, enumerated over runs, workers, room and kind"
         }
     }
     assert.deepEqual([minWorkersFor("unit"), minWorkersFor("e2e"), maxWorkersFor(15), maxWorkersFor(2), MAX_RUNS], [2, 1, 13, 1, 3]);
-    assert.equal(admit({ kind: "unit", running: 0, workers: 0, room: -5 * GB, perWorker: GB, cap: 8, maxWorkers: 13 }).jobs, 1, "alone, a run always starts");
+    assert.equal(admit({ kind: "unit", running: 0, workers: 0, room: -5 * GB, price: { base: 0, slope: GB }, cap: 8, maxWorkers: 13 }).jobs, 1, "alone, a run always starts");
     // A declared count (`want`, a batch job's workers): all of it or none, and alone too it must fit both caps.
     for (const running of [0, 1, 2]) for (const workers of [0, 7, 8, 13]) for (const room of [-GB, 5 * GB, 6 * GB, 20 * GB]) {
-        const got = admit({ kind: "batch", running, workers, room, perWorker: GB, cap: 1, maxWorkers: 13, want: 6 }).jobs;
+        const got = admit({ kind: "batch", running, workers, room, price: { base: 0, slope: GB }, cap: 1, maxWorkers: 13, want: 6 }).jobs;
         assert.equal(got, 13 - workers >= 6 && room >= 6 * GB ? 6 : 0, `want 6: ${running} running with ${workers} workers, ${room / GB} GB`);
     }
-    assert.equal(admit({ kind: "batch", running: 0, workers: 0, room: 20 * GB, perWorker: GB, cap: 1, maxWorkers: 2, want: 6 }).jobs, 0, "alone on a 4-core machine: 6 of 2 workers is refused");
-    assert.equal(admit({ kind: "unit", running: 1, workers: 0, room: 4 * GB, perWorker: GB, cap: 8, maxWorkers: 13, want: 3 }).jobs, 3, "`want` replaces the kind's minimum and cap");
+    assert.equal(admit({ kind: "batch", running: 0, workers: 0, room: 20 * GB, price: { base: 0, slope: GB }, cap: 1, maxWorkers: 2, want: 6 }).jobs, 0, "alone on a 4-core machine: 6 of 2 workers is refused");
+    assert.equal(admit({ kind: "unit", running: 1, workers: 0, room: 4 * GB, price: { base: 0, slope: GB }, cap: 8, maxWorkers: 13, want: 3 }).jobs, 3, "`want` replaces the kind's minimum and cap");
+});
+
+// --- admission at base + slope × workers ---
+
+test("admit: the most workers is the largest w with base + slope × w within the room; the base alone buys none", () => {
+    const price = { base: 1.5 * GB, slope: 0.5 * GB }, args = { kind: "unit", running: 1, workers: 2, price, cap: 8, maxWorkers: 13 };
+    // 4 GB of room: 1.5 + 0.5 w <= 4 gives w = 5. Written out over a range of rooms.
+    for (const room of [0, GB, 1.5 * GB, 2.4 * GB, 2.5 * GB, 3 * GB, 3.9 * GB, 4 * GB, 4.4 * GB, 5.5 * GB, 30 * GB]) {
+        const fit = room < 1.5 * GB ? 0 : Math.floor((room - 1.5 * GB) / (0.5 * GB));
+        const got = admit({ ...args, room });
+        assert.equal(got.jobs, fit < 2 ? 0 : Math.min(8, 11, fit), `${room / GB} GB of room`);
+        if (fit < 2) assert.equal(got.why, `memory: ${room >= GB ? (room / GB).toFixed(1) + " GB" : Math.round(room / 1024 ** 2) + " MB"} above the reserve, 2 workers take ~2.5 GB`);
+    }
+    assert.equal(fitIn(price, 4 * GB), 5, "fits exactly at the boundary");
+    assert.equal(fitIn(price, 4 * GB - 1), 4, "one byte short loses a worker");
+    assert.equal(fitIn(price, GB), 0);
+    // Alone, the head always starts, on one worker if that is all.
+    assert.equal(admit({ ...args, running: 0, workers: 0, room: GB }).jobs, 1);
+    assert.equal(admit({ ...args, running: 0, workers: 0, room: 30 * GB, cap: 4 }).jobs, 4, "the cap holds");
+    // `want` is all or nothing at the price: 6 workers take 4.5 GB.
+    const w = (room) => admit({ ...args, kind: "batch", want: 6, cap: 1, room }).jobs;
+    assert.deepEqual([w(4.4 * GB), w(4.5 * GB), w(20 * GB)], [0, 6, 6]);
+    // A bigger base moves the whole line: the same slope, 2 GB more base, 4 fewer workers at the same room.
+    assert.equal(admit({ ...args, room: 5 * GB }).jobs - admit({ ...args, price: { base: 3.5 * GB, slope: 0.5 * GB }, room: 5 * GB }).jobs, 4);
 });
 
 test("three runs start together under the budget; a fourth waits on the cap and starts when one ends", () => {
@@ -141,19 +410,21 @@ test("the budget full: a second run waits for memory; alone, a run starts on wha
     const [a, b] = ["a", "b"].map((c) => submit({ cmd: [c], mode: "attached", dir, deps, tree: tree() }).ticket);
     assert.deepEqual(states(dir, [a, b], deps), ["running", "queued"]);
     assert.equal(look(a, { dir, deps }).job.jobs, 3, "9 GB less the 6 GB reserve: 3 workers");
-    assert.match(look(b, { dir, deps }).why, /^memory: 0 MB above the reserve, 2 workers take 2\.0 GB$/);
+    assert.match(look(b, { dir, deps }).why, /^memory: 0 MB above the reserve, 2 workers take ~2\.0 GB$/);
     const tight = laptop(2 * GB);
     finish(a, 0, { dir, deps: tight });
     assert.deepEqual([look(b, { dir, deps: tight }).job.state, look(b, { dir, deps: tight }).job.jobs], ["running", 1], "below the reserve, the head still starts on one worker");
 });
 
 test("what a running run planned counts until its workers hold it, and no further", () => {
-    const run = (jobs, perWorker, pid) => ({ jobs, sizing: { perWorker }, pid });
+    const run = (jobs, perWorker, pid) => ({ jobs, sizing: { base: 0, slope: perWorker }, pid });
     assert.equal(promisedBy([run(4, GB, 1), run(2, GB, 2)], (j) => (j.pid === 1 ? 3 * GB : 5 * GB)), GB, "1 GB still to come; the second run holds more than it planned");
+    // The plan is the price at the run's workers: base + slope × workers.
+    assert.equal(promisedBy([{ jobs: 4, sizing: { base: 1.5 * GB, slope: 0.5 * GB }, pid: 1 }], () => GB), 2.5 * GB, "3.5 GB planned, 1 GB held");
     // A run that planned 6 GB and holds none of it yet leaves 8 GB of room; holding all of it, it leaves 8 GB too,
     // since free memory has then dropped by what it holds.
     const dir = tmpDir(), deps = { ...laptop(20 * GB), resident: () => 0 };
-    writeQueue(dir, [holder(process.pid, startTime(process.pid), { jobs: 6, sizing: { perWorker: GB } })]);
+    writeQueue(dir, [holder(process.pid, startTime(process.pid), { jobs: 6, sizing: { base: 0, slope: GB } })]);
     const b = submit({ cmd: ["b"], mode: "attached", dir, deps, tree: tree() });
     assert.equal(look(b.ticket, { dir, deps }).job.jobs, 7, "13 − 6 workers left; 8 GB of room");
     assert.equal(look(b.ticket, { dir, deps }).job.sizing.coming, 6 * GB);
@@ -200,7 +471,7 @@ const putTest = (dir, deps, cmd, kind = "unit") => submit({ kind, cmd: [cmd], mo
 /** Rewrite the queue's record of a ticket. */
 const edit = (dir, ticket, f) => { const s = JSON.parse(fs.readFileSync(path.join(dir, "queue.json"), "utf8")); f(s.jobs.find((j) => j.ticket === ticket)); fs.writeFileSync(path.join(dir, "queue.json"), JSON.stringify(s)); };
 /** A queue where something holds 2 workers already, so no job gets the alone-starts exemption. */
-const held = (dir) => writeQueue(dir, [holder(process.pid, startTime(process.pid), { jobs: 2, sizing: { perWorker: GB } })]);
+const held = (dir) => writeQueue(dir, [holder(process.pid, startTime(process.pid), { jobs: 2, sizing: { base: 0, slope: GB } })]);
 
 test("batch: submitted before a test job, it is judged after it; both start when the budget fits both", () => {
     for (const batchFirst of [true, false]) {
@@ -313,15 +584,18 @@ test("batch: a declared worker count is all or nothing; alone it must fit too", 
     assert.equal(BATCH_MAX_WORKERS, 6);
 });
 
-test("batch: its footprints do not size a test run; with none of its own it takes the unit figure", () => {
+test("batch: its footprints do not size a test run; with none of its own it takes the unit price", () => {
     const dir = tmpDir(), write = (...ls) => fs.writeFileSync(path.join(dir, "footprints.jsonl"), `${ls.map((l) => JSON.stringify(l)).join("\n")}\n`);
-    assert.deepEqual(perWorkerFor("batch", dir), { bytes: GB, measured: 0 }, "nothing measured at all: the default");
-    write({ kind: "unit", perWorker: 3 * GB });
-    assert.deepEqual(perWorkerFor("batch", dir), { bytes: 3 * GB, measured: 0 }, "no batch lines: the unit p90");
-    write({ kind: "unit", perWorker: 3 * GB }, ...[...Array(10)].map((_, i) => ({ kind: "batch", perWorker: (i + 1) * 100 })));
-    assert.deepEqual(perWorkerFor("batch", dir), { bytes: 900, measured: 10 }, "batch lines: their p90, whatever the unit lines say");
-    assert.deepEqual(perWorkerFor("unit", dir), { bytes: 3 * GB, measured: 1 }, "a batch line never sizes a unit run");
-    assert.deepEqual(perWorkerFor("e2e", dir), { bytes: GB, measured: 0 });
+    const fp = (kind, peakRss, jobs = 2) => ({ kind, jobs, peakRss });
+    assert.deepEqual(priceIn("batch", null, dir), { base: GB, slope: 0.4 * GB, measured: 0, from: "default" }, "nothing measured at all: the defaults");
+    write(fp("unit", 3 * GB));
+    assert.deepEqual(priceIn("batch", null, dir), { ...priceIn("unit", null, dir), measured: 0 }, "no batch lines: the unit price");
+    assert.equal(priceIn("batch", null, dir).base, 3 * GB - 0.8 * GB);
+    write(fp("unit", 3 * GB), ...[...Array(10)].map((_, i) => fp("batch", (i + 1) * GB, 1)));
+    // Batch lines at one worker count: the default slope; the base is the p90 of their peaks less one slope.
+    assert.deepEqual(priceIn("batch", null, dir), { base: 9 * GB - 0.4 * GB, slope: 0.4 * GB, measured: 10, from: "kind" }, "batch lines: their own, whatever the unit lines say");
+    assert.equal(priceIn("unit", null, dir).measured, 1, "a batch line never sizes a unit run");
+    assert.deepEqual(priceIn("e2e", null, dir), { base: GB, slope: 0.4 * GB, measured: 0, from: "default" });
 });
 
 test("batch: a footprint line has durationMs, and a batch run past the overrun mark is marked `overran`", () => {
@@ -361,7 +635,7 @@ test("batch: the CLI takes --kind batch --workers N and refuses a bad count with
 // --- the wall-clock cap: a job past it is stopped ---
 
 const MIN = 60_000;
-/** Footprint lines of \`kind\` with these durations. */
+/** Footprint lines of `kind` with these durations. */
 const footprints = (dir, kind, durations) => { fs.mkdirSync(dir, { recursive: true }); if (durations.length) fs.appendFileSync(path.join(dir, "footprints.jsonl"), durations.map((d) => JSON.stringify({ kind, jobs: 2, peakRss: 2 * GB, perWorker: GB, durationMs: d })).join("\n") + "\n"); };
 /** A recorder standing in for the signalling, so no test signals a process it did not start. */
 const kills = () => { const sent = []; return { sent, kill: (j, sig) => sent.push([j.ticket, sig]) }; };
@@ -711,7 +985,7 @@ test("a grant subtracts the browsers a sweep just admitted, joins the bench's le
         assert.equal(job.jobs, jobsFor({ ...job.sizing, available: job.sizing.available - 3 * GB, cap: capFor("unit") }));
         assert.ok(said.some((l) => l.includes("3.0 GB of it promised to bench browsers and other test runs starting up")), said.join("\n"));
         const mine = ledger().find((e) => e.kind === "tests");
-        assert.deepEqual([mine.pid, mine.ticket, mine.planned], [process.pid, r.ticket, job.jobs * job.sizing.perWorker]);
+        assert.deepEqual([mine.pid, mine.ticket, mine.planned], [process.pid, r.ticket, priceAt(job.sizing, job.jobs)]);
         finish(r.ticket, 0, { dir });
         assert.equal(ledger().some((e) => e.kind === "tests"), false, "a finished run leaves the ledger");
     } finally {

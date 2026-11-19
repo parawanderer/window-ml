@@ -264,6 +264,34 @@ root 404s), `todays-date` answers the date.
   stays in `examples/cross-page/serve.mjs`.
 
 
+## Review of 2026-11-17: the lifetimes list
+
+One paragraph added to the default system prompt (`lifetimesClause`, `src/agent/prompts.ts`; docs/spec/ASYNC_CALLS.md,
+rule 4b, slice D), so the model never counts on something that is gone. The exact text, at the default figures:
+
+> HOW LONG THINGS LAST. Python variables: this run; gone if the sandbox dies, or after 10 min idle between turns.
+> `/files/`: this session. `@tool:` values: this session; gone if the extension's worker restarts. A detached `ml.sh`
+> call or cell: runs on after your answer, to its end or 60 min. A fetch: this turn. A page-bound task: this page.
+
+`ml.sh` is named beside a cell only when the shell clause names it (the shell on and `exec` wired). The `@tool:`
+sentence is there only when the run has tool tokens (off by default, when the prompt names nothing of the
+feature). The idle clause is left out when `pythonIdleMinutes` is 0 (never reaped for idleness). Both figures follow the person's
+settings, read from the public config the run is assembled with.
+
+- **Size**: a default-kit prompt (every builtin tool, tool tokens, pipe, `ml.current`, vision; the shell off, so the
+  list reads "A detached cell") goes from 7,257 to 7,583 characters; the paragraph is 326 characters, 56 words, about
+  82 tokens at four characters a token (not measured
+  against a backend's `usage.prompt_tokens`, which this review did not run). The tool schemas are unchanged.
+- **Not measured on a bench**: whether the paragraph changes any model's behaviour. It adds facts and removes none, so
+  the decision rule (no pass rate drops) has not been checked; the next sweep that touches the prompt should include it.
+- **Checked against the code**: Python variables end at a kernel death and at the between-turns idle reap
+  (`py-reap.ts`); a live turn's idle worker is shut after 30 min (`REAP_LIVE_MS`) unless the cell passed `keep`, which
+  `python_exec`'s own description says, so the list does not repeat it. `@tool:` values live in worker memory
+  (`tokensByRun`) and go with a worker eviction; an attached file's pointer does not. The tool-output clause said a
+  `@tool:` was "valid for the whole session", which contradicted the list; those five words are removed (-31
+  characters), so the list is the one statement of a value's lifetime.
+
+
 ## `task` reaches every run with `python_exec` (2026-11-12)
 
 A `python_exec` cell of a worker-hosted run now detaches past its lease (ASYNC_CALLS.md mode 1), so `task` is offered
@@ -295,6 +323,15 @@ system and user message:
   answers that misread a wake are the waits after a missed estimate. What stays open is what "this turn" and "this run"
   span, asked by three models. The words are shared with `ml.sh`'s detached text and the `task` tool, so that is the
   next prompt review's, not this text's.
+
+## `change_setting` reaches every run the worker builds (2026-11-17)
+
+`change_setting` (MODEL_SETTINGS.md) is offered by `startUserRun` to every run the worker builds, beside
+`propose_policy`, so its definition is paid on every call of such a run. It is 625 characters as sent (name,
+description, parameters); `propose_policy`'s is 1,199. Its description names `ml.settings()` and says the result names
+the old value; it quotes no setting's name or tooltip (those are the person's, on the card). The backend's
+`usage.prompt_tokens` delta is not measured yet: the next prompt review measures it with the bench, as for `task` above.
+
 ## Round 3, first finding: glm-4.7-flash's csv-total was the tool, not the prompt (2026-10-14)
 
 Round 2 left the `python_exec` cut unshipped because glm-4.7-flash lost csv-total under it. Reading its steps showed

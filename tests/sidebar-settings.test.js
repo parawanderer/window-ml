@@ -1037,7 +1037,7 @@ test("policy page: Add sends op add with the effect, label and source typed", as
     await w.flush();
     [...sec().querySelectorAll(".pol-add button.test-btn")].find((b) => b.textContent === "Add").click();
     await w.flush();
-    assert.deepEqual(calls.at(-1), { type: "POLICIES", payload: { op: "add", effect: "deny", label: "no tracker", source: '(c) => c.kind === "fetch" && c.host === "example.com"' } });
+    assert.deepEqual(calls.at(-1), { type: "POLICIES", payload: { op: "add", consumer: "fetch", effect: "deny", label: "no tracker", source: '(c) => c.kind === "fetch" && c.host === "example.com"' } });
 });
 
 // --- "Waiting for an answer": the sites asking for access, for every site, the popup's rows in Settings ---

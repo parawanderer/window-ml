@@ -760,7 +760,7 @@ test("the live call hands its glyphs over, the reformatted block takes them, and
     assert.match(rd("../src/sidebar/code-block.tsx"), /if \(format && preRef\.current\) morphInto\(preRef\.current\)/);
     assert.match(rd("../src/sidebar/transcript/agent-detail.tsx"), /useState\(\(\) => \(!history \? liveHandoff\(\) : null\)\)/);
     assert.match(rd("../src/sidebar/transcript/agent-detail.tsx"), /handed && open \? " handed"/);
-    assert.match(rd("../src/chat/chat.css"), /\.chat\.calm \.astep\.handed \.astep-body \{ animation: none; \}/);
+    assert.match(rd("../src/chat/chat.css"), /\.chat\.calm \.astep\.handed:not\(\.closing\) \.astep-body \{ animation: none; \}/);
 });
 
 test("a call that arrived as one block, or stood for a frame, is not morphed", async () => {

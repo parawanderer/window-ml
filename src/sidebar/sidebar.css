@@ -826,6 +826,11 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 }
 .set-field input:focus, .set-field select:focus { outline: none; border-color: var(--accent); }
 .set-field input:disabled { opacity: .5; cursor: not-allowed; }
+/* A SECRET'S TEXT BOX: the input fills the row and the eye sits inside its right end, so the box is the same width as every other field. */
+.secret-input { position: relative; display: flex; }
+.secret-input > input { flex: 1; min-width: 0; padding-right: 34px; }
+.secret-input > .secret-eye { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); }
+.secret-input > .secret-eye:disabled { opacity: .4; cursor: default; }
 .set-field input.err { border-color: var(--err); }
 /* Model combobox (ModelPicker): a text input + a caret that drops the full server model list (filtered by
    what's typed). Replaces the native <datalist>, which hid non-matching entries + closed on re-render. */
@@ -3288,6 +3293,8 @@ html[data-focus] .action-verb { font-weight: 500; }
 .fold-rail:hover::before { background: color-mix(in srgb, var(--fg) 32%, transparent); }
 .fold-rail-cite::before { background: color-mix(in srgb, var(--cite) 70%, transparent); }
 .fold-rail-cite:hover::before { background: var(--cite); }
+/* `.fold-rail-still`: the rail of a call still being written (live-call.tsx), drawn but not a control: no hover, no click. */
+.fold-rail-still { pointer-events: none; cursor: default; }
 @media (prefers-reduced-motion: reduce) { .fold-rail::before { transition: none; } }
 /* NOT A TAP TARGET on a phone: each place that draws one has a full-width header or row that does the same, and an
    11px strip beside the content is a mis-tap there. The line stays; only the click goes. */
@@ -4677,3 +4684,14 @@ pre.code.morphing { position: relative; }
 pre.code.morphing:not(.numbered) > code, pre.code.morphing .lcode { visibility: hidden; }   /* a numbered block keeps its gutter */
 .code-morph { position: absolute; inset: 0; pointer-events: none; white-space: pre; }
 .code-morph > span { position: absolute; }
+
+/* change_setting's card (card/setting-card-view.tsx): both values in full, never capped or scrolled away. */
+.setcard { display: flex; flex-direction: column; gap: 6px; font-size: .92em; line-height: 1.4; }
+.setcard-name { font-weight: 600; }
+.setcard-tip, .setcard-sync, .setcard-once { color: var(--fg-dim); }
+.setcard-reason { font-weight: 600; }
+.setcard-val { display: grid; grid-template-columns: 3.5em 1fr; gap: 2px 8px; }
+.setcard-val-label { color: var(--fg-dim); }
+.setcard-val-lines { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.setcard-line { font-family: var(--mono, ui-monospace, monospace); font-size: .9em; overflow-wrap: anywhere; white-space: pre-wrap; }
+.setcard-why-text { overflow-wrap: anywhere; }
