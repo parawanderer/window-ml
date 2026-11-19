@@ -51,6 +51,12 @@ function wrote(p) {
     return there;
 }
 
+/** Runs `row`, then removes `paths` whatever happened, so one failing row leaves no file to red the rows after it. */
+async function cleaning(paths, row) {
+    try { return await row(); }
+    finally { for (const p of paths) py.runPython(`import os\nif os.path.exists(${JSON.stringify(p)}): os.remove(${JSON.stringify(p)})`); }
+}
+
 const sitePackages = () => String(py.runPython(`import site; site.getsitepackages()[0]`));
 
 // --- to_string(buf=…) writes where the cell says: it asks, by every way of binding buf ---
@@ -67,11 +73,11 @@ const TO_STRING = [
 for (const [label, code] of TO_STRING) {
     test(`to_string ASKS and writes nothing: ${label}`, { timeout: 60000 }, async (t) => {
         if (skip) return t.skip(skip);
-        for (const target of ["/tmp/ml-buf-probe.txt", `${sitePackages()}/zz_ml_buf_probe.py`]) {
+        for (const target of ["/tmp/ml-buf-probe.txt", `${sitePackages()}/zz_ml_buf_probe.py`]) await cleaning([target], async () => {
             const r = await inside(code(target));
             assert.match(r.refused ?? "", /to_string\(buf=…\) writes to the file or buffer it is given/, `${target}: ${JSON.stringify(r)}`);
             assert.strictEqual(wrote(target), false, `${target} was written`);
-        }
+        });
     });
 }
 
@@ -118,29 +124,27 @@ const SINKS = {
     "DataFrame.to_string": { probe: "to_string's rows above" },
     "Series.to_string": { probe: "to_string's rows above" },
     "builtins.print": {
-        probe: async () => {
+        probe: () => cleaning(["/tmp/ml-print-probe.txt"], async () => {
             const r = await inside(`print("X = 1", file="/tmp/ml-print-probe.txt")`);
             assert.ok(!r.value || r.refused || r.error, JSON.stringify(r));
             assert.strictEqual(wrote("/tmp/ml-print-probe.txt"), false);
-        },
+        }),
         why: "file= must have a write method; a cell cannot get a real file (open is refused), only its own StringIO",
     },
     "csv.DictReader": {
-        probe: async () => {
+        probe: () => cleaning(["/tmp/ml-csv-probe.txt"], async () => {
             py.runPython(`open("/tmp/ml-csv-probe.txt", "w").write("A\\nsecret-content\\n")`);
             const r = await inside(`import csv\n[dict(r) for r in csv.DictReader("/tmp/ml-csv-probe.txt")]`);
-            wrote("/tmp/ml-csv-probe.txt");
             assert.doesNotMatch(JSON.stringify(r), /secret-content/);
-        },
+        }),
         why: "f is iterated, never opened: a path string is read as its own characters",
     },
     "PIL.Image.open": {
-        probe: async () => {
+        probe: () => cleaning(["/tmp/ml-pil-probe.png"], async () => {
             py.runPython(`from PIL import Image; Image.new("RGB", (2, 2)).save("/tmp/ml-pil-probe.png")`);
             const r = await inside(`from PIL import Image\nImage.open("/tmp/ml-pil-probe.png").size`);
-            wrote("/tmp/ml-pil-probe.png");
             assert.ok(r.refused, JSON.stringify(r));
-        },
+        }),
     },
 };
 
