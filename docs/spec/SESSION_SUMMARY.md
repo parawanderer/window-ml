@@ -107,11 +107,28 @@ What the attribution needs per session, and whether the extension holds it:
 | The electricity price (`usage.electricity`) | cost | Yes: each call records it (`price-book.ts`). |
 
 So the extension can attribute only what it watched, and a past session's readings are gone with the stream. The page
-reads a per-session share stored as it accrues, never the frames: the worker attributes each stretch of generations
-once it closes (30 s tail and 30 s rest after its last generation) and adds `{ J, aboveJ, basis, ms, cost }` to the
-session's record, declared with `defineState`. Open, for the coordinator: the worker holds the stream whenever a local
-runtime generates for a session, not only while a panel is open. Without that, a session run with no panel open has no
-reading and draws nothing.
+reads a per-session share stored as it accrues, never the frames.
+
+The hold (ruled by the coordinator, 2026-11-19). The worker holds the event stream while a local runtime generates for a
+session and until that stretch closes (the 30 s tail and the 30 s rest after its last generation), with or without a
+panel open, and only when the runtime's first `sample` frame carries a power field. It does not hold the stream while
+nothing generates. A connection the worker opens with no frame seen asks for the server's whole ring
+(`sinceFor(null, ...)` in `sw-events.ts`, `RING_MS`), so a stretch watched this way has the 10 min before it, as well as
+the 30 s rest after it, to find its rest baseline in: each channel's median over readings at least 30 s after any
+generation, every client's included. When neither part has such readings (the box was busy for the 10 min before, and
+the next stretch opened inside the 30 s after), the rest is unknown: the stretch keeps its energy and draws no "above
+idle", and its tails go unattributed, as `attribute` already does.
+
+What an evicted worker leaves. A stretch's readings are in worker memory, and the worker can die between the last
+generation and the close. The worker re-runs the attribution over the stretch so far at each of its `gen.end` frames and
+writes the share each time, so an eviction loses only what came after the last write: the tail and any later
+generation's part. The record is `{ J, aboveJ, basis, ms, cost, open, cut }`. It is written `open: true` until the close
+writes `open: false`. On its next start, the worker marks every stretch still `open` as `cut: true`, and the page draws a
+cut stretch's figure with the words "cut short: the browser stopped watching before the stretch ended". So a cut stretch
+never reads as a complete one. The `defineState` declaration's description says this: "A session's local-model energy
+and cost, one entry per stretch of generations, written at each generation's end; `cut` marks a stretch the worker
+stopped inside, whose tail is missing." The test, a fixture of frames ending mid-stretch: "energy share: frames that
+end mid-stretch leave a cut record, drawn as cut, never as complete".
 
 Cost for one session in a page. The page reads one stored record per session. The attribution itself, measured on this
 clone's box log (2026-11-19): `runEnergy` for the two busiest sessions (37 generations over 1.2 min, 27 over 2.8 min)
@@ -123,6 +140,16 @@ What draws when a reading is absent: nothing, by the rule above; never an estima
 A session on a cloud model has no energy line. A local session whose box reported no power, or whose stretch was not
 watched, has none either. A stretch with no rest baseline in reach shows the energy but no "above idle". The basis is
 always drawn with the figure (`BASIS_WORDS`: "at the wall", "GPUs only", ...), because the scopes are not comparable.
+
+Order of work, one PR each:
+
+1. Re-pin `src/proto/events.proto` to the fork's commit that has `GPUInfo.power` and `ComputeInfo.power_sources`, and
+   regenerate.
+2. Move the attribution into `src/spend/` with `move-symbols`. The bench imports it from there. No behaviour change, and
+   the bench's own tests are unchanged. To a janitor, through the coordinator.
+3. The worker's hold and the stored share, with the cut record and its fixture test. To a janitor, through the
+   coordinator.
+4. The page's line in the resources tab.
 
 ### Files tab
 
