@@ -201,7 +201,7 @@ export function ComposerCard() {
                 <ThumbStrip imgs={att.imgs} loading={att.loading} onRemove={att.remove} />
                 <FileStrip docs={att.docs} reasons={att.reasons} onRemove={att.removeDoc} />
                 <textarea ref={ref} class="card-cmp-input" rows={3}
-                    placeholder={el ? "Ask about the selected element…" : "Ask window.ml to do something on this page… (paste an image or a file to attach)"}
+                    placeholder={el ? "Ask about the selected element…" : "Ask window.ml to do something on this page…"}
                     value={text}
                     onInput={e => { setText((e.target as HTMLTextAreaElement).value); if (err) setErr(""); }}
                     onPaste={att.onPaste} onDragOver={att.onDragOver} onDrop={att.onDrop}
