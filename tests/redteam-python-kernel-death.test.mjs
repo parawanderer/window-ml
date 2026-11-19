@@ -1,7 +1,7 @@
 // redteam-python-kernel-death.test.mjs — the ADVERSARIAL half of ruling 26 (window-ml#1976, branch
-// feat/py-fatal-listener at b9e0d06a): a Python cell must not be able to choose, fake or word the verdict that the
-// kernel died, and a run's death must reach no other run's namespace. Two levels, because they answer different
-// questions:
+// feat/py-fatal-listener, rows written at b9e0d06a and re-run at 3031bf4c): a Python cell must not be able to choose,
+// fake or word the verdict that the kernel died, and a run's death must reach no other run's namespace. Two levels,
+// because they answer different questions:
 //
 // - The real worker (tests/fixtures/kernel-death-redteam-driver.mjs, a child process, real Pyodide; self-SKIPS without
 //   dist/pyodide) for whether the verdict is Pyodide's: a cell patches what the probe reads, installs `sys.settrace`,
@@ -11,9 +11,9 @@
 // - The offscreen document (src/offscreen.ts under a fake `chrome` and Worker, no Pyodide) for the blast radius: a kill
 //   for reason `kernel-death` touches the dying principal's runs and no other run's.
 //
-// The one row marked `todo` is a gap, not a fail: `kernelDied(cause)` interpolates the worker's error verbatim, and the
-// answered-cell paths in python-worker.ts (`fatal = String(result.error)`) do not cut it to a line as `onUncaught` does,
-// so a death whose error carries a traceback puts a multi-line, cell-source-bearing text in front of the model.
+// The cause is bounded at the document's edge: `boundCause` (src/offscreen.ts) keeps the LAST non-empty line, at most
+// 300 characters, so a death whose error carries a traceback hands the model its last line and never the cell's source.
+// That row was failing-first at b9e0d06a (kernelDied interpolated the worker's error verbatim); it passes at 3031bf4c.
 import { test, before } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -152,9 +152,17 @@ test("RED TEAM: a death on the shared full-mode worker is the whole principal's,
     assert.ok(!("nsReset" in control.answer), "another principal's cell was told its namespace went");
 });
 
-test("RED TEAM: the model-facing cause is one line, whatever the worker's error text was", { todo: "kernelDied interpolates the worker's error verbatim, and python-worker.ts's answered-cell paths do not cut it to a line as onUncaught does" }, async () => {
+test("RED TEAM: the model-facing cause is one line and bounded, whatever the worker's error text was", async () => {
+    // A traceback: the model gets its last line, never the cell's source above it.
     const died = await runCell({ principal: "run:kd-shape", wire: { client: "rt-s1", run: "kd-shape" } }, { ok: false, stdout: "", error: TRAP_TRACEBACK, fatal: true });
     const cause = String(died.answer.error);
     assert.equal(cause.split("\n").length, 1, `the model is told ${cause.split("\n").length} lines, the cell's source among them: ${JSON.stringify(cause.slice(0, 240))}`);
     assert.ok(!cause.includes("import PIL._imagingtk"), "the cell's own line rides in the answer");
+    assert.ok(cause.includes("RuntimeError: function signature mismatch"), `the cause is not the traceback's last line: ${JSON.stringify(cause.slice(0, 320))}`);
+    // One line of the cell's choosing, 20k long: the model is not handed the block.
+    const huge = await runCell({ principal: "run:kd-long", wire: { client: "rt-s2", run: "kd-long" } }, { ok: false, stdout: "", error: "E".repeat(20000), fatal: true });
+    const long = String(huge.answer.error);
+    const inner = /^The Python interpreter crashed \((E+)\) and was restarted/.exec(long)?.[1] ?? "";
+    assert.equal(long.split("\n").length, 1, `a death's words brought their own lines: ${JSON.stringify(long.slice(0, 120))}`);
+    assert.ok(inner.length > 0 && inner.length <= 300, `the model is told ${inner.length} characters of the error (boundCause's cap is 300): ${JSON.stringify(long.slice(0, 80))}`);
 });
