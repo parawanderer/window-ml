@@ -119,6 +119,17 @@ test("an awk program that can run a command, read another file or the environmen
     ]) assert.match(awkProgramRefusal(p) ?? "DESCRIBED", why, p);
 });
 
+test("a word or a redirection split by a backslash-newline is refused as the spliced text would read it", () => {
+    for (const [p, why] of [
+        ["BEGIN{sys\\\ntem(\"id\")}", /"system"/], ["{get\\\nline d < \"/etc/passwd\"}", /"getline"/], ["BEGIN{print ENV\\\nIRON[\"HOME\"]}", /"ENVIRON"/],
+        ["{prin\\\nt \"x\" > \"out\"}", /> after a print/], ["{pr\\\nintf \"x\" >> \"out\"}", /> after a print/],
+        // The raw text is checked too, so a | that only splices into || still asks.
+        ["a |\\\n| b {print}", /a \| that is not \|\|/],
+    ]) assert.match(awkProgramRefusal(p) ?? "DESCRIBED", why, JSON.stringify(p));
+    // A backslash-newline that splices nothing refused stays described.
+    for (const p of ["{print \\\n$1}", "NR>1\\\n{print}"]) assert.equal(awkProgramRefusal(p), undefined, JSON.stringify(p));
+});
+
 test("an awk operand is an assignment only in the identifier=value form awk itself reads as one", () => {
     for (const a of ["n=1", "FS=:", "_x9=", "a=b=c"]) assert.ok(AWK_ASSIGNMENT.test(a), a);
     for (const a of ["./n=1", "1n=2", "=x", "a-b=1", "file", "dir/a=b"]) assert.ok(!AWK_ASSIGNMENT.test(a), a);

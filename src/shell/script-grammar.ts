@@ -238,15 +238,19 @@ export const AWK_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
  * Why an awk program is not described, or undefined when it is. The text is checked WITHOUT a lexer, by substrings, so
  * no string, regular expression or comment can hide what is beneath it: it holds none of AWK_REFUSED, no `|` that is not
  * part of `||` (a pipe to or from a command), and no `>` after its first `print` (an output redirection needs a `print`
- * or `printf` before its `>`). A program that compares with `>` after a print is refused too; that only asks.
+ * or `printf` before its `>`). A program that compares with `>` after a print is refused too; that only asks. Each test
+ * runs on the raw text and again with every backslash-newline removed, since an awk that splices lines inside a word
+ * (`sys\<newline>tem`) would otherwise run a word no substring names.
  * @param text the program: the first operand
  */
 export function awkProgramRefusal(text: string): string | undefined {
-    const word = AWK_REFUSED.find((w) => text.includes(w));
-    if (word) return `the awk program holds ${JSON.stringify(word)}, which can run a command, read a file or the environment, or change which files are read`;
-    if (/\|/.test(text.replace(/\|\|/g, ""))) return "the awk program holds a | that is not ||: a pipe to or from a command";
-    const p = text.indexOf("print");
-    if (p >= 0 && text.indexOf(">", p) >= 0) return "the awk program holds a > after a print: an output redirection writes a file";
+    for (const t of [text, text.replace(/\\\n/g, "")]) {
+        const word = AWK_REFUSED.find((w) => t.includes(w));
+        if (word) return `the awk program holds ${JSON.stringify(word)}, which can run a command, read a file or the environment, or change which files are read`;
+        if (/\|/.test(t.replace(/\|\|/g, ""))) return "the awk program holds a | that is not ||: a pipe to or from a command";
+        const p = t.indexOf("print");
+        if (p >= 0 && t.indexOf(">", p) >= 0) return "the awk program holds a > after a print: an output redirection writes a file";
+    }
     return undefined;
 }
 
