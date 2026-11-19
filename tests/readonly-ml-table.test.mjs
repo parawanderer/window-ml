@@ -137,5 +137,8 @@ test("ADVERSARIAL: the host is handed a fresh copy of three options, never the s
 });
 
 test("ADVERSARIAL: in the worker, a table read defers to the page", async () => {
-    await assert.rejects(run(`return await ml.table("#sales")`, host().ml, { realm: "worker" }), (e) => e instanceof NeedsPage);
+    // The worker's `ml` carries other members, so `ml` exists there and `table` is the absent one.
+    const { ml } = host();
+    ml.getModel = () => "m";
+    await assert.rejects(run(`return await ml.table("#sales")`, ml, { realm: "worker" }), (e) => e instanceof NeedsPage);
 });

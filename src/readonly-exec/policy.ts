@@ -608,11 +608,11 @@ export function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown,
     }
     // `ml.table(src, opts)` — a whole table the survey owns (docs/spec/ML_TABLE.md). Judged by the host's source rule
     // before it reads: a page table, a pointer or a URL already in the fetch cache is free; a Sheet or an unfetched URL
-    // is refused here and goes to the person. The worker has no page, so it defers there. Only the three options the
-    // host reads are passed, as a fresh copy, never the script's own object.
+    // is refused here and goes to the person. The worker has no page, so the member is absent there, and reaching it
+    // defers to the page like any absent member. Only the three options the host reads are passed, as a fresh copy,
+    // never the script's own object.
     const hostTable = (ml as Record<string, unknown>)["table"], tableAsks = (ml as Record<string, unknown>)["_tableAsks"];
-    if (worker) out.table = (src: unknown): never => { throw new NeedsPage(`table(${typeof src === "string" ? JSON.stringify(src) : "…"}) reads the page`); };
-    else if (typeof hostTable === "function" && typeof tableAsks === "function") {
+    if (!worker && typeof hostTable === "function" && typeof tableAsks === "function") {
         out.table = (src: unknown, opts?: unknown): unknown => {
             const why = (tableAsks as (s: unknown) => string | null).call(ml, src);
             if (why) throw new Denied(why);
