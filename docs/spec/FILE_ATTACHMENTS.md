@@ -1442,7 +1442,9 @@ delete of one git cannot undo asks, for a cell and for an `ml.sh` call whose man
 - AMENDED 2026-11-19 (host lane, H12, each measured first). The before-hash of a file over the cap comes from a cache
   keyed by the whole stat (device, inode, size, mtime and ctime to the nanosecond), held for a call's two snapshots,
   with a budget of 2 GiB of uncached bytes per snapshot; past the budget a big file is listed with its size and no
-  hash. "Not captured" means out of the tree, tracked or not, so a file that crosses the cap or turns unreadable
+  hash. A hash is kept only when the file's mtime and ctime are both more than 2 s before the read began (git's
+  racy-clean rule: a same-size rewrite inside one tick of a coarse filesystem keeps the whole stat); otherwise the
+  file is read again at every snapshot. "Not captured" means out of the tree, tracked or not, so a file that crosses the cap or turns unreadable
   during a call shows as an add or a delete in the tree diff, and H13's report reconciles that with the lists. Git
   lists no FIFO, socket or device, so the host finds them by type in the directories the listings reached and never
   opens one; an ignored one is left out except in the uploads folder. Known limit: one in a directory holding no file
