@@ -22,7 +22,7 @@ import { browserInfo, cropDataUrl } from "./util";   // the fork's settings sche
 import { workerRaster } from "./raster";
 import { ensureDebuggerAttached, releaseDebugger, cdpClick, cdpScreenshot, cdpShadowResolve } from "./sw/sw-cdp";   // CDP/debugger layer (strict-CSP exec, trusted click/type, host-grant-free screenshot)
 import { CAPTURE_RETRIES, CAPTURE_RETRY_MS, captureOwnTab, NOT_SHOWING } from "./sw/sw-capture";
-import { buildWorkerTools, workerSpend } from "./sw/worker-tools";
+import { buildWorkerTools, workerSpend, runChat } from "./sw/worker-tools";
 import { captureRunTab, workerShot, workerVisionChat, dropAllVisionMemory } from "./sw/worker-vision";   // the worker's vision pieces, test-only until a tool uses them
 import { workerVisionHost, onWorkerHost, useRasterForTest } from "./sw/worker-vision-host";   // the worker's vision host: the verify uses it; the hook below drives it directly
 import { workerAnswerMedia, workerMint, workerPythonImage } from "./sw/worker-media";   // the answer's media and python's image in the worker: the hook below drives them
@@ -184,7 +184,7 @@ startValueSweeps(liveHeldSessions);   // its first pass releases held rows no se
 // state its sub-call spend is counted in; `spend` reads it back.
 (globalThis as unknown as { __mlWorkerVisionForTest?: unknown }).__mlWorkerVisionForTest = {
     captureRunTab, workerShot, workerVisionChat, workerVisionHost, onWorkerHost, spend: workerSpend, checkVerifyRequest, workerLook, workerLocate,
-    workerAnswerMedia, workerPythonImage, workerMint,
+    workerAnswerMedia, workerPythonImage, workerMint, runChat,
     // A vm has no OffscreenCanvas: a test draws the worker's crops with a recorder of its own.
     useRaster: useRasterForTest,
     seedRun: (runId: string, tabId: number) => { buildWorkerTools(runId, tabId, () => "", ["fetch_url"]); },

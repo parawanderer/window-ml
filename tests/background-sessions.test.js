@@ -715,7 +715,8 @@ test("a title asked with content that is not text (an array of parts) is not sen
 // 4. A page's FETCH_LLM / LLM_STREAM with extend "utility" (ml.chat({extend:"utility"})): forBackendFromPage as for
 //    every page call (tests/redteam-forpage.test.mjs).
 // 5. A run's worker-side utility reader (fetch_url ASK mode, python_exec's ml.chat extend "utility"): meteredChat ->
-//    forModelMessages (src/sw/worker-tools.ts). Needs no row here: it is the same function as 1, whose rows cover it.
+//    forModelMessages (src/sw/worker-tools.ts). Rows: "a worker run's utility call ..." in tests/worker-media.test.mjs
+//    (sent with the marker; unreadable registry sends nothing), through runChat, which every worker-side call ends in.
 // 6. settings.tsx's "test utility model" ping and popup.ts's "Reply with exactly: OK": constant text, no registered value.
 // 7. ocr / vision readers (ocrRequest, workerVisionChat): the reader model, not the utility profile.
 
