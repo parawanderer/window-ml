@@ -41,10 +41,29 @@ export function textForEgress(text: string, subs: readonly RegistrySub[] | null)
     return subs ? scrubRegistry(text, subs).text : undefined;
 }
 
-/** Whether a string is anywhere under `value`. */
-function holdsText(value: unknown): boolean {
+/**
+ * A key kept when there are no substitutions to trust: letters only, starting lowercase, at most 32 (`title`,
+ * `startedBy`). The same shape as sw-scrub.ts's stored scrub. The residue, stated: a registered value of that shape
+ * used as a key survives that path.
+ */
+const SCHEMA_KEY = /^[a-z][A-Za-z]{0,31}$/;
+
+/**
+ * A row's key as it leaves: scrubbed like its text, or (with no `subs`) kept only when it has a schema's shape.
+ * @param key the key
+ * @param subs the substitutions, or null to withhold
+ * @returns the key, or undefined when its entry is withheld
+ */
+function keyForEgress(key: string, subs: readonly RegistrySub[] | null): string | undefined {
+    if (subs) return scrubRegistry(key, subs).text;
+    return SCHEMA_KEY.test(key) ? key : undefined;
+}
+
+/** Whether a string is anywhere under `value`, or a key {@link keyForEgress} would change. */
+function holdsText(value: unknown, subs: readonly RegistrySub[] | null): boolean {
     if (typeof value === "string") return true;
-    return value != null && typeof value === "object" && Object.values(value).some(holdsText);
+    return value != null && typeof value === "object"
+        && Object.entries(value).some(([k, v]) => keyForEgress(k, subs) !== k || holdsText(v, subs));
 }
 
 /**
@@ -61,15 +80,29 @@ function scrubLeaves(value: unknown, path: string, subs: readonly RegistrySub[] 
     }
     if (value == null || typeof value !== "object") return value;
     // Deeper than any row's text goes today, so unread: withheld rather than sent as it is when it holds any text.
-    if (depth < 0) return holdsText(value) ? undefined : value;
+    if (depth < 0) return holdsText(value, subs) ? undefined : value;
     if (Array.isArray(value)) return value.map((v) => scrubLeaves(v, path, subs, depth - 1)).filter((v) => v !== undefined);
     let changed = false;
-    const out: Record<string, unknown> = {};
+    const kept: { key: string; was: string; v: unknown }[] = [];
     for (const [k, v] of Object.entries(value)) {
+        // A key is text too: a registered value used as one is scrubbed, and with no substitutions withheld.
+        const key = keyForEgress(k, subs);
+        if (key !== k) changed = true;
+        if (key === undefined) continue;
         const s = scrubLeaves(v, path ? `${path}.${k}` : k, subs, depth - 1);
         if (s !== v) changed = true;
-        if (s !== undefined) out[k] = s;
+        if (s !== undefined) kept.push({ key, was: k, v: s });
     }
+    // Two keys can scrub to one text: the later ones are numbered, so no value is lost, and a key the scrub left alone
+    // keeps its name. fromEntries defines each key as data, so a "__proto__" key stays a key.
+    const taken = new Set(kept.filter((e) => e.key === e.was).map((e) => e.key));
+    const out: Record<string, unknown> = Object.fromEntries(kept.map((e) => {
+        if (e.key === e.was) return [e.key, e.v];
+        let name = e.key;
+        for (let n = 2; taken.has(name); n++) name = `${e.key} (${n})`;
+        taken.add(name);
+        return [name, e.v];
+    }));
     // A page whose URL was withheld is no page: a client reads `url` as present wherever the object is. An object the
     // scrub emptied (a search's `match`) is nothing to send.
     if (typeof (value as { url?: unknown }).url === "string" && out.url === undefined) return undefined;

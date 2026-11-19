@@ -688,4 +688,6 @@ list row shows the marker.
 **Known limits.** Until ruling 39's turn scrub is built, the stored turn holds a registered value the person typed,
 so the transcript shows it while the row shows the marker. An archived session's search runs over its stored text
 in the archive, so a query holding a value can match it; the row and snippet that come back are scrubbed. A link
-built from a scrubbed URL opens the URL with the marker in it.
+built from a scrubbed URL opens the URL with the marker in it. A row's keys are scrubbed as its text is (two that
+scrub to one text are numbered); before the registry's first read, a key is kept only when it has a schema's shape
+(letters only, lowercase first, at most 32), so a registered value of that shape used as a key survives that path.

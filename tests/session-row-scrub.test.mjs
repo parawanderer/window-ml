@@ -77,6 +77,24 @@ test("text deeper than the scrub looks is withheld, never sent as it is; a deep 
     assert.equal(out.counts.a.b.c.d.n, 3);
 });
 
+test("a registered value used as a KEY is scrubbed like text: collisions numbered, __proto__ kept a key, a deep one withheld, and none with no substitutions", () => {
+    const row = { ...fullRow(), usage: { [VALUE]: 1, [`x ${VALUE}`]: 2, [MARK]: 3, plain: 4 } };
+    const out = rowForEgress(row, SUBS);
+    assert.ok(!holds(out, VALUE), JSON.stringify(out.usage));
+    // The key the scrub left alone keeps its name; the later one that scrubs to it is numbered.
+    assert.deepEqual(out.usage, { [`${MARK} (2)`]: 1, [`x ${MARK}`]: 2, [MARK]: 3, plain: 4 });
+    const proto = rowForEgress(JSON.parse(`{"id":{"runtime":"local","hash":"h"},"__proto__":{"${VALUE}":1}}`), SUBS);
+    assert.equal(Object.getPrototypeOf(proto), Object.prototype);
+    assert.ok(Object.hasOwn(proto, "__proto__") && !holds(proto, VALUE), JSON.stringify(proto));
+    const deep = rowForEgress({ ...fullRow(), later: { a: { b: { c: { d: { [VALUE]: 1 } } } } } }, SUBS);
+    assert.ok(!holds(deep, VALUE) && !("later" in deep), JSON.stringify(deep.later));
+    // With no substitutions to trust, a key with a schema's shape is kept, any other entry withheld.
+    const shut = rowForEgress(row, null);
+    assert.ok(!holds(shut, VALUE));
+    assert.deepEqual(shut.usage, { plain: 4 });
+    assert.deepEqual(shut.id, row.id);
+});
+
 // --- the session server: every exit crosses `row` ---
 
 function server() {
