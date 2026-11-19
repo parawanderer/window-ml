@@ -45,7 +45,9 @@ function fetchResultUrl(v: object): string | null {
  */
 export function tableSource(src: unknown): TableSourceKind {
     if (isTable(src)) return { kind: "table", table: src as Table };
-    if (isElement(src)) return { kind: "element", el: src };
+    // A real element has no OWN nodeType (it is Node.prototype's); one the page put there is the page's code, and could
+    // answer differently each time it is read, so such an object is never an element.
+    if (isElement(src) && !Object.getOwnPropertyDescriptor(src, "nodeType")) return { kind: "element", el: src };
     if (src !== null && typeof src === "object") {
         const url = fetchResultUrl(src);
         if (url !== null) return tableSource(url);
@@ -112,8 +114,24 @@ function fromText(text: string, opts: TableOpts, delimiter?: string): Table {
  * @throws a sentence naming what is wrong and what to call instead
  */
 export const table = async function(this: MlApi, src: unknown, opts: TableOpts = {}): Promise<Table> {
-    const o: TableOpts = opts && typeof opts === "object" ? { raw: !!opts.raw, ...(typeof opts.delimiter === "string" ? { delimiter: opts.delimiter } : {}), ...(typeof opts.header === "boolean" ? { header: opts.header } : {}) } : {};
+    return readSource(this, tableSource(src), opts);
+};
+
+/**
+ * Resolve a source ONCE, for a caller that judges it before it reads (the read-only dialect's facade): whether reading
+ * it asks, and a read of exactly that resolution. Resolving twice would let a source the page shapes (an accessor that
+ * answers differently on each read) be one kind to the ask and another to the read.
+ * @param src what the caller passed
+ * @returns `asks` (null, or why it needs the person) and `read(opts)`, which reads the resolution `asks` judged
+ */
+export function tableSurvey(this: MlApi, src: unknown): { asks: string | null; read: (opts?: TableOpts) => Promise<Table> } {
     const k = tableSource(src);
+    return { asks: tableSourceAsks(k), read: (opts?: TableOpts) => readSource(this, k, opts ?? {}) };
+}
+
+/** Read a resolved source: the body of `table`. */
+async function readSource(ml: MlApi, k: TableSourceKind, opts: TableOpts): Promise<Table> {
+    const o: TableOpts = opts && typeof opts === "object" ? { raw: !!opts.raw, ...(typeof opts.delimiter === "string" ? { delimiter: opts.delimiter } : {}), ...(typeof opts.header === "boolean" ? { header: opts.header } : {}) } : {};
     const notDelimited = (what: string): void => {
         if (o.delimiter !== undefined || o.header !== undefined) throw new Error(`ml.table: ${what} names its own columns, so delimiter and header do not apply. Drop them, or read a CSV.`);
     };
@@ -139,8 +157,8 @@ export const table = async function(this: MlApi, src: unknown, opts: TableOpts =
             return fromText(csv, o, ",");
         }
         case "pointer": {
-            if (typeof this.dereference !== "function") throw new Error(`ml.table(${JSON.stringify(k.ref)}): a pointer is only live inside an ml.agent run.`);
-            const d = await this.dereference(k.ref);
+            if (typeof ml.dereference !== "function") throw new Error(`ml.table(${JSON.stringify(k.ref)}): a pointer is only live inside an ml.agent run.`);
+            const d = await ml.dereference(k.ref);
             const t = (d as { table?: Table }).table;
             if (!t) throw new Error(`ml.table(${JSON.stringify(k.ref)}): that output is not a table.`);
             notDelimited("a pointer's table");
@@ -159,9 +177,9 @@ export const table = async function(this: MlApi, src: unknown, opts: TableOpts =
         }
         case "page": case "element": {
             notDelimited("a page table");
-            const read = k.kind === "page" ? pageTable(this, k.selector, !!o.raw) : { source: { label: elPath(k.el) }, data: this._resolveTable(k.el, !!o.raw) };
+            const read = k.kind === "page" ? pageTable(ml, k.selector, !!o.raw) : { source: { label: elPath(k.el) }, data: ml._resolveTable(k.el, !!o.raw) };
             if (read.data.kind !== "rows") throw new Error(`ml.table: "${read.source.label}" has merged or nested cells, so it does not read as rows. Read it in python_exec with pd.read_html, or point at a simpler table.`);
             return fresh(tableOf(read.data.columns, read.data.rows));
         }
     }
-};
+}

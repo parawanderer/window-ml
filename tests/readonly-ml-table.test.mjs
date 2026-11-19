@@ -6,7 +6,7 @@ import { test, afterEach } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
 import { evalReadonly, NotInDialect, Denied, NeedsPage } from "../src/readonly-exec.ts";
-import { table, tableSource, tableSourceAsks } from "../src/ml/ml-table.ts";
+import { table, tableSurvey } from "../src/ml/ml-table.ts";
 import { mlFetchCache } from "../src/ml/ml-fetch-cache.ts";
 import { derivedFetchFields } from "../src/ml/fetch-result.ts";
 import { asTable } from "../src/table/table-data.ts";
@@ -23,14 +23,17 @@ function fetched(url, text, extra = {}) {
     return r;
 }
 
-/** An `ml` with the real member and judge, a page table read the test scripts, and a count of host reads. */
+/** An `ml` with the real member and survey, a page table read the test scripts, and a count of host reads. */
 function host() {
     const reads = [];
     const ml = {
         _resolveTable: (sel) => { reads.push(sel); if (sel !== "#sales") throw new Error(`no table element matches "${sel}"`); return { kind: "rows", columns: [...SALES.columns], rows: SALES.rows.map((r) => [...r]) }; },
-        _tableAsks: (src) => tableSourceAsks(tableSource(src)),
     };
     ml.table = function (src, opts) { reads.push(["table", src, opts]); return table.call(ml, src, opts); };
+    ml._tableSurvey = function (src) {
+        const s = tableSurvey.call(ml, src);
+        return { asks: s.asks, read: (opts) => { reads.push(["table", src, opts]); return s.read(opts); } };
+    };
     return { ml, reads };
 }
 const run = (js, ml = host().ml, opts = {}) => evalReadonly(js, doc(), ml, undefined, opts);
@@ -141,4 +144,20 @@ test("ADVERSARIAL: in the worker, a table read defers to the page", async () => 
     const { ml } = host();
     ml.getModel = () => "m";
     await assert.rejects(run(`return await ml.table("#sales")`, ml, { realm: "worker" }), (e) => e instanceof NeedsPage);
+});
+
+test("ADVERSARIAL: the source is resolved once, so one the page shapes is the same kind to the ask and to the read", async () => {
+    // (An OWN accessor never makes an element at all: tableSource reads it as a plain object. This one is on the
+    // prototype, where only resolving once holds it.)
+    // An element-like object whose nodeType (on its prototype, where a real element's is) answers 1 the first time and 2
+    // after, carrying a Sheets URL as a fetch result: resolved twice it would be free to the ask and a Sheet to the read.
+    let n = 0;
+    const el = Object.create({ get nodeType() { return ++n === 1 ? 1 : 2; } });
+    Object.assign(el, { url: "https://docs.google.com/spreadsheets/d/EVIL/edit#gid=0", status: 200, type: "csv" });
+    const resolved = [];
+    const ml = { _resolveTable: (x) => { resolved.push(x); return { kind: "rows", columns: ["a"], rows: [[1]] }; } };
+    const s = tableSurvey.call(ml, el);
+    assert.equal(s.asks, null, "positive control: the first look is an element, which is free");
+    assert.deepEqual((await s.read()).col("a"), [1]);
+    assert.deepEqual(resolved, [el], "the read is the element the ask judged, never a Sheet fetch");
 });

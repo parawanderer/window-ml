@@ -242,8 +242,9 @@ export interface MlApi {
      *  `header` override discovery for a CSV or a Sheet. Editing the answer changes nothing else, and a second read
      *  returns the source again. In a read-only survey a Sheet, or a URL not yet fetched, needs approval. */
     table(src: string | Element | FetchResult | Table | TableValue, opts?: { raw?: boolean; delimiter?: string; header?: boolean }): Promise<Table>;
-    /** Whether reading `src` with `table` needs the person: null, or why it asks. The read-only dialect's judge. */
-    _tableAsks(src: unknown): string | null;
+    /** Resolve `src` once for the read-only dialect: `asks` (null, or why reading it needs the person) and `read`,
+     *  which reads exactly the source `asks` judged, so a source the page shapes cannot change between the two. */
+    _tableSurvey(src: unknown): { asks: string | null; read: (opts?: { raw?: boolean; delimiter?: string; header?: boolean }) => Promise<Table> };
     /** Built-in sandboxed-Python tool factory (numpy/Pillow pixel/array work). */
     pythonTool(): MlTool;
     /** Read-only self-introspection tool for ml.agent (pass via `extraTools`): reports the run's model,

@@ -491,8 +491,9 @@ re-checked even when no construct was added.
 
 `ml.table(src, { raw, delimiter, header })` (`ml-table.ts`, docs/spec/ML_TABLE.md) reads a WHOLE table by source: a
 selector or `current`, a URL in the page's fetch cache, a fetch result (by its URL alone), `@tool:<id>` or a table
-value. The facade asks the host's `_tableAsks` before it reads, so the one source rule judges every caller: a page
-table, a pointer or a cached URL is free; a Sheet or an unfetched URL is refused and goes to the person (the run's
+value. The facade resolves the source ONCE through the host's `_tableSurvey` and reads that resolution, so the one
+source rule judges every caller and a source the page shapes (an accessor that answers differently on each read) is
+the same kind to the ask and the read: a page table, a pointer or a cached URL is free; a Sheet or an unfetched URL is refused and goes to the person (the run's
 approved-Sheets store is not readable from the facade yet, so a Sheet always asks here); a `/files/` path, a clipped
 fetch body and a preview are errors. The host gets a fresh copy of the three options, never the script's object. In
 the worker the member raises `NeedsPage`. The answer's rows are a copy, so an approved script's edit reaches neither the
