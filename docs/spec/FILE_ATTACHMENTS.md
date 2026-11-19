@@ -1651,30 +1651,48 @@ backup, in the same two tables and the same volumes. A session moved into the ar
 one place each session lives, and the folder is a copy of it. A setting leaves out files over a size, since the folder
 is often on a drive a cloud service syncs.
 
-- **The setting** (the coordinator's proposal, to be read): `archiveFileMaxMB`, a number in MB like
-  `sessionStoreBudgetMB` and `valueStoreBudgetMB`, default 100. A file larger than it is left out of the month files; 0
-  removes the limit. It is in DevTools Settings beside the archive folder's form (the rule for a new setting) and in the
-  chat page's Extension tab where the folder is set. It changes only the folder: a one-off backup carries every file
-  that is not hidden, whatever its size.
+- **The setting**, the coordinator's call (2026-11-19), open to Shane's override: `archiveFileMaxMB`, a number in MB
+  like `sessionStoreBudgetMB` and `valueStoreBudgetMB`, default 100. A file larger than it is left out of the month
+  files; 0 removes the limit. It is in DevTools Settings beside the archive folder's form (the rule for a new setting)
+  and in the chat page's Extension tab where the folder is set. It changes only the folder: a one-off backup carries
+  every file that is not hidden, whatever its size. The default is reasoned from an assumed uplink, not measured
+  (below).
 - **Why 100 MB.** A sync rewrites each dirty month whole (archive.md, "Dirty months"), 30 seconds after an archive write
   and every 6 hours, so a file in a month is uploaded again each time any session of that month changes, by the cloud
   client that syncs the folder. At an uplink of 20 Mbit/s, an assumption for a home connection and not a measurement,
   100 MB is about 40 seconds of upload per file per rewrite: past it the folder costs more than a copy is worth to most
   people, and a person who wants the large files kept raises the limit or makes a one-off backup. A data file a run made
   (a Parquet or a CSV of a fetched table) is usually well under it; a model checkpoint or a video is not.
+- **Changing the limit marks the months it affects dirty**, as switching the form does (backup.md): raising it, every
+  month holding a file omitted by size that is now within it; lowering it, every month holding a file now over it. The
+  next sync rewrites those months, so the folder matches the setting from that sync on, and no other month is rewritten.
+  Row: with months A (an omitted 150 MB file), B (a 60 MB file) and C (small files only), raising the limit to 200 marks
+  only A dirty and the sync writes the file into A; lowering it to 50 marks only B and the sync leaves the file out of
+  B.
 - **What is left out is named.** A file over the limit keeps its `files` row, with no chunks and `omitted: "size"`, and
-  the month's `meta` lists it. A restore from the folder lists it under its path as "not in the archive folder: over
-  100 MB", and a read of it fails with that reason. Its bytes are still in the browser's archive while the session is:
-  only a wiped profile loses them.
+  the month's `meta` lists it with the limit in force when the month was written. A restore from the folder lists it
+  under its path as "not in the archive folder: over <the limit> MB", read from that `meta`, and a read of it fails with
+  that reason. Its bytes are still in the browser's archive while the session is: only a wiped profile loses them.
 - **A hidden file** is left out of the month files as it is out of a backup, by the same rule (above), and a month file
   is a set of volumes as a backup is. A month's first volume keeps the month's name (`2026-10.wmlbak`); the others are
   `2026-10.v2.wmlbak` and on, in the month's form. An install from before this does not read those names as months
   (`MONTH_FILE`, `src/archive/archive-folder.ts`), so it ignores them.
+- **An older install reading a new month.** The first volume is an ordinary month file with two more tables and more
+  `meta` keys. An install from before this reads its sessions as it always has and ignores the `files` and `file_chunks`
+  tables and the volume list, with no error; it imports the sessions without their files. Row: a fixture of a new first
+  volume, read by the merge as it is on main before this, imports its sessions and reports no error.
+- **A month an older install rewrote.** Such a month comes back without `files` rows (Known limits, below). The newer
+  install's merge never reads an absent `files` row as a deletion: a file leaves the browser's archive only by the
+  person deleting it or by a `removed` entry (backup.md, 3b), never because a month file lacks it. When the merge finds
+  the archive holding files the month lacks, it marks that month dirty, so the next sync writes them back. Row: a month
+  rewritten without `files` rows, merged by the newer install, leaves every file in the browser's archive byte-identical
+  and marks the month dirty.
 - **Known limits.** An install from before this that rewrites a month (a change on a second machine running the older
   version) writes it without the `files` rows, and the folder's copy of that month's files is lost until a newer install
-  rewrites the month again; the volumes it ignores are left orphaned until then. The sessions themselves are unaffected.
-  Rows: a month with a file over the limit restores it as omitted by size, a month with files restores them
-  byte-identical, and a pre-files month file restores with no files and no error.
+  merges that month and rewrites it; the volumes it ignores are left orphaned until then. The sessions themselves, and
+  the files in each browser's archive, are unaffected. Rows: a month with a file over the limit restores it as omitted
+  by size, naming the limit from its `meta`; a month with files restores them byte-identical; and a pre-files month file
+  restores with no files and no error.
 
 ### A restore over the quota (ruling 48)
 
