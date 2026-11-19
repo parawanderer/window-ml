@@ -893,14 +893,23 @@ preview, like any other exec value.
 
 - **Where they land: the shelf, by chunk.** A write member, and a Python file's close (item 3), sends its bytes to the
   offscreen document in chunks of at most 512 KiB, never a whole file in one message (the runtime message limit is
-  64 MiB, measured in `notebooks/session-store/chrome-bounds.ipynb`); the offscreen document appends them to a
-  pending part and commits the file as one new stored Blob on close or at the end of `writeFile`. Until the commit,
-  readers see the previous version.
+  64 MiB, measured in `notebooks/session-store/chrome-bounds.ipynb`); the offscreen document writes each at its
+  offset into a pending part and commits the file as one new stored Blob at the commit point (below). A write may seek
+  back and overwrite, and a file may be truncated (zipfile patches its headers, sqlite writes pages anywhere): the
+  pending part is a list of ranges over stored chunks and the version it replaces, composed into a Blob without
+  copying bytes. Its writer reads it back through the same handle; until the commit, every other reader sees the
+  previous version.
 - **The quota** (this spec's open question): with nothing loaded at start, the quota is no longer a start-time budget.
   It bounds what a session's runs keep on disk: the person's attachments do not count, run-made files do, at their
-  stored size (not three times). Its value is a DevTools Settings flag, by the standing rule; proposed default 1 GiB
-  per session, below the value store's budget. Over it, a write rejects with `ENOSPC` and the message names `ml.fs.rm`
-  or the files panel.
+  stored size (not three times). Its value is the DevTools Settings flag `filesQuotaMB` (the coordinator's call,
+  2026-11-19; owned by the session-store lane), default 1024 MiB per session, below the value store's budget; a stored
+  value that is not a positive whole number reads as the default, and a larger number widens it. Over it, a write
+  rejects with `ENOSPC` and the message names `ml.fs.rm` or the files panel. It is checked on every chunk appended, not
+  only at the commit.
+- **The commit point is UNDECIDED** (open with Shane, 2026-11-19): a file commits when it is closed, or every write of
+  a cell commits together when the cell succeeds (ruling 69's restricted cells, and possibly `full` ones too). The
+  reader's write side serves either: writes belong to a transaction that commits atomically over all of its files, and
+  a file committed on its own close is a transaction of one.
 - **A worker evicted mid-file.** A commit is atomic: an uncommitted file's pending part is discarded when its writer
   goes (a worker evicted, a kernel killed, a tab closed), the previous version stands, and the next turn's start
   message says which file was not written. Nothing is half-written.
@@ -985,8 +994,9 @@ are what the model reads.
 6. Each owner reruns in Chrome what it builds on: the reader's slice reruns `ranged.ipynb` against the real offscreen
    document; the mount's slice reruns route A's Stop and cost rows (`notebooks/pyodide-mount/`) against this reader.
 
-**Owners.** The ranged reader and `ml.fs`: unassigned; the coordinator assigns after this spec merges. The Python
-mount (slice 4): the packages lane, whose measurement of the mounts (ruling 36) fixes its design.
+**Owners** (the coordinator, 2026-11-19, ruling 54). The ranged reader and `ml.fs`: the session-store lane. The Python
+mount (slice 4): the async lane, on this reader; the packages lane's measurement of the mounts (ruling 36) informs its
+design.
 
 ### Host directories in the sandbox, and a cell's edits as diffs (proposed 2026-11-13)
 
@@ -1781,7 +1791,7 @@ Fetched values stay out.
 
 - The quota's value and where it is set: a DevTools Settings flag, by the standing rule for a new setting. AMENDED
   2026-11-17: nothing loads at start any more, so the quota is a disk quota, not a start-time budget ("`/files/` read
-  by range, and `ml.fs`", "Writes"); the proposed default is 1 GiB per session.
+  by range, and `ml.fs`", "Writes"); SETTLED 2026-11-19 (the coordinator): `filesQuotaMB`, default 1024 per session.
 - A post arriving for a path the person deleted or renamed during the run. The lean: it is kept under the written name
   as a new file, and the inbox notice says so, since the delete removed the old bytes, not the model's work.
 - Whether a frozen version's provenance "read from disk <path>" may reach a page through `dereference`, or is scrubbed
@@ -1876,16 +1886,16 @@ value; dump then reload equals the stored table, its values and its declared dty
 
 ### Python's view: two mounts (ruling 36)
 
-Python sees `/files` through Emscripten mounts, never a mount that loads whole files:
+Python sees `/files` through Emscripten mounts, never a mount that loads whole files. ONE store, the shelf, holds
+both folders (the coordinator's call, 2026-11-19): no OPFS copy of `agent/`, so the quota, the atomic commit, the
+backup and any commit-on-cell-success live in one place.
 
-- **`attached/` on WORKERFS**: lazy slices of a `Blob`, read-only. The 2026-11-12 measurement found WORKERFS needs
-  `FileReaderSync`, which the lockdown does not allow, and fails a write with EIO, not EROFS; both are to be
-  measured by the packages notebook, and if WORKERFS cannot run under the lockdown, the fallback is a custom read-only
-  mount over the same ranged reader (Open questions, below).
-- **`agent/` on a custom mount over OPFS synchronous access handles**: each `read` and `write` goes to the file's
-  handle at its offset, so nothing is held but the buffer the call passes. A write is in the store when the call
-  returns, which removes the close-and-flush safety net the MEMFS design needed (item 3 above), to be confirmed by
-  the notebook.
+- **Both `attached/` and `agent/` on route A's file system type over the ranged reader** ("One reader, three front
+  ends", above). Python's `open()` is synchronous, and route A's sliced wait makes each read and write synchronous from
+  Python's view while the offscreen document serves it from the shelf; `FileReaderSync`, which the lockdown does not
+  allow, is not needed. `attached/` is read-only (EROFS). A write to `agent/` streams to the shelf chunk by chunk
+  ("Writes", above), so the worker holds one chunk, not a cell's output, and lands at the commit point. A case the
+  shelf cannot serve synchronously goes to the coordinator as a case, not as a second store.
 - **The scrub runs inside the mount's read**, chunked with an overlap of the longest registered form minus one byte,
   so a registered value in a file never reaches the kernel. It preserves LENGTH: in the mount a match is replaced by
   the same number of filler bytes (`*`, 0x2A), never by `[REDACTED:<NAME>]`, because Python seeks by offset and reads
@@ -1895,7 +1905,7 @@ Python sees `/files` through Emscripten mounts, never a mount that loads whole f
 
 **To be measured by the packages notebook, before this is fixed** (ruling 36, no figure here is this section's):
 whether the restricted fork gates `open()` on a mount; whether worker memory stays flat reading ranges of a 1 GiB
-file; whether WORKERFS runs under the lockdown; the cost of the scrub inside the read, both the plaintext registry's and
+file; the cost of the scrub inside the read, both the plaintext registry's and
 ruling 32's hash-only matcher's; and whether a Parquet writer wheel exists.
 
 ### Backup and restore carry the files (ruling 35)
@@ -2019,8 +2029,8 @@ file browser's commands are the session-store amendment's (ruling 24).
 
 ### Open questions, each with a recommendation
 
-Settled as the coordinator's calls and written in above: the dump is `ml.fs.cp`; if WORKERFS cannot run under the
-lockdown, `attached/` gets a custom read-only mount over the ranged reader, never a loosened lockdown; `readFile`'s
+Settled as the coordinator's calls and written in above: the dump is `ml.fs.cp`; both folders are on route A's type
+over the ranged reader, one store, the shelf (2026-11-19), never a loosened lockdown; `readFile`'s
 bound is 8 MiB; and no sidecar for JSON or text. The two left for Shane are settled (2026-11-18) and written in
 above: the archive folder's month files carry a session's files, with a size limit (ruling 47), and a restore over
 the quota restores every file and then refuses writes until the session is back under (ruling 48).
