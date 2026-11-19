@@ -323,8 +323,21 @@ worker drives with `autoApprovePython` on:
    argument that can write is not listed at all (`UNLISTED` in make-corpus-count.py, `ndarray.round`): a checker on a
    C method does not survive a `*` or `**` call, which reaches the gate as the bound builtin rather than the descriptor
    its tables key on. `tests/python-dialect-out-args.test.mjs` enumerates both.
+   **The fork's `load_manifests` admits reading each standard-library name but registers no call**, so `decimal.Decimal`,
+   `io.StringIO` or `csv.reader` was refused inside although `manifest-stdlib.json` lists it. `_ml_stdlib` registers
+   each listed callable from its row (lifted; fresh when the row returns fresh), its kind's listed methods, and a listed
+   Python class's dunders lifted (`csv.DictReader`); a name in `DIALECT_STDLIB_REFUSED` (`random.choice`, which
+   advances the shared generator) refuses with its reason. **A listed pandas property runs its getter under the gate**,
+   which refused its reads of pandas internals (`df.values` was dead inside), so `_ml_lifted_reads` moves each pure one
+   from its kind's table to the kind's dynamic rule, which the gate reads lifted. `Series.iloc` reads items through its
+   indexer and never writes one: the barrier would judge the indexer, not the Series. `Series.dtype` and
+   `DataFrame.dtypes` are not listed: `str()` of a numpy dtype imports from C under the cell's frame, which has no
+   `__builtins__`, so it raises KeyError. `tests/python-dialect-vocab.test.mjs` holds every listed stdlib name to a call
+   that runs inside or a reason. Both functions go when the fork does this itself.
 3. `wrapUserScript(…, inside)` runs the cell through `run_cell` (`INSIDE_CELL`, `python-dialect-run.ts`) in a COPY of the namespace that holds no `_` name.
-   A bare trailing expression gets `return ` spliced in at its own column, so the value matches the full path.
+   A bare trailing expression gets `return ` spliced in at its own column, so the value matches the full path. Decimal
+   arithmetic sets the thread context's sticky flags from C, which no ownership check sees, so the context's flags and
+   traps are put back after the run, refused or not, and a later cell never reads what an inside cell computed.
 4. If it finishes, its bindings are copied back, except a builtin's name or one starting with `_`, and only if every
    new binding and the value are DATA (`_ml_not_inert`, an allowlist on the exact type: scalars, the builtin containers,
    numpy arrays, pandas frames, series and indexes, object values walked), or exactly what the cell's own import
