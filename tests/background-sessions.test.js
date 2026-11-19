@@ -734,6 +734,23 @@ test("an extension frame's utility FETCH_LLM (the HUD summary) sends no register
     assert.deepEqual(messages, sent, "the asker's messages are as they were");
 });
 
+test("a utility FETCH_LLM's tool call with OBJECT arguments sends no registered value, in a value or a key, and stays an object", T, async () => {
+    const { bg, bodies } = utilityWorld();
+    await flush();
+    const messages = [
+        { role: "user", content: "go" },
+        { role: "assistant", content: "", tool_calls: [{ id: "c1", name: "type", arguments: { text: SECRET.value, byColumn: { [SECRET.value]: 1 } } }] },
+        { role: "tool", tool_call_id: "c1", content: "ok" },
+    ];
+    const r = await bg.send({ type: "FETCH_LLM", payload: { messages, extend: "utility", maxTokens: 48 } }, { url: "chrome-extension://test/sidebar/sidebar.html" });
+    await flush();
+    assert.equal(r.data, "Lamp hunt", "the call was made");
+    const body = bodies.find((b) => b.includes("tool_calls"));
+    assert.ok(body && !bodies.some((b) => b.includes(SECRET.value)), body);
+    const args = JSON.parse(JSON.parse(body).messages[1].tool_calls[0].function.arguments);
+    assert.deepEqual(args, { text: "[REDACTED]", byColumn: { "[REDACTED]": 1 } });
+});
+
 test("an extension frame's utility FETCH_LLM is not sent at all when the registry cannot be read", T, async () => {
     const { bg, bodies } = utilityWorld({ ml_secret_registry: () => {} });
     await flush();

@@ -207,15 +207,37 @@ export async function forBackendFromPage<T>(payload: T): Promise<T> {
         let out = m as Record<string, unknown>;
         if (typeof c === "string") out = { ...out, content: scrub(c) };
         else if (Array.isArray(c)) out = { ...out, content: c.map((part) => part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string" ? { ...part, text: scrub((part as { text: string }).text) } : part) };
-        // An assistant turn the page wrote carries its calls' arguments as text too.
+        // An assistant turn carries its calls' arguments as text too: in the neutral shape every sender here builds
+        // (`{ id, name, arguments }`, a string or an object, which API_FORMATS converts at send time), and in OpenAI's
+        // wire shape (`function.arguments`) a page may send as it is.
         const calls = (m as { tool_calls?: unknown }).tool_calls;
         if (Array.isArray(calls)) out = { ...out, tool_calls: calls.map((tc) => {
-            const f = tc && typeof tc === "object" ? (tc as { function?: { arguments?: unknown } }).function : undefined;
-            return f && typeof f.arguments === "string" ? { ...tc, function: { ...f, arguments: scrub(f.arguments) } } : tc;
+            if (!tc || typeof tc !== "object") return tc;
+            let call = tc as Record<string, unknown>;
+            if ("arguments" in call) call = { ...call, arguments: scrubArgs(call.arguments, scrub) };
+            const f = call.function as { arguments?: unknown } | undefined;
+            if (f && typeof f === "object" && "arguments" in f) call = { ...call, function: { ...f, arguments: scrubArgs(f.arguments, scrub) } };
+            return call;
         }) };
         return out;
     });
     return changed ? { ...payload, messages: next } : payload;
+}
+
+/**
+ * A tool call's arguments, scrubbed: a string as text, an object through its JSON (keys included) and back. A scrubbed
+ * JSON that no longer parses is sent as the scrubbed text, which holds no value either.
+ * @param args the arguments, a string or an object
+ * @param scrub the text scrub
+ * @returns the arguments, the same value when nothing changed
+ */
+function scrubArgs(args: unknown, scrub: (t: string) => string): unknown {
+    if (typeof args === "string") return scrub(args);
+    if (!args || typeof args !== "object") return args;
+    const text = JSON.stringify(args);
+    const out = scrub(text);
+    if (out === text) return args;
+    try { return JSON.parse(out); } catch { return out; }
 }
 
 /**
