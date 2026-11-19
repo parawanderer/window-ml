@@ -1167,6 +1167,61 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   arguments outright is a follow-up. #1963 (manifest flavours): subcommand names are shown only when they are
   plain words, others are counted, not quoted (accepted); e3's rows are green at 02c6942d. #1948 (the scrub) is
   back with janitor-2 at 91e24caa; #1979 (the test-timings false positive) is with janitor-3.
+- **Shane's ruling 51 (2026-11-19): packages owns the Python network gate.** Closed by default (ruling 37). Order
+  for the lane: the ruling 36 measurement, the ruling 37 measurement, then the gate, spec first, with a red-team
+  pass by e3.
+- **Shane's ruling 52 (2026-11-19): session-store is resumed.** Its order, the coordinator's: slice 2 of
+  `docs/spec/SESSION_HISTORY_STORE.md` (the `history` and `runmeta` stores, the writer, the upgrade, `onError`,
+  `historyBytes`); then the Session summary's fields (the fork parent at `fork()`, the current page, the history
+  size per session on `SessionSummary`; labels `@hub-compat` and `@mobile`, with the session contract's diff);
+  then slice 3 onward. Still halted, resumed only on Shane's word: async, Chat Page, move-run, flaky-ci.
+- **Shane's ruling 53 (2026-11-19): the Session summary shows usage over time and totals (tokens, cost), and the
+  energy a local model drew with its cost.** The coordinator first called measured power absent and unowned; that
+  was wrong, and Shane corrected it: the patched backend reports power and the bench already integrates it per
+  generation and session (`tests/e2e/bench/electricity.mjs`). Owner of the energy line: bench. The coordinator's
+  calls: the attribution becomes one module under `src/spend/` that the bench and the page both import; an absent
+  reading draws nothing, never an estimate from rated wattage; the worker holds the event stream while a local
+  runtime generates for a session and until that stretch closes, panel or no panel, only when the runtime reports
+  power. The spec is #1986 (open, changes asked: the ruling written in, what an evicted worker leaves, the order
+  of work). The usage rows and the network owner go into `docs/spec/SESSION_SUMMARY.md` in a docs PR by
+  small-fixes (not yet open).
+- **Shane's ruling 54 (2026-11-19): the coordinator decides the order in which sessions build things.** Shane:
+  "you have a better overview of the dependencies than I do". Each order is written here and surfaced in one line.
+- **Security defect on main, 2026-11-19 (the packages lane's account; e3 is reproducing it).** A cell inside the
+  Python read-only dialect, which runs unasked, writes cell-chosen text to any path in the worker's filesystem
+  through `DataFrame.to_string(buf=<path>)` and the `Series` form: `notebooks/python-dialect/data/manifest-pandas.json`
+  and `notebooks/python-dialect/leafpass.py` declare both pure. A fresh worker is enough, since pandas loads at
+  start-up. Measured on restricted core 35bd1d69 at main 7f7783ec. Not measured: whether a planted module is then
+  imported by a later cell or by the harness. The coordinator's order (ruling 54): packages repairs it first, as
+  its own PR, ahead of the ruling 36 notebook; a call that binds `buf` by keyword or by position falls outside
+  the dialect; one test walks every admitted name for a path, buffer or file parameter, the 25 of 161 names the
+  lane could not resolve included; e3 writes the red-team rows on that branch and probes the import chain,
+  argument spreads and what survives a restart; janitor-3 reviews. A second defect, failing closed: inside the
+  dialect `np.array([1, 2]).sum()` raises `KeyError: '__builtins__'`; packages owns it as a later PR over every
+  numpy reduction, and stops before any change to the core's pin.
+- **Merged 2026-11-19, each verified:** #1982 (efed571d, the plan), #1983 (7f7783ec, the Session summary spec,
+  ruling 50), #1984 (d06ff26a, rulings 46 to 48 in the file, backup and policy specs; `archiveFileMaxMB` defaults
+  to 100 MB and 0 means no limit, the coordinator's call), #1963 (0ff1b911, manifest flavours), #1952 (5a84a3c1,
+  `change_setting` and `ml.settings()`, part b), #1948 (e8508959, the secret scrub by value). With #1948 merged,
+  H11 is released (ruling 18); files-host's order after it: #1959 (the matcher notebook), the `hiddenSecrets`
+  note, ruling 39's code, the shape detector.
+- **In review, 2026-11-19.** #1977 (ruling 31's gate): janitor-3 found that a `shellRevealsAllow` of the wrong
+  type fails open; the coordinator's call: repaired inside #1977, which adds the gate, as one checked function
+  that every reader uses and that answers an empty list on a wrong type; the lane adds two rows (a string value
+  still asks, an object value answers cleanly), e3 then flips its todo row, janitor-3 names the final head.
+  #1975 (access tab, PR A) and #1979 (the test-timings false positive): janitor-3 asked one test row each. #1976
+  (the kernel-death listener) is with janitor-2 at 3031bf4c; its repair bounds the crash line and adds the
+  aborted-signal install row (item 7 of the install spec). #1985 (the spec for `change_setting` part (c)): the
+  coordinator asked that the residual of a sampled key be stated, since a rule matching one value of a sampled
+  number key reads "none" for that key and is off the card. The sed and awk manifests may open now that #1963
+  merged (the lane's account: a new shared vector kind, `flavoured/`, 25 calls).
+- **Session summary shell (small-fixes; the coordinator's calls, 2026-11-19).** The sidebar's detail header uses a
+  `ChatStore`, so there is one `SessionActions` list; the sessions port comes through a `services()` member that
+  the overlay and DevTools supply; the store closes its port when the last detail view unmounts. The PR is not
+  draw-only and goes to a janitor through the coordinator. Open: who owns the Python kernel-state fields (kernel
+  loaded, the deadline).
+- **Packages, ruling 36 (the lane's account, 2026-11-19).** The restricted fork has no file gate today. The
+  measurement's results come as a notebook, its head to the coordinator.
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like

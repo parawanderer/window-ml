@@ -34,6 +34,7 @@ import { toHost } from "../parent-channel";
 import { ShellSectionBody } from "./shell-section";
 import { ManifestsSectionBody } from "./manifests-section";
 import { LibrariesSectionBody } from "./libraries-section";
+import { SecretsSectionBody } from "./secrets-section";
 import { RequestRows, answerRequest, useWaitingRequests } from "./requests-section";
 import { SettingLbl } from "./settings-label";
 import { SETTING_TEXT } from "../../setting-text";
@@ -1128,7 +1129,7 @@ function SelfApprovalList() {
 // --- the policy page: every policy, one line each, editable and deletable (docs/dev/policies.md) ---
 
 /** A stored policy as the worker's `POLICIES` answer carries it (`StoredPolicy`, src/sw/sw-policies.ts; worker code, so not imported here). */
-interface PolicyRecord { id: string; scope: "global" | "run"; consumer: "fetch" | "sh"; effect: "allow" | "deny" | "ask"; source: string; label: string; origin: "person" | "card" | "proposed"; created: number }
+interface PolicyRecord { id: string; scope: "global" | "run"; consumer: "fetch" | "sh" | "act" | "setting"; effect: "allow" | "deny" | "ask"; source: string; label: string; origin: "person" | "card" | "proposed"; created: number }
 /** What the worker's `POLICIES` answers (`policyView`, src/sw/sw-policies.ts). */
 interface PolicyView { global: PolicyRecord[]; runs: { hash: string; policies: PolicyRecord[] }[]; builtin: { label: string; source: string }; broken: Record<string, string> }
 /** The effect a selector's value names; anything else is `allow`, the policy page's default. */
@@ -1236,6 +1237,7 @@ function Policies() {
     const [view, setView] = usePolicies();
     const [err, setErr] = useState("");
     const [effect, setEffect] = useState<PolicyRecord["effect"]>("allow");
+    const [consumer, setConsumer] = useState<"fetch" | "sh" | "setting">("fetch");
     const [label, setLabel] = useState("");
     const [source, setSource] = useState(POLICY_STARTER);
     if (!view) return null;
@@ -1250,7 +1252,7 @@ function Policies() {
             onRemove={() => { void send({ op: "remove", id: p.id }); }} />
     ));
     const add = (): void => {
-        void send({ op: "add", effect, label: label.trim(), source }).then((ok) => { if (ok) { setLabel(""); setSource(POLICY_STARTER); } });
+        void send({ op: "add", consumer, effect, label: label.trim(), source }).then((ok) => { if (ok) { setLabel(""); setSource(POLICY_STARTER); } });
     };
     return (
         <Section id="policies" title="Policies">
@@ -1263,6 +1265,11 @@ function Policies() {
                     <option value="allow">allows</option>
                     <option value="ask">asks</option>
                     <option value="deny">refuses</option>
+                </select>
+                <select aria-label="New policy consumer" value={consumer} onChange={(e: any) => setConsumer(e.target.value === "sh" || e.target.value === "setting" ? e.target.value : "fetch")}>
+                    <option value="fetch">fetches</option>
+                    <option value="sh">shell calls</option>
+                    <option value="setting">setting changes</option>
                 </select>
                 <input class="perm-input" type="text" placeholder="Label" aria-label="New policy label" value={label} onInput={(e: any) => setLabel(e.target.value)} />
                 <textarea class="pol-source-input" aria-label="New policy source" rows={3} spellcheck={false} value={source} onInput={(e: any) => setSource(e.target.value)} />
@@ -1908,6 +1915,10 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
 
                 <Section id="manifests" title="Program manifests (ml.sh)">
                 <ManifestsSectionBody roots={c.shellRoots ?? []} />
+                </Section>
+
+                <Section id="secrets" title="Secrets">
+                <SecretsSectionBody />
                 </Section>
 
                 <Section id="libraries" title="Python libraries (read-only dialect)">
