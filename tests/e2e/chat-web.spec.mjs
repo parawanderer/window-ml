@@ -1020,6 +1020,8 @@ test("a run of the same tool folds into one row, and opens again", async () => {
     // It says what the six rows could not: how many, how many failed, how long.
     await expect(streak.locator(".astreak-n")).toHaveText("× 6");
     await expect(streak.locator(".astreak-bad")).toHaveText("1 failed");
+    // ...but the calm view, which this page opens in, does not draw the failure count: the model usually recovers.
+    await expect(streak.locator(".astreak-bad")).toBeHidden();
     // The members are NOT drawn while it is folded — that is the whole point.
     await expect(page.locator('[data-astep-seq="303"]')).toHaveCount(0);
 
@@ -3577,7 +3579,7 @@ test("an empty box whose placeholder would wrap stays on one row, still", async 
     const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(CHAT)}`);
     const row = page.locator(".composer .composer-row");
     const box = row.locator(".cinput");
-    await box.evaluate((el) => { el.placeholder = "Send a message (or paste an image) to continue, ".repeat(6); });
+    await box.evaluate((el) => { el.placeholder = "Send a message to continue, ".repeat(6); });
     // An edit makes the box re-measure, and clearing it leaves it empty with only the placeholder in it.
     await box.fill("x");
     await row.evaluate((el) => {
