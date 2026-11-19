@@ -217,6 +217,10 @@ export type RenderDescriptor = (
     // why it cannot be installed. Drawn as rows, never as a code note; the worker approves only an answer carrying
     // exactly these rows. Index text in it is untrusted: a renderer escapes it (`shownText`).
     | { type: "packages"; ecosystem: "pypi"; request: { name: string; version?: string }; verdict: PkgCard }
+    // change_setting's card (sw/sw-change-setting.ts): the setting's name and tooltip as DevTools Settings shows them, both
+    // values in full, the guarded reason, the model's `why`, and where the change applies. Built by the worker from the
+    // checked change; only `why` is the model's text, and a renderer escapes it with the values (`shownText`).
+    | { type: "setting"; key: string; name: string; tip?: string; reason?: string; class: "guarded" | "ordinary"; from: unknown; to: unknown; why?: string; synced: boolean; host?: string }
     | { type: "action"; verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; crossOrigin?: string; offMachine?: string; asYou?: string; ask?: string; answeredBy?: string; tokens?: number; askBody?: string; askBodyLang?: string; askBodyTruncated?: boolean; pipe?: string; attempts?: FetchAttempt[]; resolvedBy?: FetchAttempt["strategy"] }
 );
 

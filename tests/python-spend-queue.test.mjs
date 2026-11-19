@@ -14,6 +14,17 @@ const PYODIDE_DIR = path.resolve(import.meta.dirname, "../dist/pyodide");
 const hasPyodide = fs.existsSync(path.join(PYODIDE_DIR, "pyodide.mjs"));
 const skip = hasPyodide ? false : "no dist/pyodide — run `npm run fetch-pyodide` to enable";
 
+// The cells leave tasks asleep for 10 to 30 s, and Pyodide's scheduleCallback times them with the global setTimeout:
+// tracked here and cleared in `after`, or the process holds its ~3 GB heap that long after the last test.
+const pyTimers = new Set();
+const { setTimeout: realSetTimeout, clearTimeout: realClearTimeout } = globalThis;
+globalThis.setTimeout = (fn, ms, ...args) => {
+    const t = realSetTimeout((...a) => { pyTimers.delete(t); fn(...a); }, ms, ...args);
+    pyTimers.add(t);
+    return t;
+};
+globalThis.clearTimeout = (t) => { pyTimers.delete(t); realClearTimeout(t); };
+
 let py = null;
 let harness = null;
 let spendStarted = 0;
@@ -29,6 +40,8 @@ before(async () => {
 }, { timeout: 180000 });
 
 after(async () => {
+    for (const t of pyTimers) realClearTimeout(t);
+    pyTimers.clear();
     onSpending(null);
     try { await py?.destroy?.(); } catch { /* */ }
 });

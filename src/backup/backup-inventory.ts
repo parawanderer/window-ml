@@ -88,6 +88,9 @@ export const INVENTORY: readonly InventoryEntry[] = [
     ui("ml_runlog_colour", "the execution log's colouring"),
     ui("ml_runstate_folded", "which run-state sections are folded"),
 
+    // --- never: the person's registered secrets ---
+    local("ml_secret_registry", "config", "the values the person registered as secret (SECRET_HANDLES.md, \"The scrub as built\"): a secret is never written to a backup, an export or an archive-folder file", "never"),
+
     // --- never: sessions and what a run leaves behind ---
     local("ml_session_", "chat", "a chat's resumable record, per chat: the session's archive row carries the same history (backup.md, \"Resuming a restored chat\")", "never", { prefix: true }),
     local("ml_bgrun_", "run-state", "a live run's resumable snapshot; a restored machine has no run to resume", "never", { prefix: true }),
@@ -99,6 +102,7 @@ export const INVENTORY: readonly InventoryEntry[] = [
     session("ml_pagebuilt", "run-state", "which tab and site built a page's session; tab ids, meaningless in another browser"),
     session("ml_pinned_tabs", "run-state", "tab ids, meaningless in another browser"),
     session("ml_pkginstalls", "run-state", "the Python packages each run installed; dies with the run's namespace, and the wheels themselves are in the mirror"),
+    session("ml_setting_declined", "run-state", "the guarded settings each run's person declined, which that run does not ask again; meaningless outside the run"),
     session("ml_py_bridged", "run-state", "runs whose Python cell reached the browser's JavaScript, for their later cells' cards; dies with the namespace"),
     local("ml_policies_run", "policies", "run policies belong to one session and go with it when it is archived or restored"),
     local("ml_policies_archived", "policies", "what an archived session lost, told once"),

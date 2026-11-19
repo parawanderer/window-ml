@@ -320,6 +320,26 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   and `--check-genres` also refuses a `redteam-*python*` row that neither `python` nor `python-host` names.
   **`--files a.test.mjs b.test.mjs`** runs exactly those, which is what `scripts/test-cover.mjs` prints.
   Still run the full `npm test` before you commit; CI runs everything regardless.
+- **Test timings: the runner warns, it never fails.** `scripts/test.mjs` runs a second reporter beside the spec one
+  (`scripts/test-times-reporter.mjs`; the console output is unchanged) and, once the run is over, prints ONE block at
+  the very end that begins `test timings — warnings for whoever ran this`. If you ran the tests, it is addressed to you:
+  act on it. Three checks (`scripts/test-times.mjs`, thresholds in `LIMITS`): (a) a FILE'S PROCESS OUTLIVED ITS TESTS
+  (wall time more than 20 s past the sum of its top-level tests AND more than that sum): something a test started keeps the
+  event loop open, the measured case being an unanswered approval ask whose 5-minute timer held a file at 302 s for 5 s of
+  tests and the machine-wide queue's slot with it; (b) a test over 3x its own p90 and 2 s slower, with at least 5 earlier
+  records; (c) a new or rare test (under 3 records) over 5x the median of its file AND of its genre and at least 2 s,
+  except a file's FIRST top-level test: node:test charges the file's top-level `before()` hooks to it (a Pyodide boot made an
+  85 ms scan read 6 s), so it is judged only against its own history by (b). node:test emits no hook event, so the mark
+  lands on every file's first top-level row, hook or not: a new file whose first test is slow never reaches (c), and (b)
+  covers it once five records exist. The
+  exit code is never touched. File wall time is the reporter's top-level `test:complete` event for the file (the child
+  process's whole life, start-up included); the sum is its nesting-0 tests. History is `~/.cache/window-ml/test-times/history.jsonl`
+  (`TEST_TIMES_DIR` overrides), shared by every clone and keyed by repo-relative file + test name, tests of 100 ms and up, the
+  newest 30 per test, compacted past 3 MB, never written in CI unless `TEST_TIMES_HISTORY=1`, never a reason to fail when
+  the folder is unwritable. With under 5 local records (a fresh machine) check (b) uses the committed
+  `tests/test-times-baseline.json` (p90 of every test of 500 ms and up, committed so a clone has a yardstick on day one);
+  refresh it with `node scripts/test.mjs --timings-baseline` after a few full runs. It refuses (exit 1) a rebuild that is
+  empty or under half the committed one, from a machine whose history is too thin; `--force` writes it anyway.
 - **Tests: `npm test`** (Node ≥ 20, `node:test`). `tests/helpers.js` loads the
   real extension files into `node:vm` sandboxes with mocked `chrome`/`fetch`/
   `window`, so tests exercise the shipped code with no build step. Add a
@@ -451,8 +471,9 @@ and a 40 s suite took ten minutes. A rule each lane had to remember did not hold
 `scripts/test-slot.mjs` is one machine-wide queue that every `scripts/test.mjs` spawn, Playwright's main process and
 `npm run coverage` goes through. Since 2026-11-09 it admits up to three runs at once and 13 workers between them (cores
 − 2): a queued run starts when free memory, less the 25% reserve and what the running runs planned and do not hold yet,
-leaves room for its minimum (2 workers for a unit run, 1 for e2e) at its kind's p90 per-worker figure, measured from
-past runs, and gets the workers that room gives. One run at a time had twelve sessions' 6.5-minute suites queued behind
+leaves room for its minimum (2 workers for a unit run, 1 for e2e) at the run's price, `base + slope × workers` fitted from
+past runs of the same command (else the kind's; rule of 2026-11-18, `priceFor`), and gets the workers that room buys.
+A price per worker (peak / workers) ratcheted, because a unit run's peak barely depends on its workers. One run at a time had twelve sessions' 6.5-minute suites queued behind
 each other while the machine ran three workers. The queue is FIFO among the admissible (a small e2e probe passes a
 waiting suite only while the suite cannot start), and with nothing running the head always starts. Each footprint
 records how many runs shared the machine (`runs`), for a later tuning. Work that is not a test run but wants the memory

@@ -293,6 +293,59 @@ to diff. Global (persistent) policies are edited there the same way as a run's. 
 at once ("these five no longer match anything this session does"), as one card the person confirms; removing narrows
 what runs without asking, so it cannot escalate, but it is still the person's list.
 
+## The effective view: one session's policies as rows
+
+A session's policies are read as ROWS, one per policy, placed against the others of the same consumer, by `sessionPolicies(hash)`
+(`sw-policies.ts`, rows built in `sw-policy-view.ts`) beside `judgeCall` and from the same lists. The page that shows them is a
+separate piece of work; this section is the worker's contract.
+
+- **A row is `{consumer, layer, entry, wins, overrides, overriddenBy, removal}`, `removal` being `{class, exposes, reach}`.** `layer` is `default` (the built-in rule,
+  one row per consumer that has a policy), `global`, or `session`. `entry` is the policy's `id`, `label`, `source`, `effect`,
+  `origin`, `created` and why it broke. NOTHING ELSE: the row type has no field for a value, a call's arguments or a result,
+  so a consumer whose policies talk about files shows PATHS and nothing a file held.
+- **The layers never change a verdict.** For the consumers that exist (`fetch`, `sh`, `act`), `judgeCall` takes the strictest
+  effect across every scope (`deny`, then `ask`, then `allow`), so a session `allow` does not override a global `deny`.
+  `overrides` follows that order: a row beats the rows of the same consumer with a weaker effect, on a call both match; equal
+  effects override nothing. `wins` is true when no row of the consumer beats it. The layer only decides which of two rows of the
+  same effect `judgeCall` names. The default never overrides (it is the weakest) and is beaten by any `ask` or `deny`.
+- **A consumer with another order registers it.** The hide and show consumer of ruling 34 orders by most specific, a tie hides,
+  and a session `show` beats a default `hide`; it calls `registerPrecedence(consumer, (a, b) => …)` beside its judge, and `wins`,
+  `overrides`, `overriddenBy` and a removal's `exposes` follow it. The enumeration test for such a consumer runs against its OWN
+  judge (the test for the hook does so with a toy one); until a consumer registers, its rows are ordered by strictness, which is
+  right only if its judge is.
+- **A policy whose script breaks is still a row.** `judgeCall` skips it for the call it broke on (`broken` is per call), but the
+  next call may not break it, so the row is read by strictness like any other and carries `entry.broken`: `wins` means "on a
+  call both match and whose script runs", and a row with `entry.broken` is one that may not be applied.
+- **A registered order that cannot be trusted is not used.** A judge decides a call both rows match, so for two rows of different
+  effects exactly one beats the other, and no row beats itself. An order that throws, or breaks that for a pair (both ways, neither
+  way, or a row over itself), is replaced by strictness for that pair, and every removal in the view is classed `widens` (confirm
+  required); the read always answers. A classifier that throws is read as `widens`.
+- **A consumer's class can only add caution.** A classifier that says a removal narrows is overruled when the entry is not an
+  allow and the removal would leave another row (the built-in default included) to decide: the class is `widens`.
+- **A policy is a script, so "on a call both match" is not decided here.** The read says what wins WHERE both match, never that
+  they overlap. The enumeration test holds it against `judgeCall` over every pair of layers and effects.
+- **Two removal classes, decided by the worker and sent in the row.** Removing an `allow` NARROWS (fewer calls run unasked):
+  one gesture. Removing a `deny` or an `ask` WIDENS: the page shows the entry and `removal.exposes`, the rows that would
+  decide the calls this one decided (the default among them), and only then sends `confirm`. `removal.reach` says whose
+  policies it changes: `session` is this session's alone, `all` is a GLOBAL row's, which every session loses, and the page shows the layer
+  with it. A global `allow`'s removal is still one gesture; the layer is shown, not confirmed. The worker enforces it: a widening
+  `removeChecked` without `confirm` is refused with the row, so a caller that did not show the effect cannot skip it. A consumer
+  that needs another rule (the files host's `hide` and `show`) registers a classifier (`registerRemovalClass`); the read and the
+  removal name no consumer.
+- **The message.** `POLICIES` `{ op: "session", hash }` reads the rows and `{ op: "removeChecked", hash, id, confirm? }`
+  removes one; both are EXTENSION PAGES ONLY like every `POLICIES` op, and no page-relayed message carries either. A policy that
+  is not in this session's view (another session's) is refused.
+- **The host seam (the contract the tab will read through).** `SessionHost.sessionPolicies(key) -> rows | null` and
+  `removePolicy(key, id, confirm?)`, with ONE SessionFeed event `policies-changed {hash}` as the change signal. `null` means
+  unknown (the runtime is unreachable, or the host has no policy store), never "none". The host splits the page's
+  `runtime:hash` key on the LAST `:` and hands the worker the bare hash; the worker never sees a runtime. In v1 the extension
+  host alone answers (it maps the event from `onPoliciesChanged`, storage `onChanged` being only its own source) and every other
+  host answers `null`, so the tab hides the remove there. A remote route (a sealed hub command) is left open and is not built.
+- **What the renderer decides and what the worker does.** The row carries `removal.class` and `removal.exposes`, so the page shows
+  a widening removal's confirm from the row it already holds, with no second read. That confirm is display: the gate is the
+  worker's refusal of a widening `removeChecked` without `confirm`. A row's `source` is shown as its label with the source behind
+  a disclosure, and a broken policy (`entry.broken`) as one line on its row.
+
 ## A change takes effect at once
 
 On every call not yet started:
@@ -675,6 +728,162 @@ normalised URL before the rows see it. Still nothing built; same place in the or
 ### What the build taught (the policies lane, 2026-11-07, `20261107-policies-to-repl-specs-spec-gaps-met-building.md`; written in by the coordinator)
 
 Seven things the code or an e2e run showed that this file did not say. (1) WHICH RUNS REACH THE JUDGE (measured): a page's own `ml.agent` runs on the page's loop and no policy governs it unless the worker hosts the run, which happens when a debug surface (DevTools or the overlay) is on or the page is not on the self-approval list; the worked example's page-built navigate met the policy only under `debugMode: "devtools"`. A spec row about a policy says which runs it reaches. (2) THE PERSON'S WORD under `crossOrigin: false` (ruling of 2026-10-29, built in #1358) is judged per navigate at the send and travels as a field of the message (`crossOriginWord`), never of the tool args; a `deny` or `ask` still wins in `autoApprove`; the arrival gate still judges the arrival; the `builtin` exclusion in `personAllowsNav` is defence in depth (the red team's negative result in #1389; `by` is already empty for a navigate nothing decides). A navigate card is never the word. (3) POINT CLICKS (#1360): `actElement` hit-tests a `@pt` token with the same closure as `clickAt`, and the precheck's `href` falls back to `element.href`, which closed a hole where a point click skipped `clickLinkRefusal`; a `@box` token resolves no element, the click and type prechecks refusing it before anything runs; a page predating the `element` field reads as unknown and fails closed. (4) OPEN, the security lane's: a CDP click dispatches at the raw coordinate with nothing hidden, so it can land inside our own sidebar or card shadow roots while the judge saw the page element; the synthetic-click scope of the point hit-test is in policies.md, the CDP path is not covered by it (this is gap (8)'s territory). (5) THE STORE LOADS ONCE: a direct `chrome.storage.local.set` of policies after the worker has loaded is not seen; a spec row that seeds a policy goes through the POLICIES message (`op: add|remove`) from an extension page. (6) THE NULL-FACT RULE in the facade: an `allow` that read a null fact never fires, a `deny` or `ask` does, a strict facade refuses a missing-field read as `broken`; for `act`, `element.href` is null when absent and `element.name` is always a string. (7) THE CARD (#1423): a several-rule proposal's descriptor carries `rules: {effect, source, note}[]` beside `text` and `note`, which still hold the whole proposal with the `// Rule i of n: <effect>` and `Rule i of n.` markers the red team's pin reads, so the markers are a contract, not decoration; a single-rule proposal has no `rules` and draws as before.
+
+## Hiding files: the sandbox's defaults, and `hide` and `show` policies (ruling 34)
+
+Shane's ruling 34 (2026-11-17): the files the host's sandbox holds unreadable are DEFAULTS, and a policy overrides
+them. Make the default reasonable; someone with an idiosyncratic layout fixes it with an override, not with a new
+default rule. Two things stay defects whatever the policies say: a path the call's facts list as hidden
+(`hiddenSecrets`) that the call can read, and a default-held value reaching the model with no override. The rest of
+this section is the coordinator's calls under the ruling, each surfaced to Shane. Nothing here is built.
+
+**One list, two verbs, the policy store's.** A hiding rule is a `StoredPolicy` with consumer `files`, effect `hide` or
+`show`, and `source` a path or a glob. Scope `global`, or `run`, which is the session's and keyed by its hash, as for
+every policy. Origin `person`, `card` or `proposed`. There is no second store: the policy page, its edit and remove,
+and the run-scope lifetime rules (it survives a resume and is removed at archive) are the ones above.
+
+- **`hide <pattern>`** holds what it matches, for reading and writing, like a default hold.
+- **`show <pattern>`** releases a hold on what it matches: a default (a dotenv name, one of the three credential files
+  at a root's top, a held symlink target, or a linked template), or a `hide` in a layer below it. By the layer rule
+  below, a session `show` overrides a person's global `hide`. A shown path is readable AND writable, and is never listed
+  in `hiddenSecrets`. The credential directories (`.ssh`, `.gnupg`, `.aws` and the rest) and the masks under `$HOME` are
+  not defaults a `show` releases in this version: a `show` that matches one is refused, naming it. This was the
+  coordinator's call narrowing ruling 34; Shane's ruling 46 (2026-11-18) keeps it.
+- **A pattern** is an absolute path inside a root, or a glob within the roots using `*`, `?` and `[…]` inside one path
+  segment; `**` is refused, since on Linux every match is a mask the host builds by walking the tree. At most 512
+  characters, and at most 256 entries a scope.
+- **A `show` that cannot be applied whole is refused with its reason, never half-applied.** In the
+  `ln -s .env.example .env` shape, `show .env.example` would leave `.env` listed as held while on Linux a read through
+  `.env` lands on the now-unmasked template (on macOS `.env` stays refused by its name, but the same bytes read under
+  the template's). So the entry is refused, naming `.env` as the link that resolves to it; `show .env` with it is the
+  entry that applies whole.
+- **A `show` does not stop the registry scrub.** A value registered as a secret is still scrubbed from what a
+  released file prints (SECRET_HANDLES.md, "The scrub as built").
+
+**Which entry wins.** The layers are read from the top: the session's entries, then the global ones, then the
+defaults. For a path, the first layer with an entry that matches it decides. Within a layer, the most specific entry
+wins (a literal path over a glob; between globs, more path segments, then more literal characters); on a tie, `hide`
+wins.
+
+**The defaults are entries too**, listed with stable ids so a `show` can name what it overrides and the view can show
+a default as overridden: `default:dotenv` (`.env` and `.env.*` but the templates), `default:credential-files`
+(`.netrc`, `.git-credentials`, `.pgpass`), `default:link-target` (the file a root-top held-name symlink resolves to)
+and `default:linked-template` (a template a held name resolves to). They are built in, not stored, and cannot be
+removed, only overridden.
+
+**Who writes and who proposes.** The main path is the MODEL'S PROPOSAL: a card that shows the exact entry and, for a
+`show`, the paths it would release at that moment (the host's `glob`, bounded). It offers "this session" (the default)
+and "always" (global). A session `show` that overrides a global `hide` names that entry, verbatim, before the paths, and
+offers no "always": a global `show` under a global `hide` is the person's own edit on the policy page. A glob releases
+what matches LATER too, and the card says so beside the paths it lists. Nothing changes until the person approves. A
+person may also write an entry directly, in DevTools Settings, from the file browser's right-click (ruling 24), or with
+"always" on a card that offers it; that is expected to be rare. A page, `change_setting` and `ml.settings` can neither
+write nor propose one: the list is a gate key ([MODEL_SETTINGS.md](MODEL_SETTINGS.md)).
+
+**One command to change it.** Adding or removing an entry is one session-contract command with one handler, whichever
+renderer sends it: the extension's, the file browser's, or a remote host's. It is sealed and carried over the hub like
+any other command, with no transport-specific refusal of a remote sender in the handler (ruling 24 as refined). A
+confirmation is a step of the renderer that sends it. Adding a `hide` narrows and needs no confirmation. Adding a
+`show` widens and is the approval itself. Removing a `show` narrows and is one gesture. Removing a `hide` widens: the
+renderer first shows the entry verbatim and the paths that would become readable. A remote host of the renderer hides
+the remove control until a person-signed command exists. The hub needs no change to carry the command, the read below
+or the second verb: the sealed body is opaque to it ([hub-client.md](../dev/hub-client.md)).
+
+**What the host gets.** On each `spawn`, the worker sends the call's resolved list: the session's layer over the global
+one, as `{ "show": [<pattern>…], "hide": [<pattern>…] }` with each entry's id. The host applies `show` before it builds
+the held set, so `hiddenSecrets` never lists a shown path, and adds each `hide`. On macOS a `hide` becomes read and
+write deny rules after the template allow, and a `show` an allow after the denies but never over a credential directory.
+On Linux a `hide` is resolved against the tree when the call is spawned and each match is masked; more than 256 matches
+fails the spawn with `SandboxFailed` naming the entry, rather than leaving the excess readable. Naming a hidden path in
+`pathArgs` asks, for a `hide` as for a dotenv file, and the card names the entry that hides it; approved, it re-allows
+that path's read for that call. No `allow` policy of any consumer frees that ask, and no "always" is offered on it: the
+durable way to read the file is to remove the `hide`. A change applies from the next call; a call already running keeps
+the sandbox it started with. The host's protocol (window-ml-host, PROTOCOL.md) gains the `spawn` field when this is
+built.
+
+**Every reader of a root is bound by it.** The list binds every way a file under a root is read, not only a `spawn`:
+`ml.fs` and its one ranged reader, an `@files` reference, the file browser's content view, and ruling 36's `/files`
+mounts once they exist. One list, every reader: a reader the host does not sandbox applies the worker's resolved list
+itself before it reads. A hidden file readable through `ml.fs` is the defect this rules out, and a row asserts it for
+each reader.
+
+**What a hidden file shows.** As for a default-held file: its NAME is listed, by `ls`, the file browser and `glob`, on
+both platforms; its content is not, and a read fails with EPERM on macOS and EACCES on Linux. A `hide` behaves as the
+defaults do on each platform, and the file browser marks the name as hidden (the per-entry `hidden` flag the hide-list
+item asks for).
+
+**Known limits.** On Linux a `hide` is resolved when the call is spawned, so a file the call creates that matches it is
+not masked for that call; macOS's rules match by pattern and cover it. The next call's spawn holds it on both. A file
+inside a credential directory, or under a mask in `$HOME`, has no `show` that releases it (ruling 46): a layout that
+keeps a file a call needs in one has no override in this version, and moves that file out.
+
+**The read, for the view.** The view of the effective list is the access tab of small-fixes' per-session Session
+summary page, a read-only layered list (default < global < session) with a scope chip, an "overrides <rule>" line and
+a remove control on each row. It reads through a `services()` seam, `sessionPolicies(hash)`, and never derives which
+entry wins: the worker computes that and sends it, in the existing `POLICIES` read (`policyView()`), extended for a
+session with every `files` row in its effective order: `{ id, scope: "default" | "global" | "run", effect: "hide" |
+"show", source, label, origin, created, overrides: [<id>…], remove: "narrows" | "widens" | "none" }`. `remove` is the
+worker's class for the control: `none` for a default. Paths and patterns only, never a file's content or a secret's
+value. A change is signalled by a `SessionFeed` event, so a host that is not the extension updates; the extension's
+own host may also listen on `storage.onChanged`.
+
+**Offering `hide` entries when a root is added.** When the person adds a workspace root, the host lists the files
+under it that might be credentials the defaults do not hold, and a card offers each as a `hide` entry. Nothing is
+hidden until the person picks it, and never all at once by default. The coordinator's calls, each surfaced to Shane:
+
+- **Which files: an enumerated rule, never a judgement over contents.** A file is offered when BOTH hold:
+  1. git ignores it, as `git ls-files --others --ignored --exclude-standard` answers in the root, run by the host under
+     its git belt (window-ml-host `src/gitfacts.rs`): the person's global and system config off
+     (`GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`), `core.fsmonitor=false`, no optional locks, no prompt and
+     no pager, so a root not yet trusted runs none of its own code; `ls-files` runs no hook or filter and writes
+     nothing. A root that is not a git work tree gets no offer. A tracked file is not offered: hiding the working copy
+     does not take a committed secret out of the repository's history, and offering it would suggest it does.
+  2. its NAME is on the host's file-name lists (`looks_secret`, window-ml-host `src/facts.rs`): the names `.env`,
+     `.envrc`, `.netrc`, `_netrc`, `.npmrc`, `.pypirc`, `.pgpass`, `.git-credentials`, `.htpasswd`, `credentials`,
+     `credentials.json`, `credentials.db`, `known_hosts`, `authorized_keys` and `hosts.yml`; a name starting `.env.` but
+     the three templates (`.env.example`, `.env.sample`, `.env.template`); a name starting `id_`; and the suffixes
+     `.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`, `.kdbx`, `.gpg`, `.asc`, `.ovpn` and `.tfvars`. Matched
+     case-insensitively on the last component. This differs from `looks_secret` in one way: `looks_secret` also flags
+     any path with a component in `.ssh`, `.gnupg`, `.aws`, `.azure`, `.kube`, `.docker`, `.password-store`, `Keychains`
+     or `.config/gcloud` and `.config/gh`, and here an ignored directory of those names is offered as ONE row (hiding
+     the directory), never one row per file inside it. Both exempt the three templates (`looks_secret` checks
+     `DOTENV_TEMPLATES`, window-ml-host main `090fe14f`).
+
+  No file's contents are read for the offer: no parser, no entropy test, no key-name guess. A file a default already
+  holds (a dotenv name, a credential file at a root's top) is listed as already held, not offered.
+- **Bounds.** The scan is streamed, never the whole list in memory: the host reads `ls-files`' output as it comes,
+  stops after 100,000 ignored paths or 10 seconds, whichever is first, and keeps the matches shallowest first, so a
+  `node_modules` fixture full of `.pem` and `.key` files cannot crowd out a `.env` at the root. At most 256 rows are
+  offered. When the scan stopped early or the rows were cut, the card says so and how many more matched, so an offer
+  never looks complete when it is not.
+- **The card** shows the root, then one row per file: its path relative to the root, the list entry that matched (the
+  name, the `.env.` prefix, the `id_` prefix or the suffix), and a checkbox, unchecked. Applying writes one global
+  `hide` entry per checked row, `origin: "card"`. The card says that a hidden file's name stays listed and its content
+  is held from every reader, and that the entries can be removed on the policy page. Dismissing it writes nothing; the
+  offer comes again only if the root is added again.
+- **Whose card.** It follows the person's own gesture of adding a root in DevTools Settings, outside any run, so no
+  model sees it and none can trigger it. A root set at the machine for remote use (`hub-roots`) gets no offer until a
+  surface exists where the person adds one at the machine; there is none in the extension today.
+- **Limits.** A nested repository and a submodule are not descended into: `ls-files` answers for the root's own work
+  tree only, so their ignored files are not offered. A file that becomes ignored or is created after the root is added
+  is not offered later; the offer is made once, when the root is added.
+
+**Rows the build lands with.**
+- `show .env.example` in the linked-template shape is refused with its reason, and the list is unchanged.
+- `show .env` releases `.env` (readable and writable, not listed) while every other dotenv name stays held.
+- A glob `show` releases what it matches and nothing else.
+- A `hide` holds a non-default file on both platforms and lists it.
+- Session over global, and a tie that hides.
+- A proposal the person declines leaves the list byte-unchanged.
+- Adding a root offers exactly the ignored files whose names are on the list. A tracked `.pem`, an ignored `notes.txt`
+  and a file already held by a default are not offered. Nothing is hidden before the person checks a row, and a
+  root that is not a git work tree gets no card.
+- A session `show` overrides a global `hide`: its card names the global entry verbatim and offers no "always".
+- A hidden file is unreadable through `ml.fs`, its ranged reader, `@files` and the file browser's content view, as
+  through a `spawn`.
+- Naming a hidden path in `pathArgs` asks, names the `hide`, and no `allow` policy frees the ask.
+- The upgrade: there was no earlier hide list, so the fixture is today's policy store, with no `files` rows, read by
+  the new code. Its policies decide as before, and the view shows the four defaults only.
 
 ## Open questions
 

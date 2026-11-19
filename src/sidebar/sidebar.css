@@ -826,6 +826,11 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 }
 .set-field input:focus, .set-field select:focus { outline: none; border-color: var(--accent); }
 .set-field input:disabled { opacity: .5; cursor: not-allowed; }
+/* A SECRET'S TEXT BOX: the input fills the row and the eye sits inside its right end, so the box is the same width as every other field. */
+.secret-input { position: relative; display: flex; }
+.secret-input > input { flex: 1; min-width: 0; padding-right: 34px; }
+.secret-input > .secret-eye { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); }
+.secret-input > .secret-eye:disabled { opacity: .4; cursor: default; }
 .set-field input.err { border-color: var(--err); }
 /* Model combobox (ModelPicker): a text input + a caret that drops the full server model list (filtered by
    what's typed). Replaces the native <datalist>, which hid non-matching entries + closed on re-render. */
@@ -4672,10 +4677,20 @@ html[data-calm] .task-say > .task-dev, html[data-focus] .task-say > .task-dev { 
     border-radius: 8px; box-shadow: 0 6px 24px rgba(0, 0, 0, .35); font-weight: normal; text-align: left; cursor: auto;
 }
 .hc-text { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; font-size: .92em; color: var(--fg); tab-size: 4; }
-=======
 /* `.code-morph`: the characters of a reformatted script flying from where the live call had them to their new places
    (code-morph.ts). The real text is hidden while they fly; the layer is removed when they land. */
 pre.code.morphing { position: relative; }
 pre.code.morphing:not(.numbered) > code, pre.code.morphing .lcode { visibility: hidden; }   /* a numbered block keeps its gutter */
 .code-morph { position: absolute; inset: 0; pointer-events: none; white-space: pre; }
 .code-morph > span { position: absolute; }
+
+/* change_setting's card (card/setting-card-view.tsx): both values in full, never capped or scrolled away. */
+.setcard { display: flex; flex-direction: column; gap: 6px; font-size: .92em; line-height: 1.4; }
+.setcard-name { font-weight: 600; }
+.setcard-tip, .setcard-sync, .setcard-once { color: var(--fg-dim); }
+.setcard-reason { font-weight: 600; }
+.setcard-val { display: grid; grid-template-columns: 3.5em 1fr; gap: 2px 8px; }
+.setcard-val-label { color: var(--fg-dim); }
+.setcard-val-lines { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.setcard-line { font-family: var(--mono, ui-monospace, monospace); font-size: .9em; overflow-wrap: anywhere; white-space: pre-wrap; }
+.setcard-why-text { overflow-wrap: anywhere; }

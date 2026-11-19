@@ -78,6 +78,57 @@ test("a program a stored manifest describes runs without a card under the sandbo
     }
 });
 
+// --- a program that reveals other processes (PROGRAM_MANIFEST.md, ruling 31) ---
+
+/** The person's `ps`, stored with the marker, pinned to what the fake host resolves it to. */
+const storedPs = () => ({ ml_manifests_global: [{ id: "man-ps", scope: "global", origin: "person", created: 1,
+    manifest: { program: "ps", version: { range: "*", args: [], pattern: "" }, reveals: "processes", command: { effects: [], paths: "none", flags: { "-e": {} } } },
+    pin: { path: "/usr/bin/ps", fingerprint: "1:2:3:4", inRoot: false } }] });
+
+test("a revealing program asks, saying why, until the person lists it; a config saved before the key existed reads it empty", T, async () => {
+    for (const [extra, cards] of [[{}, 1], [{ shellRevealsAllow: ["lsof"] }, 1], [{ shellRevealsAllow: ["ps"] }, 0]]) {
+        const host = fakeNativeHost({ done: () => ({ out: "PID\n", err: "", code: 0 }) });
+        const ask = answering(true);
+        const { results } = await runOn("userScripts", [runs(["ps", "-e"])], { ...NO_FETCH, onNative: host.onNative, configExtra: { ...ON, ...extra }, localExtra: storedPs(), onStep: ask.onStep });
+        const r = valueOf(results[0]);
+        const label = JSON.stringify(extra);
+        assert.equal(r.ok, true, label);
+        assert.equal(ask.asked.length, cards, label);
+        assert.equal(r.approvedBy, cards ? "person" : "builtin", label);
+        if (cards) {
+            assert.deepEqual([ask.asked[0].why?.cause, ask.asked[0].why?.program], ["reveals", "ps"], label);
+            assert.equal(JSON.stringify(ask.asked[0].facts.reveals), JSON.stringify({ what: "processes", program: "ps", allowed: false }), label);
+        }
+    }
+});
+
+test("a shellRevealsAllow of another type, written to storage by hand, lists nothing: ps still asks, and the call answers without throwing", T, async () => {
+    for (const value of ["ps", "xxps", 7, { ps: true }, [["ps"]], ["ps", 1]]) {
+        const host = fakeNativeHost({ done: () => ({ out: "PID\n", err: "", code: 0 }) });
+        const ask = answering(true);
+        const { results } = await runOn("userScripts", [runs(["ps", "-e"])], { ...NO_FETCH, onNative: host.onNative, configExtra: { ...ON, shellRevealsAllow: value }, localExtra: storedPs(), onStep: ask.onStep });
+        const label = JSON.stringify(value);
+        assert.equal(valueOf(results[0]).ok, true, label);
+        assert.equal(ask.asked.length, 1, label);
+        assert.deepEqual([ask.asked[0].why?.cause, ask.asked[0].why?.program], ["reveals", "ps"], label);
+    }
+});
+
+test("a revealing program's version probe is judged with the marker: it starts only once the program is listed", T, async () => {
+    const ranged = storedPs();
+    ranged.ml_manifests_global[0].manifest.version = { range: ">=3", args: ["--version"], pattern: "^ps (\\d+)" };
+    for (const [allow, starts, cards] of [[[], 1, 1], [["ps"], 2, 0]]) {
+        const host = fakeNativeHost({ done: (_id, spawn) => spawn?.argv?.[1] === "--version" ? { out: "ps 4\n", err: "", code: 0 } : { out: "PID\n", err: "", code: 0 } });
+        const ask = answering(true);
+        const { results } = await runOn("userScripts", [runs(["ps", "-e"])], { ...NO_FETCH, onNative: host.onNative, configExtra: { ...ON, shellRevealsAllow: allow }, localExtra: ranged, onStep: ask.onStep });
+        const label = JSON.stringify(allow);
+        assert.equal(valueOf(results[0]).ok, true, label);
+        assert.equal(host.calls.filter((c) => c.call === "spawn" && c.args.argv[1] === "--version").length, 1, `${label}: the probe is resolved`);
+        assert.equal(host.calls.filter((c) => c.call === "start").length, starts, `${label}: unlisted, only the call itself starts, after its card`);
+        assert.equal(ask.asked.length, cards, label);
+    }
+});
+
 // --- a call the person is asked about ---
 
 test("an undescribed program asks inside the running step, showing the host's facts; allowed, it runs and says it waited", T, async () => {
@@ -155,6 +206,67 @@ test("an in-root file named like a shipped program asks under the sandbox, where
         assert.equal(ask.asked.length, asks, argv[0]);
         assert.equal(valueOf(results[0]).approvedBy, asks ? "person" : "builtin", argv[0]);
     }
+});
+
+// --- a flavour's hardening: the facts show the flavour, the call is spawned again hardened (PROGRAM_MANIFEST.md, "Flavours") ---
+
+/** A flavoured tool the person registered, pinned to the macOS system file the fake host resolves `/usr/bin/tool` to:
+ *  BSD by where it is (a stored manifest's gnu probe is never run), and its bsd overlay hardens with --sandbox. */
+const flavouredTool = { ml_manifests_global: [{ id: "man-ft", scope: "global", origin: "person", created: 1,
+    manifest: {
+        program: "tool", version: { range: "*", args: [], pattern: "" },
+        flavours: { gnu: { probe: { args: ["--version"], pattern: "^tool \\(GNU tool\\) (\\d+\\.\\d+)", range: ">=4.3 <5" } }, bsd: { system: "macos" } },
+        command: { effects: ["read"], paths: "operands", flags: {}, flavour: { bsd: { flags: { "--sandbox": {} }, harden: ["--sandbox"] }, gnu: { flags: { "--gnu-only": {} } } } },
+    },
+    pin: { path: "/usr/bin/tool", fingerprint: "1:2:3:4", inRoot: false } }] };
+const gnuDone = (id, args) => args?.argv.includes("--version") ? { out: "tool (GNU tool) 4.9\n", err: "", code: 0 } : { out: "ok\n", err: "", code: 0 };
+
+test("a flavour's hardening is what runs and what the card shows: the unhardened spawn is discarded and the call spawned again (condition b)", T, async () => {
+    const host = fakeNativeHost({ done: gnuDone });
+    const ask = answering(true);
+    const { results } = await runOn("userScripts", [runs(["/usr/bin/tool", "a.txt"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep,
+        localExtra: { ...flavouredTool, ml_policies_global: [pol("ask", '(c) => c.argv.includes("a.txt")', "ask before tool")] } });
+    const r = valueOf(results[0]);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const spawns = host.calls.filter((c) => c.call === "spawn").map((c) => ({ id: c.id, argv: c.args.argv }));
+    assert.deepEqual(spawns.map((x) => x.argv), [["/usr/bin/tool", "a.txt"], ["/usr/bin/tool", "--sandbox", "a.txt"]],
+        "the call, then the call again with the bsd hardening");
+    const started = host.calls.filter((c) => c.call === "start").map((c) => spawns.find((x) => x.id === c.args.id)?.argv);
+    assert.deepEqual(started, [["/usr/bin/tool", "--sandbox", "a.txt"]], "only the hardened call starts");
+    assert.ok(host.calls.some((c) => c.call === "discard" && c.args.id === spawns[0].id), "the unhardened spawn is discarded");
+    assert.equal(ask.asked.length, 1);
+    assert.equal(JSON.stringify(ask.asked[0].facts.argv), JSON.stringify(["/usr/bin/tool", "--sandbox", "a.txt"]), "the card's facts are the hardened call's");
+    assert.equal(JSON.stringify(ask.asked[0].facts.flavour), JSON.stringify({ name: "bsd", how: "BSD (the macOS system program)" }));
+    assert.match(shCardLines(ask.asked[0].facts)[0].value, /--sandbox/, "the card's Runs line shows the hardening");
+});
+
+test("a program file that changes between the spawn and its hardened spawn is not run", T, async () => {
+    let n = 0;
+    const host = fakeNativeHost({ done: gnuDone, facts: (args) => {
+        const fp = args.argv.includes("--sandbox") ? "9:9:9:9" : "1:2:3:4";
+        n++;
+        return { argv: args.argv, program: { path: args.argv[0], inRoot: false, fingerprint: fp }, cwd: { path: args.cwd, inRoot: true }, env: { set: [], secrets: [], free: true }, repo: null, repoConfigRunsCode: null,
+            paths: (args.pathArgs ?? []).map((p) => ({ arg: p.arg, given: args.argv[p.arg], path: `${args.cwd}/${args.argv[p.arg]}`, inRoot: true, secret: false, exists: true })), effects: "unknown", mode: "host", sandboxed: true, placement: "host-sandbox" };
+    } });
+    const ask = answering(true);
+    const { results } = await runOn("userScripts", [runs(["/usr/bin/tool", "a.txt"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep, localExtra: flavouredTool });
+    const r = valueOf(results[0]);
+    assert.equal(r.code, "Denied");
+    assert.match(r.threw, /changed while its flavour was read: not run/);
+    assert.equal(n, 2);
+    assert.equal(host.calls.filter((c) => c.call === "start").length, 0, "nothing started");
+    assert.equal(ask.asked.length, 0);
+});
+
+test("a stored manifest's gnu probe is never spawned: a program outside the system directories is undetected, and its gnu-only flag asks", T, async () => {
+    const pinned = { ml_manifests_global: [{ ...flavouredTool.ml_manifests_global[0], pin: { path: "/usr/local/bin/tool", fingerprint: "1:2:3:4", inRoot: false } }] };
+    const host = fakeNativeHost({ done: gnuDone });
+    const ask = answering(false);
+    await runOn("userScripts", [runs(["/usr/local/bin/tool", "--gnu-only", "a.txt"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep, localExtra: pinned });
+    assert.ok(!host.calls.some((c) => c.call === "spawn" && c.args.argv.includes("--version")), "the stored manifest's probe was spawned");
+    assert.equal(ask.asked.length, 1, "the gnu-only flag did not ask");
+    assert.equal(ask.asked[0].facts.flavour.name, null);
+    assert.match(ask.asked[0].facts.flavour.how, /never run/);
 });
 
 // --- a credentialed call: the host injects the person's GitHub token (SHELL.md, GH UNDER THE SANDBOX RULED 2026-11-08) ---
