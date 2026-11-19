@@ -336,7 +336,11 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   (wall time more than 20 s past the sum of its top-level tests AND more than that sum): something a test started keeps the
   event loop open, the measured case being an unanswered approval ask whose 5-minute timer held a file at 302 s for 5 s of
   tests and the machine-wide queue's slot with it; (b) a test over 3x its own p90 and 2 s slower, with at least 5 earlier
-  records; (c) a new or rare test (under 3 records) over 5x the median of its file AND of its genre and at least 2 s. The
+  records; (c) a new or rare test (under 3 records) over 5x the median of its file AND of its genre and at least 2 s,
+  except a file's FIRST top-level test: node:test charges the file's top-level `before()` hooks to it (a Pyodide boot made an
+  85 ms scan read 6 s), so it is judged only against its own history by (b). node:test emits no hook event, so the mark
+  lands on every file's first top-level row, hook or not: a new file whose first test is slow never reaches (c), and (b)
+  covers it once five records exist. The
   exit code is never touched. File wall time is the reporter's top-level `test:complete` event for the file (the child
   process's whole life, start-up included); the sum is its nesting-0 tests. History is `~/.cache/window-ml/test-times/history.jsonl`
   (`TEST_TIMES_DIR` overrides), shared by every clone and keyed by repo-relative file + test name, tests of 100 ms and up, the

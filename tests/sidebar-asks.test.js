@@ -75,6 +75,40 @@ test("Approve on an ask posts its id beside the step's seq, and the card goes at
     assert.equal(w.shadow.querySelector(".astep-approve.ask.leaving .appr-btn"), null, "a card on its way out has nothing left to press");
 });
 
+// --- a program that reveals other processes: the card's third answer (PROGRAM_MANIFEST.md, ruling 31) ---
+
+const REVEALS_WHY = { line: "Asking because ps shows other processes.", detail: "d", cause: "reveals", program: "ps" };
+const PS_FACTS = { ...FACTS, argv: ["ps", "-ef"], effects: [], described: true, why: [], reveals: { what: "processes", program: "ps", allowed: false } };
+
+test("a call that asks only because its program reveals other processes offers Always allow, which lists the program before it approves", async () => {
+    const w = await loadSidebarWorld({ sync: { shellRevealsAllow: ["lsof"] } });
+    await w.dispatch(agentStart("rev1", "list processes"));
+    await w.dispatch(running("rev1", [ask({ facts: PS_FACTS, why: REVEALS_WHY })]));
+    await open(w);
+    const card = w.shadow.querySelector(".astep-approve.ask");
+    assert.match(card.textContent, /ps shows other processes: their arguments, users and open files/, "the card says what the program shows");
+    const always = card.querySelector(".appr-btn.appr-always");
+    assert.ok(always, "the third answer is drawn");
+    assert.equal(always.textContent, "Always allow ps");
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    always.click();
+    await w.tick();
+    await w.tick();
+    assert.deepEqual(w.syncStore.shellRevealsAllow, ["lsof", "ps"], "the program is added to the list, the others kept");
+    const msg = posted.find((m) => m.__mlSidebarApp === "approval");
+    assert.deepEqual([msg.hash, msg.seq, msg.decision, msg.ask, msg.persist], ["rev1", 1, true, ID, false], "and the call is approved");
+});
+
+test("no Always allow on a call that asks for any other reason, or with no reveals cause", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("rev2", "list processes"));
+    await w.dispatch(running("rev2", [ask({ facts: { ...PS_FACTS, effects: "unknown" } })]));
+    await open(w);
+    assert.equal(w.shadow.querySelector(".appr-always"), null, "without the reveals cause, two answers");
+    assert.equal(w.syncStore.shellRevealsAllow, undefined, "and nothing is written");
+});
+
 test("answered calls gather in ONE footer in the step's body: a row each, with how it ended and the person's note, and no buttons", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("ask3", "check the repo"));

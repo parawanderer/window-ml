@@ -171,6 +171,11 @@ const GENRES = {
         about: "propose_policy and propose_manifest (a program manifest or a tier 3 library): the drafts, their cards, what is stored on approval",
         files: ["propose-library.test.mjs", "propose-library-redteam.test.mjs", "propose-manifest.test.mjs", "python-install.test.mjs", "propose-policy-redteam.test.mjs", "propose-policy.test.mjs"],
     },
+    // The policy store's own tests by name prefix: the worker's ask over a policy, a policy lifted from a call, the model's proposals of one, and the effective view of a session.
+    policy: {
+        about: "the policy store's consumers and views: asks over a policy, the lifter, proposals, and a session's effective rows",
+        files: ["policy-ask-worker.test.mjs", "policy-lift.test.mjs", "policy-proposals.test.mjs", "policy-effective-view.test.mjs", "policies-session-view-handler.test.mjs"],
+    },
     nav: { about: "a run's tab moving: the navigation barrier, the hand-over off an approved site, and the arrival judgement on every commit", files: ["nav-barrier.test.mjs", "nav-handover.test.mjs", "nav-arrival.test.mjs", "nav-arrival-host.test.mjs", "nav-navigate-redteam.test.mjs"] },
     bench: {
         about: "the benchmark harness (tests/e2e/bench/): its spec matrix, metrics, viewer, server, page, sweep log, scoreboard, memory readings, the box's event stream and the held runs' screens",
