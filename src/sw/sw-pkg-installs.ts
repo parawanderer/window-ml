@@ -63,12 +63,23 @@ export async function runInstalls(runId: string): Promise<InstalledWheel[]> {
 }
 
 /**
- * Add one install call's wheels to the run's record, after the candidate passed.
+ * Add one install call's wheels to the run's record, after the candidate passed, but only when the record is still the
+ * one the call read: a call whose candidate ran beside another install of the run was tested without that install's
+ * wheels, and its names were checked against a record that no longer holds.
  * @param runId the run
  * @param wheels the call's wheels
+ * @param earlier the run's record as the call read it before its candidate
+ * @returns whether the wheels were recorded
  */
-export function recordInstalls(runId: string, wheels: InstalledWheel[]): Promise<void> {
-    return edit((all) => { all[runId] = [...(all[runId] ?? []), ...wheels]; });
+export async function recordInstalls(runId: string, wheels: InstalledWheel[], earlier: InstalledWheel[]): Promise<boolean> {
+    let done = false;
+    await edit((all) => {
+        const now = all[runId] ?? [];
+        if (now.length !== earlier.length || now.some((w, i) => w.sha256 !== earlier[i].sha256)) return;
+        all[runId] = [...now, ...wheels];
+        done = true;
+    });
+    return done;
 }
 
 /**
