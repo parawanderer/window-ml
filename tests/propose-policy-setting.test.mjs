@@ -33,11 +33,13 @@ const writable = Object.keys(SETTING_CLASSES).filter((k) => ["ordinary", "guarde
 const spender = (n) => `(c) => { let s = 0; for (const x of ${JSON.stringify("x".repeat(n))}) { s = s + 1; } return c.key === "theme"; }`;
 /** The steps a measure of `when` spends of the shared budget. */
 const stepsOf = (when, effect = "allow") => { const budget = { left: 1e12 }; PP.measureSettingBreadth(prop(when, { effect }), DEPS, [], budget); return 1e12 - budget.left; };
-/** The loop length whose measure spends about `share` of SETTING_MEASURE_STEPS, from two calibration measures. */
+/** The budget the budget rows measure against: the mechanism is the product's, at a cost a test can pay many times. */
+const TEST_STEPS = 300_000;
+/** The loop length whose measure spends about `share` of TEST_STEPS, from two calibration measures. */
 function nFor(share) {
     const a = stepsOf(spender(0)), b = stepsOf(spender(20));
     const perIter = (b - a) / 20;   // total steps per extra iteration, over the whole measure
-    return Math.max(0, Math.round((share * PP.SETTING_MEASURE_STEPS - a) / perIter));
+    return Math.max(0, Math.round((share * TEST_STEPS - a) / perIter));
 }
 
 // --- the measure: what a rule covers ---
@@ -195,25 +197,33 @@ test("an allow covering only guarded keys is refused; the same deny and ask are 
 
 // --- the step budget ---
 
-test("a rule just under SETTING_MEASURE_STEPS is measured and one just over is refused, for allow, deny and ask", () => {
+test("the measure's budget is SETTING_MEASURE_STEPS, 1,000,000 steps, shared by the rows of one call unless a test passes its own", () => {
+    assert.equal(PP.SETTING_MEASURE_STEPS, 1_000_000);
+    // A rule costing a few hundred thousand steps fits the product's budget and not a quarter of it.
+    const mid = prop(spender(nFor(1.3)));
+    assert.ok("measures" in PP.measureSettingRows([mid], DEPS), "the default budget is not SETTING_MEASURE_STEPS");
+    assert.ok("error" in PP.measureSettingRows([mid], DEPS, [], TEST_STEPS));
+});
+
+test("a rule just under the budget is measured and one just over is refused, for allow, deny and ask", () => {
     const under = nFor(0.8), over = nFor(1.3);
     for (const effect of ["allow", "deny", "ask"]) {
         const u = prop(spender(under), { effect }), o = prop(spender(over), { effect });
-        const bu = PP.measureSettingBreadth(u, DEPS), bo = PP.measureSettingBreadth(o, DEPS);
-        assert.equal(bu.exhausted, false, `${effect} under`);
-        assert.equal(PP.settingRefusal(u, bu), null, effect);
-        assert.equal(bo.exhausted, true, `${effect} over`);
-        assert.match(PP.settingRefusal(o, bo), /takes too long to measure/, effect);
-        assert.ok("measures" in PP.measureSettingRows([u], DEPS) && "error" in PP.measureSettingRows([o], DEPS), effect);
+        const ru = PP.measureSettingRows([u], DEPS, [], TEST_STEPS), ro = PP.measureSettingRows([o], DEPS, [], TEST_STEPS);
+        assert.ok("measures" in ru && ru.measures[0] && !ru.measures[0].exhausted, `${effect} under: ${JSON.stringify(ru).slice(0, 200)}`);
+        assert.match(ro.error ?? "", /takes too long to measure/, `${effect} over`);
     }
+    const bo = PP.measureSettingBreadth(prop(spender(over)), DEPS, [], { left: TEST_STEPS });
+    assert.equal(bo.exhausted, true);
+    assert.match(PP.settingRefusal(prop(spender(over)), bo), /takes too long to measure/);
 });
 
 test("the budget is shared across the rows of one call: two rows each over half are refused (\"rule 2:\"), each under half both measured", () => {
     const big = prop(spender(nFor(0.6))), small = prop(spender(nFor(0.4)));
-    const r = PP.measureSettingRows([big, big], DEPS);
+    const r = PP.measureSettingRows([big, big], DEPS, [], TEST_STEPS);
     assert.ok("error" in r, "two rows each over half were measured");
     assert.match(r.error, /^Error: rule 2: .*takes too long/);
-    const ok = PP.measureSettingRows([small, small], DEPS);
+    const ok = PP.measureSettingRows([small, small], DEPS, [], TEST_STEPS);
     assert.ok("measures" in ok, JSON.stringify(ok));
     assert.equal(ok.measures.length, 2);
     assert.ok(ok.measures.every((m) => m && !m.exhausted));

@@ -562,10 +562,12 @@ export function settingBreadthNote(p: PolicyProposal, b: SettingBreadth): string
  * @param rows the call's accepted rows, in order
  * @param deps the stored config and the server's model ids
  * @param called the keys of this run's `change_setting` calls
+ * @param steps the budget the rows share; the product's is {@link SETTING_MEASURE_STEPS}, a test's may be smaller
  * @returns each row's measure (undefined for a row of another consumer), or the error the model reads
  */
-export function measureSettingRows(rows: readonly PolicyProposal[], deps: SettingMeasureDeps, called: readonly string[] = []): { measures: (SettingBreadth | undefined)[] } | { error: string } {
-    const budget = { left: SETTING_MEASURE_STEPS };
+export function measureSettingRows(rows: readonly PolicyProposal[], deps: SettingMeasureDeps, called: readonly string[] = [],
+    steps: number = SETTING_MEASURE_STEPS): { measures: (SettingBreadth | undefined)[] } | { error: string } {
+    const budget = { left: steps };
     const measures: (SettingBreadth | undefined)[] = [];
     for (let i = 0; i < rows.length; i++) {
         const lit = rows[i].consumer === "setting" ? settingLiteralRefusal(rows[i]) : null;
