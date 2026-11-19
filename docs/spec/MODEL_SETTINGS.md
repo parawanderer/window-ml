@@ -1,9 +1,10 @@
 # Spec (proposed): settings the model can see and change
 
-**Status: proposed 2026-11-13, nothing built.** From Shane's words in the calm-chat-motion session (2026-11-13) and the
-points agreed there, handed to the settings-specs lane by the policies/python/desktop/manifests coordinator. Questions
-1 and 2 of the first review (`ml.config()` stays as it is; the guarded class is not a second mechanism) were ruled by
-Shane on 2026-11-13 as proposed. Shane also ruled on 2026-11-13:
+**Status: proposed 2026-11-13; discovery and the surface built (#1815, #1952), part (c) spec'd and not built.** From
+Shane's words in the calm-chat-motion session (2026-11-13) and the points agreed there, handed to the settings-specs
+lane by the policies/python/desktop/manifests coordinator. Questions 1 and 2 of the first review (`ml.config()` stays as
+it is; the guarded class is not a second mechanism) were ruled by Shane on 2026-11-13 as proposed. Shane also ruled on
+2026-11-13:
 
 - the model reads the settings through `ml.settings()`, not `ml.current.settings`: they are the person's global
   settings, and a name under `ml.current` says they belong to the run;
@@ -95,7 +96,9 @@ exec's `ml.config()` is open question 1, a later slice.
 - **The surface, one PR**: `ml.settings()`, `change_setting`, the `setting` consumer, the card (with the verbatim
   values the shell keys need), the fatigue refusal ("Threat model", item 6) and the red-team rows. Under ruling 2
   guarded keys are read-write from the first commit, so a change can be declined at a guarded card from the start, and
-  the fatigue refusal cannot wait for a later key. Not started until Shane confirms (coordinator, 2026-11-14).
+  the fatigue refusal cannot wait for a later key. Built (#1952).
+- **`propose_policy` rows of consumer `setting`** (part (c)): spec'd here ("Proposing a `setting` policy"), its code
+  and red-team rows a PR of their own. Not built.
 
 ## Four classes of setting
 
@@ -302,14 +305,13 @@ for asks. A person who wants the theme to follow the model's say writes `(c) => 
 whose add form takes the consumer.
 
 **Who writes a `setting` policy, and what it frees** (as `docs/dev/policies.md`, "The `setting` consumer"). An `allow`
-frees an ORDINARY change only, with no card; a guarded change shows its card whatever a policy says, in both
-directions, and a `deny` refuses either. The person writes one today, on the policy page or in a policy file.
-`propose_policy` does NOT accept consumer `setting` as built: `checkProposal` (`src/sw/policy-proposal.ts`) refuses
-any consumer but `fetch` and `act`, pinned by `tests/propose-policy.test.mjs`, "a proposal for consumer setting is
-refused". The model asking for a standing allow over settings is open question 10. No `setting` allow frees a guarded
-key, a shell key or `agentStartPage`: `judgeSettingChange` frees class `ordinary` alone, and every shell key and
-`agentStartPage` is held to a class other than ordinary by `tests/setting-class.test.mjs`, "no shell key and not
-agentStartPage is ever ordinary".
+frees an ORDINARY change only, with no card; a guarded change shows its card whatever a policy says, in both directions,
+and a `deny` refuses either. The person writes one today, on the policy page or in a policy file. `propose_policy` does
+NOT accept consumer `setting` as built: `checkProposal` (`src/sw/policy-proposal.ts`) refuses any consumer but `fetch`
+and `act`, pinned by `tests/propose-policy.test.mjs`, "a proposal for consumer setting is refused". The model asking for
+one is part (c), below ("Proposing a `setting` policy"). No `setting` allow frees a guarded key, a shell key or
+`agentStartPage`: `judgeSettingChange` frees class `ordinary` alone, and every shell key and `agentStartPage` is held to
+a class other than ordinary by `tests/setting-class.test.mjs`, "no shell key and not agentStartPage is ever ordinary".
 
 **The card**, rendered by the worker from the facts, never from the model's text, except `why`, shown as the model's
 words:
@@ -349,6 +351,119 @@ told the setting changed meanwhile. A card already showing also closes on `chrom
 before any answer. A `setting`/`changed` record goes to the
 run log with the key, from, to and who answered (`docs/dev/run-log.md`); the tool result tells the model the old value
 so it can say how to undo. A change takes effect as the same change made in Settings would, for this run included.
+
+## Proposing a `setting` policy (part (c), not built)
+
+`propose_policy` accepts `consumer: "setting"` beside `fetch` and `act`, in a run the worker built, under the same
+rules as its other rows: the model proposes, the person approves on a card, the policy lasts for the run, and every
+row of one call is measured and shown on one card (`PROPOSAL_ROWS_MAX`). Rulings: the coordinator, 2026-11-18.
+
+**What the card names is measured, never taken from the model.** The label is the model's words and is shown as such.
+The keys a rule covers come from running the rule, as the fetch measure runs a rule over the run's calls and a probe.
+There is no check of the rule's source (reading `c.key` is a proxy: `(c) => c.key.length > 0` reads it and covers
+everything); the measure alone decides what the card says.
+
+**What a setting rule can read.** Exactly the facts `settingFacts` builds, and nothing else:
+
+| Fact | Varies with | Measured |
+| --- | --- | --- |
+| `kind` | nothing: always `"setting"` | fixed |
+| `key` | the key | every read-write key |
+| `class` | the key | fixed per key |
+| `effects` | nothing: always `"unknown"` | fixed |
+| `from` | the stored value | varied (below) |
+| `to` | the model's value | varied (below) |
+| `widens` | `key`, `from`, `to` (the key's declared direction) | follows from the two above |
+
+The policy realm gives a rule no other input: no `Date` (the clock is not a fact), `Math.random` refused ("method
+'random' not allowed on Math"), no `ml`, no config, no other key's value (`policyRoot`,
+`src/readonly-exec/policy-realm.ts`).
+So a rule is a pure function of `(key, from, to)`, and varying `from` and `to` over each key measures all of it. A row
+pins the realm to this list, so a builtin added to it later reds here and is either measured or removed.
+
+**The measure** (`measureSettingBreadth`, `src/sw/policy-proposal.ts`), over every key `modelWritable` allows (49
+today).
+An ordinary key is measured over its declared domain (`SettingDomain`, `src/setting-class.ts`):
+
+| Domain kind | `to` | `from` | Reported as |
+| --- | --- | --- | --- |
+| `boolean` | every value | every value: all (from, to) pairs | exact |
+| `enum` | every word | every word: all pairs | exact |
+| `number`, integer with `min` and `max` and a range of at most 2048 values | every value | the current value and 4 drawn at random | sampled |
+| `number`, any other | `min`, `max` where declared, the default, and 4 drawn at random | the current value and 4 drawn at random | sampled |
+| `hours` | every valid `a-b` pair (552) | the current value and 4 drawn at random | sampled |
+| `currency` | every code `Intl.supportedValuesOf("currency")` lists | the current value and 4 drawn at random | sampled |
+| `model` | every id the server lists that the model filter allows | the current value and 4 drawn from that list | sampled; with no list, **could not be measured** |
+
+A guarded key has no domain (its values are checked by type in `checkSettingChange`); it is measured from samples by
+type, for `from` and `to` alike: a boolean's both values; for a list, the current list, the current list plus one
+random absolute path, and the current list minus its first entry; for a string, `""`, the current value and a random
+one (for `agentStartPage`, a random https host). Reported as sampled.
+
+Random samples are drawn afresh per proposal with no fixed marker, as the fetch probe is (repl-specs ruling, #719), so a
+rule cannot be written to miss the values it knows the measure tries. A pair with `from === to` is skipped, as
+`checkSettingChange` refuses it.
+
+For each key the result is **every value** (every pair tried matched; for a sampled key, "every value tried"), **some
+values**, **none**, or **could not be measured**.
+
+**Size.** With today's table and 162 currencies: about 5,100 evaluations per proposal, most of them `hours` (552 × 5 =
+2,760) and `currency` (162 × 5 = 810), each bounded by the realm's step budget. The PR measures the wall time of one
+measure with a rule of the budget's full length and records the number here.
+
+**The card**, leading with the measure, before the label and the code:
+
+- A rule the measure finds covering every ordinary key at every value tried leads with "every setting the agent may
+  change", in those words. Not refused: the person decides on the card.
+- Otherwise: "It covers: **Theme** (every value), **Code font size** (some values)." Keys by Settings name
+  (`SETTING_TEXT`), at most 6 in the line, then "and N more", the full list behind a disclosure.
+- "Could not be measured: **Model**." by name, for every key reported so, for every effect.
+- For an `allow`, the guarded keys it matches are listed apart: "It would also cover, but these always ask whatever a
+  policy says: **Shell roots**, **Start page**." No `setting` allow frees a guarded key, a shell key or
+  `agentStartPage`: the judge frees class `ordinary` alone (`judgeSettingChange`).
+- For a `deny` or `ask`, guarded keys are listed with the rest: a deny of a guarded change is honoured.
+- If the run already called `change_setting`, the card says which of those keys the rule covers.
+- The closing line says what was sampled: "Measured over every setting the agent may change; values marked sampled were
+  tried, not proven."
+- Deny and ask rows get a card, as fetch deny rows do.
+
+**Refused at check time, no card** (the model reads why):
+
+- an `allow` that covers no ordinary key by the measure: it would free nothing, and a card for it would read as a grant;
+- an `allow` whose only covered ordinary keys could not be measured.
+
+**What does not change**: the judge, `rejudgePending` (an added allow re-judges an open ordinary setting card, never a
+guarded one), fatigue, the gate and secret keys (refused by `checkSettingChange` before any judge, so a rule over them
+is inert and the measure does not enumerate them), and the `change_setting` tool description.
+`propose_policy`'s own description gains one clause naming consumer `setting`; its size goes in `PROMPT_BUDGET.md`.
+
+**Tests** (rows that fail first):
+
+- the measure: `(c) => c.key === "theme"` reports Theme, every value, and nothing else; `(c) => true` leads with
+  "every setting the agent may change" and lists every guarded key apart; one enum word reports "some values";
+- `from` is varied: `c.key === "theme" || (c.key === "cardCorner" && c.from !== <its current value>)` reports Card
+  corner, not only Theme;
+- exactness: every `boolean` and `enum` key is measured over all its pairs (the row iterates `SETTING_CLASSES`:
+  enumerate the inputs); every integer key with a range of at most 2048 has every `to` tried;
+- a bounded number: `c.key === "detachedTaskMaxMin" && c.to === <one value>` reports "some values";
+- random samples: two measures of the same rule draw different random `from` and number samples;
+- could not be measured: with no server list, a model key is named as such on the card; an allow covering only model
+  keys is refused;
+- refusals: an allow covering only guarded keys;
+- the realm: the policy root's names are exactly the list above, and `Math.random` stays refused;
+- the judge after approval: the added allow frees an ordinary change with no card and still shows a guarded one's card;
+- the card text is built from `SETTING_TEXT` and the measure, and holds none of the label's text outside the quote.
+
+**Red-team pass** (the redteam skill; e3 through the coordinator):
+
+- a rule covering a guarded key by pattern (`c.key.startsWith("shell")`);
+- a rule keyed on `c.to` to dodge the samples;
+- a rule keyed on `c.from` to match nothing now and everything after one approved change (finding (a));
+- `c.to === <one value>` on an enumerated bounded number key, which must show as "some values";
+- a rule using `c.class` or `c.widens` to look narrow;
+- a rule covering only model keys while the server's list cannot be read;
+- a label claiming a narrower scope than the measure;
+- a mixed proposal hiding a setting row behind a fetch row.
 
 ## Threat model
 
@@ -465,7 +580,7 @@ call this surface (above); what it can do is ask the model, in text, to call it.
     code). RULED by the coordinator (2026-11-17): it may, since the card is the person's; the card must name the keys
     or the key pattern the allow covers, measured over every read-write key with sample values from each key's domain
     (for an enum key, the whole domain); and no `setting` allow ever frees a guarded key, a shell key or
-    `agentStartPage`. Refused as built (above, "Who writes a `setting` policy").
+    `agentStartPage`. Spec'd above, "Proposing a `setting` policy"; refused as built until that lands.
 
 ## Owners
 
