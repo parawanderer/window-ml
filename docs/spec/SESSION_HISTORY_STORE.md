@@ -245,8 +245,9 @@ Each of these keeps a bound per step: one batch of events, a few MiB at most, ne
 
 ### a. The memory of `/files/` (FILE_ATTACHMENTS.md, "A session's files as a directory")
 
-**A proposal.** It takes effect only through an amendment to FILE_ATTACHMENTS.md, a separate spec PR after this one
-(accepted as a proposal by the coordinator, 2026-11-17); building it is assigned later.
+**Ruled 2026-11-17, and now in FILE_ATTACHMENTS.md**, "`/files/` read by range, and `ml.fs`": Shane ruled that
+`/files/` never holds all files in memory and that it gets `ml.fs` (Node's `fs/promises`) for JS. The text below is
+the recommendation that led there; the spec there is what holds.
 
 **Measured in that spec, not built** (`FILE_ATTACHMENTS.md:552-555`). The ruled mount is EAGER: at interpreter start
 every file's whole bytes are posted to the worker and held as ArrayBuffers, "one times the directory's size" (`:601`).

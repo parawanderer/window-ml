@@ -28,7 +28,7 @@ const changesEffect = (f) => (f.effects?.length ?? 0) > 0 || f.valueIsPath || f.
 // --- the shipped manifests ---
 
 test("the first set from PROGRAM_MANIFEST.md ships, one file per program", () => {
-    assert.deepEqual(Object.keys(manifests).sort(), ["cat", "cp", "find", "gh", "git", "head", "jq", "ls", "mv", "rg", "rm", "rmdir", "tail", "unlink", "wc"]);
+    assert.deepEqual(Object.keys(manifests).sort(), ["awk", "cat", "cp", "find", "gh", "git", "head", "jq", "ls", "mv", "rg", "rm", "rmdir", "sed", "tail", "unlink", "wc"]);
     for (const [file, m] of Object.entries(manifests)) assert.equal(m.program, file, `${file}.json names ${m.program}`);
 });
 
@@ -366,6 +366,8 @@ const AFTER_OPERAND = {
     rm: { argv: ["rm", "a", "-r"], described: false },
     rmdir: { argv: ["rmdir", "a", "-v"], described: false },
     unlink: { argv: ["unlink", "a", "-v"], described: false },
+    sed: { argv: ["sed", "p", "f", "-n"], described: false },
+    awk: { argv: ["awk", "{print}", "f", "-F:"], described: false },
     find: { argv: ["find", ".", "-L"], described: false, measured: "find's own grammar: after the first operand -L is an expression, which the manifest does not list (macOS find: \"-L: unknown primary or operator\")" },
     rg: { argv: ["rg", "a", "f", "-n"], described: true, measured: "ripgrep 15.0.0 on macOS numbered the lines: rg parses its own argv, the same code on Linux" },
     jq: { argv: ["jq", ".", "f", "-c"], described: true, measured: "jq-1.7.1-apple printed compact output: jq's main.c reads options anywhere, the same code on Linux" },
@@ -416,17 +418,36 @@ test("upgrade: main's cat, head, tail, wc and ls described a flag after an opera
 // --- the host holds the same bytes (window-ml #882, window-ml-host #19) ---
 
 /** The pin both repos hold: sha256 of the lines "<sha256 hex of the raw bytes>  <name>\n", over every .json of the fixtures
- *  ("calls/<p>.json") and the manifests ("manifests/<p>.json"), names sorted bytewise. The host's copy under
+ *  ("calls/<p>.json"), the manifests ("manifests/<p>.json"), the flavoured calls ("flavoured/<p>.json") and the sed
+ *  scanner vectors ("scanners/<f>.json"), names sorted bytewise. The host's copy under
  *  `vectors/program-manifests/` records it in `PIN`. */
-const VECTOR_PIN = "a09ef075ba3ef647db8dff2924b71de18ca0d59f1c8028b7fd1f3c1c5627ec3d";
+/** The calls described as one detected flavour (sed's two -i, awk's -safe), shared with the host like the other vectors. */
+const FLAVOURED_CALLS = new URL("./fixtures/program-calls-flavoured/", import.meta.url);
+
+const VECTOR_PIN = "597122c31a364b90cd17d6cc5f2b629ff19d9263ccbc0242b361b27af65d52c7";
 
 test("the manifests and call fixtures hash to the pin the host holds", () => {
     const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");
-    const named = [["calls", FIXTURES], ["manifests", MANIFESTS]].flatMap(([dir, url]) =>
+    const named = [["calls", FIXTURES], ["manifests", MANIFESTS], ["flavoured", FLAVOURED_CALLS], ["scanners", new URL("./fixtures/sed-scanners/", import.meta.url)]].flatMap(([dir, url]) =>
         fs.readdirSync(url).filter((f) => f.endsWith(".json")).map((f) => [`${dir}/${f}`, fs.readFileSync(new URL(f, url))]));
     named.sort(([a], [b]) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
     const pin = sha(named.map(([n, bytes]) => `${sha(bytes)}  ${n}\n`).join(""));
-    assert.equal(pin, VECTOR_PIN, "the manifests or call fixtures changed: re-copy them to window-ml-host's vectors/program-manifests/ and update VECTOR_PIN here and PIN there together");
+    assert.equal(pin, VECTOR_PIN, "the manifests, call fixtures or scanner vectors changed: re-copy them to window-ml-host's vectors/program-manifests/ and update VECTOR_PIN here and PIN there together");
+});
+
+test("every flavoured call describes as recorded under its flavour", () => {
+    const files = fs.readdirSync(FLAVOURED_CALLS).filter((f) => f.endsWith(".json"));
+    assert.deepEqual(files.sort(), ["awk.json", "sed.json"]);
+    for (const f of files) {
+        const fx = JSON.parse(fs.readFileSync(new URL(f, FLAVOURED_CALLS), "utf8"));
+        assert.ok(manifests[fx.program].flavours, `${fx.program} declares flavours`);
+        for (const c of fx.calls) {
+            const d = describeCall(c.argv, manifests[fx.program], { version: fx.version, flavour: c.flavour });
+            const got = { described: d.described, effects: keys(d.effects), pathArgs: d.pathArgs, actsOnDir: d.actsOnDir, runner: d.runner, okCodes: d.okCodes, echoes: d.echoes, recursive: d.recursive, hardened: hardenArgv(c.argv, d) };
+            const want = { described: c.described, effects: c.effects, pathArgs: c.pathArgs, actsOnDir: c.actsOnDir, runner: c.runner, okCodes: c.okCodes, echoes: c.echoes, recursive: c.recursive, hardened: c.hardened };
+            assert.deepEqual(got, want, `${c.argv.join(" ")} as ${c.flavour} (${c.note})`);
+        }
+    }
 });
 
 // --- the editor's warning: a script whose manifest lacks runs-code (SHELL.md, the TRAP paragraph) ---
@@ -592,9 +613,10 @@ test("a flavour's hardening is added after the core's, only for that flavour", (
 });
 
 test("upgrade: a manifest without flavours describes every fixture call identically whatever the flavour says", () => {
-    // The 15 shipped manifests declare no flavours; each vector under each detection state is today's description.
-    for (const [name, fx] of Object.entries(fixtures)) {
-        assert.equal(manifests[name].flavours, undefined, `${name} ships unflavoured in this change`);
+    // The 15 manifests shipped before flavours declare none; each vector under each detection state is today's description.
+    const plain = Object.entries(fixtures).filter(([name]) => !manifests[name].flavours);
+    assert.equal(plain.length, 15);
+    for (const [name, fx] of plain) {
         for (const c of fx.calls) {
             const today = describeCall(c.argv, manifests[name], { version: fx.version });
             for (const flavour of ["gnu", "bsd", "other", null]) assert.deepEqual(describeCall(c.argv, manifests[name], { version: fx.version, flavour }), today, `${c.argv.join(" ")} as ${flavour}`);

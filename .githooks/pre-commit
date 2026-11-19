@@ -45,6 +45,14 @@ if ! node scripts/check-format.mjs --staged; then
     exit 1
 fi
 
+# 1b. A merge-conflict marker left behind, in any file type (scripts/check-markers.mjs). check-format reads only
+#     the code and data files; a bare `=======` once sat in sidebar.css and dropped the rule under it (#1994).
+if ! node scripts/check-markers.mjs --staged; then
+    echo ""
+    echo "pre-commit: a merge-conflict marker is staged. Resolve it, re-stage, and commit again."
+    exit 1
+fi
+
 # 2. The generated JSON Schema. `docs/spec/export.schema.json` is CHECKED IN — it is a published contract
 #    that people link to and generate parsers from — so it can go stale the moment src/export-schema.ts or
 #    src/contract.ts changes and nobody reruns the generator. CI catches that (tests/export-schema.test.mjs
