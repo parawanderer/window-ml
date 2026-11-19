@@ -24,11 +24,14 @@ test("the checked-in decoder is what the schema generates", () => {
     // supposed to make impossible — so where protoc IS present, regenerate and diff. Skipped otherwise rather
     // than failing a machine that never asked for a protobuf toolchain (the same rule the CPython tests use).
     if (!protocVersion()) return;
+    // The header's protoc version line is not the decoder: a machine with another protoc release generates the same
+    // code under a different line (35.1 and 36.2 differ only there), and must not read as stale.
+    const code = (s) => s.replace(/^\/\/ +protoc +v\S+$/m, "//   protoc");
     const tmp = mkdtempSync(join(tmpdir(), "protogen-"));
     try {
         const fresh = generate(tmp);
         const shipped = readFileSync(new URL("../src/proto/chat.gen.ts", import.meta.url), "utf8");
-        assert.equal(fresh, shipped, "src/proto/chat.gen.ts is stale — run `npm run gen-proto`");
+        assert.equal(code(fresh), code(shipped), "src/proto/chat.gen.ts is stale — run `npm run gen-proto`");
     } finally { rmSync(tmp, { recursive: true, force: true }); }
 });
 
