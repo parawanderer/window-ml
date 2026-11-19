@@ -1222,6 +1222,77 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   loaded, the deadline).
 - **Packages, ruling 36 (the lane's account, 2026-11-19).** The restricted fork has no file gate today. The
   measurement's results come as a notebook, its head to the coordinator.
+- **Shane's ruling 55 (2026-11-19): a library's inert data types are declared in that library's manifest.** The
+  dialect runner names no library, and the default bundling of numpy and pandas is no exception: "any new library
+  addition should be contained in its own files that get opted into". `_ml_not_inert` in
+  `src/python/python-dialect-run.ts` hard-codes numpy and pandas types today; that moves. Owner: packages.
+- **Shane's ruling 56 (2026-11-19): argument-conditioned effects are data in the library manifest.** A leaf whose
+  effect depends on an argument (`buf` bound, `inplace` true, `out` bound) is declared in the manifest and enforced by
+  the extension through `allow_call`, in one spec with ruling 55. The fork's hard-coded stand-ins come out at a later
+  core rebuild. Cost does not become a real function now: the size cap and the wall-clock kill stay.
+- **Shane's ruling 57 (2026-11-19): outside data is never modified in the original, only in a copy.** The lane's
+  account (packages): this holds at the source today, since every route into a run's namespace (`tables`, `df`,
+  `img`, stored pointer tables, `ml`) builds a fresh Python copy and none is a live handle. Inside the kernel the
+  loader redirects (`pd.read_csv(name)`, `Image.open(name)`) return the same object each time, so a re-read after an
+  approved edit returns the edited value. Coordinator's call: a re-read returns the original; it goes in the spec
+  ruling 58 leads to.
+- **Shane's ruling 58 (2026-11-19): the goal is that the model edits its own Python kernel values without approval
+  prompts.** Shane's framing: in JS the approval protects ownership (the page's DOM) and termination; in Python every
+  kernel value is the model's, so the read-only interpreter protects termination (step budget, memory cap) and
+  effects that leave the kernel, not ownership. An approved cell has no step budget and is ended only by the timeout.
+  The existing block is not removed now. The lane's account (packages, measured on the pinned core): an inside cell
+  may already mutate what an earlier inside cell made, under the fork's undo log (Python/restricted.c:1386-1531 in
+  the fork: a whole-object snapshot on the first write to an owned value older than the run, replayed on refusal).
+  Refused today: mutation of a value a full-mode cell made or the harness injected. A cell refused part-way reruns
+  from the top on the full path, which is why an unlogged write would apply twice. The candidate design: plain data
+  from those two sources joins the owned set. Spec first, not built.
+- **Shane's ruling 59 (2026-11-19): count why read-only Python cells ask before designing ruling 58's change.**
+  Owner: bench, as a notebook from run records that already exist; no real-model run. Its head to the coordinator.
+- **Python dialect defects found 2026-11-19 (the lane's account, packages), and the coordinator's calls.** The
+  manifests' `leaves` rows are read by nobody at run time; enforcement is hard-coded in the fork's
+  Lib/restricted.py.
+  (1) `DataFrame.to_string(buf=<path>)` and `Series.to_string(buf=…)` wrote any worker path unasked: #1991 (the
+  repair), a check that refuses the parameter bound to anything but None, with an enumeration of every admitted
+  callable's path, file or buffer parameter.
+  (2) `out=` wrote into an array the cell does not own (`np.sum(m, axis=0, out=b)`, `np.abs(x, out=b)`,
+  `ndarray.round(out=b)`): a C callee's write is invisible to the ownership check, which sees only the interpreter's
+  store sites. #1993 (the repair) refuses `out` on every admitted module function and ufunc.
+  (3) A `*` or `**` call reaches the gate as the bound builtin, so no checker on a C method survives it. Call:
+  `round` leaves the ndarray kind now (`a.round()` asks); the fork's call lookup is repaired at the next rebuild.
+  Interim manifest rule: a C method with an argument that can write is not listed.
+  (4) Of the 8 listed ndarray methods, `any`, `max`, `mean` and `sum` error inside: the fork lifts only Python
+  functions, never a C method descriptor. Repair: `allow_call` on the four with the same checks (PR C).
+  (5) The freeze (PR B2): every numpy array older than the cell is set read-only before an inside cell runs, thawed
+  when its undo copy is taken, and restored after. Measured: numpy's flag stops every `out` route and a cell cannot
+  turn it back on. pandas (copy on write) and Pillow have no equivalent; the ownership check stays their barrier.
+  (6) The undo copy of an array or frame is not counted against the 256 MiB cap. Call: B2 totals a cell's undo
+  copies in bytes and refuses a write whose copy would pass the cap's value, before copying; the cell asks.
+  Packages' order: #1991, #1993, B2, C, one docs PR on what a library manifest carries (rulings 55 and 56, the
+  interim lists' home, the fork follow-ups), its code, ruling 36's notebook, ruling 37's measurement, the network
+  gate. Reviewer: janitor-3; e3 writes rows on each branch.
+- **Settings rules, part (c) (`propose_policy` with consumer `setting`): the coordinator's calls (2026-11-19).** One
+  budget of 1,000,000 steps for the whole measure (about 5,100 evaluations); over it, refused at check time. Measured
+  once; the measure travels with the proposal; no cache by source. The rule's own literals (with plus and minus one,
+  after constant folding) join the measured values. Refused at check time: an unknown `c.key` literal, a literal
+  outside the key's domain or type, and a rule that breaks on any tried (key, from, to); the text names the count, up
+  to three keys, the break and the repair. Exact coverage for the fragment is not scheduled. The spec text rides in
+  the same PR. Owner: settings specs.
+- **Snapshot H11 and H13 as merged (#1988, c79aa0e1).** `docs/spec/FILE_ATTACHMENTS.md`: an untracked path the host's
+  secret-name matcher catches enters neither tree and is listed as withheld; a tracked one that changed is listed
+  "changed, contents withheld"; a blob under an ordinary name is withheld when its id equals the blob of a matched
+  path in either tree. Stated limits: a hard link, a copy of an untracked secret file, an edited copy, a secret in
+  an ordinary file. Coordinator's call, Shane may override: the exact-copy blob-id rule. The host side is
+  window-ml-host#51, with e3's four rows.
+- **Merged 2026-11-19.** #1985 (15b88764), #1986 (76885deb, the energy section of `docs/spec/SESSION_SUMMARY.md`),
+  #1987 (cf8436b0), #1988 (c79aa0e1), #1959 (1119c481, the matcher notebook), #1976 (f23d0ccb, a cell that kills
+  Pyodide is answered as the kernel's death).
+- **Main repairs open 2026-11-19.** #1990 (bench): a protoc 36.2 install changed the generated header's version
+  line, so `tests/proto.test.mjs` and `tests/events-proto.test.mjs` went red locally in every clone; the comparison
+  now ignores that line. #1994 (settings specs): a conflict-marker line in `src/sidebar/sidebar.css` from #1921
+  dropped one rule; a check that refuses such lines follows from small-fixes as its own PR.
+- **The sed and awk manifests (#1989, with window-ml-host#52), 2026-11-19.** A program inside an argument is
+  described by a narrow grammar; text outside it is unknown and asks; the flavoured vectors design is accepted. The
+  host PR merges first, by hand. #1977 (the reveals gate): its red-by-design row is e3's to edit.
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
