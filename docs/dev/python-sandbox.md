@@ -331,10 +331,13 @@ worker drives with `autoApprovePython` on:
    Python class's dunders lifted (`csv.DictReader`); a name in `DIALECT_STDLIB_REFUSED` (`random.choice`, which
    advances the shared generator) refuses with its reason. **A listed pandas property runs its getter under the gate**,
    which refused its reads of pandas internals (`df.values` was dead inside), so `_ml_lifted_reads` moves each pure one
-   from its kind's table to the kind's dynamic rule, which the gate reads lifted. `Series.iloc` reads items through its
+   from its kind's table to the kind's dynamic rule, which the gate reads lifted. On pandas 3.0.2 that is five getters,
+   each one expression with no argument and no write: `DataFrame.shape` (`len(self.index), len(self.columns)`),
+   `DataFrame.values` (`self._mgr.as_array()`), `Series.values` (`self._mgr.external_values()`), `Index.values` (its
+   data) and `Series.iloc` (a new `_iLocIndexer` over the receiver). `Series.iloc` reads items through its
    indexer and never writes one: the barrier would judge the indexer, not the Series. `Series.dtype` and
    `DataFrame.dtypes` are not listed: `str()` of a numpy dtype imports from C under the cell's frame, which has no
-   `__builtins__`, so it raises KeyError. `tests/python-dialect-vocab.test.mjs` holds every listed stdlib name to a call
+   `__builtins__`, so it raises KeyError (#2040). `tests/python-dialect-vocab.test.mjs` holds every listed stdlib name to a call
    that runs inside or a reason. Both functions go when the fork does this itself.
 3. `wrapUserScript(…, inside)` runs the cell through `run_cell` (`INSIDE_CELL`, `python-dialect-run.ts`) in a COPY of the namespace that holds no `_` name.
    A bare trailing expression gets `return ` spliced in at its own column, so the value matches the full path. Decimal

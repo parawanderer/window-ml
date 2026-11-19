@@ -342,7 +342,7 @@ UNLISTED = {("numpy", "ndarray"): {"round": "a C method that writes its out argu
 # Names listed whatever the count: ruled in (V1, repl-specs 2026-11-19) from the cell replay's first refusals on #1997,
 # where each stopped a cell the count's threshold had not reached. Series.dtype and DataFrame.dtypes are NOT here:
 # str() of a numpy dtype imports from C under the cell's frame, which has no __builtins__ (KeyError), so admitting
-# them would hand the model an error a full run never gives.
+# them would hand the model an error a full run never gives (#2040).
 LISTED = {("numpy", None): {"rint"}, ("pandas", "DataFrame"): {"columns", "shape"}, ("pandas", "Series"): {"iloc"}}
 
 def manifest(mod):
