@@ -10,7 +10,7 @@
 import { MlAnswer, StepOptions, MlTool, AgentOptions, AgentResult, MlAgentHandle, ApprovalRequest, AgentStepEvent } from "./contract/contract-agent";
 import { ChatOptions, MlHistory, NeutralMessage, ToolCall, TokenUsage } from "./contract/contract-chat";
 import { MlPublicConfig } from "./contract/contract-config";
-import { TablePreview, TableValue, FetchResult, FetchFormat, TableSource } from "./contract/contract-fetch";
+import { TablePreview, TableValue, FetchResult, FetchFormat, TableSource, Table } from "./contract/contract-fetch";
 
 // THE BARREL. A themed module is where a type LIVES; this file is where every consumer still finds it, and
 // that is not a convenience. Roughly a hundred references across the codebase are written as the inline type
@@ -236,6 +236,14 @@ export interface MlApi {
      *  screenshot injected as `img`/`img_np`. No network/filesystem/DOM. `keep` holds a worker-hosted run's sandbox
      *  through idle gaps until its turn ends or its sandbox is killed (a timeout, a crash, a cancel), which the next cell is told as loss; a page's call has no run to keep, so it is ignored there. */
     pythonExec(code: string, opts?: { image?: string | Element | null; margin?: number; tableRaw?: boolean; tables?: string | Element | TableValue | Record<string, string | Element | TableValue> | null; keep?: boolean; onStdout?: (chunk: string, ts?: number) => void }): Promise<{ ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; render?: "latex" | "img" | "figure"; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] }; bootMs?: number; runMs?: number }>;
+    /** Read a whole table you own: a CSS selector or `"current"` (a page table, or the Google Sheet you are on), an
+     *  http(s) URL this page already fetched (read from the fetch cache, never fetched), a fetch result (by its URL),
+     *  a Google Sheets URL, `"@tool:<id>"`, or a table value. `raw` keeps every cell a string; `delimiter` and
+     *  `header` override discovery for a CSV or a Sheet. Editing the answer changes nothing else, and a second read
+     *  returns the source again. In a read-only survey a Sheet, or a URL not yet fetched, needs approval. */
+    table(src: string | Element | FetchResult | Table | TableValue, opts?: { raw?: boolean; delimiter?: string; header?: boolean }): Promise<Table>;
+    /** Whether reading `src` with `table` needs the person: null, or why it asks. The read-only dialect's judge. */
+    _tableAsks(src: unknown): string | null;
     /** Built-in sandboxed-Python tool factory (numpy/Pillow pixel/array work). */
     pythonTool(): MlTool;
     /** Read-only self-introspection tool for ml.agent (pass via `extraTools`): reports the run's model,

@@ -606,6 +606,22 @@ export function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown,
             return r;
         };
     }
+    // `ml.table(src, opts)` — a whole table the survey owns (docs/spec/ML_TABLE.md). Judged by the host's source rule
+    // before it reads: a page table, a pointer or a URL already in the fetch cache is free; a Sheet or an unfetched URL
+    // is refused here and goes to the person. The worker has no page, so it defers there. Only the three options the
+    // host reads are passed, as a fresh copy, never the script's own object.
+    const hostTable = (ml as Record<string, unknown>)["table"], tableAsks = (ml as Record<string, unknown>)["_tableAsks"];
+    if (worker) out.table = (src: unknown): never => { throw new NeedsPage(`table(${typeof src === "string" ? JSON.stringify(src) : "…"}) reads the page`); };
+    else if (typeof hostTable === "function" && typeof tableAsks === "function") {
+        out.table = (src: unknown, opts?: unknown): unknown => {
+            const why = (tableAsks as (s: unknown) => string | null).call(ml, src);
+            if (why) throw new Denied(why);
+            const o = opts && typeof opts === "object" ? opts as object : {};
+            const own = (k: string): unknown => Object.getOwnPropertyDescriptor(o, k)?.value;
+            const copy = { raw: own("raw") === true, ...(typeof own("delimiter") === "string" ? { delimiter: own("delimiter") as string } : {}), ...(typeof own("header") === "boolean" ? { header: own("header") as boolean } : {}) };
+            return (hostTable as (s: unknown, o: unknown) => unknown).call(ml, src, copy);
+        };
+    }
     // `ml.pipe(text, stages)` — the `grep | head` line scanner, which models reach for constantly, often in place of
     // the JS they would otherwise have to write (`ml.pipe(JSON.stringify(cfg, null, 1), "grep -iE 'model|approve' |
     // head 40")`). Pure: no I/O, no DOM, no tokens. Free here on three conditions the host enforces through `limits`,

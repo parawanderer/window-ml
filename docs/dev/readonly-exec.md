@@ -489,6 +489,16 @@ to grow a collection while iterating it — the halting argument the collection 
 than re-made. Both have tests; a new kind of value flowing through an existing surface gets the contract
 re-checked even when no construct was added.
 
+`ml.table(src, { raw, delimiter, header })` (`ml-table.ts`, docs/spec/ML_TABLE.md) reads a WHOLE table by source: a
+selector or `current`, a URL in the page's fetch cache, a fetch result (by its URL alone), `@tool:<id>` or a table
+value. The facade asks the host's `_tableAsks` before it reads, so the one source rule judges every caller: a page
+table, a pointer or a cached URL is free; a Sheet or an unfetched URL is refused and goes to the person (the run's
+approved-Sheets store is not readable from the facade yet, so a Sheet always asks here); a `/files/` path, a clipped
+fetch body and a preview are errors. The host gets a fresh copy of the three options, never the script's object. In
+the worker the member raises `NeedsPage`. The answer's rows are a copy, so an approved script's edit reaches neither the
+cache nor the next read; inside the dialect the answer is still the host's under the ownership rule, so a survey copies
+it to build on it, as above. Tests: `tests/readonly-ml-table.test.mjs`.
+
 ### The table facade: a receiver kind of its own
 
 Every table a caller receives is a FACADE (`asTable`, table-data.ts; the `Table` type in contract.ts): the data
