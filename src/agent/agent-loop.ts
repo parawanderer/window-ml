@@ -598,7 +598,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // The label says what this view IS — its source and the reduction that produced it — so a later
             // read (or the nearest-pointer list on a typo) reads as "dereference: python_exec | .rows | head 5".
             label: cleanLabel(`${nameOf(src)} | ${String(args?.pipe ?? "")}`),
-            in: JSON.stringify(args), t: Date.now(), step, seq,
+            in: JSON.stringify(args), t: Date.now(), step, seq: (opts.seqBase ?? 0) + seq,
         });
         tokenRenders.push({ id, tool: DEREF_TOOL, render: derefRender(text), result: text });   // citable in the answer
         // …and onto the STEP. The answer renderer resolves a citation by matching `step.token`, and this id is
@@ -942,7 +942,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         const id = toolToken(opts.runHash, (opts.seqBase ?? 0) + s);
         try {
             opts.claimValue?.(value);
-            tokenStore.note({ id, tool: "task", kind: "text", out: text, value, label: cleanLabel(`task ${task} result`), in: JSON.stringify({ id: task }), t: Date.now(), step, seq: s });
+            tokenStore.note({ id, tool: "task", kind: "text", out: text, value, label: cleanLabel(`task ${task} result`), in: JSON.stringify({ id: task }), t: Date.now(), step, seq: (opts.seqBase ?? 0) + s });
         } catch (e) { threw("task", "run", e); return ""; }
         return cutNote(id, chars);
     };
@@ -1271,7 +1271,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 const image = tr?.image
                     ?? (r?.type === "image" ? r.src : r?.type === "look" ? r.image : r?.type === "python-out" ? r.image : undefined);
                 const latex = r?.type === "python-out" && r.latex && r.value != null ? String(r.value) : undefined;
-                tokenStore.note({ id: tokenId, tool: call.name, kind, out: result, ...(full ? { full } : {}), ...(image ? { image } : {}), ...(latex ? { latex } : {}), ...(label ? { label } : {}), in: JSON.stringify(args), t: Date.now(), step, seq: s, ...(tbl ? { table: tbl } : {}), ...(value ? { value } : {}) });
+                tokenStore.note({ id: tokenId, tool: call.name, kind, out: result, ...(full ? { full } : {}), ...(image ? { image } : {}), ...(latex ? { latex } : {}), ...(label ? { label } : {}), in: JSON.stringify(args), t: Date.now(), step, seq: (opts.seqBase ?? 0) + s, ...(tbl ? { table: tbl } : {}), ...(value ? { value } : {}) });
                 tokenRenders.push({ id: tokenId, tool: call.name, render: tr?.renderOut, result });   // → res.outputs (only if CITED)
             } catch (e) {
                 threw(call.name, "run", e);
