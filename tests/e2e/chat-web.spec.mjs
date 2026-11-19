@@ -3714,3 +3714,30 @@ test("a busy session's list dot pulses when it appears, then rests at full colou
     expect(errors).toEqual([]);
     await page.close();
 });
+
+// --- the composer's usage figure follows the session while it is open ---
+
+// The footer's figure is the LATEST sample's prompt+completion. It is drawn by the composer, a child of the open
+// pane, and must move when a new sample arrives on the open session, not only after the session is left and re-opened.
+test("an open chat session's footer usage figure follows a new usage sample without re-opening", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
+    const gauge = page.locator(".composer-foot .usage-gauge");
+    await expect(gauge.locator(".tt-pop")).toContainText("236");
+    for (const [turn, tokens] of [[1, 300], [2, 350], [3, 399]]) {
+        await page.evaluate(([k, turn, tokens]) => {
+            const hash = k.split(":")[1], ts = Date.now() + turn * 10;
+            const base = { id: `${hash}-${turn}`, ts, save: true, session: { hash, turn } };
+            globalThis.__chatFake.emit(k, { ...base, kind: "chat", streaming: false,
+                request: { model: "qwen3:32b", extend: null, messages: [{ role: "user", content: `again ${turn}` }], images: null, toolIds: null, schema: false, think: null, maxTokens: null },
+                config: { system: null, model: "qwen3:32b", think: null, schema: false, toolIds: null, maxTokens: null, save: true } });
+            globalThis.__chatFake.emit(k, { ...base, ts: ts + 1, kind: "chat-result", model: "qwen3:32b", extend: null, reasoning: null, sources: null, structured: false,
+                usage: { promptTokens: tokens - 10, completionTokens: 10, totalTokens: tokens }, content: `answer ${turn}` });
+        }, [CHAT, turn, tokens]);
+    }
+    await expect(page.getByText("answer 3")).toBeVisible();
+    // The demo's model has no known window, so the bare figure and the tooltip both carry the number.
+    await expect(page.locator(".composer-foot .usage-total")).toHaveText("399 tok");
+    await expect(gauge.locator(".tt-pop")).toContainText("399 tokens in context");
+    expect(errors).toEqual([]);
+    await page.close();
+});
