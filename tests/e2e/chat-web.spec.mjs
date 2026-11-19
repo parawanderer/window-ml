@@ -1515,18 +1515,55 @@ test("one session, one menu: the list's dots and the chat's offer the same thing
         .evaluateAll((els) => els.map((e) => e.firstChild?.textContent?.trim()));
 
     await page.locator(".chat-row-more").first().click();
-    expect(await labels(".chat-row-menu")).toEqual(["Pin to the top", "Rename…", "Look at the page", "Copy session id", "Delete…"]);
+    expect(await labels(".chat-row-menu")).toEqual(["Summary", "Pin to the top", "Rename…", "Look at the page", "Copy session id", "Delete…"]);
     await page.keyboard.press("Escape");
 
     // The open session's menu: the same list, plus the one thing that can only be done where a transcript is held.
     await row(page, WAITING).click();
     await page.locator(".chat-head-more").first().click();
-    expect(await labels(".chat-head-menu")).toEqual(["Pin to the top", "Rename…", "Look at the page", "Export chat…", "Copy session id", "Delete…"]);
+    expect(await labels(".chat-head-menu")).toEqual(["Summary", "Pin to the top", "Rename…", "Look at the page", "Export chat…", "Copy session id", "Delete…"]);
     // CALM VIEW IS NOT AMONG THEM. It is how the page reads, not something done to this session, and it lives in the
     // gear with the other page-wide choices — it used to be here too, behind a condition on the window's width.
     await expect(page.locator(".chat-head-menu")).not.toContainText("Calm view");
     expect(errors).toEqual([]);
     await page.close();
+});
+
+test("Summary opens the session's summary page from a row's menu and from the open session's, over the transcript on a phone", async () => {
+    // docs/spec/SESSION_SUMMARY.md: the page reads the index row live, draws a line only where a source answers it,
+    // and on a phone is a dismissable overlay that leaves the transcript where it was.
+    const { page, errors } = await open(DESKTOP);
+    const lineOf = (field) => page.locator(`.sum-line[data-field="${field}"] dd`);
+    await page.locator(`.chat-row-wrap:has(.chat-row[data-session="${WAITING}"]) .chat-row-more`).first().click();
+    await page.getByRole("menuitem", { name: "Summary" }).click();
+    const dialog = page.getByRole("dialog", { name: "Cheapest AMS → LIS fare" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator(".sum-hash")).toHaveText(WAITING.split(":")[1]);
+    await expect(lineOf("state")).toHaveText("waiting on you");
+    await expect(lineOf("asks")).toHaveText("1 pending");
+    await expect(lineOf("model")).toHaveText("qwen3:32b");
+    await expect(lineOf("page")).toContainText("flights.example");
+    // The tabs not built yet each say what they will hold, in one line.
+    await dialog.getByRole("tab", { name: "Files" }).click();
+    await expect(dialog.locator(".sum-empty")).toHaveText(/files/i);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await page.close();
+
+    // A phone: the open session's ⋮, the page over the transcript, and closing it leaves the transcript as it was.
+    const phone = await open(PHONE, `#s=${encodeURIComponent(WAITING)}`);
+    const p = phone.page;
+    await expect(p.locator(".chat-head-more").first()).toBeVisible();
+    const at = p.url();
+    await p.locator(".chat-head-more").first().click();
+    await p.getByRole("menuitem", { name: "Summary" }).click();
+    const sheet = p.getByRole("dialog", { name: "Cheapest AMS → LIS fare" });
+    await expect(sheet).toBeVisible();
+    await sheet.getByRole("button", { name: "Close" }).click();
+    await expect(sheet).toHaveCount(0);
+    expect(p.url(), "an overlay, not a route: the session stays open where it was").toBe(at);
+    expect([...errors, ...phone.errors]).toEqual([]);
+    await p.close();
 });
 
 test("a thing that cannot be done stays on the menu and says why, in words, not a tooltip", async () => {
