@@ -1264,28 +1264,36 @@ nothing into the repository.
   (a copy of the person's index, for its stat cache) and a private `GIT_OBJECT_DIRECTORY`, both in the host's own
   directory, with the repository's object directory as an alternate (`GIT_ALTERNATE_OBJECT_DIRECTORIES`). The person's
   index, HEAD, stash list and object store are unchanged; the private directory is deleted when the diff is made.
-- H11. Changed files are hashed with `git hash-object -w --no-filters --stdin-paths` and entered with
-  `git update-index --index-info`, never `git add` or `update-index --add`, which run a clean filter. Every git spawn
-  carries the git belt (`core.fsmonitor=false`, `core.pager=cat`, `GIT_OPTIONAL_LOCKS=0`), so no filter, textconv,
-  fsmonitor or hook runs. Untracked files are included; ignored files are not, except the uploads folder. The snapshot
-  runs whatever `repoConfigRunsCode` says: the belt, `--no-filters`, `--no-ext-diff` and `--no-textconv` leave no path
-  by which the repository's config runs a program, and the e3 row with a clean filter, an fsmonitor and a hook
-  configured is the pass condition for that case too. AMENDED 2026-11-13 (host lane): the belt alone was not enough,
-  since the person's global config (`git lfs install` sets `filter.lfs.clean`) also runs a program; H7's
-  `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM` close that. AMENDED 2026-11-17 (host lane, found building H10): nor
-  for a spawn that writes the scratch index (`write-tree`, `read-tree`, `update-index`). The write runs the
-  repository's `post-index-change` hook, and its check of a racily clean entry reads the file through the clean
-  filter, at the entry's path from the process's directory, since `write-tree` never enters `GIT_WORK_TREE`. So each
-  scratch spawn also sets `core.hooksPath=/dev/null` and runs in, and names as `GIT_WORK_TREE`, an empty directory of
-  the scratch store (window-ml-host `src/snapshot.rs`). The changed set is the host's own stat comparison against
-  the scratch index, not a git status.
+- H11. Changed files are hashed with `git hash-object -w --no-filters --stdin-paths` and entered with `git update-index
+  --index-info`, never `git add` or `update-index --add`, which run a clean filter. Every git spawn carries the git belt
+  (`core.fsmonitor=false`, `core.pager=cat`, `GIT_OPTIONAL_LOCKS=0`), so no filter, textconv, fsmonitor or hook runs.
+  Untracked files are included; ignored files are not, except the uploads folder. The snapshot runs whatever
+  `repoConfigRunsCode` says: the belt, `--no-filters`, `--no-ext-diff` and `--no-textconv` leave no path by which the
+  repository's config runs a program, and the e3 row with a clean filter, an fsmonitor and a hook configured is the pass
+  condition for that case too. AMENDED 2026-11-13 (host lane): the belt alone was not enough, since the person's global
+  config (`git lfs install` sets `filter.lfs.clean`) also runs a program; H7's `GIT_CONFIG_GLOBAL` and
+  `GIT_CONFIG_NOSYSTEM` close that. AMENDED 2026-11-17 (host lane, found building H10): nor for a spawn that writes the
+  scratch index (`write-tree`, `read-tree`, `update-index`). The write runs the repository's `post-index-change` hook,
+  and its check of a racily clean entry reads the file through the clean filter, at the entry's path from the process's
+  directory, since `write-tree` never enters `GIT_WORK_TREE`. So each scratch spawn also sets `core.hooksPath=/dev/null`
+  and runs in, and names as `GIT_WORK_TREE`, an empty directory of the scratch store (window-ml-host `src/snapshot.rs`).
+  The changed set is the host's own stat comparison against the scratch index, not a git status. AMENDED 2026-11-19 (the
+  coordinator's call): an untracked file whose path looks like a secret (the host's `facts::looks_secret`: a dotenv name
+  other than the three templates, `*.pem`, `id_*`, a credentials directory such as `.ssh` or `.aws` among its
+  components) is never entered, inside the uploads folder or out, so it is in neither tree and the diff draws nothing
+  for it. A tracked one is H13's.
 - H12. Bounds: no file over the diff cap (1 MB, "The diff's cap") goes into the tree; it is compared by size and
   sha256 instead. The walk stops at `WALK_CAP` (20 000) entries; past that the call's diff is null with the reason.
 - H13. The diff is `git diff-tree --no-ext-diff --no-textconv` of the two trees. Its body goes out as held output (a
   pointer, as stdout does), and `done` carries the summary line (`edited a.py (+3 −1); deleted old.log`). A change is
-  reported as "changed during this call", never attributed to the call's process, since another process may have
-  written meanwhile. An orphaned call's snapshot reports through `status`/`ended`, as `protectedChanged` does. A
-  workspace that is not a git repository gets a null diff (open, as in the section above).
+  reported as "changed during this call", never attributed to the call's process, since another process may have written
+  meanwhile. An orphaned call's snapshot reports through `status`/`ended`, as `protectedChanged` does. A workspace that
+  is not a git repository gets a null diff (open, as in the section above). AMENDED 2026-11-19 (the coordinator's call):
+  the body of a file whose path looks like a secret never reaches the model through the diff, tracked or untracked. A
+  tracked one that changed is listed by path as "changed, contents withheld", with no line of its body in the held
+  output or the summary. The scrub by value (#1948) is the second layer under this rule, never the reason to show a
+  body. A name says nothing of a hardlink to a held file under another name, or of a secret in an ordinary file: those
+  reach the diff, and only the scrub by value stands between them and the model.
 - H14. The diff's file list is what the call's end flushes to the browser backup ("The sync").
 
 **Telling an old host apart** (H15). `hello` gains `mounts: true` and `snapshot: true` (and `filesArgv: true`, H9;
@@ -1394,12 +1402,16 @@ delete of one git cannot undo asks, for a cell and for an `ml.sh` call whose man
   The scratch index and the private object directory live outside the worktree and are gone after the diff; a build
   that drops `GIT_OBJECT_DIRECTORY` turns this row red.
 - What the snapshot takes (H11). An ignored `.env` never enters a tree; an ignored file inside the uploads folder does;
-  an untracked file the call creates appears in the after-tree.
+  an untracked file the call creates appears in the after-tree. AMENDED 2026-11-19: an untracked `.env.local` that is
+  not ignored, and an untracked `id_ed25519` inside the uploads folder, enter neither tree; an untracked ordinary file
+  beside them still does.
 - Bounds (H12). A workspace with a FIFO, a socket and an unreadable file snapshots within budget and lists them as not
   captured, never opening them. A changed file over the cap is reported by size and sha256, never its body; a file
   under the cap whose only change is its mtime is not reported.
 - The report (H13). The body goes out as a held pointer and `done` carries only the summary line; a change by another
-  process reads "changed during this call", unattributed.
+  process reads "changed during this call", unattributed. AMENDED 2026-11-19: a tracked `.env` the call changed is
+  listed as "changed, contents withheld", and no line of its old or new body is in the held output, the summary, the run
+  log or either export.
 - An old host (H15). With a `hello` carrying neither field the worker sends no `mount`, `fetch`, `store`, `list`,
   `remove`, `rename`, `stat` or snapshot call and no probe; `mounts: "yes"`, `1` or `{}` read as absent.
 - Pages, four ways. Each new message type is refused at the router from a page, the host seeing nothing; a
