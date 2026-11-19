@@ -333,12 +333,19 @@ def kind_methods(kinds):
         out[kind] = got
     return out
 
+# Methods never listed, whatever the count: a C method (a method_descriptor) whose effect depends on an argument. A
+# checker on a C method does not survive a */** call (the gate sees the bound builtin, not the descriptor its tables
+# key on), so `a.round(**{"out": b})` wrote an array the cell did not own; listed again once the fork maps the bound
+# builtin back to its descriptor (tests/python-dialect-out-args.test.mjs).
+UNLISTED = {("numpy", "ndarray"): {"round": "a C method that writes its out argument; its checker does not survive * or ** spreading"}}
+
 def manifest(mod):
     fns = module_names(mod)
     kinds = kind_methods(KINDS[mod])
     pick = lambda d: sorted(k for k, v in d.items() if v >= MIN_CELLS)
+    never = lambda k: UNLISTED.get((mod, k), {})
     return {"module": mod, "version_counted_against": (pd if mod == "pandas" else np).__version__, "min_cells": MIN_CELLS,
-            "functions": pick(fns), "kinds": {k: pick(v) for k, v in kinds.items()},
+            "functions": pick(fns), "kinds": {k: [n for n in pick(v) if n not in never(k)] for k, v in kinds.items()},
             "observed": {"functions": dict(sorted(fns.items())), "kinds": {k: dict(sorted(v.items())) for k, v in kinds.items()}},
             "note": "names only; effects, return marking (fresh/alias/internal) and cost shapes are the second pass, after the CPython restricted mode"}
 
