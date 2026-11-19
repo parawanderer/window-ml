@@ -22,9 +22,11 @@ of the store on the refusal's line, or of the first such store when the refusal 
 when the name is one the cell was handed (`df`, `tables`, a key of its `tables` map), `alias` when this cell bound it
 before that line (a name for a value the cell did not make: `y = df`), else the latest earlier cell that bound it at its
 top level, `inside` or `full` by that cell's outcome, and `unknown` when none did. Syntactic, so a binding in a branch
-that never ran counts.
+that never ran counts. An `alias` is followed to what it names (`alias_of`): the root of the right-hand side of the cell's
+last plain assignment to it before the line, read the same way (`injected`, `inside`, `full`, `unknown`), so `y = df` is an
+alias of the injected table and `y = kept` one of an earlier cell's value.
 
-Writes features only (run hash, model, arm, route, cell index, outcome, refusal kind, maker), never a cell's code.
+Writes features only (run hash, model, arm, route, cell index, outcome, refusal kind, maker, alias_of), never a cell's code.
 """
 
 import ast
@@ -96,23 +98,42 @@ def mutation(reason):
     return next((k for k, text in MUTATION if reason and text in reason), None)
 
 
+def alias_rhs(tree, name, line):
+    """The root name of the right-hand side of the cell's last plain `name = <x>` before `line` (any line when None)."""
+    best = None
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Assign) and (line is None or n.lineno < line) and any(isinstance(t, ast.Name) and t.id == name for t in n.targets):
+            if best is None or n.lineno > best.lineno: best = n
+    return (root(best.value), best.lineno) if best is not None else (None, None)
+
+
+def origin(cells, i, name, line, tree, depth=0):
+    """Who made the value `name` holds on cell i's `line`: (maker, alias_of) as the module's docstring reads them."""
+    own = binds(tree)
+    if name in own and (line is None or own[name] < line):
+        if depth > 8: return "alias", "unknown"
+        src, at = alias_rhs(tree, name, line)
+        if src is None: return "alias", "unknown"
+        m, a = origin(cells, i, src, at, tree, depth + 1)
+        return "alias", a if m == "alias" else m
+    if name in cells[i]["injected"]: return "injected", None
+    for j in range(i - 1, -1, -1):
+        t = parse(cells[j]["code"])
+        if t is not None and name in binds(t): return ("inside" if cells[j]["inside"] else "full"), None
+    return "unknown", None
+
+
 def maker(cells, i, kind, reason):
-    """Who made the value cell i's refused mutation wrote to (see the module's docstring)."""
+    """Who made the value cell i's refused mutation wrote to, and what an alias names: (maker, alias_of)."""
     tree = parse(cells[i]["code"])
-    if tree is None: return "unknown"
+    if tree is None: return "unknown", None
     m = METHOD.search(reason or "")
     found = stored_roots(tree, kind, m.group(1) if m else None)
     line = int(LINE.search(reason).group(1)) if LINE.search(reason or "") else None
     on_line = [r for l, r in found if l == line] if line else []
     name = (on_line or [r for _, r in found] or [None])[0]
-    if name is None: return "unknown"
-    own = binds(tree)
-    if name in own and (line is None or own[name] < line): return "alias"
-    if name in cells[i]["injected"]: return "injected"
-    for j in range(i - 1, -1, -1):
-        t = parse(cells[j]["code"])
-        if t is not None and name in binds(t): return "inside" if cells[j]["inside"] else "full"
-    return "unknown"
+    if name is None: return "unknown", None
+    return origin(cells, i, name, line, tree)
 
 
 def injected_names(tables):
@@ -138,12 +159,12 @@ def cells_of(session):
 
 
 def rows_of(cells):
-    """Features per cell: index, outcome, refusal reason, mutation kind and maker. No code."""
+    """Features per cell: index, outcome, refusal reason, mutation kind, maker and alias_of. No code."""
     rows = []
     for i, c in enumerate(cells):
         kind = mutation(c["reason"])
-        rows.append({"cell": i, "inside": c["inside"], "refused": c["reason"], "mutation": kind,
-                     "maker": maker(cells, i, kind, c["reason"]) if kind else None})
+        mk, of = maker(cells, i, kind, c["reason"]) if kind else (None, None)
+        rows.append({"cell": i, "inside": c["inside"], "refused": c["reason"], "mutation": kind, "maker": mk, "alias_of": of})
     return rows
 
 

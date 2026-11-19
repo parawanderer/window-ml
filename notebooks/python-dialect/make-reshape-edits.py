@@ -81,6 +81,27 @@ assert [r["maker"] for r in smoke] == [None, None, "injected", None, "full"], [r
 pd.DataFrame(smoke)
 """)
 
+md("""
+An alias is followed to what it names, since ruling 64 counts an alias of an earlier cell's value and not one of the
+injected table: `y = df` then `y['a'] = 1` is an alias of `injected`; `z = kept` then `z.append(1)` after an inside cell
+made `kept` is an alias of `inside`; `w = z` before that is followed through `z`.
+""")
+
+code("""
+ITEM = "item assignment to a value the cell does not own: on DataFrame (line 2)"
+APPEND = "a method that writes a value the cell does not own: 'append' of list (line {})"
+ALIASES = [
+    ("kept = [1, 2]", True, None),
+    ("y = df\\ny['a'] = 1", False, ITEM),
+    ("z = kept\\nz.append(1)", False, APPEND.format(2)),
+    ("z = kept\\nw = z\\nw.append(1)", False, APPEND.format(3)),
+]
+aliases = prov.rows_of([{"code": c, "inside": ok, "reason": r, "injected": prov.injected_names(None)} for c, ok, r in ALIASES])
+got = [(r["maker"], r["alias_of"]) for r in aliases]
+assert got == [(None, None), ("alias", "injected"), ("alias", "inside"), ("alias", "inside")], got
+pd.DataFrame(aliases)
+""")
+
 code("""
 U = "http://127.0.0.1:1/"
 fetch = lambda n: {"tool": "fetch_url", "arguments": {"url": U + n}}
@@ -155,6 +176,70 @@ if cells is not None:
         hit = edits[edits["maker"] == m].groupby(["route", "arm", "model"])["run"].nunique()
         per_run[f"runs with {m}"] = hit.reindex(per_run.index, fill_value=0)
     display(per_run)
+""")
+
+md("""
+## Ruling 64: build ruling 58, drop it, or read the edits
+
+Fixed before any run (Shane, 2026-11-19). The unit is the run. A counted run is one in a hinted arm (`neutral-hint`,
+`staged-hint`) whose first cell loads its files through `tables` (route `tables-url` or `tables-path`). A HIT is a counted
+run with at least one refused edit on a value an earlier cell made: maker `inside` or `full`, or an `alias` of one of
+those. An edit on the injected table, directly or through an alias, is reported apart and does not count; nor does
+`unknown`.
+
+- at least a quarter of the counted runs are hits: build ruling 58;
+- under a tenth: drop it;
+- in between: read which edits they are.
+
+The fraction is the point estimate the rule is stated on; the 95% Wilson interval is printed beside it.
+""")
+
+code("""
+import math
+HINTED = ["neutral-hint", "staged-hint"]
+TABLES = ["tables-url", "tables-path"]
+EARLIER = {"inside", "full"}
+
+def wilson(k, n, z=1.96):
+    if n == 0: return (float("nan"), float("nan"))
+    p = k / n
+    c = (p + z * z / (2 * n)) / (1 + z * z / n)
+    h = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / (1 + z * z / n)
+    return (c - h, c + h)
+
+def ruling64(rows):
+    \"\"\"(hits, counted runs, fraction, Wilson interval, verdict, injected-only runs) over the hinted arms.\"\"\"
+    df = pd.DataFrame(rows)
+    counted = df[df["arm"].isin(HINTED) & df["route"].isin(TABLES)]
+    n = counted["run"].nunique()
+    edit = counted[counted["mutation"].notna()]
+    earlier = edit["maker"].isin(EARLIER) | ((edit["maker"] == "alias") & edit["alias_of"].isin(EARLIER))
+    injected = (edit["maker"] == "injected") | ((edit["maker"] == "alias") & (edit["alias_of"] == "injected"))
+    k = edit[earlier]["run"].nunique()
+    inj = edit[injected]["run"].nunique()
+    frac = k / n if n else float("nan")
+    verdict = "no counted runs" if n == 0 else "build ruling 58" if frac >= 0.25 else "drop ruling 58" if frac < 0.10 else "read which edits they are"
+    return {"hits": k, "counted runs": n, "fraction": frac, "wilson 95%": wilson(k, n), "verdict": verdict, "runs with an injected edit": inj}
+
+# the rule on synthetic rows: 4 counted runs (an unhinted run and a read_csv run are not counted), hits in r1 (full) and
+# r2 (alias of inside); r3's edit is on the injected table through an alias, so it is reported apart
+row = lambda run, arm, route, maker=None, alias_of=None: {"run": run, "arm": arm, "route": route, "mutation": "item" if maker else None, "maker": maker, "alias_of": alias_of}
+synth = [row("r1", "neutral-hint", "tables-url", "full"), row("r2", "staged-hint", "tables-path", "alias", "inside"),
+         row("r3", "staged-hint", "tables-url", "alias", "injected"), row("r4", "neutral-hint", "tables-url"),
+         row("r5", "neutral", "tables-url", "inside"), row("r6", "neutral-hint", "read_csv-fetched", "inside")]
+got = ruling64(synth)
+assert (got["hits"], got["counted runs"], got["verdict"], got["runs with an injected edit"]) == (2, 4, "build ruling 58", 1), got
+lo, hi = got["wilson 95%"]
+assert 0.15 < lo < 0.16 and 0.84 < hi < 0.86, got["wilson 95%"]
+
+if cells is None:
+    print("No reshape sweep yet: ruling 64's fraction is not computed.")
+else:
+    r = ruling64(cells.to_dict("records"))
+    lo, hi = r["wilson 95%"]
+    print(f"{r['hits']} of {r['counted runs']} counted runs in the hinted arms have a refused edit on a value an earlier cell made: "
+          f"{r['fraction']:.3f} (95% Wilson {lo:.3f} to {hi:.3f}). Verdict: {r['verdict']}.")
+    print(f"Reported apart: {r['runs with an injected edit']} counted runs with a refused edit on the injected table.")
 """)
 
 nb = nbf.v4.new_notebook()
