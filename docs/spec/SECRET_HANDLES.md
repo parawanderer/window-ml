@@ -229,7 +229,10 @@ on real captured output in its PR.
   `GET_CONFIG`'s answer to a page is not run through the registry, by design, since what keeps a secret out of it is
   `publicConfig`'s fixed key list (`redteam-lifetimes-config.test.mjs`, #1942, enumerates it, no secret key among them),
   and a public value equal to a registered one reaches the model only through a crossing that scrubs it (a page-started
-  request, or a tool result that read the page).
+  request, or a tool result that read the page); when the registered secrets cannot be read, the stored scrub
+  (`forStored`, which takes an object's keys as it takes its values) keeps a key only when it has a schema's shape
+  (letters only, lowercase first, at most 32: `type`, `byColumn`), so the record keeps its shape, and a registered value
+  of that shape used as a key survives that path.
 - **Deferred to the handles slice**: reading values from a listed `.env` (a new host message), the keychain, a handle's
   value, and the `echoes` refusal.
 
