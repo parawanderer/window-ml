@@ -16,8 +16,9 @@ import type { AskWhy, PersistGrant } from "../contract";
 import { validList, CONSUMERS, GLOBAL_POLICIES_KEY, POLICY_LABEL_MAX } from "./policy-valid";
 
 /** Which kind of call a policy is about; a policy is only ever evaluated over calls of its own consumer. `sh` is
- *  `ml.sh` (docs/spec/SHELL.md), whose facts its own consumer builds. */
-export type PolicyConsumer = "fetch" | "sh" | "act";
+ *  `ml.sh` (docs/spec/SHELL.md), whose facts its own consumer builds. `setting` is `change_setting`
+ *  (docs/spec/MODEL_SETTINGS.md): an `allow` frees only an ordinary key's change, never a guarded one. */
+export type PolicyConsumer = "fetch" | "sh" | "act" | "setting";
 
 /** Where a policy came from: written by the person, added by answering an approval card, or proposed by the model and
  *  approved by the person on its own card (`propose_policy`). */

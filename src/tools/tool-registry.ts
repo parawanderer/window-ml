@@ -98,6 +98,9 @@ defineBuiltinTool({ name: "propose_manifest", factories: ["src/tools/propose-man
 // python_install asks the person to install a PyPI package: always a card listing every file and its hash, and the worker
 // approves only the rows the card showed.
 defineBuiltinTool({ name: "python_install", factories: ["src/tools/python-install-tool.ts"], gated: true, citable: false, realm: "worker", cardLine: null });
+// change_setting asks to change one of the person's settings: a card unless a policy decides (a guarded key always asks),
+// and the worker writes only the change it judged, over the value it judged it against.
+defineBuiltinTool({ name: "change_setting", factories: ["src/tools/change-setting-tool.ts"], gated: true, citable: false, realm: "worker", cardLine: null });
 // task acts on the run's own detached calls (sw-tasks.ts): nothing outside the run, and the run is the worker's word.
 defineBuiltinTool({ name: "task", factories: ["src/tools/task-tool.ts"], gated: false, citable: false, realm: "worker", cardLine: null });
 defineBuiltinTool({ name: "agent_api_docs", factories: ["src/tools/api-docs-tool.ts"], gated: false, citable: true, realm: "worker", cardLine: null });
