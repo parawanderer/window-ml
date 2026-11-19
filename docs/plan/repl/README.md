@@ -1222,6 +1222,127 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   loaded, the deadline).
 - **Packages, ruling 36 (the lane's account, 2026-11-19).** The restricted fork has no file gate today. The
   measurement's results come as a notebook, its head to the coordinator.
+- **Shane's ruling 55 (2026-11-19): a library's inert data types are declared in that library's manifest.** The
+  dialect runner names no library, and the default bundling of numpy and pandas is no exception: "any new library
+  addition should be contained in its own files that get opted into". `_ml_not_inert` in
+  `src/python/python-dialect-run.ts` hard-codes numpy and pandas types today; that moves. Owner: packages.
+- **Shane's ruling 56 (2026-11-19): argument-conditioned effects are data in the library manifest.** A leaf whose
+  effect depends on an argument (`buf` bound, `inplace` true, `out` bound) is declared in the manifest and enforced by
+  the extension through `allow_call`, in one spec with ruling 55. The fork's hard-coded stand-ins come out at a later
+  core rebuild. Cost does not become a real function now: the size cap and the wall-clock kill stay.
+- **Shane's ruling 57 (2026-11-19): outside data is never modified in the original, only in a copy.** The lane's
+  account (packages): this holds at the source today, since every route into a run's namespace (`tables`, `df`,
+  `img`, stored pointer tables, `ml`) builds a fresh Python copy and none is a live handle. Inside the kernel the
+  loader redirects (`pd.read_csv(name)`, `Image.open(name)`) return the same object each time, so a re-read after an
+  approved edit returns the edited value. Coordinator's call: a re-read returns the original; it goes in the spec
+  ruling 58 leads to.
+- **Shane's ruling 58 (2026-11-19): the goal is that the model edits its own Python kernel values without approval
+  prompts.** Shane's framing: in JS the approval protects ownership (the page's DOM) and termination; in Python every
+  kernel value is the model's, so the read-only interpreter protects termination (step budget, memory cap) and
+  effects that leave the kernel, not ownership. An approved cell has no step budget and is ended only by the timeout.
+  The existing block is not removed now. The lane's account (packages, measured on the pinned core): an inside cell
+  may already mutate what an earlier inside cell made, under the fork's undo log (Python/restricted.c:1386-1531 in
+  the fork: a whole-object snapshot on the first write to an owned value older than the run, replayed on refusal).
+  Refused today: mutation of a value a full-mode cell made or the harness injected. A cell refused part-way reruns
+  from the top on the full path, which is why an unlogged write would apply twice. The candidate design: plain data
+  from those two sources joins the owned set. Spec first, not built.
+- **Shane's ruling 59 (2026-11-19): count why read-only Python cells ask before designing ruling 58's change.**
+  Owner: bench, as a notebook from run records that already exist; no real-model run. Its head to the coordinator.
+- **Python dialect defects found 2026-11-19 (the lane's account, packages), and the coordinator's calls.** The
+  manifests' `leaves` rows are read by nobody at run time; enforcement is hard-coded in the fork's
+  Lib/restricted.py.
+  (1) `DataFrame.to_string(buf=<path>)` and `Series.to_string(buf=…)` wrote any worker path unasked: #1991 (the
+  repair), a check that refuses the parameter bound to anything but None, with an enumeration of every admitted
+  callable's path, file or buffer parameter.
+  (2) `out=` wrote into an array the cell does not own (`np.sum(m, axis=0, out=b)`, `np.abs(x, out=b)`,
+  `ndarray.round(out=b)`): a C callee's write is invisible to the ownership check, which sees only the interpreter's
+  store sites. #1993 (the repair) refuses `out` on every admitted module function and ufunc.
+  (3) A `*` or `**` call reaches the gate as the bound builtin, so no checker on a C method survives it. Call:
+  `round` leaves the ndarray kind now (`a.round()` asks); the fork's call lookup is repaired at the next rebuild.
+  Interim manifest rule: a C method with an argument that can write is not listed.
+  (4) Of the 8 listed ndarray methods, `any`, `max`, `mean` and `sum` error inside: the fork lifts only Python
+  functions, never a C method descriptor. Repair: `allow_call` on the four with the same checks (PR C).
+  (5) The freeze (PR B2): every numpy array older than the cell is set read-only before an inside cell runs, thawed
+  when its undo copy is taken, and restored after. Measured: numpy's flag stops every `out` route and a cell cannot
+  turn it back on. pandas (copy on write) and Pillow have no equivalent; the ownership check stays their barrier.
+  (6) The undo copy of an array or frame is not counted against the 256 MiB cap. Call: B2 totals a cell's undo
+  copies in bytes and refuses a write whose copy would pass the cap's value, before copying; the cell asks.
+  Packages' order: #1991, #1993, B2, C, one docs PR on what a library manifest carries (rulings 55 and 56, the
+  interim lists' home, the fork follow-ups), its code, ruling 36's notebook, ruling 37's measurement, the network
+  gate. Reviewer: janitor-3; e3 writes rows on each branch.
+- **Settings rules, part (c) (`propose_policy` with consumer `setting`): the coordinator's calls (2026-11-19).** One
+  budget of 1,000,000 steps for the whole measure (about 5,100 evaluations); over it, refused at check time. Measured
+  once; the measure travels with the proposal; no cache by source. The rule's own literals (with plus and minus one,
+  after constant folding) join the measured values. Refused at check time: an unknown `c.key` literal, a literal
+  outside the key's domain or type, and a rule that breaks on any tried (key, from, to); the text names the count, up
+  to three keys, the break and the repair. Exact coverage for the fragment is not scheduled. The spec text rides in
+  the same PR. Owner: settings specs.
+- **Snapshot H11 and H13 as merged (#1988, c79aa0e1).** `docs/spec/FILE_ATTACHMENTS.md`: an untracked path the host's
+  secret-name matcher catches enters neither tree and is listed as withheld; a tracked one that changed is listed
+  "changed, contents withheld"; a blob under an ordinary name is withheld when its id equals the blob of a matched
+  path in either tree. Stated limits: a hard link, a copy of an untracked secret file, an edited copy, a secret in
+  an ordinary file. Coordinator's call, Shane may override: the exact-copy blob-id rule. The host side is
+  window-ml-host#51, with e3's four rows.
+- **Merged 2026-11-19.** #1985 (15b88764), #1986 (76885deb, the energy section of `docs/spec/SESSION_SUMMARY.md`),
+  #1987 (cf8436b0), #1988 (c79aa0e1), #1959 (1119c481, the matcher notebook), #1976 (f23d0ccb, a cell that kills
+  Pyodide is answered as the kernel's death).
+- **Main repairs open 2026-11-19.** #1990 (bench): a protoc 36.2 install changed the generated header's version
+  line, so `tests/proto.test.mjs` and `tests/events-proto.test.mjs` went red locally in every clone; the comparison
+  now ignores that line. #1994 (settings specs): a conflict-marker line in `src/sidebar/sidebar.css` from #1921
+  dropped one rule; a check that refuses such lines follows from small-fixes as its own PR.
+- **The sed and awk manifests (#1989, with window-ml-host#52), 2026-11-19.** A program inside an argument is
+  described by a narrow grammar; text outside it is unknown and asks; the flavoured vectors design is accepted. The
+  host PR merges first, by hand. #1977 (the reveals gate): its red-by-design row is e3's to edit.
+- **Shane's ruling 60 (2026-11-19): `ml.fs` replaces `ml.files` outright.** Nothing built or model-facing uses
+  `ml.files`; one directory gets one file API. #1999 (session-store, the `/files/` amendment and its notebook) says so.
+- **Shane's ruling 61 (2026-11-19): a session list row scrubs every registered secret, sent "as is" or not.** Ruling
+  39's exemption covers the model and the store; the row is one of the other crossings. The cost is stated in the
+  spec: a phone's transcript shows a sent-as-is value while its list row shows the marker. #2008.
+- **Shane's ruling 62 (2026-11-19): the multi-cell task's wording is the coordinator's call.** The call: both wordings,
+  neutral and staged, as two arms on the same models.
+- **Shane's ruling 63 (2026-11-19): widen the read-only Python vocabulary first; ruling 58's design waits.** Shane, in
+  the coordinator's session: "when you start using these models on real tasks you will see them want to reuse variables
+  across cells more like you do in jupyter notebooks". So ruling 58's design is not shelved on the csv-total sample.
+  Order: packages widens the vocabulary, then bench measures the multi-cell task, then ruling 58's design.
+- **Ruling 59's count (#1997, bench, notebooks/python-dialect, 2026-11-19).** 129 cells, 58 runs, 6 models, one task
+  (csv-total). 46 cells show no card. First refusals: `pd.read_csv` unlisted 41, an unlisted attribute or leaf 14
+  (`df.columns` and `df.shape` are not in the pandas manifest), an unlisted call 13, an operation on None 8, a generator
+  expression 5, a refusal caught by library code 2, a mutation of an unowned value 0. A syntactic count behind the
+  first refusal: 83 refused cells, 1 store, 0 on plain data. Correction: the bench has a start-surface option
+  (`cellSurface`), so the earlier "start-surface gap" item is void.
+- **The vocabulary work (packages, by ruling 63).** One PR of manifest data and rows: the inert read attributes the
+  replay names, each with its count. `pd.read_csv` gets a design note to the coordinator before it is built (what a
+  read-only cell may read, rulings 56 and 57). Generator expressions are an evaluator change: an assessment only.
+  Order for packages: B2 (the numpy freeze), this, then C, the docs PR and ruling 36's notebook.
+- **The multi-cell task (bench).** Four generated files (sales 3,000 rows, returns about 300, targets 20, regions 4);
+  the answer is the manager, the pair and the shortfall to the cent. Required: a unique top pair with a stated margin,
+  and cents stable under summation order. Bench builds the fixture, the checker and a fake-model smoke with three edit
+  cases (injected, inside-made, asked-made) now. The real sweep runs after the vocabulary PR merges and needs Shane's
+  yes in bench's own session.
+- **Secrets findings of 2026-11-19, owner files-host, each its own PR, all before H12.**
+  - #2006: a nested ask's facts, why, note and outcome are kept through the stored scrub. Only the live card shows raw
+    facts; the chat page, phone, store, exports, DevTools ring and replay hold `[REDACTED:<NAME>]`.
+  - #2007: the utility model's calls (a session's title made from its task, every `side.call`) cross the by-value scrub
+    and are not sent when the scrub cannot run. This was the one path where a registered value reached a model backend.
+  - #2008: a session row is scrubbed at every exit from the worker (found by session-store on #2003). Every string but
+    the identifiers is scrubbed, so a field added later is covered. The model reads no summary row (lane's account).
+  - #2003 (session-store, `forkedFrom` and `currentPage` on the summary) does not merge before #2008.
+- **Coordinator's calls, 2026-11-19 (each overridable by Shane).**
+  - B2 (the numpy freeze): a view an inside cell makes of a frozen older array stays read-only after the cell; the way
+    out is `w.copy()`; documented.
+  - `/files/` mounts are lazy at every size, with no eager mount under a threshold (#1999's figures: lazy 51, 169 and
+    219 MiB against eager 262 MiB, 1.0 GiB and 2.0 GiB at 1, 4 and 8 sessions).
+  - session-store's order: the summary fields (#2003), history size after #1995, then #1999's slice 1 (the ranged
+    reader). Slices 2 and 3 are unassigned; slice 2 waits on files-host's hide-list rule.
+  - A flaky phone test (the pinned-row long press, chat-web.spec.mjs) was measured, not assumed: lifts 4 of 10 on main,
+    6 of 10 on #2002, 10 of 10 with the preceding swipe skipped. The press landed on a list still flinging. The repair
+    is its own PR (#2005), never folded into #2002.
+- **Open PRs added 2026-11-19 and their readers.** janitor-2: window-ml-host#51, #2007, #2008, #2006, #1995, #1997,
+  #1998, #2001 (propose_policy consumer `setting`), #2003, #2004 (the conflict-marker check). janitor-3: #1979, #2000
+  (events.proto re-pin, energy step 1), #2005, #1975, #1977, #1991, #1993, #2002 (the Session summary shell), #1999.
+  e3's rows, in order: #1989, #2007, #2008, #2006, #2001, #1998, #2003, #1991, #1993.
+- **Merged 2026-11-19.** #1990, #1994, #1992 (usage rows in the Session summary spec), window-ml-host#52 (sed and awk,
+  host side; #1989 waits on e3's rows).
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
