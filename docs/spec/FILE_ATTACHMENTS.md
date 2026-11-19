@@ -1601,6 +1601,10 @@ value; dump then reload equals the stored table, its values and its declared dty
 
 ### Python's view: two mounts (ruling 36)
 
+BUILT, the mount only (2026-11-19, docs/dev/python-sandbox.md, "`/files` in Python"): one type over the ranged reader
+for both folders, per the coordinator's call of 2026-11-19 striking WORKERFS and OPFS below; it is switched on when the
+reader lands (`setFilesReader`).
+
 Python sees `/files` through Emscripten mounts, never a mount that loads whole files:
 
 - **`attached/` on WORKERFS**: lazy slices of a `Blob`, read-only. The 2026-11-12 measurement found WORKERFS needs
