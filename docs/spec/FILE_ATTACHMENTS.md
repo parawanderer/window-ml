@@ -1300,6 +1300,23 @@ nothing into the repository.
   never the reason to show a body. A name says nothing of a hardlink to a held file under another name, a copy of an
   untracked secret file (its blob is in neither tree to compare), an edited copy, or a secret in an ordinary file: those
   reach the diff, and only the scrub by value stands between them and the model.
+  AMENDED 2026-11-19 (the coordinator's calls, on the host lane's questions while building H13). (1) The orphan
+  report is split out as H13b, a later change of the host lane's. Until it lands an orphaned call's `ended` carries
+  `diff: null` with a `diffReason` saying an orphaned call's diff is not reported; it is never an absent `diff`. (2)
+  On `done`, `diff` is `{ ptr, size, sha256, truncated, summary, fromHead }`, or `null` with a `diffReason` ("not a
+  git repository"); an absent `diff` means an older host. (3) A withheld path reads `changed <path> (contents
+  withheld)` whether it was added, edited, deleted or only changed mode, with no size, hash or line count, in the
+  over-the-cap list too. (4) The empty blob is left out of the blob-id match, since an empty tracked `.env` would
+  otherwise withhold every empty file; an empty file whose own path looks like a secret is still withheld by name.
+  (5) Past 1000 withheld or reconciled paths the patch is left out whole and the change list stays; the body and the
+  summary say so, with the count. (6) A file that crosses the diff cap during the call, or stops or starts being
+  captured, reads `edited <path> (was/now over the diff cap)` or `(was/now not captured: <reason>)`, with no patch.
+  A big file of unchanged size with no hash in either snapshot (past H12's budget) reads `not compared`. An
+  untracked file withheld by name in both snapshots is not named as a change; every not-captured path is listed in
+  the body after each call. (7) The report is always on: every call whose repository is the working directory's, or
+  the one its arguments name, is snapshotted, with no opt-out. A pipe snapshots its first stage's repository only.
+  The host lane's measurement (release builds, start to done for `true`): about 170 ms on a clean clone of 2 215
+  files, about 315 ms at 19 000 clean files, 1.6 to 1.9 s at 19 000 files with every stat changed.
 - H14. The diff's file list is what the call's end flushes to the browser backup ("The sync").
 
 **Telling an old host apart** (H15). `hello` gains `mounts: true` and `snapshot: true` (and `filesArgv: true`, H9;
