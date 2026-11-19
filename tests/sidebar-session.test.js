@@ -429,6 +429,9 @@ test("composer usage gauge: a new figure rolls only the digit that changed, draw
     assert.equal(pct().textContent, "30%");
     assert.equal(pct().querySelectorAll(".tick-d.rolled").length, 0, "drawn, not changed: nothing rolls");
     const tens = pct().querySelector(".tick-d");
+    // `Ticking` clears its first-render guard in a mount effect, which Preact schedules on a frame; `tick`/`flush` do not
+    // cross one, so without this the update can land while the guard still says "first render" and nothing rolls.
+    await new Promise((r) => w.window.requestAnimationFrame(() => r()));
     await w.dispatch(chatStart("rol", 1, "more", { model: "gemma4:31b" }));
     await w.dispatch(chatResult("rol", 1, "b", { model: "gemma4:31b", usage: { promptTokens: 350, completionTokens: 50, totalTokens: 400 } }));
     await w.tick(); await w.flush();
