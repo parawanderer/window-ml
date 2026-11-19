@@ -136,12 +136,6 @@ export function tableSpecs(tables: unknown): { name: string; src: string | Eleme
 }
 
 /**
- * Resolve ONE `tables` source to a loaded DataFrame spec `{ name, source, data }`, dispatching
- * by the value's shape: `'current'` or a Google Sheets URL → fetch its CSV; anything else →
- * a DOM selector/Element (a page table). `source` carries the provenance for the debug
- * render's label + tooltip. Page-side; async (sheets go through the background fetch).
- */
-/**
  * The URL a `tables` source names when it is a PATH on the page's site (`/sales.csv`, `./data.csv`, `../data.csv`),
  * resolved against the page, or null when it is not one: a URL, a CSS selector, `current`, or a page not on the web. A
  * path is told from a selector by how it starts, since no CSS selector starts with `/`, `./` or `../`; `x.csv` IS a
@@ -161,6 +155,12 @@ export function sitePathUrl(src: string, pageHref: string): string | null {
     return url.origin === page.origin ? url.href : null;
 }
 
+/**
+ * Resolve ONE `tables` source to a loaded DataFrame spec `{ name, source, data }`, dispatching by the value's shape:
+ * `'current'` or a Google Sheets URL → fetch its CSV; a path on the page's site (`sitePathUrl`) → the run's fetched copy
+ * of it; anything else → a DOM selector/Element (a page table). `source` carries the provenance for the debug render's
+ * label + tooltip. Page-side; async (sheets go through the background fetch).
+ */
 export const _loadTable = async function(this: MlApi, name: string, src: string | Element | TableValue, raw = false): Promise<LoadedTable> {
     // A TABLE BY VALUE: a pointer's table the loop resolved, or a table a page script already holds. Whole tables
     // only. A prefix analysed as a DataFrame gives confident wrong numbers (a sum over the first 200 of 48,231
