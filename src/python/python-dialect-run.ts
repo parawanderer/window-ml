@@ -223,7 +223,10 @@ def _ml_out_args(_restricted, restricted):
     # parameter the signature lacks is a reason, so every cell asks.
     import importlib, inspect, json
     for _mod, _name, _p in json.loads(${JSON.stringify(JSON.stringify(DIALECT_OUT_ARGS))}):
-        _f = getattr(importlib.import_module(_mod), _name, None)
+        try:
+            _f = getattr(importlib.import_module(_mod), _name, None)
+        except ImportError:     # the library is not loaded here, so load_manifests admitted nothing of it either
+            continue
         if _f is None:
             continue
         try:
