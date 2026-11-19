@@ -1,4 +1,4 @@
-// propose-policy-tool.ts — the `propose_policy` tool: the model asks the person for a run policy over fetch_url.
+// propose-policy-tool.ts — the `propose_policy` tool: the model asks the person for a run policy over fetch_url, act or change_setting.
 
 // It never adds one itself. The call is always gated; the worker checks it, measures its breadth and leads the card with
 // that (policy-proposal.ts), and adds the policy only when the person approves (sw-run-host.ts, the gate's resolve). By
@@ -28,7 +28,7 @@ export function proposePolicyTool(define: typeof defineTool, deps?: ProposePolic
     return define({
         name: "propose_policy",
         summary: "Asks the person for a rule that answers matching fetch_url, click and type calls of this run without a card.",
-        description: "Ask the person to let matching fetch_url calls (or clicks and types, consumer \"act\") go without asking (allow), be refused (deny), or always be put to them (ask). " +
+        description: "Ask the person to let matching fetch_url calls (consumer \"act\": clicks and types; \"setting\": change_setting) go without asking (allow), be refused (deny), or always be put to them (ask). " +
             "They see your code and what it matches. Keep an allow narrow, e.g. one host. " +
             "Several rules go in `rules`; a deny beats an allow.",
         parameters: {
@@ -37,8 +37,8 @@ export function proposePolicyTool(define: typeof defineTool, deps?: ProposePolic
                 effect: { type: "string", enum: ["allow", "deny", "ask"] },
                 when: {
                     type: "string",
-                    description: "A read-only JS function over the call returning a boolean, e.g. (c) => c.host === \"docs.python.org\". " +
-                        "Fields: url, host, method, credentials, rendered, interactive (true for navigate). For act: url, host, action, element.tag, element.href, element.name. Use === only.",
+                    description: "A read-only JS predicate over the call, e.g. (c) => c.host === \"docs.python.org\". " +
+                        "Fields: url, host, method, credentials, rendered, interactive (a navigate). Act: url, host, action, element.tag, element.href, element.name. Setting: key, from, to, class, widens. Use === only.",
                 },
                 label: { type: "string", description: "One short sentence the person reads, e.g. \"Read docs.python.org\"." },
                 rules: {
@@ -47,7 +47,7 @@ export function proposePolicyTool(define: typeof defineTool, deps?: ProposePolic
                     description: "Instead of effect, when and label.",
                     items: {
                         type: "object",
-                        properties: { consumer: { type: "string", enum: ["fetch", "act"] }, effect: { type: "string", enum: ["allow", "deny", "ask"] }, when: { type: "string" }, label: { type: "string" } },
+                        properties: { consumer: { type: "string", enum: ["fetch", "act", "setting"] }, effect: { type: "string", enum: ["allow", "deny", "ask"] }, when: { type: "string" }, label: { type: "string" } },
                         required: ["effect", "when", "label"],
                     },
                 },
@@ -66,8 +66,9 @@ export function proposePolicyTool(define: typeof defineTool, deps?: ProposePolic
             const kept = rows.map((q, i) => (stored[i] === q.label ? "" : ` (the run already held the rule "${stored[i]}", so "${q.label}" was not kept)`));
             if (rows.length > 1) return `Added for this run: ${rows.map((q, i) => `${q.effect} "${stored[i]}"${kept[i]}`).join("; ")}. A deny beats an allow.`;
             const q = rows[0];
-            const what = q.consumer === "act" ? "click and type calls" : "fetch_url calls";
-            return `Added for this run: "${stored[0]}"${kept[0]}. ${q.effect === "ask" ? `Matching ${what} now always ask the person.` : `Matching ${what} are now ${q.effect === "allow" ? (q.consumer === "act" ? "made" : "fetched") : "refused"} without asking.`}`;
+            const what = q.consumer === "act" ? "click and type calls" : q.consumer === "setting" ? "change_setting calls" : "fetch_url calls";
+            const done = q.consumer === "act" ? "made" : q.consumer === "setting" ? "made for ordinary settings (a guarded one still asks)" : "fetched";
+            return `Added for this run: "${stored[0]}"${kept[0]}. ${q.effect === "ask" ? `Matching ${what} now always ask the person.` : `Matching ${what} are now ${q.effect === "allow" ? done : "refused"} without asking.`}`;
         },
     });
 }

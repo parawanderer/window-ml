@@ -164,3 +164,15 @@ export function scrollToStepSeq(seq?: number, hash?: string, slot?: "in" | "out"
     // token (same seq) re-triggers the block's open effect (a stale value would make the dep look unchanged).
     setTimeout(() => { if (revealSeq.value === seq) revealSeq.value = null; }, 1700);
 }
+
+/** The stored `seq` of the step a revision points at, or undefined when that step is not in `steps`. Found by the
+ *  minted token id in `revision.ref` (`@tool:<id>`), the way a prose citation is, and NOT by `revision.seq`: that is
+ *  the loop's turn-local counter, while a step's stored `seq` carries the multi-turn offset, so in a later turn it
+ *  named an earlier, unrelated step (the first call of the session, in the worst case). Undefined makes
+ *  `scrollToStepSeq` do nothing.
+ *  @group transcript */
+export function revisionStepSeq(ref: string, steps: readonly { token?: string; tool?: string; seq?: number }[] | undefined): number | undefined {
+    const id = ref.replace(/^@tool:/, "").replace(/:(in|out)$/, "");
+    const st = steps && id ? steps.find((s) => s.token === id) : undefined;
+    return st?.seq;
+}

@@ -299,6 +299,15 @@ test("an ml.sh call that ran without asking exports a note with the argv the hos
     assert.equal(md.match(/ran without asking/g).length, 1, "a span with no unasked record is not a line");
 });
 
+test("an ml.sh call that ran without asking exports a Held line for each file the sandbox held unreadable", () => {
+    const shCalls = [{ program: "ls", durationMs: 4, unasked: { by: "default", argv: ["ls"], hiddenSecrets: ["/w/.env", "/w/.netrc"], outcome: { ran: "host-sandbox", envelope: null, protectedChanged: [] } } }];
+    const s = { hash: "abc", kind: "agent", model: "m", tag: "session", createdTs: 1, lastTs: 2, status: "ok", turns: [], task: "t",
+        steps: [{ step: 1, seq: 1, ts: 1, tool: "exec", arguments: { js: "x" }, result: "0", approval: "user", shCalls }], answers: [] };
+    const { md } = serializeSession(s);
+    assert.match(md, /Held: \/w\/\.env \(unreadable to this call\)/);
+    assert.match(md, /Held: \/w\/\.netrc \(unreadable to this call\)/);
+});
+
 test("a cited table, a returned frame and a loaded frame held as a prefix say the source's row count in both sinks", async () => {
     const { toolToken } = await import("../src/util.ts");
     const hash = "prefix01";

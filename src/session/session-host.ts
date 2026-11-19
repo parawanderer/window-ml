@@ -931,8 +931,9 @@ export type HostStatus =
     | { state: "offline"; reason?: string; retryAt?: number };
 
 /** How far one attached file's upload has got, for a host that sends files ahead in chunks (the hub's `file.put`):
- *  `fraction` is the share of its chunks the runtime has accepted, 0 to 1 (`uploadFraction`, file-frame.ts). */
-export interface FileProgress { name: string; fraction: number }
+ *  `fraction` is the share of its chunks the runtime has accepted, 0 to 1 (`uploadFraction`, file-frame.ts). `index` is
+ *  the file's position among the files of the command being sent (0-based): names can repeat, positions cannot. */
+export interface FileProgress { name: string; index: number; fraction: number }
 
 /** What a send may carry beside its command: a cancel, and where a file's upload reports how far it has got. A host
  *  that sends files inline reports nothing. */

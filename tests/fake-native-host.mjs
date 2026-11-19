@@ -78,6 +78,7 @@ export function fakeNativeHost(opts = {}) {
                             const exists = opts.fs ? path in opts.fs : true;
                             return { arg: p.arg, given, path, inRoot: tilde ? inRoots(path) : true, secret: false, exists, ...(p.walk ? { containsSecret: false } : {}), ...(p.hash ? { sha256: opts.fs ? opts.fs[path] ?? null : opts.sha256?.(n) ?? "0".repeat(64) } : {}) };
                         }),
+                        ...(opts.hiddenSecrets ? { hiddenSecrets: opts.hiddenSecrets } : {}),
                         effects: "unknown", mode: "host", sandboxed: opts.sandbox !== false, placement: opts.sandbox !== false ? "host-sandbox" : "host-plain",
                         // A host that lists credentials honours one asked for (the real one also checks the manifest's hash).
                         ...(opts.credentials ? { credential: args.credential ? { provider: args.credential.provider, ports: [443], hosts: ["api.github.com", "github.com"], profile: `credentialed:${args.credential.provider}` } : null } : {}),
