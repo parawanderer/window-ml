@@ -907,8 +907,7 @@ preview, like any other exec value.
 
 #### `ml.files` is superseded
 
-PROPOSED, pending Shane (the coordinator asks): ruling 23 gives `ml.fs` Node's syntax; that it REPLACES `ml.files` has
-not been ruled. `ml.fs` replaces the proposed `ml.files` ("The files API", below). Its rules are kept: `list()` is `readdir` with
+RULED 2026-11-19 (Shane, ruling 60, in the coordinator's session). `ml.fs` replaces the proposed `ml.files` ("The files API", below). Its rules are kept: `list()` is `readdir` with
 `stat`, a read the dialect may call; `remove(paths)` is `rm`/`unlink`, judged as written: the runs' files go free, the
 person's ask unless a policy allows, and a cited file keeps its frozen version. Nothing built or model-facing names
 `ml.files` (searched: only this spec), so the rename costs no code.
@@ -1310,7 +1309,7 @@ into the repository's object store and hash every build output. A delete or over
 and that card, kept in the transcript, is the only record of it. A workspace that is not a git repository falls back
 to #1780's before copies for cells, and gets no diff for an `ml.sh` call (open).
 
-**The files API.** To be SUPERSEDED by `ml.fs` (PROPOSED, pending Shane: "`ml.files` is superseded", above), which keeps both
+**The files API.** SUPERSEDED 2026-11-19 by `ml.fs` (RULED 2026-11-19, Shane, ruling 60, in the coordinator's session: "`ml.files` is superseded", above), which keeps both
 rules below: `list()` is `readdir` with `stat`, `remove(paths)` is `rm`/`unlink`. As proposed on 2026-11-13: the model
 lists, ages and clears its own files in code (use case 6), with the same names in JS and Python:
 
