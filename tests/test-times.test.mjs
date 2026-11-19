@@ -103,6 +103,17 @@ test("warningsFor: the file's first top-level test carries its before() hooks, s
     r.get("tests/a.test.mjs").tests[0].first = false;
     assert.equal(warningsFor(r).length, 1);
 });
+test("warningsFor: a first test is still judged against its own history (b), marked or not", () => {
+    // Five earlier records just under a third of this run's time: (b) fires above 3x, so exactly a third would not.
+    const history = new Map([["tests/a.test.mjs\u0000first", Array(5).fill(1900)]]);
+    for (const first of [true, false]) {
+        const r = run([{ file: "tests/a.test.mjs", tests: [{ ...t(6000, "first"), first }, t(5, "a")] }]);
+        const w = warningsFor(r, { history });
+        assert.equal(w.length, 1, `first: ${first}`);
+        assert.match(w[0], /first/);
+        assert.match(w[0], /last 5 runs/);
+    }
+});
 
 // --- parsing the reporter's lines ---
 
