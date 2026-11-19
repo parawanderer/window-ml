@@ -1538,6 +1538,7 @@ export function PyBenchOut({ d, running, marks }: { d: Extract<RenderDescriptor,
  *  purely because of where it was cited. Pass `ctx` to get the tools; without it this is just the block.
  *
  *  A descriptor with several `rules` (a policy proposal) draws one section per rule instead.
+ *  @gallery revising call {"d":{"type":"code","lang":"javascript","text":"const n = 1 + 1;\nreturn n;","revision":{"ref":"9d3822f","tool":"exec","seq":1,"label":"the timeline survey","before":"const n = 1;\nreturn n;","claim":"Counts both lists."}},"ctx":{"hash":"g1","seq":2}}
  *  @gallery {"d":{"type":"code","lang":"javascript","text":"// Rule 1 of 2: allow\nreturn true;\n\n// Rule 2 of 2: deny\nreturn false;","note":"Rule 1 of 2. Covers 3 of 3 fetches.\n\nRule 2 of 2. Covers none.","rules":[{"effect":"allow","source":"return c.host === \"a.example\";","note":"Covers 3 of 3 fetches."},{"effect":"deny","source":"return c.url.includes(\"/admin/\");","note":"Covers none."}]}} */
 export function CodeRender({ d, failLine, ctx, failed }: { d: Extract<RenderDescriptor, { type: "code" }>; failLine?: number | null; ctx?: CodeCtx; failed?: boolean }) {
     const rv = rev.value;   // subscribe: a landed annotation repaints the block (retained via data-rev below)
@@ -1566,6 +1567,9 @@ export function CodeRender({ d, failLine, ctx, failed }: { d: Extract<RenderDesc
             ref={block} tabIndex={0} onKeyDown={find.onKey}>
             {find.bar ? <div class="code-find">{find.bar}</div> : null}
             {d.revision ? <CodeDiff revision={d.revision} after={shown} lang={d.lang === "python" ? "python" : "javascript"} hash={ctx?.hash} failed={failed} /> : null}
+            {/* The toolbar is positioned against its nearest positioned ancestor. On a revising call that has to be
+                the CODE (`.code-body`), or it sits over the REVISES header above it. */}
+            <CodeBody wrap={!!d.revision}>
             {ctx ? <CodeTools ctx={ctx} lang={d.lang === "python" ? "python" : "javascript"} src={shown} /> : null}
             {/* Said out loud, because the rendered text is not always what the caller typed: `exec` expands
                 pointer macros before running, so a reader comparing this against the raw args would
@@ -1581,8 +1585,14 @@ export function CodeRender({ d, failLine, ctx, failed }: { d: Extract<RenderDesc
                     ? "This line failed. It is shown reflowed for reading — in the code as written this was one line, so the failure is somewhere in the statement starting here."
                     : "This line failed."}
                 notes={notesForBlock(ctx, rv)} />
+            </CodeBody>
         </div>
     );
+}
+
+/** The code part of a revising call's block, so `.code-tools` is positioned against the code and not the whole block (the REVISES header sits above it). Without a revision it adds no element. */
+function CodeBody({ wrap, children }: { wrap: boolean; children: ComponentChildren }) {
+    return wrap ? <div class="code-body">{children}</div> : <>{children}</>;
 }
 
 /** A JS failure, with the LINE it happened on made clickable — the counterpart to a python traceback frame.
