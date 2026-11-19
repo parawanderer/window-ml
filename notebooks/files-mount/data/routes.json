@@ -1,0 +1,750 @@
+{
+  "core": "pyodide-restricted-314.0.3-35bd1d69 93eda2433fa4f650ba395f9df09f6e5c8d4398446d3b295c1075599b52873751",
+  "measured": "2026-11-19",
+  "fixtureParquetFailed": null,
+  "parquet": {
+    "pyarrow": "22.0.0",
+    "parquet_module": true,
+    "error": null,
+    "codecs": {
+      "snappy": true,
+      "gzip": true,
+      "brotli": true,
+      "zstd": true,
+      "lz4": true
+    }
+  },
+  "rows": [
+    {
+      "route": "CONTROL pandas frame",
+      "kind": "control",
+      "cell": "import pandas as pd\nlen(pd.DataFrame({\"a\": [1, 2]}))",
+      "inside": {
+        "verdict": "ran",
+        "value": 2
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 2
+      }
+    },
+    {
+      "route": "CONTROL numpy array",
+      "kind": "control",
+      "cell": "import numpy as np\nnp.array([1, 2]).tolist()",
+      "inside": {
+        "verdict": "ran",
+        "value": [
+          1,
+          2
+        ]
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": [
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "route": "open() builtin",
+      "kind": "read",
+      "cell": "len(open(\"/files/attached/t.csv\").read())",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: call on builtin_function_or_method (line 1)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 16
+      }
+    },
+    {
+      "route": "open() in a with",
+      "kind": "read",
+      "cell": "with open(\"/files/attached/t.csv\") as f:\n    n = len(f.read())\nn",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: With (line 1)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 16
+      }
+    },
+    {
+      "route": "builtins.open",
+      "kind": "read",
+      "cell": "import builtins\nlen(builtins.open(\"/files/attached/t.csv\").read())",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: import 'builtins' (line 1)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 16
+      }
+    },
+    {
+      "route": "io.open",
+      "kind": "read",
+      "cell": "import io\nlen(io.open(\"/files/attached/t.csv\").read())",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'open' of module (line 2)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 16
+      }
+    },
+    {
+      "route": "io.FileIO",
+      "kind": "read",
+      "cell": "import io\nlen(io.FileIO(\"/files/attached/t.csv\").read())",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'FileIO' of module (line 2)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 16
+      }
+    },
+    {
+      "route": "pathlib read_text",
+      "kind": "read",
+      "cell": "import pathlib\nlen(pathlib.Path(\"/files/attached/t.csv\").read_text())",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: import 'pathlib' (line 1)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 16
+      }
+    },
+    {
+      "route": "pathlib read_bytes",
+      "kind": "read",
+      "cell": "from pathlib import Path\nlen(Path(\"/files/attached/t.csv\").read_bytes())",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: import 'pathlib' (line 1)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 16
+      }
+    },
+    {
+      "route": "os.open + os.read",
+      "kind": "read",
+      "cell": "import os\nfd = os.open(\"/files/attached/t.csv\", os.O_RDONLY)\nlen(os.read(fd, 1000))",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: import 'os' (line 1)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 16
+      }
+    },
+    {
+      "route": "os.listdir",
+      "kind": "list",
+      "cell": "import os\nsorted(os.listdir(\"/files/attached\"))",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: import 'os' (line 1)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": [
+          "a.bin",
+          "a.npy",
+          "i.png",
+          "p.pkl",
+          "t.csv",
+          "t.json",
+          "t.parquet",
+          "t.txt"
+        ]
+      }
+    },
+    {
+      "route": "glob.glob",
+      "kind": "list",
+      "cell": "import glob\nsorted(glob.glob(\"/files/attached/*\"))",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: import 'glob' (line 1)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": [
+          "/files/attached/a.bin",
+          "/files/attached/a.npy",
+          "/files/attached/i.png",
+          "/files/attached/p.pkl",
+          "/files/attached/t.csv",
+          "/files/attached/t.json",
+          "/files/attached/t.parquet",
+          "/files/attached/t.txt"
+        ]
+      }
+    },
+    {
+      "route": "codecs.open",
+      "kind": "read",
+      "cell": "import codecs\nlen(codecs.open(\"/files/attached/t.csv\").read())",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: import 'codecs' (line 1)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 16
+      }
+    },
+    {
+      "route": "linecache.getlines",
+      "kind": "read",
+      "cell": "import linecache\nlen(linecache.getlines(\"/files/attached/t.csv\"))",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: import 'linecache' (line 1)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 4
+      }
+    },
+    {
+      "route": "fileinput",
+      "kind": "read",
+      "cell": "import fileinput\nlen(list(fileinput.input(\"/files/attached/t.csv\")))",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: import 'fileinput' (line 1)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 4
+      }
+    },
+    {
+      "route": "shutil.copyfile",
+      "kind": "write",
+      "cell": "import shutil\nshutil.copyfile(\"/files/attached/t.csv\", \"/files/agent/copy.csv\")",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: import 'shutil' (line 1)",
+        "wrote": false
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": "/files/agent/copy.csv",
+        "wrote": true
+      }
+    },
+    {
+      "route": "csv.reader over open()",
+      "kind": "read",
+      "cell": "import csv\nlen(list(csv.reader(open(\"/files/attached/t.csv\"))))",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: call on builtin_function_or_method (line 2)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 4
+      }
+    },
+    {
+      "route": "json.load over open()",
+      "kind": "read",
+      "cell": "import json\nlen(json.load(open(\"/files/attached/t.json\")))",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'load' of module (line 2)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 2
+      }
+    },
+    {
+      "route": "pickle.load over open()",
+      "kind": "read",
+      "cell": "import pickle\npickle.load(open(\"/files/attached/p.pkl\", \"rb\"))",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: import 'pickle' (line 1)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": {
+          "k": 1
+        }
+      }
+    },
+    {
+      "route": "pd.read_csv(path)",
+      "kind": "read",
+      "cell": "import pandas as pd\npd.read_csv(\"/files/attached/t.csv\").shape[0]",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'read_csv' of module (line 2)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 3
+      }
+    },
+    {
+      "route": "pd.read_table(path)",
+      "kind": "read",
+      "cell": "import pandas as pd\npd.read_table(\"/files/attached/t.csv\", sep=\",\").shape[0]",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'read_table' of module (line 2)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 3
+      }
+    },
+    {
+      "route": "pd.read_json(path)",
+      "kind": "read",
+      "cell": "import pandas as pd\npd.read_json(\"/files/attached/t.json\").shape[0]",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'read_json' of module (line 2)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 3
+      }
+    },
+    {
+      "route": "pd.read_parquet(path)",
+      "kind": "read",
+      "cell": "import pandas as pd\npd.read_parquet(\"/files/attached/t.parquet\").shape[0]",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'read_parquet' of module (line 2)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 3
+      }
+    },
+    {
+      "route": "pd.read_pickle(path)",
+      "kind": "read",
+      "cell": "import pandas as pd\nlen(pd.read_pickle(\"/files/attached/p.pkl\"))",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'read_pickle' of module (line 2)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 1
+      }
+    },
+    {
+      "route": "np.load(path)",
+      "kind": "read",
+      "cell": "import numpy as np\nint(np.load(\"/files/attached/a.npy\").sum())",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'load' of module (line 2)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 15
+      }
+    },
+    {
+      "route": "np.loadtxt(path)",
+      "kind": "read",
+      "cell": "import numpy as np\nint(np.loadtxt(\"/files/attached/t.txt\").sum())",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'loadtxt' of module (line 2)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 21
+      }
+    },
+    {
+      "route": "np.genfromtxt(path)",
+      "kind": "read",
+      "cell": "import numpy as np\nint(np.genfromtxt(\"/files/attached/t.txt\").sum())",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'genfromtxt' of module (line 2)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 21
+      }
+    },
+    {
+      "route": "np.fromfile(path)",
+      "kind": "read",
+      "cell": "import numpy as np\nint(np.fromfile(\"/files/attached/a.bin\", dtype=\"int64\").sum())",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'fromfile' of module (line 2)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 15
+      }
+    },
+    {
+      "route": "np.memmap(path)",
+      "kind": "read",
+      "cell": "import numpy as np\nint(np.memmap(\"/files/attached/a.bin\", dtype=\"int64\", mode=\"r\").sum())",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'memmap' of module (line 2)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 15
+      }
+    },
+    {
+      "route": "PIL Image.open(path)",
+      "kind": "read",
+      "cell": "from PIL import Image\nImage.open(\"/files/attached/i.png\").size[0]",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'Image' of module (line 1)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 4
+      }
+    },
+    {
+      "route": "pyarrow.parquet.read_table(path)",
+      "kind": "read",
+      "cell": "import pyarrow.parquet as pq\npq.read_table(\"/files/attached/t.parquet\").num_rows",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: import 'pyarrow.parquet' (line 1)"
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 3
+      }
+    },
+    {
+      "route": "open(path, 'w')",
+      "kind": "write",
+      "cell": "open(\"/files/agent/w.txt\", \"w\").write(\"hi\")",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: call on builtin_function_or_method (line 1)",
+        "wrote": false
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 2,
+        "wrote": true
+      }
+    },
+    {
+      "route": "pathlib write_text",
+      "kind": "write",
+      "cell": "import pathlib\npathlib.Path(\"/files/agent/p.txt\").write_text(\"hi\")",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: import 'pathlib' (line 1)",
+        "wrote": false
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": 2,
+        "wrote": true
+      }
+    },
+    {
+      "route": "df.to_csv(path)",
+      "kind": "write",
+      "cell": "import pandas as pd\npd.DataFrame({\"a\": [1]}).to_csv(\"/files/agent/d.csv\")",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'to_csv' of DataFrame (line 2)",
+        "wrote": false
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": null,
+        "wrote": true
+      }
+    },
+    {
+      "route": "df.to_parquet(path)",
+      "kind": "write",
+      "cell": "import pandas as pd\npd.DataFrame({\"a\": [1]}).to_parquet(\"/files/agent/d.parquet\")",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'to_parquet' of DataFrame (line 2)",
+        "wrote": false
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": null,
+        "wrote": true
+      }
+    },
+    {
+      "route": "np.save(path)",
+      "kind": "write",
+      "cell": "import numpy as np\nnp.save(\"/files/agent/s.npy\", np.arange(3))",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'save' of module (line 2)",
+        "wrote": false
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": null,
+        "wrote": true
+      }
+    },
+    {
+      "route": "ndarray.tofile(path)",
+      "kind": "write",
+      "cell": "import numpy as np\nnp.array([1, 2]).tofile(\"/files/agent/s.bin\")",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'tofile' of numpy.ndarray (line 2)",
+        "wrote": false
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": null,
+        "wrote": true
+      }
+    },
+    {
+      "route": "np.savetxt(path)",
+      "kind": "write",
+      "cell": "import numpy as np\nnp.savetxt(\"/files/agent/s.txt\", np.array([1, 2]))",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'savetxt' of module (line 2)",
+        "wrote": false
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": null,
+        "wrote": true
+      }
+    },
+    {
+      "route": "Image.save(path)",
+      "kind": "write",
+      "cell": "from PIL import Image\nImage.new(\"RGB\", (2, 2)).save(\"/files/agent/s.png\")",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'Image' of module (line 1)",
+        "wrote": false
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": null,
+        "wrote": true
+      }
+    },
+    {
+      "route": "df.to_string(buf=path)",
+      "kind": "write",
+      "cell": "import pandas as pd\npd.DataFrame({\"a\": [1]}).to_string(buf=\"/files/agent/to_string.out\")",
+      "inside": {
+        "verdict": "ran",
+        "value": null,
+        "wrote": true
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": null,
+        "wrote": true
+      }
+    },
+    {
+      "route": "df.to_html(buf=path)",
+      "kind": "write",
+      "cell": "import pandas as pd\npd.DataFrame({\"a\": [1]}).to_html(buf=\"/files/agent/to_html.out\")",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'to_html' of DataFrame (line 2)",
+        "wrote": false
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": null,
+        "wrote": true
+      }
+    },
+    {
+      "route": "df.to_markdown(buf=path)",
+      "kind": "write",
+      "cell": "import pandas as pd\npd.DataFrame({\"a\": [1]}).to_markdown(buf=\"/files/agent/to_markdown.out\")",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'to_markdown' of DataFrame (line 2)",
+        "wrote": false
+      },
+      "outside": {
+        "verdict": "error",
+        "line": "ImportError: `Import tabulate` failed.  Use pip or conda to install the tabulate package.",
+        "wrote": false
+      }
+    },
+    {
+      "route": "df.to_latex(buf=path)",
+      "kind": "write",
+      "cell": "import pandas as pd\npd.DataFrame({\"a\": [1]}).to_latex(buf=\"/files/agent/to_latex.out\")",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'to_latex' of DataFrame (line 2)",
+        "wrote": false
+      },
+      "outside": {
+        "verdict": "error",
+        "line": "ImportError: `Import Jinja2` failed. DataFrame.style requires jinja2. Use pip or conda to install the Jinja2 package.",
+        "wrote": false
+      }
+    },
+    {
+      "route": "df.to_json(buf=path)",
+      "kind": "write",
+      "cell": "import pandas as pd\npd.DataFrame({\"a\": [1]}).to_json(\"/files/agent/to_json.out\")",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'to_json' of DataFrame (line 2)",
+        "wrote": false
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": null,
+        "wrote": true
+      }
+    },
+    {
+      "route": "df.to_xml(buf=path)",
+      "kind": "write",
+      "cell": "import pandas as pd\npd.DataFrame({\"a\": [1]}).to_xml(\"/files/agent/to_xml.out\")",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'to_xml' of DataFrame (line 2)",
+        "wrote": false
+      },
+      "outside": {
+        "verdict": "error",
+        "line": "ImportError: lxml not found, please install or use the etree parser.",
+        "wrote": false
+      }
+    },
+    {
+      "route": "df.to_pickle(buf=path)",
+      "kind": "write",
+      "cell": "import pandas as pd\npd.DataFrame({\"a\": [1]}).to_pickle(\"/files/agent/to_pickle.out\")",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'to_pickle' of DataFrame (line 2)",
+        "wrote": false
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": null,
+        "wrote": true
+      }
+    },
+    {
+      "route": "df.to_feather(buf=path)",
+      "kind": "write",
+      "cell": "import pandas as pd\npd.DataFrame({\"a\": [1]}).to_feather(\"/files/agent/to_feather.out\")",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'to_feather' of DataFrame (line 2)",
+        "wrote": false
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": null,
+        "wrote": true
+      }
+    },
+    {
+      "route": "df.to_excel(buf=path)",
+      "kind": "write",
+      "cell": "import pandas as pd\npd.DataFrame({\"a\": [1]}).to_excel(\"/files/agent/to_excel.out\")",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'to_excel' of DataFrame (line 2)",
+        "wrote": false
+      },
+      "outside": {
+        "verdict": "error",
+        "line": "ValueError: No engine for filetype: 'out'",
+        "wrote": false
+      }
+    },
+    {
+      "route": "Series.to_csv(path)",
+      "kind": "write",
+      "cell": "import pandas as pd\npd.Series([1]).to_csv(\"/files/agent/series.csv\")",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'Series' of module (line 2)",
+        "wrote": false
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": null,
+        "wrote": true
+      }
+    },
+    {
+      "route": "Series.to_string(buf=path)",
+      "kind": "write",
+      "cell": "import pandas as pd\npd.Series([1]).to_string(buf=\"/files/agent/series.txt\")",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: attribute 'Series' of module (line 2)",
+        "wrote": false
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": null,
+        "wrote": true
+      }
+    },
+    {
+      "route": "pq.write_table(path)",
+      "kind": "write",
+      "cell": "import pyarrow as pa, pyarrow.parquet as pq\npq.write_table(pa.table({\"a\": [1]}), \"/files/agent/w.parquet\")",
+      "inside": {
+        "verdict": "refused",
+        "line": "not in dialect: import 'pyarrow' (line 1)",
+        "wrote": false
+      },
+      "outside": {
+        "verdict": "ran",
+        "value": null,
+        "wrote": true
+      }
+    }
+  ]
+}
