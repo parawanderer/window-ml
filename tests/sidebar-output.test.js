@@ -664,6 +664,28 @@ test("the revises pill shows the model's own name for the call, and the raw poin
     assert.doesNotMatch(barePill.textContent, /python_exec:/, "no invented name, and no empty prefix either");
 });
 
+// WHERE THE PILL GOES in a later turn. `revision.seq` is the agent loop's per-turn counter; the panel stores steps
+// re-based by the turn's seqBase, so turn 2's call 1 is stored as seq 11 and its revision still says seq 1. The pill
+// resolves its target by the revised call's TOKEN, which survives the re-base; scrolling by `revision.seq` lands on
+// turn 1's first call instead.
+test("the revises pill in a later turn goes to the step carrying the revised call's token, not to revision.seq", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("mt", "retry it"));
+    const call = (seq, token, code, renderIn) => agentStep("mt", seq, {
+        seq, tool: "python_exec", result: "1", token, arguments: { code }, renderIn: renderIn ?? { type: "python-in", mode: "script", code },
+    });
+    await w.dispatch(call(1, "0c0ffee", "y = 1"));
+    await w.dispatch(call(11, "1a5fef", "x = 0"));
+    await w.dispatch(call(12, "9d3822", "x = 1", { type: "python-in", mode: "script", code: "x = 1",
+        revision: { ref: "@tool:1a5fef", tool: "python_exec", seq: 1, before: "x = 0" } }));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    w.shadow.querySelector('[data-astep-seq="12"] .astep-head').click(); await w.tick();
+
+    w.shadow.querySelector(".r-diff-ref").click(); await w.tick();
+    assert.ok(w.shadow.querySelector('[data-astep-seq="11"]').classList.contains("astep-pulse"), "the jump lands on the revised call, stored as seq 11");
+    assert.ok(!w.shadow.querySelector('[data-astep-seq="1"]').classList.contains("astep-pulse"), "…and not on seq 1, the turn-local number the revision carries");
+});
+
 test("diff gutter: a row carries only the side it exists on, and the new side matches the block below", async () => {
     const w = await loadSidebarWorld({ local: { ml_debug_codelines: true } });
     await w.dispatch(agentStart("dg2", "retry it"));
