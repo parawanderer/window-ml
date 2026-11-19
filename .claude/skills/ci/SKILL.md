@@ -178,6 +178,22 @@ Artifacts are worth knowing about: a red **legend word-clipping** case uploads
 `legend-notebook-node<N>` — download it and open `legend-notebook.html`, where the failing cell shows the
 words, the crop box, and expected-vs-actual. The workflow also writes a pointer to it on the run summary.
 
+### An install step failed, or stalled
+
+The apt steps (`Install Playwright Chromium` in five jobs, `Install bubblewrap`, the shaders' `glslang-tools`) go
+through `.github/actions/retry-install`: apt's own `Acquire::Retries`, then two attempts of at most fifteen minutes
+each, the second only when the first failed with the mirror's signature (or did not finish at all — a healthy install
+can take ten minutes: today's green ones ran 517 to 652 s). A step whose log ends in `Err: … Connection failed`,
+`503 Service Unavailable`, `Failed to fetch` or exit code 100 is the Ubuntu mirror, not the diff — rerun the job and
+say which step it was, and read the diff only if a second attempt fails the same way.
+
+The other shape is a stall with no error at all: e2e (1/3) job 135545553298 (run 44519875129) sat 3 h 38 min inside
+`Install Playwright Chromium`, its last line `Get:5 … noble-security InRelease`, until the run was cancelled by hand
+and the cleanup killed `npm exec playwright install --with-deps chromium`. That is what the action's per-attempt
+`timeout` and every job's `timeout-minutes` bound: the cap holds the installer's worst case (two 900 s attempts) plus
+the job's own work, and the arithmetic is written beside the caps in tests.yml. A job that dies at its cap ends with
+`The job … has exceeded the maximum execution time` — that is a hang to report, not a test to rerun.
+
 ## What runs, and what each catches
 
 | Job | Catches |
