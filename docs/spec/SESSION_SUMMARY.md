@@ -80,6 +80,50 @@ The session's slice of the resource panel, by mounting the existing components (
 the components gain a `hash` prop (a refactor in the resources PR, its call). On the chat page the panel exists only for
 a local runtime; elsewhere the tab says so in one line.
 
+#### Energy and its cost
+
+Ruled by Shane (2026-11-19): the resources tab shows what a local model drew for the session, and its cost. Owner:
+bench. The attribution is `tests/e2e/bench/electricity.mjs` today (readings integrated per interval, each interval's
+energy split among the generations running in it, per GPU by residency, priced at each moment's rate). It becomes ONE
+module under `src/spend/`, beside `price-book.ts`, that the bench and the page both import (moved with `move-symbols`),
+never a second copy; only `runEnergy`, which reads the bench's SQLite box log, stays in the bench.
+
+Where the readings come from. Live, from frames the extension already receives: the patched Ollama's `sample` frames
+carry `info.compute.supported_gpus[].power` and `info.compute.power_sources`. In this clone's box log (2026-10-15 to
+2026-11-17), 27,603 of 34,117 sample frames carried them, about half under 0.5 s apart while busy and 15 s apart idle. The
+box log (`box.sqlite`, written by `box-stream.mjs`) is the bench's own record and never reaches the extension.
+`sw-events.ts` keeps frames verbatim, so the fields arrive today, but the pinned `src/proto/events.proto` (fork
+`10b026a3`) predates both (`GPUInfo.power` = 20 and `ComputeInfo.power_sources` = 6 on `slop`): re-pin before `src/`
+reads them, so their names are checked.
+
+What the attribution needs per session, and whether the extension holds it:
+
+| Input | Used for | Held today |
+| --- | --- | --- |
+| `hint.session` on every `gen.end`, ours and every other client's | which generations are this session's; another client's take their share of an interval | Yes, live: each request sends `hintSession(hash)` (`contract-run.ts`), and `gen.end` frames carry every client's hint. |
+| Power readings (`sample` frames' `info.compute`) | the energy | Only while the stream is held: `sw-events.ts` connects while a resource panel subscribes and stops with the last. The server's ring is 10 min (`RING_MS`); the sidebar keeps 45 min, in memory (`RESOURCE_RETENTION_MS`). |
+| Residency per GPU (`sample` frames' `ps.models[].gpus`) | which card's draw a generation can take | As the readings: the same frames. |
+| Rest baseline: each channel's median draw over readings at least 30 s after any generation, within 5 min of the session's generations | "above idle" and the 30 s tails | As the readings, and only when the stream was held around the session. |
+| The electricity price (`usage.electricity`) | cost | Yes: each call records it (`price-book.ts`). |
+
+So the extension can attribute only what it watched, and a past session's readings are gone with the stream. The page
+reads a per-session share stored as it accrues, never the frames: the worker attributes each stretch of generations
+once it closes (30 s tail and 30 s rest after its last generation) and adds `{ J, aboveJ, basis, ms, cost }` to the
+session's record, declared with `defineState`. Open, for the coordinator: the worker holds the stream whenever a local
+runtime generates for a session, not only while a panel is open. Without that, a session run with no panel open has no
+reading and draws nothing.
+
+Cost for one session in a page. The page reads one stored record per session. The attribution itself, measured on this
+clone's box log (2026-11-19): `runEnergy` for the two busiest sessions (37 generations over 1.2 min, 27 over 2.8 min)
+took 150 ms and 54 ms, SQLite reads and JSON parsing included, so per stretch in the worker it is noise. What would cost
+is holding raw frames: a sample frame averages 4.8 KB (2.5 KB of it `info.compute`), about 1 MB a minute at the busy
+cadence. The worker reduces each frame to its `reading()` on arrival and drops it once its stretch is attributed.
+
+What draws when a reading is absent: nothing, by the rule above; never an estimate from rated wattage or token counts.
+A session on a cloud model has no energy line. A local session whose box reported no power, or whose stretch was not
+watched, has none either. A stretch with no rest baseline in reach shows the energy but no "above idle". The basis is
+always drawn with the figure (`BASIS_WORDS`: "at the wall", "GPUs only", ...), because the scopes are not comparable.
+
 ### Files tab
 
 Owned by files-host, after its scrub chain (#1948 and what it releases). On main, `/files/` is ruled, not built
