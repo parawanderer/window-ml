@@ -17,7 +17,7 @@ import { IconSend, IconWarn } from "../sidebar/icons";
 import { modelCache, SeesImagesToggle, visionUnreported } from "./sees-images";
 import { setVisionChoice, visionChoices } from "./view-mode";
 import { visionFor } from "../vision-choice";
-import { FileStrip, ThumbStrip, sentFile, useImageAttach } from "../sidebar/transcript/composer";
+import { FileStrip, ThumbStrip, sentFile, useImageAttach, type PendingFile } from "../sidebar/transcript/composer";
 import { imagesRefusal, type SentFile } from "../contract/contract-run";
 import { cursorTipOn } from "../sidebar/ui-kit";
 import type { ChatStore } from "./chat-store";
@@ -61,6 +61,15 @@ function StartField({ boxOf }: { boxOf: () => Element | null }) {
     const canvas = useRef<HTMLCanvasElement>(null);
     useEffect(() => (canvas.current ? startField(canvas.current, boxOf, (t) => onOpenGround(t, ".chat-start-page")) ?? undefined : undefined), []);
     return <canvas class="chat-start-field" ref={canvas} aria-hidden="true" />;
+}
+
+/** Each attached doc's upload progress, by the doc's place in the start page's strip. A progress index counts the
+ * command's files, which are the sendable docs (a refused or unread one is not sent): each doc takes the upload at
+ * its position among the sendable ones, the same test `useImageAttach` filters by. */
+export function uploadsForDocs(docs: PendingFile[], reasons: (string | undefined | null)[], uploads: FileProgress[]): (FileProgress | undefined)[] {
+    const pos = new Map<number, number>();
+    docs.forEach((d, i) => { if (!reasons[i] && sentFile(d)) pos.set(i, pos.size); });
+    return docs.map((_, i) => (pos.has(i) ? uploads.find((p) => p.index === pos.get(i)) : undefined));
 }
 
 /** The start page: a pill to type in, and the choices a start needs on one row inside it. */
@@ -158,10 +167,7 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
     const streaming = kind === "agent";
     // Text, or an image or a file alone: the start commands accept any of them (session-commands.ts).
     const ready = (!!text.trim() || att.imgs.length > 0 || att.sendable.length > 0) && !imagesRefusal(att.imgs.length) && !busy && rt.online && (kind === "chat" || (pick.ready && blocked.kind === "ok"));
-    // A progress index counts the command's files, which are `att.sendable` (the refused docs are not sent): each doc
-    // takes the upload at its position among the sendable ones, the same test `useImageAttach` filters by.
-    let sentSoFar = 0;
-    const uploadsByDoc = att.docs.map((d, i) => (!att.reasons[i] && sentFile(d) ? uploads.find((p) => p.index === sentSoFar++) : undefined));
+    const uploadsByDoc = uploadsForDocs(att.docs, att.reasons, uploads);
     const start = async (): Promise<void> => {
         if (!ready) return;
         setBusy(true);
