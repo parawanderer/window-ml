@@ -87,7 +87,78 @@ cost so far" line is the short form of these totals.
 | --- | --- | --- | --- |
 | Tokens over time, and totals | have | `usageSamples` (`usage.tsx`, reducer): one `TokenUsage` per call, ordered by its step's or turn's `ts`; `promptTokens`, `completionTokens`, `cachedTokens`, `reasoningTokens` | — |
 | Cost over time, and total, for an external model | partial | `sessionCalls` priced through `services().priceCalls` against each call's own snapshot (`TokenUsage.prices`, `src/spend/price-book.ts`) | Extension pages only; no cost on the web or hub chat page (session-store). An unpriced call is counted, not costed. |
-| Energy for a local model, and its cost | partial | Measured on the box: the patched backend reports GPU board watts (`supported_gpus[].power`) and `compute.power_sources` counters (`docs/FORKED-BACKENDS.md`), and the bench attributes them per generation and per session, joined on `hint.session` (`tests/e2e/bench/electricity.mjs`, read from the box log). Each call also records the electricity price it ran under (`TokenUsage.electricity`, `spendForCall` in `src/sw/sw-prices.ts`) | The extension reads no power field (`spend.tsx`: "which the extension does not measure yet"). Needs the attribution as one shared module, never a second copy. A figure from a rated wattage is not a measurement and draws nothing. Owner proposed, pending Shane: the bench moves the attribution into `src/spend/`, and this page draws it. |
+| Energy for a local model, and its cost | partial | Measured on the box: the patched backend's `sample` frames carry GPU board watts and `compute.power_sources`, and the bench attributes them per session (`tests/e2e/bench/electricity.mjs`). Each call records the electricity price it ran under (`TokenUsage.electricity`) | The extension reads no power field yet. Owner: bench (ruling 53); the design is "Energy and its cost" below. A figure from a rated wattage draws nothing. |
+
+#### Energy and its cost
+
+Ruled by Shane (2026-11-19): the resources tab shows what a local model drew for the session, and its cost. Owner:
+bench. The attribution is `tests/e2e/bench/electricity.mjs` today (readings integrated per interval, each interval's
+energy split among the generations running in it, per GPU by residency, priced at each moment's rate). It becomes ONE
+module under `src/spend/`, beside `price-book.ts`, that the bench and the page both import (moved with `move-symbols`),
+never a second copy; only `runEnergy`, which reads the bench's SQLite box log, stays in the bench.
+
+Where the readings come from. Live, from frames the extension already receives: the patched Ollama's `sample` frames
+carry `info.compute.supported_gpus[].power` and `info.compute.power_sources`. In this clone's box log (2026-10-15 to
+2026-11-17), 27,603 of 34,117 sample frames carried them, about half under 0.5 s apart while busy and 15 s apart idle. The
+box log (`box.sqlite`, written by `box-stream.mjs`) is the bench's own record and never reaches the extension.
+`sw-events.ts` keeps frames verbatim, so the fields arrive today, but the pinned `src/proto/events.proto` (fork
+`10b026a3`) predates both (`GPUInfo.power` = 20 and `ComputeInfo.power_sources` = 6 on `slop`): re-pin before `src/`
+reads them, so their names are checked.
+
+What the attribution needs per session, and whether the extension holds it:
+
+| Input | Used for | Held today |
+| --- | --- | --- |
+| `hint.session` on every `gen.end`, ours and every other client's | which generations are this session's; another client's take their share of an interval | Yes, live: each request sends `hintSession(hash)` (`contract-run.ts`), and `gen.end` frames carry every client's hint. |
+| Power readings (`sample` frames' `info.compute`) | the energy | Only while the stream is held: `sw-events.ts` connects while a resource panel subscribes and stops with the last. The server's ring is 10 min (`RING_MS`); the sidebar keeps 45 min, in memory (`RESOURCE_RETENTION_MS`). |
+| Residency per GPU (`sample` frames' `ps.models[].gpus`) | which card's draw a generation can take | As the readings: the same frames. |
+| Rest baseline: each channel's median draw over readings at least 30 s after any generation, within 5 min of the session's generations | "above idle" and the 30 s tails | As the readings, and only when the stream was held around the session. |
+| The electricity price (`usage.electricity`) | cost | Yes: each call records it (`price-book.ts`). |
+
+So the extension can attribute only what it watched, and a past session's readings are gone with the stream. The page
+reads a per-session share stored as it accrues, never the frames.
+
+The hold (ruled by the coordinator, 2026-11-19). The worker holds the event stream while a local runtime generates for a
+session and until that stretch closes (the 30 s tail and the 30 s rest after its last generation), with or without a
+panel open, and only when the runtime's first `sample` frame carries a power field. It does not hold the stream while
+nothing generates. A connection the worker opens with no frame seen asks for the server's whole ring
+(`sinceFor(null, ...)` in `sw-events.ts`, `RING_MS`), so a stretch watched this way has the 10 min before it, as well as
+the 30 s rest after it, to find its rest baseline in: each channel's median over readings at least 30 s after any
+generation, every client's included. When neither part has such readings (the box was busy for the 10 min before, and
+the next stretch opened inside the 30 s after), the rest is unknown: the stretch keeps its energy and draws no "above
+idle", and its tails go unattributed, as `attribute` already does.
+
+What an evicted worker leaves. A stretch's readings are in worker memory, and the worker can die between the last
+generation and the close. The worker re-runs the attribution over the stretch so far at each of its `gen.end` frames and
+writes the share each time, so an eviction loses only what came after the last write: the tail and any later
+generation's part. The record is `{ J, aboveJ, basis, ms, cost, open, cut }`. It is written `open: true` until the close
+writes `open: false`. On its next start, the worker marks every stretch still `open` as `cut: true`, and the page draws a
+cut stretch's figure with the words "cut short: the browser stopped watching before the stretch ended". So a cut stretch
+never reads as a complete one. The `defineState` declaration's description says this: "A session's local-model energy
+and cost, one entry per stretch of generations, written at each generation's end; `cut` marks a stretch the worker
+stopped inside, whose tail is missing." The test, a fixture of frames ending mid-stretch: "energy share: frames that
+end mid-stretch leave a cut record, drawn as cut, never as complete".
+
+Cost for one session in a page. The page reads one stored record per session. The attribution itself, measured on this
+clone's box log (2026-11-19): `runEnergy` for the two busiest sessions (37 generations over 1.2 min, 27 over 2.8 min)
+took 150 ms and 54 ms, SQLite reads and JSON parsing included, so per stretch in the worker it is noise. What would cost
+is holding raw frames: a sample frame averages 4.8 KB (2.5 KB of it `info.compute`), about 1 MB a minute at the busy
+cadence. The worker reduces each frame to its `reading()` on arrival and drops it once its stretch is attributed.
+
+What draws when a reading is absent: nothing, by the rule above; never an estimate from rated wattage or token counts.
+A session on a cloud model has no energy line. A local session whose box reported no power, or whose stretch was not
+watched, has none either. A stretch with no rest baseline in reach shows the energy but no "above idle". The basis is
+always drawn with the figure (`BASIS_WORDS`: "at the wall", "GPUs only", ...), because the scopes are not comparable.
+
+Order of work, one PR each:
+
+1. Re-pin `src/proto/events.proto` to the fork's commit that has `GPUInfo.power` and `ComputeInfo.power_sources`, and
+   regenerate.
+2. Move the attribution into `src/spend/` with `move-symbols`. The bench imports it from there. No behaviour change, and
+   the bench's own tests are unchanged. To a janitor, through the coordinator.
+3. The worker's hold and the stored share, with the cut record and its fixture test. To a janitor, through the
+   coordinator.
+4. The page's line in the resources tab.
 
 ### Files tab
 
