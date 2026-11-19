@@ -1404,6 +1404,97 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   - `tests/python-bench-stop.test.mjs` hung for 900 s once on #2005's CI. No owner yet; a second hang goes to Shane.
 - **Merged 2026-11-19, each verified.** #2009 (b06d2cf8, the plan), #1979 (71f2016e, test timings),
   window-ml-host#51 (20b394ea, H11), #1977 (d7a799da, the reveals gate, ruling 31).
+- **Shane's rulings 68 to 76 (2026-11-19, in the coordinator's session).**
+  - (68) python_exec stops injecting tables. A Python cell asks for its data: `await ml.table("#sales")`, mirroring
+    the tool in JS. It returns a TableLike, not rows. "`ml.table(ml.fetch(<a csv>))` should arguably work." Approval
+    reuses the rule the tool call's prompt has for a table reference: permitted only if the person approved it. The
+    model writes the table to its `/files` if it wants to keep it.
+  - (69) A cell writes its own files unasked. "The limit is the limit for the virtual file system in general."
+  - (70) A source given to `ml.table` is judged exactly as python_exec's `tables` argument judges it today.
+  - (71) `pd.read_csv(<source>)` stays served from the run's fetches; a URL the run did not fetch asks.
+  - (72) For a table too large to load: reuse an existing engine that does not load all the data into memory, if
+    one fits; do not write one from scratch.
+  - (73) async and Chat Page each finish their one old PR (#1929; #1950) and then pause.
+  - (74) The coordinator may restart the async lane where it is relevant again. Used once: #1929, then Python's
+    `/files` mount, and nothing else.
+  - (75) "Your call is fine on the /files for now." The coordinator's calls it covers, each overridable:
+    - one store (the shelf) for agent/ and attached/, on route A's type; async builds Python's mount on it;
+    - a full cell commits each file when it is CLOSED, and a cell that fails keeps the files it closed;
+    - an attempt INSIDE the dialect holds its closed files in one transaction and commits it only if the attempt
+      succeeds. A refusal or a failure aborts it, as the attempt's namespace already rolls back: the refused
+      attempt is rerun after the person answers, and a file kept from it would exist under a cell they may deny.
+      (Narrowed by the coordinator after the ruling and told to Shane the same evening.)
+  - (76) The quota is the DevTools Settings flag `filesQuotaMB`, default 1024, owned by session-store. The model may
+    propose a change to it; a change always asks the person.
+- **`/files`: owners, order and the reader (coordinator, under rulings 54 and 75).**
+  - session-store: the ONE ranged reader and `ml.fs`, as three PRs after #1995 and #1999 and ahead of the history
+    size PR: the reader with a ranged scrub; `ml.fs` reads; `ml.fs` writes with the quota, ENOSPC and the atomic
+    commit, a copy from an `@tool:` value into agent/ included.
+  - async: Python's mount on that reader. attached/ is read-only (EROFS); close() is closeWrite plus the commit of
+    a transaction of one.
+  - packages: the Python `await ml.fetch` and `await ml.table`, and the list of writers a read-only cell may call.
+  - The reader, agreed by session-store and async: in the offscreen document, keyed by volume ("files", later
+    "history"); the session comes from the channel's run record; Node-shaped errors; a stale channel id answers
+    EBADF. Reads: stat, a paged opendir, open (the fd pins a version, and reads it until close even after another
+    commit), read (at most 512 KiB, scrubbed inside the read with length kept), close. Writes sit in a transaction:
+    begin, openWrite, a positioned write, truncate, closeWrite, rename, unlink, mkdir, rm, then commit (one IndexedDB
+    transaction) or abort. The quota is checked on every write. The last commit wins, with a run-log note.
+  - #1999 (session-store, the spec amendment) carries the owners, the one store, the key and the commit point. The
+    coordinator named its spec at b93f7328; its scripts are with flaky-ci.
+  - session-store's account, for the design note below: a person cannot upload into agent/ but can rename, move
+    and delete there; the shelf can keep a removed or overwritten version by reference, with no bytes copied.
+- **The `ml.table` design note (packages, #2021, ML_TABLE.md beside this file once merged).** Nothing is built from
+  it until Shane rules. The coordinator read 7de3b989 and asked ten changes; the next head opens with one table of
+  decisions for Shane:
+  - how a read-only cell awaits: the dialect has no Await node and the fork's cell runner is synchronous, so
+    `await ml.table` is a fork change and a core rebuild, or a synchronous call over JSPI (to be costed);
+  - what Python gets: the lane recommends a pandas DataFrame, which departs from ruling 68's TableLike;
+  - whether `tables` stays as shorthand for `ml.table`;
+  - a nested ask for a Sheet whose id is computed in code;
+  - whether rm, mv and an overwrite in `/files` run unasked (the lane: only for a file this run made), and whether
+    a removed file is restorable (then: counts toward the quota, how long kept, not in the backup);
+  - whether a fetch stops parsing a table by default. The lane's account: a 60 MB CSV costs 1.16 s and about 600 MB
+    of transient heap on its eager parse; detection alone costs 0.1 ms;
+  - the engine for very large files. The lane's account, on 11.7 million rows: pyarrow (already shipped) reads
+    Parquet within 24 MiB of baseline; its CSV groupby reached 443 MiB, over the cell's 256 MiB cap, so a large CSV
+    is converted to Parquet first. DuckDB and Polars were not measured;
+  - two inference rules on the person's data: a 2-decimal column read as exact decimal, and dtypes from a prefix.
+  - Two corrections to ruling 68's brief, accepted: no read-only cell can await today; today's approval check reads
+    only the `tables` argument and collects only Sheet ids, so the code scan is new work that only hoists sources
+    onto the card, and the rule itself runs at call time on the resolved value.
+  - Unassigned until the ruling: the JS `ml.table`, and the fork's cell runner.
+- **CI on 2026-11-19 (ruling 65: window-ml-flaky-ci owns it).**
+  - Red checks sorted by cause from the job logs: an apt mirror outage in "Install Playwright Chromium";
+    the hang in `tests/python-bench-stop.test.mjs`; the flaky row "P2-bound mutation and the C-function path, in child
+    processes" in `tests/redteam-python-sandbox.test.mjs` (the control child is killed at its 10 s limit while
+    loading packages, janitor-3's measurement); and e2e rows that fail under load in
+    `tests/e2e/chat-two-execs.spec.mjs`, `tests/e2e/chat-web.spec.mjs`, `tests/e2e/bench-dock.spec.mjs`,
+    `tests/sh-delete-manifests.test.mjs` and `tests/backup-section.test.mjs`.
+  - #2018 (flaky-ci): apt retries and job timeouts. #2022 (flaky-ci): the hang. The lane's account: the stage was a
+    cell inside WASM, and the guard's kill line was lost because it was written on the event loop; the boot and each
+    cell get their own 180 s guard. Both with janitor-2.
+  - #2013 (e3): the P2 row. Its first repair failed that row in CI; the second (a3dba4b3) starts a child's limit at
+    a READY line. janitor-3 names it only if the row passes in CI.
+- **Findings of the evening of 2026-11-19, each with its owner.**
+  - #2006 (the stored-ask scrub, files-host): the worker's approvals list returns raw facts while
+    `docs/spec/SECRET_HANDLES.md` says otherwise (janitor-2). The coordinator's ruling: the list maps the scrubbed
+    facts, with a row that fails on base, and the scrub's pass-through past depth 8 fails closed, with a row.
+  - #2008 (the session-row scrub, files-host): change asked (janitor-2); the storage report's largest rows go
+    through the row-text scrub and a subtree past the depth is withheld. e3 holds seven rows for the repair head.
+  - #2015 (HUD dismissal, small-fixes): no row exercised the load gate (janitor-2). The row is written.
+  - #2011 (the reshaping task, bench): the amount checker accepted a grouped or digit-adjacent amount (janitor-3);
+    repaired at 0879f5d2. The coordinator named the notebook; residue: an alias made through a non-bare right-hand
+    side, or past depth 8, still counts as a hit.
+  - #1993 (the `out=` checker, packages): its own manifest row was stale; removed at dc6643b8.
+  - #2017 (the revises chip's target, small-fixes) adds a logic module, so it fails ruling 13 and goes to review.
+    #2016, #2019 and #2020 are draw-only and pass it.
+- **Queues at the end of 2026-11-19.** janitor-2: #2018, #2022, #1989 (24606799), #2001; re-names for #2015, #2006,
+  #2007, #2008 and window-ml-host#54 on new heads. janitor-3: #1993, #2013, #2011's code, #2012 after e3's rows, #2000,
+  #1991, #2005, #2002. flaky-ci's reviews: #2017, #1999's scripts, #1995, #1997. e3: #2008, #2012, #1993, #1991, #2006,
+  #2001, #1998, #2003, window-ml-host#54, and a guard row over every built bundle.
+- **Merged 2026-11-19 (evening), each verified.** #2014 (293e3bf7, the plan), #1975 (f7b8ab06, a session's
+  effective policies as rows), #2004 (773be7f7, the conflict-marker check), window-ml-host#53 (cd82e8cc, the awk
+  splice check).
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
