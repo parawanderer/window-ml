@@ -5,9 +5,8 @@ const CHUNK = 512 * 1024;
 
 /**
   * A fake `/files` reader: an in-memory store per session behind any number of `channel()` objects, with the layout
-  * (root, `attached/` and `agent/` itself read-only; a run writes only in its own folder `agent/<folder>/`, and every other
-  * model's folder answers ENOENT as if it were missing), transactions, hidden paths and a per-session quota.
-  * @param {{ quotaBytes?: number, hidden?: string[], folderOf?: (session: string) => string }} [opts] `hidden` paths are hidden in every session; `folderOf` names a session's own folder (default `m1`).
+  * (root and `attached/` read-only, `agent/` writable), transactions, hidden paths and a per-session quota.
+  * @param {{ quotaBytes?: number, hidden?: string[] }} [opts] `hidden` paths are hidden in every session.
   * @returns {{
   *   channel(): any,
   *   seed(session: string, path: string, bytes: Uint8Array | string): void,
@@ -17,7 +16,7 @@ const CHUNK = 512 * 1024;
   *   log: any[][],
   * }}
   */
-export function makeFakeFiles({ quotaBytes = 1 << 30, hidden = [], folderOf = () => "m1" } = {}) {
+export function makeFakeFiles({ quotaBytes = 1 << 30, hidden = [] } = {}) {
     /** @type {any[][]} */
     const log = [];
     /** @type {Map<string, { files: Map<string, any>, dirs: Set<string> }>} */
@@ -43,16 +42,11 @@ export function makeFakeFiles({ quotaBytes = 1 << 30, hidden = [], folderOf = ()
     };
     const store = (s) => {
         let st = stores.get(s);
-        if (!st) stores.set(s, (st = { files: new Map(), dirs: new Set(["", "attached", "agent", ownDir(s)]) }));
+        if (!st) stores.set(s, (st = { files: new Map(), dirs: new Set(["", "attached", "agent"]) }));
         return st;
     };
     const parentOf = (p) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
-    const ownDir = (s) => "agent/" + folderOf(s);
     const underAgent = (p) => p.startsWith("agent/");
-    /** Strictly below the session's own folder. */
-    const underOwn = (s, p) => p.startsWith(ownDir(s) + "/");
-    /** The path is inside another model's folder (or is it): `agent/<x>` with x not the session's own. */
-    const inOther = (s, p) => underAgent(p) && p.split("/")[1] !== folderOf(s);
     const isHidden = (s, p) => {
         for (const h of [...hiddenAll, ...(hiddenBy.get(s) ?? [])]) if (p === h || p.startsWith(h + "/")) return true;
         return false;
@@ -131,7 +125,7 @@ export function makeFakeFiles({ quotaBytes = 1 << 30, hidden = [], folderOf = ()
             mtimeMs: e ? e.mtimeMs : 1_700_000_000_000,
             birthtimeMs: e ? e.birthtimeMs : 1_700_000_000_000,
             hidden: isHidden(s, p),
-            readonly: !(underOwn(s, p) || p === ownDir(s)),
+            readonly: !(underAgent(p) || p === "agent"),
         };
     };
 
@@ -166,17 +160,8 @@ export function makeFakeFiles({ quotaBytes = 1 << 30, hidden = [], folderOf = ()
             if (f.kind === "w" && !txns.has(f.txn.id)) throw err("EBADF", syscall);
             return f;
         };
-        /** Another model's folder, or anything under it: indistinguishable from a missing path. */
-        const unseen = (s, p, syscall) => {
-            if (inOther(s, p)) throw err("ENOENT", syscall, p);
-        };
-        /** Judge a write-class target: EROFS at the root and in attached/, ENOENT in another model's existing folder, EACCES outside the own folder. */
-        const writable = (s, v, p, syscall) => {
-            if (p !== "agent" && !underAgent(p)) throw err("EROFS", syscall, p, "read-only file system");
-            if (inOther(s, p) && v.dirs.has("agent/" + p.split("/")[1])) throw err("ENOENT", syscall, p);
-            if (underOwn(s, p)) return;
-            if (p === ownDir(s) && syscall === "mkdir") throw err("EEXIST", syscall, p);
-            throw err("EACCES", syscall, p, `EACCES: '${p}' is outside this run's folder`);
+        const writable = (p, syscall) => {
+            if (!underAgent(p)) throw err("EROFS", syscall, p, "read-only file system");
         };
         const parentDir = (v, p, syscall) => {
             const k = kindOf(v, parentOf(p));
@@ -189,10 +174,6 @@ export function makeFakeFiles({ quotaBytes = 1 << 30, hidden = [], folderOf = ()
         const txnOf = (s, opts, syscall) => (opts && opts.txn != null ? getTxn(s, opts.txn, syscall) : undefined);
 
         return {
-            /** The session's own folder as a path (`/files/agent/<folder>`), undefined before `setSession`. */
-            get home() {
-                return session === null ? undefined : "/files/" + ownDir(session);
-            },
             setSession(hash, opts) {
                 session = hash;
                 attemptTxn = opts?.attemptTxn;
@@ -200,14 +181,12 @@ export function makeFakeFiles({ quotaBytes = 1 << 30, hidden = [], folderOf = ()
             stat(path, opts) {
                 return call("stat", [path, opts], (s) => {
                     const p = canon(path, "stat");
-                    unseen(s, p, "stat");
                     return statOf(s, viewOf(s, txnOf(s, opts, "stat")), p, "stat");
                 });
             },
             opendir(path, opts) {
                 return call("opendir", [path, opts], (s) => {
                     const p = canon(path, "opendir");
-                    unseen(s, p, "opendir");
                     const v = viewOf(s, txnOf(s, opts, "opendir"));
                     const k = kindOf(v, p);
                     if (!k) throw err("ENOENT", "opendir", p);
@@ -218,9 +197,7 @@ export function makeFakeFiles({ quotaBytes = 1 << 30, hidden = [], folderOf = ()
                     for (const q of [...v.files.keys(), ...v.dirs]) {
                         if (q === "" || !q.startsWith(prefix)) continue;
                         const rest = q.slice(prefix.length);
-                        if (rest === "" || rest.includes("/")) continue;
-                        if (p === "agent" && rest !== folderOf(s)) continue;
-                        names.add(rest);
+                        if (rest !== "" && !rest.includes("/")) names.add(rest);
                     }
                     let sorted = [...names].sort();
                     const cur = opts.cursor;
@@ -238,7 +215,6 @@ export function makeFakeFiles({ quotaBytes = 1 << 30, hidden = [], folderOf = ()
             open(path, opts) {
                 return call("open", [path, opts], (s) => {
                     const p = canon(path, "open");
-                    unseen(s, p, "open");
                     const t = txnOf(s, opts, "open");
                     const v = viewOf(s, t);
                     const k = kindOf(v, p);
@@ -274,7 +250,7 @@ export function makeFakeFiles({ quotaBytes = 1 << 30, hidden = [], folderOf = ()
                         mtimeMs: d.mtimeMs,
                         birthtimeMs: d.birthtimeMs,
                         hidden: isHidden(s, f.path),
-                        readonly: !underOwn(s, f.path),
+                        readonly: !underAgent(f.path),
                     };
                 });
             },
@@ -295,10 +271,10 @@ export function makeFakeFiles({ quotaBytes = 1 << 30, hidden = [], folderOf = ()
             openWrite(path, flags, txn) {
                 return call("openWrite", [path, flags, txn], (s) => {
                     const p = canon(path, "open");
+                    writable(p, "open");
                     if (!["w", "a", "r+", "x"].includes(flags)) throw err("EINVAL", "open", p);
                     const t = getTxn(s, attemptTxn != null ? attemptTxn : txn, "open");
                     const v = viewOf(s, t);
-                    writable(s, v, p, "open");
                     const k = kindOf(v, p);
                     if (k === "dir") throw err("EISDIR", "open", p);
                     parentDir(v, p, "open");
@@ -359,10 +335,10 @@ export function makeFakeFiles({ quotaBytes = 1 << 30, hidden = [], folderOf = ()
                 return call("rename", [from, to, txn], (s) => {
                     const a = canon(from, "rename");
                     const b = canon(to, "rename");
+                    writable(a, "rename");
+                    writable(b, "rename");
                     const t = getTxn(s, txn, "rename");
                     const v = viewOf(s, t);
-                    writable(s, v, a, "rename");
-                    writable(s, v, b, "rename");
                     const ka = kindOf(v, a);
                     if (!ka) throw err("ENOENT", "rename", a);
                     parentDir(v, b, "rename");
@@ -380,8 +356,8 @@ export function makeFakeFiles({ quotaBytes = 1 << 30, hidden = [], folderOf = ()
             unlink(path, txn) {
                 return call("unlink", [path, txn], (s) => {
                     const p = canon(path, "unlink");
+                    writable(p, "unlink");
                     const t = getTxn(s, txn, "unlink");
-                    writable(s, viewOf(s, t), p, "unlink");
                     const k = kindOf(viewOf(s, t), p);
                     if (!k) throw err("ENOENT", "unlink", p);
                     if (k === "dir") throw err("EISDIR", "unlink", p);
@@ -391,9 +367,9 @@ export function makeFakeFiles({ quotaBytes = 1 << 30, hidden = [], folderOf = ()
             mkdir(path, txn) {
                 return call("mkdir", [path, txn], (s) => {
                     const p = canon(path, "mkdir");
+                    writable(p, "mkdir");
                     const t = getTxn(s, txn, "mkdir");
                     const v = viewOf(s, t);
-                    writable(s, v, p, "mkdir");
                     parentDir(v, p, "mkdir");
                     if (kindOf(v, p)) throw err("EEXIST", "mkdir", p);
                     t.ops.push({ op: "mkdir", path: p });
@@ -402,9 +378,9 @@ export function makeFakeFiles({ quotaBytes = 1 << 30, hidden = [], folderOf = ()
             rmdir(path, txn) {
                 return call("rmdir", [path, txn], (s) => {
                     const p = canon(path, "rmdir");
+                    writable(p, "rmdir");
                     const t = getTxn(s, txn, "rmdir");
                     const v = viewOf(s, t);
-                    writable(s, v, p, "rmdir");
                     const k = kindOf(v, p);
                     if (!k) throw err("ENOENT", "rmdir", p);
                     if (k === "file") throw err("ENOTDIR", "rmdir", p);
