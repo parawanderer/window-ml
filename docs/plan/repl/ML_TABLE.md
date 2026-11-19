@@ -1,11 +1,28 @@
 # `ml.table`: a cell reads its own tables (design note for ruling 68, 2026-11-19)
 
 Written by packages (session `19f583d1`, `claude-opus-5-5`) for Shane, through the coordinator (repl-specs). NOTHING here
-is built; nothing is built from it until Shane rules on this note. Rulings 69 (item 7), 70 (item 2), 71 (item 4) and 72 (item 12) are already
-Shane's and are written as settled. Every other item ends in a recommendation.
+is built; nothing is built from it until Shane rules on this note. Rulings 69 (item 7), 70 (item 2), 71 (item 4),
+72 (item 12), 75 (item 7, the commit point) and 76 (item 7, the quota) are already Shane's and are written as settled.
+Every other item ends in a recommendation.
 
-Each claim is marked: **[code]** read from the code at main 293e3bf7, with the place; **[measured]** run, with the
-script in the lane's scratchpad (`mtable/`, `mpandas/`); **[guess]** neither.
+Each claim is marked:
+- **[code]**: read from the code at main 293e3bf7, with the place.
+- **[measured]**: run, with the script in the lane's scratchpad (mtable/, mpandas/, marrow/, mjspi/).
+- **[guess]**: neither.
+
+## Decisions for Shane
+
+| Question | Recommendation | Item |
+| --- | --- | --- |
+| How a cell waits on `ml.table`: the fork's `Await`, or a synchronous call over JSPI | JSPI: `t = ml.table(src)` works on the pinned core with no rebuild (measured in Node; Chrome still to measure) | 1 |
+| What a Python cell gets: ruling 68's TableLike, or a pandas DataFrame | a DataFrame: the JS facade has four methods, less than the model has now | 1 |
+| `tables` on `python_exec` (and `ml.pythonExec`'s option): removed, or kept as shorthand for `name = ml.table(src)` | kept as shorthand: it injects nothing, and 623 of 647 table-fetch runs use it | 5 |
+| A computed Sheet in an approved cell, which the card did not hoist | a nested ask on the running step, its card naming the resolved id | 2 |
+| `ml.fs.rm`, `mv` and an overwrite, unasked | free only for a file this run made; otherwise ask; `attached/` refused. A restorable `rm`: three sub-questions | 7 |
+| A fetch parses its whole table eagerly | detection and a prefix summary in the fetch; the full parse only on `ml.table` or `.table` | 11 |
+| Dtypes in that summary, taken from a prefix | label them "from the first N rows" | 11 |
+| The engine for tables past the cell's memory cap | pyarrow 22 (already shipped); a large CSV is converted to Parquet first | 12 |
+| Money columns read as `decimal128` by inference | only when the cell names the column (`decimal=[...]`) or its header names a currency; never by decimal places alone | 12 |
 
 ## What ruling 68 changes
 
@@ -28,10 +45,28 @@ one the cell made and owns, and the same member exists in JS.
   FORK change and a core rebuild: `run_cell` compiles with `PyCF_ALLOW_TOP_LEVEL_AWAIT` and drives the coroutine on the
   cell's loop, and the membership pass admits an `Await` node only when its value is a call whose callee is an
   attribute of the facade `ml` (the name bound by the harness, never a rebinding). Every other await stays out.
+- **The alternative needs no `Await` node: a synchronous `ml.table(...)` over JSPI.**
+  - The pinned core has `pyodide.ffi.run_sync` and `can_run_sync`. They are marked experimental, and they work when
+    JS Promise Integration is on and the stack was entered through `runPythonAsync`, which is how every cell runs
+    (`_pyodide/_core_docs.py:1689` in the core's stdlib) **[code]**.
+  - Measured on the pinned core in Node 26, where JSPI is on by default (mjspi/jspi.mjs): `can_run_sync()` is True. A
+    harness callable registered with `_restricted.allow_call` that calls `run_sync(<coroutine>)` returned its value
+    from inside `restricted.run_cell` **[measured]**.
+  - So the facade's `ml.table` can block on the wire answer and return the frame, and a cell writes `t = ml.table(src)`
+    with no rebuild.
+  - What is not measured: Chrome's offscreen worker (JSPI ships enabled in current Chrome **[guess: not checked against
+    the pinned Chrome]**); the dialect's step budget and wall clock while suspended; and whether other webloop tasks
+    run during the suspension and can see the half-run cell (`spend-queue.ts:4` notes JSPI queues Python a second
+    time).
+  - **Recommendation: JSPI, after those three are measured in Chrome.** It needs no fork change and no Await rule, and
+    the facade gives one spelling inside and outside the dialect. Ruling 68 wrote `await ml.table`; under JSPI,
+    `await` is refused inside and harmless outside only if the member also returns an awaitable, so the spelling is
+    part of this decision.
 - **Size.** A wire answer over `WIRE_VALUE_CAP` (1 MiB, `sw-ml-wire.ts:27`) comes back as a pointer **[code]**.
   Recommendation: `ml.table` answers with the table's bytes in the value store (the route `injectStoredTable` already
   uses, `python-runtime.ts:918`), read into the cell as `bytes`, never as a JSON row list.
-- **What a Python cell gets: a pandas DataFrame**, built in the cell from those bytes, so it is fresh and owned (item 3)
+- **What a Python cell gets: a question for Shane.** Ruling 68's words are "it returns a TableLike, not bare rows". The
+  recommendation departs from them: **a pandas DataFrame**, built in the cell from those bytes, so it is fresh and owned (item 3)
   and is the pandas the model already writes. The JS `Table` facade has four methods (`col`, `select`, `records`,
   `head`; `contract-fetch.ts:135-145`) and refuses everything else with a pointer to `python_exec`
   (`table-data.ts:626-639`) **[code]**: handing Python that facade would give the model LESS than it has now. The
@@ -51,8 +86,8 @@ one the cell made and owns, and the same member exists in JS.
     `pd.read_csv(url)` find it afterwards.
 - **A page-built run** (`ml.pythonExec` from a page script, stateless) opens a wire client too (`src/sw/sw-python.ts:275`,
   `run: null`) **[code]**, so `ml.table` exists there with the same rule; what it cannot have is a run's fetch cache.
-  Recommendation: `ml.pythonExec` keeps its `tables` option, defined as item 5's shorthand, because a page script is
-  the one caller that already holds its data.
+  Whether `ml.pythonExec` keeps its `tables` option is part of item 5's question. The recommendation is to keep it,
+  as item 5's shorthand, because a page script is the one caller that already holds its data.
 
 ## 2. The approval rule (ruling 70, settled)
 
@@ -67,6 +102,14 @@ A source given to `ml.table` is judged exactly as a source in `tables` is today 
 - An http(s) URL is read only from the run's fetch cache, and never fetched (`worker-tools.ts:382-387`): a cache hit
   is free, because the person already approved that fetch. A miss is an error today.
 - The approval card hoists the sources above the code (`externalSheetGrant`, `sidebar/transcript/agent-detail.tsx:213`).
+- **A fetch result is a source** (ruling 68's own example, `ml.table(ml.fetch(<a csv>))`), with this note's
+  recommendation for how:
+  - It is judged and read by its URL alone: `ml.table(r)` is `ml.table(r.url)`, so a fetch made in the same cell is
+    then a cache hit.
+  - Its `.text` and `.table` are never read as the source. They may be a truncated view (`valueKey`), and in a cell
+    they are the cell's own dict, which could carry any URL beside any text. Reading by the URL takes the whole kept
+    body (ruling 71), and a dict naming a URL the run never fetched gets the same ask as that URL.
+  - In JS the same holds for a `FetchResult` object, whose `url` field is the source.
 
 What changes is WHERE the source is. In `tables` it is a value in the tool's arguments; in `ml.table` it is an
 expression in the code. The coordinator's reading is correct, with one correction:
@@ -146,7 +189,9 @@ the mount exists. Why it stays:
 
 ## 5. `tables`, `df`, `current`, sheets and pointers
 
-- **Recommendation: keep `tables` as shorthand,** defined as the cell running `name = await ml.table(source)` for each
+- **Question for Shane: keep `python_exec`'s `tables` argument, or remove it?** Ruling 68 says python_exec stops
+  injecting tables; the shorthand injects nothing, but keeping the argument is Shane's call. **Recommendation: keep
+  it as shorthand,** defined as the cell running `name = await ml.table(source)` for each
   entry before its code, under item 2's rule.
   - 623 of the 647 table-fetch runs used `tables` **[measured]**, so removing it would retrain every model for no gain.
   - The rows are no longer injected: the prelude calls the member.
@@ -184,11 +229,12 @@ Recommendation: the bytes are the original, and the table is a view of them.
 ## 7. A cell writes its own session's `/files` (ruling 69, settled)
 
 A cell inside the dialect writes its own session's `/files/` unasked. The limit is the session quota and nothing
-else: what the session's runs keep, at stored size, as a DevTools Settings flag (proposed 1 GiB), enforced in the
-offscreen document on every chunk (session-store, #1999's slice 1, not on main).
+else (ruling 76): `filesQuotaMB`, default 1024, what the session's runs keep at stored size. It is a DevTools Settings
+flag, and session-store's. The model may propose a change through `change_setting`, which always asks. It is enforced
+in the offscreen document on every chunk (#1999's slice 1, not on main).
 
 - **Which members write `/files` inside the dialect** (async's hole 4). The dialect has no `open()` and no `os`. Ruling
-  36's route table (branch `measure/py-files-mount`, `notebooks/files-mount/data/routes.json`) shows every one of 51
+  36's route table (branch `measure/py-files-mount`, notebooks/files-mount/data/routes.json) shows every one of 51
   file routes refused inside today. The one exception, `to_string(buf=path)`, is #1991's fix **[measured]**.
   - Admitted, each as a manifest leaf `"effects": "writes(path arg) when the path is in the session's files"` with
     the checker below:
@@ -207,8 +253,8 @@ offscreen document on every chunk (session-store, #1999's slice 1, not on main).
     keep = f                            # the handle under another name
     keep.write(row)                     # no path on this call; the gate sees a str
     ```
-    In a worker-hosted run the namespace persists, so `keep` outlives the cell and writes from a later cell, after the
-    quota check and the commit-on-success rule (below) have run. The library writers and `ml.fs.writeFile` cover the
+    In a worker-hosted run the namespace persists, so `keep` outlives the cell and writes from a later cell, long after
+    the path was checked at `open`. The library writers and `ml.fs.writeFile` cover the
     same need with one checked call each. Revisit only if a measured task needs incremental writes.
   - Not admitted: `to_excel`, `to_latex`, `to_markdown` and `to_xml`. Their optional dependencies are missing
     outside too (the route table). Also not admitted: `ndarray.tofile` and `shutil`. `tofile` is a C method with a
@@ -216,25 +262,32 @@ offscreen document on every chunk (session-store, #1999's slice 1, not on main).
   - `to_pickle` writes inert bytes, but reading a pickle back runs code. `pd.read_pickle`, `np.load(...,
     allow_pickle=True)` and `pickle.load` stay refused inside, on a `/files` path too, and each gets a committed row.
     `np.load` with `allow_pickle` unset or False is a read, under ruling 71's rule.
+  - Every admitted writer is a row in #1991's ENUMERATED test: probed, or given a reason. A name added to it without
+    the row fails that test.
+  - JS: `ml.fs.writeFile`, `ml.fs.rm` and `ml.fs.mv`, through `mlFacade`.
 - **Question for Shane: may `ml.fs.rm`, `ml.fs.mv` and an overwrite run unasked?** Ruling 69's words are "let it write
   it to its own files". Deleting or overwriting an earlier file is wider than writing a new one.
-  - What protects the person's files today: `attached/` is read-only (EROFS, session-store's rule (a)), and nothing
-    else.
-  - Session-store's quota counts "what a session's runs keep", so everything outside `attached/` was written by some
-    run of this session. Whether the person can also place a file outside `attached/` (from the files panel, or by
-    moving one) is not settled in #1999 **[guess: not read]**. If they can, `rm` reaches a file the model did not
-    write.
-  - An earlier run's file is also not this run's: a later model can delete an earlier result the person kept.
+  - What protects the person's files: `attached/` is read-only (EROFS, session-store's rule (a)), and nothing else.
+  - Who writes outside it, by #1999's spec at b93f7328: a person cannot upload into `agent/`. Attachments land at
+    `attached/<handle>/<name>`, and the model copies from there. The person can rename, move within `agent/` and
+    delete there, from the files panel. So every byte outside `attached/` was written by a run of this session, and
+    `rm` cannot reach a byte the model did not write.
+  - But an earlier run's file, or one the person renamed or kept on purpose, is not this run's, and a later model can
+    delete it.
+  - Caveat: a later host proposal ("/files on the person's disk") would let the person's own edits reach `agent/`.
+    This rule would then need asking again.
   - **Recommendation:** writing a NEW path is free (ruling 69). `rm`, `mv` and an overwrite are free only for a file
     this run made, tracked by the offscreen document per run as the commit records it, never as the script says.
     For any other file outside `attached/`, they ask, with a card that names the file, who made it and when. Under
     `attached/` they are refused (EROFS).
-  - If the shelf keeps the previous version (session-store's atomic commit already holds it until the new one is
-    committed), an `rm` could move to a restorable bin instead of deleting. That would make the free case
-    recoverable too. It is session-store's to say whether the shelf can keep it.
-  - Every admitted writer is a row in #1991's ENUMERATED test: probed, or given a reason. A name added to it without
-    the row fails that test.
-  - JS: `ml.fs.writeFile`, `ml.fs.rm` and `ml.fs.mv`, through `mlFacade`.
+  - **A restorable `rm`, if Shane wants it** (session-store: the shelf can keep a removed or overwritten version as
+    one row marked removed, with the Blob kept by reference and no bytes copied; a restore is one commit; `mv` needs
+    nothing kept). Three sub-questions, with session-store's recommendations:
+    - Do kept versions count toward `filesQuotaMB`? Yes, or `rm` frees nothing.
+    - How long are they kept: until the session is deleted, for a bounded time, or until the person empties them?
+    - Does the backup carry them? No.
+    It would amend two sentences of #1999's spec: "there are no versions per write" and "Deleting a file deletes its
+    versions".
 - **The checker proves the path before the call.** It is a lifted `allow_call` entry check, registered the way
   #1991's `buf` check is (`_ml_buffer_args`). It reads the path by keyword and by position, through `*` and `**`, and
   from a bound method held in a name (e3's `f = d.to_string; f(*[], **{…})`). Then it applies session-store's rule:
@@ -258,15 +311,12 @@ offscreen document on every chunk (session-store, #1999's slice 1, not on main).
     `ml.fs.cp` copies the kept bytes (ruling 71's), so the file in `/files` is byte-for-byte the response, with its
     encoding, BOM and line endings. It is the only route that promises that, and the docs say so.
 - **The offscreen document is the boundary;** the checker is a gate before it.
-- **A failed cell keeps nothing. Recommendation: for.** An inside cell's `/files` writes commit only when the cell
-  succeeds.
-  - The dialect already rolls back a failed or refused cell's namespace (PYTHON_DIALECT.md). A refused cell is rerun
-    on the full path once it is approved, so a write kept from the refused attempt would be made twice. Worse, it
-    would have been made without the person's answer to the card that followed.
-  - The cost: a cell that writes and then fails loses the file, and the model reruns it. There is no partial write to
-    reason about.
-  - Built in #1999's slice 1 as a pending set per cell, committed by the harness after the cell's verdict. Written into
-    #1999's spec by session-store.
+- **The commit point (ruling 75, and the coordinator's call under it).** A file commits when it is closed.
+  - A full cell commits on close. A failed full cell keeps the files it closed.
+  - An attempt INSIDE the dialect holds its closed files in the attempt's transaction. It commits them only if the
+    attempt succeeds, and a refusal or a failure aborts them, as its namespace already rolls back. Otherwise a
+    refused attempt, rerun on the full path after approval, would have written once before the person answered.
+  - session-store writes it in slice 1's spec.
 - **What e3 attacks:** `..` past the root; `/files/attached`, `./attached/../attached/x`; a hidden name; a path in
   another session (it must resolve inside its own root by construction); a link, if any API can make one; a write
   over quota (ENOSPC, the old version intact); a write then a refusal in the same cell; each write leaf by every
@@ -280,7 +330,7 @@ one, so the AGREE rows that hold the generated registration equal to the manifes
 ```json
 "ml.table": {"effects": "reads-external when the source is an unapproved Sheet or an uncached URL; pure otherwise",
              "returns": "fresh", "inside": {"await": true, "source": ["selector", "current", "@tool:", "cached url",
-             "approved sheet", "/files path"], "keywords": ["raw", "delimiter", "header"]}}
+             "fetch result (by its url)", "approved sheet", "/files path"], "keywords": ["raw", "delimiter", "header", "decimal"]}}
 ```
 
 The `/files` writers carry `"effects": "writes(path arg) when inside the session's files"`. The checker of item 7 is
@@ -309,8 +359,9 @@ Every probe ends as a committed row or a one-line reason.
 - **Owners** (set by the coordinator, 2026-11-19):
   - packages: the Python `await ml.fetch` and `await ml.table`, the dialect change, `read_csv`, the `/files` write
     checker, and the lazy table.
-  - The JS-dialect owner: the JS `ml.table` and its `mlFacade` entry.
-  - The fork lane: `run_cell` with await.
+  - The JS `ml.table` and its `mlFacade` entry: unassigned; the coordinator assigns after the ruling.
+  - The fork's `run_cell` with await, if item 1 chooses it over JSPI: unassigned; the coordinator assigns after the
+    ruling.
   - session-store: the ranged reader, `ml.fs` and the `/files` commit, after #1995 and #1999.
   - async: Python's `/files` mount, on session-store's reader.
   - e3: the rows.
@@ -334,7 +385,7 @@ Every probe ends as a committed row or a one-line reason.
 
 ## 11. Should a fetch stop building a table by default?
 
-**[measured]**, `mtable/measure.mjs`, Node/V8, calling `derivedFetchFields` itself:
+**[measured]**, mtable/measure.mjs, Node/V8, calling `derivedFetchFields` itself:
 
 - **The parse is eager.** Every CSV fetch parses the whole body page-side (`derivedFetchFields`,
   `src/ml/fetch-result.ts:24`, `tableFromDelimited(r.text)` with no options).
@@ -359,8 +410,10 @@ Every probe ends as a committed row or a one-line reason.
   computed from a bounded prefix (the first 64 KB, plus a newline count of the rest for the row total).
 - The full parse runs only on `ml.table(...)`, or on the JS `.table` being read: a lazy getter, so existing exec code
   keeps working.
-- Dtypes from a prefix can be wrong past it. A column numeric in the prefix with text later is the case. So the
-  summary says "dtypes from the first N rows".
+- **Question for Shane: may the summary state dtypes inferred from a prefix?** The failure case: a column numeric in
+  the first 64 KB and text after it (a footer row, a `TBD`) is shown as `int64`. The model then writes arithmetic the
+  full parse breaks. Recommendation: yes, labelled "dtypes from the first N rows", because the alternative is the
+  full parse this item removes. `ml.table`'s own dtypes always come from the whole file.
 - The bytes stay the original (item 6).
 - The gain is at size, not on the bench fixture: about 1 s and 600 MB of transient page heap per 60 MB fetch that
   nothing reads.
@@ -369,7 +422,7 @@ Every probe ends as a committed row or a one-line reason.
 
 **Where pandas fails today [measured]**
 
-Setup: `mpandas/one.mjs`, the pinned core (pandas 3.0.2), Node on a 24 GiB machine, one fresh process per size, and a
+Setup: mpandas/one.mjs, the pinned core (pandas 3.0.2), Node on a 24 GiB machine, one fresh process per size, and a
 6-column sales CSV written into the file system as bytes.
 
 | CSV | `read_csv` | wasm heap after | frame (deep) |
@@ -406,7 +459,7 @@ Setup: `mpandas/one.mjs`, the pinned core (pandas 3.0.2), Node on a 24 GiB machi
 
 **pyarrow on 11.74 million rows (a 500 MB CSV, the same data as a 53 MB Parquet file) [measured]**
 
-Setup: `marrow/`, the pinned core, Node, one fresh process per run. The files are on a NODEFS mount, so they are not
+Setup: marrow/, the pinned core, Node, one fresh process per run. The files are on a NODEFS mount, so they are not
 in the wasm heap. The heap baseline with pyarrow and pandas imported is 124 MiB. The per-cell cap is 256 MiB on top
 of the heap.
 
@@ -427,9 +480,15 @@ of the heap.
   session's files, and queried there. The conversion's own bound is still to be measured: the writer reached 745 MiB
   at 16 MB blocks, and a small block size was not tried. Until it is measured, a CSV past the materialise cap is
   answered with pandas `chunksize` (the 130-155 MiB row above), or refused.
-- **Exactness:** a money column is read as `decimal128`. A column with at most 2 decimal places in the first block
-  is taken as money; the summary says so, and `raw` opts out. Then the sums are exact and do not move with block
-  size. A float column's sum is labelled float, and it is what Arrow's kernel gives.
+- **Exactness: a question for Shane, because it is an inference on the person's data.** `decimal128` sums are exact
+  and do not move with block size, while float64 drifted by up to 0.17 cents per region **[measured]**.
+  - The rule first drafted, "a column with at most 2 decimal places in the first block is money", fails on a
+    2-decimal measurement column (a temperature, a weight). It would be summed as decimal, then refuse a `mean` that
+    needs more places, or overflow `decimal128(18,2)` past 10^16.
+  - Recommendation: never infer money from decimal places alone. A column is read as decimal only when the cell says
+    so (`ml.table(src, decimal=["amount"])`), or when its header names a currency (`amount_usd`, `price €`). The
+    summary says which columns were read as decimal and why. Every other numeric column is float64, and its sum is
+    labelled float.
 - **Where it runs:** in the cell's own Pyodide worker, over a file-like built on #1999's ranged reader (`/files`) or on
   the fetch cache's value store. No bridge call is needed per operation.
 - **Open question for the fork lane:** whether Arrow's allocations count against the dialect's memory cap. The fork
