@@ -36,6 +36,7 @@ Match it to what you touched, not to what you hope passes:
 | `background.ts`, `sw-*.ts`, `content.ts`, `injected.ts` | `ext` |
 | `python-runtime.ts` / `python-worker.ts` | `python` |
 | `offscreen.ts`, `py-reap.ts`, `sw-python.ts` (the sandbox's host side) | `python-host` (`node scripts/test.mjs python-host`) |
+| the policy store's consumers or views (`sw-policies.ts`, `sw-policy-view.ts`, asks over a policy, the lifter, proposals) | `policy` (`node scripts/test.mjs policy`) |
 | anything security-relevant (a tool, a member, a page-started message) | `redteam` |
 | anything you are about to commit | `npm test` |
 

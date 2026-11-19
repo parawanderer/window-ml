@@ -28,7 +28,7 @@ export function shellStatusText(s: ShellStatus | null): string {
 
 /**
  * The section's body.
- * @gallery {"c":{"shellEnabled":true,"shellRoots":["/Users/me/src/proj"],"shellSandbox":true,"shellPath":[]},"initial":{"enabled":true,"ready":true,"sandboxed":true,"host":{"version":"0.2.0","platform":"macos","sandbox":{"kind":"seatbelt","available":true}}}}
+ * @gallery {"c":{"shellEnabled":true,"shellRoots":["/Users/me/src/proj"],"shellSandbox":true,"shellPath":[],"shellRevealsAllow":["ps"]},"initial":{"enabled":true,"ready":true,"sandboxed":true,"host":{"version":"0.2.0","platform":"macos","sandbox":{"kind":"seatbelt","available":true}}}}
  * @group settings
  * @param c the config
  * @param setField writes one setting
@@ -36,14 +36,15 @@ export function shellStatusText(s: ShellStatus | null): string {
  * @param platform what the browser says about this machine (the gallery's); absent asks `chrome.runtime.getPlatformInfo`
  */
 export function ShellSectionBody({ c, setField, initial, platform: givenPlatform }: {
-    c: Pick<MlConfig, "shellEnabled" | "shellRoots" | "shellSandbox" | "shellPath">;
-    setField: (k: "shellEnabled" | "shellRoots" | "shellSandbox" | "shellPath", v: boolean | string[]) => void;
+    c: Pick<MlConfig, "shellEnabled" | "shellRoots" | "shellSandbox" | "shellPath" | "shellRevealsAllow">;
+    setField: (k: "shellEnabled" | "shellRoots" | "shellSandbox" | "shellPath" | "shellRevealsAllow", v: boolean | string[]) => void;
     initial?: ShellStatus;
     platform?: HostPlatform;
 }) {
     const [status, setStatus] = useState<ShellStatus | null>(initial ?? null);
     const [roots, setRoots] = useState((c.shellRoots ?? []).join("\n"));
     const [path, setPath] = useState((c.shellPath ?? []).join("\n"));
+    const [reveals, setReveals] = useState((c.shellRevealsAllow ?? []).join("\n"));
     const [platform, setPlatform] = useState<HostPlatform | null>(givenPlatform ?? null);
     const [checking, setChecking] = useState(false);
     // "Check again" in the installer guide: a hello to the host, whether or not ml.sh is on (the person pressed it).
@@ -100,6 +101,12 @@ export function ShellSectionBody({ c, setField, initial, platform: givenPlatform
                 <textarea class="set-input shell-path" rows={2} spellcheck={false} placeholder="/opt/homebrew/bin" value={path}
                     onInput={(e: any) => setPath(e.target.value)}
                     onBlur={() => { setField("shellPath", linesOf(path)); setTimeout(() => measure(true), 50); }} />
+            </label>
+            <label data-setting="shellRevealsAllow" class="set-field">
+                <SettingLbl k="shellRevealsAllow" />
+                <textarea class="set-input shell-reveals" rows={2} spellcheck={false} placeholder="ps" value={reveals}
+                    onInput={(e: any) => setReveals(e.target.value)}
+                    onBlur={() => setField("shellRevealsAllow", linesOf(reveals))} />
             </label>
             <div class={`set-hint shell-status${status?.ready ? (status.sandboxed ? " ok" : " warn") : status?.enabled ? " warn" : ""}`}>
                 {shellStatusText(status)}{" "}

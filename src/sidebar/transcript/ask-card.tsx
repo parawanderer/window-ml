@@ -10,10 +10,11 @@ import { rev, focusMode } from "../store";
 import { ARRIVAL_ASK, ARRIVAL_DENIED, type StepAsk } from "../../contract";
 import { ASK_ID } from "../../approval-key";
 import { decidedSteps, sendApproval, askKey, cursorTipOn } from "../ui-kit";
+import { services } from "../services";
 import { CopyableCode } from "../code-block";
 import { ApprovalRow } from "./approval-row";
 import { IconWarn } from "../icons";
-import { shCardLines, type ShCardLine, type ShFacts } from "../../shell/sh-call";
+import { REVEALS_CAUSE, shCardLines, type ShCardLine, type ShFacts } from "../../shell/sh-call";
 import { isCallAsk } from "../../shell/sh-entries";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { putCardLines, putSubject, type PutFacts } from "../../shell/sh-put";
@@ -154,12 +155,28 @@ export function AskList({ st, hash, live }: { st: AgentStep; hash?: string; live
                                     decidedSteps.add(key);
                                     rev.value++;
                                     sendApproval(hash, seq, ok, false, feedback, a.id);
-                                }} />}
+                                }} always={alwaysOf(a, (program) => {
+                                    // Listed first, then approved: the run's next call reads the list as written.
+                                    decidedSteps.add(key);
+                                    rev.value++;
+                                    void services().revealsAllow?.(program).catch(() => undefined).then(() => sendApproval(hash, seq, true, false, undefined, a.id));
+                                })} />}
                     </div>
                 );
             })}
         </>
     );
+}
+
+/**
+ * The "Always allow" answer of an ask that asks only because its program reveals other processes, on a surface that can
+ * write the list (`services().revealsAllow`); undefined for every other ask.
+ * @param a the ask
+ * @param allow what pressing it does, given the program
+ */
+export function alwaysOf(a: StepAsk, allow: (program: string) => void): { program: string; allow: () => void } | undefined {
+    const program = a.kind === "sh" && a.why?.cause === REVEALS_CAUSE ? a.why.program : undefined;
+    return typeof program === "string" && program && services().revealsAllow ? { program, allow: () => allow(program) } : undefined;
 }
 
 /** One answered ask, as a line under its step. */
