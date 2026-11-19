@@ -7,6 +7,7 @@ import { config, psError, loadedModels } from "../store";
 import type { Session } from "../store";
 import { shownModel, normModel, seenContext } from "../model";
 import { IconUsage } from "../icons";
+import { Ticking } from "../ui-kit";
 
 // Current context OCCUPANCY for a session = the LATEST turn's / step's usage
 // (prompt + completion), NOT a sum: every call re-sends the whole history, so the
@@ -89,7 +90,7 @@ export function SubcallChip({ s }: { s: Session }) {
     if (!sub) return null;
     return (
         <span class="tt usage-sub">
-            +{fmtCtx(sub.tokens)} sub
+            +<Ticking text={fmtCtx(sub.tokens)} /> sub
             <span class="tt-pop wrap above" role="tooltip">
                 {sub.tokens.toLocaleString()} tokens over {sub.calls} delegated vision sub-call{sub.calls === 1 ? "" : "s"} this turn
                 (look/locate/verify make their own model calls). This is separate SPEND, not context occupancy — each runs in
@@ -119,7 +120,7 @@ export function UsageBar({ s }: { s: Session }) {
             <span class="tt usage-gauge">
                 <span class="usage-ic" aria-hidden="true"><IconUsage /></span>
                 <span class="usage-track"><span class="usage-fill" style={{ width: `${Math.min(100, frac * 100).toFixed(1)}%`, background: usageHue(frac) }} /></span>
-                <span class="usage-pct">{pct}%</span>
+                <span class="usage-pct"><Ticking text={`${pct}%`} /></span>
                 <span class="tt-pop wrap above" role="tooltip">
                     Context: {occupancy.toLocaleString()} / {limit.toLocaleString()} tokens ({pct}%).
                     This is the live window occupancy — every turn re-sends the whole history. Near 100% the model starts truncating.
@@ -135,7 +136,7 @@ export function UsageBar({ s }: { s: Session }) {
         <>
         <span class="tt usage-gauge">
             <span class="usage-ic" aria-hidden="true"><IconUsage /></span>
-            <span class="usage-total">{fmtCtx(occupancy)} tok</span>
+            <span class="usage-total"><Ticking text={`${fmtCtx(occupancy)} tok`} /></span>
             <span class="tt-pop wrap above" role="tooltip">
                 {occupancy.toLocaleString()} tokens in context (latest turn). No context limit is known for this model{model ? ` ("${model}")` : ""} — it's never been resident in Ollama (a cloud model?), so there's no window size to show a % against.
             </span>

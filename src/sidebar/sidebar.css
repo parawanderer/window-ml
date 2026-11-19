@@ -1014,6 +1014,13 @@ textarea.cinput { resize: none; overflow-y: auto; line-height: 1.5; font: inheri
 .spend-warn svg { width: 12px; height: 12px; }
 /* One fact per line in the spend chip's tooltip */
 .spend-line { display: block; }
+/* THE FOOTER'S FIGURES ROLL (`Ticking`, ui-kit.tsx): the same `chat-tick-in` roll the chat page's live line uses, moved here from chat.css
+   so the panel and the DevTools panel draw it as well. `min-width` holds "100%" so the bar does not slide when 9% becomes 10%. */
+.usage-pct { display: inline-block; min-width: 4ch; text-align: right; }
+.usage-gauge .tick-d, .usage-sub .tick-d { display: inline-block; }
+.usage-gauge .tick-d.rolled, .usage-sub .tick-d.rolled { animation: chat-tick-in .22s cubic-bezier(.2, .8, .2, 1) backwards; }
+@keyframes chat-tick-in { from { transform: translateY(.45em); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .usage-gauge .tick-d.rolled, .usage-sub .tick-d.rolled { animation: none; } .usage-fill { transition: none; } }
 .usage-sub { margin-left: 6px; color: var(--fg-faint); font-size: 0.78em; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* --------------------------- shared bits -------------------------------- */
