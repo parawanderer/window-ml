@@ -14,13 +14,14 @@ import type { EffectsData } from "../effects";
 import type { ShCallSpan, ShUnasked } from "../contract";
 import type { TokenStore } from "../pointers/token-pipe";
 import { bytesOf, HostError, hostTakesEnvelope, READ_CHUNK, type HostClient, type HostPutFacts, type HostEnvelope, type HostFacts, type HostStream } from "../shell/host-protocol";
-import { credentialFor, envelopeFor, isShipped, factsFlavour, flavourReplan, envelopeMismatch, envelopeText, manifestFor, manifestsFor, parseShRun, planSpawn, protectedChangesText, shFacts, shOut, shOutcome, shResult, wireCodeOf, ShRefused, SH_HEAD_BYTES, SH_HOST_TIMEOUT_MS, SH_LEASE_MS, type ShFacts, type ShOut, type ShResult, type ShRunRequest } from "../shell/sh-call";
+import { credentialFor, envelopeFor, isShipped, factsFlavour, flavourReplan, envelopeMismatch, envelopeText, manifestFor, manifestsFor, parseShRun, planSpawn, protectedChangesText, shFacts, shOut, shOutcome, shResult, wireCodeOf, REVEALS_CAUSE, revealsAllowOf, revealsListed, ShRefused, SH_HEAD_BYTES, SH_HOST_TIMEOUT_MS, SH_LEASE_MS, type ShFacts, type ShOut, type ShResult, type ShRunRequest } from "../shell/sh-call";
 import { OUTPUT_CAP } from "../contract/contract-pointers";
 import { detachedCapMs, detachTask, type TailAnswer, type TaskOutcome } from "./sw-tasks";
 import { toolToken } from "../util";
 import { defineState } from "../state-registry";
 import { binaryKind } from "./body-read";
-import { judgeCall, askWhyOf, askedByPolicy } from "./sw-policies";
+import { judgeCall, askWhyOf, askedByPolicy, revealsAskWhy } from "./sw-policies";
+import { getConfig } from "./sw-llm";
 import { base64Of, parseShPut, putFacts, putRefusalText, putTooLargeText, type PutFacts } from "../shell/sh-put";
 import { readStoredBytes, storeText } from "./sw-values";
 import { noteAskOutcome, raiseAsk } from "./sw-asks";
@@ -32,7 +33,7 @@ import { registryReady, registrySubsNow } from "./sw-secret-registry";
 import { heldTail, margin, scrubRange, type RegistrySub } from "../secret-registry";
 import { holdOutput, shellHost, ShellUnavailable, withShell, type ShellHost } from "./sw-shell";
 import { manifestsReady, storedManifests } from "./sw-manifests";
-import { flavourOf, type ProgramManifest } from "../shell/program-manifest";
+import { flavourOf, revealingName, type ProgramManifest } from "../shell/program-manifest";
 import { operandArgs, operandChanges, type RanCall } from "../shell/manifest-proposal";
 
 /** The step a call is made from, as the worker knows it: never anything the script said. */
@@ -311,10 +312,12 @@ async function runCall(ctx: ShCallContext, req: ShRunRequest, started: (h: Shell
             // The stored manifests, once storage has been read (a failed read leaves none, so a call one would describe asks).
             await manifestsReady;
             const stored = storedManifests();
+            // Read at each call, so a program the person lists (or unlists) counts from the next call on.
+            const revealsAllow = await revealsAllowList();
             // No session mounts an uploads folder yet (FILE_ATTACHMENTS.md H16), so no call passes `files` and `/files`
             // stays the browser sandbox's; once one does, `hostMapsFiles(h.hello)` gates it.
             const session = { cwd, roots, stored, tilde: h.hello.tilde === true };
-            const place = { roots, stored, platform: h.hello.platform };
+            const place = { roots, stored, platform: h.hello.platform, revealsAllow };
             let plan = planSpawn(req, session);
             if (plan.filesRefusal) return refuse("Refused", plan.filesRefusal);
             // A credential the host injects, only when its hello lists the provider (an older host would ignore it).
@@ -329,7 +332,7 @@ async function runCall(ctx: ShCallContext, req: ShRunRequest, started: (h: Shell
                 let id = facts.id;
                 const discard = () => h.client.discard(id).catch(() => { /* expired or gone: nothing to start either way */ });
                 try {
-                    const version = await versionOf(ctx, h, facts, manifestsFor(stored, roots).list);
+                    const version = await versionOf(ctx, h, facts, manifestsFor(stored, roots).list, revealsAllow);
                     // The flavour the facts show may add hardening or a path to resolve that the first plan, made before
                     // any facts, could not know: discard, spawn the flavour's plan, and describe ITS facts, from the same
                     // program file only (PROGRAM_MANIFEST.md, "Flavours": where hardening is inserted).
@@ -445,8 +448,9 @@ async function decide(ctx: ShCallContext, f: ShFacts): Promise<{ by: string; pol
     }
     // No policy answers, an `ask` policy matched (it beats an allow and the built-in default), or the store is not loaded
     // yet: the person does, on a card inside the running step. The card offers no "remember" (an ask's card never does).
-    const why = askWhyOf(j);
-    if (why) recordRunLog(ctx.runId, { subsystem: "policy", kind: askedByPolicy(why) ? "ask" : "lapsed", reason: why.cause, detail: { tool: "sh", policy: why.policy ?? "" } });
+    // A call that asks only because its program reveals other processes says so, and its card offers "Always allow".
+    const why = askWhyOf(j) ?? revealsAskWhy(j, ctx.runId, "sh", asPolicyFacts(f), f.placement);
+    if (why) recordRunLog(ctx.runId, { subsystem: "policy", kind: askedByPolicy(why) ? "ask" : why.cause === REVEALS_CAUSE ? "reveals" : "lapsed", reason: why.cause, detail: { tool: "sh", policy: why.policy ?? "" } });
     const o = await raiseAsk(ctx.runId, ctx.seq, { kind: "sh", consumer: "sh", facts: asPolicyFacts(f), placement: f.placement, ...(why ? { why } : {}) });
     if (!o.allowed) return { refused: `ml.sh: ${o.state === "denied" ? "the person declined" : o.note || o.state}${o.state === "denied" && o.note ? ` (${o.note})` : ""}${why ? `. ${why.detail}` : ""}` };
     return { by: "person", waitedMs: o.waitedMs, ...(o.askId ? { askId: o.askId } : {}) };
@@ -468,6 +472,11 @@ function envelopeDetail(r: ShResult): Record<string, string | number | boolean> 
     };
 }
 
+/** `shellRevealsAllow` from the config, through {@link revealsAllowOf}: never the raw stored value. */
+export async function revealsAllowList(): Promise<readonly string[]> {
+    return revealsAllowOf((await getConfig()).shellRevealsAllow);
+}
+
 /**
  * The version the program reports, for a manifest written against a version range (the coordinator's ruling): an
  * ordinary call of the manifest's own version args, effects empty, judged like any other; free only under the OS
@@ -477,9 +486,11 @@ function envelopeDetail(r: ShResult): Record<string, string | number | boolean> 
  * @param h the host
  * @param facts the call's facts
  * @param manifests the manifests the call is described by (default: the shipped ones)
+ * @param revealsAllow `shellRevealsAllow`: the probe of a program that shows other processes is judged with the marker
+ *  (ruling 31), so it starts only once the program is listed
  * @returns the version, null when it was not read, or null too for a manifest that reads none
  */
-export async function versionOf(ctx: Pick<ShCallContext, "runId" | "seq" | "signal">, h: ShellHost, facts: HostFacts, manifests?: readonly ProgramManifest[]): Promise<string | null> {
+export async function versionOf(ctx: Pick<ShCallContext, "runId" | "seq" | "signal">, h: ShellHost, facts: HostFacts, manifests?: readonly ProgramManifest[], revealsAllow: readonly string[] = []): Promise<string | null> {
     const m = manifestFor(facts.argv, undefined, manifests);
     // A flavoured manifest reads its gnu probe, and only when nothing cheaper told the flavour (an in-root program, a
     // file of another name, the macOS system program: flavourOf); any other manifest reads its version range's.
@@ -502,7 +513,9 @@ export async function versionOf(ctx: Pick<ShCallContext, "runId" | "seq" | "sign
     if (probe.program.fingerprint !== fp || probe.placement !== "host-sandbox") { await drop(); log("changed"); return null; }
     // Judged with no effects, and that same judged object derives its envelope below (ruled 2026-10-19: the approved
     // claims are the judge's facts, so `git --version` gets write none like any other probe).
-    const judged: ShFacts = { ...shFacts(probe), effects: [] };
+    // A revealing program's probe carries the marker, by its manifest or by its name (`revealingName`), as its call does.
+    const reveals = m.reveals || revealingName(m, facts.program.path) ? { what: "processes" as const, program: m.program, allowed: revealsListed(revealsAllow, m.program) } : null;
+    const judged: ShFacts = { ...shFacts(probe), effects: [], reveals };
     const j = judgeCall(ctx.runId, "sh", asPolicyFacts(judged), "host-sandbox");
     // Only an allow starts it: a store not loaded yet, an `ask` policy or no answer would need a card, which a probe never raises.
     if (j.decision !== "allow") { await drop(); log(j.decision === "deny" ? "denied" : "would-ask"); return null; }

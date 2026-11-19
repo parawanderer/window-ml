@@ -364,3 +364,13 @@ test("a long tool list is what truncates: every other part of the head is kept w
     const src = readFileSync(new URL("../src/sidebar/transcript/step-streak.tsx", import.meta.url), "utf8");
     assert.match(src, /astreak-tools" \{\.\.\.cursorTipOn\(s\.tools\.join\(", "\), \{ delayMs: \d+, onlyIf: \(el\) => el\.scrollWidth > el\.clientWidth/, "the whole list on hover, only when it was cut");
 });
+
+// --- the failure count is the dev view's alone ---
+
+test("the calm view hides the folded streak's failure count and the dev view keeps it", () => {
+    const css = readFileSync(new URL("../src/chat/chat.css", import.meta.url), "utf8");
+    assert.match(css, /\.chat\.calm \.astreak-bad\s*\{\s*display:\s*none;\s*\}/, "calm: no red counter on the folded row");
+    assert.doesNotMatch(css, /(^|\n)\.astreak-bad\s*\{[^}]*display:\s*none/, "the base rule (the dev view) still draws it");
+    const src = readFileSync(new URL("../src/sidebar/transcript/step-streak.tsx", import.meta.url), "utf8");
+    assert.match(src, /\{failed \? <span class="astreak-bad">\{failed\} failed<\/span> : null\}/, "the element is still rendered, so the dev view has it");
+});
