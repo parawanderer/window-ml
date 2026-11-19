@@ -637,6 +637,51 @@ test("a pointer reads the same whether it is copied under a step or revised by o
     assert.ok(chips.every((c) => c.querySelector(".tt-pop")), "…and both explain themselves on hover");
 });
 
+// --- the toolbar and the revises chip on a call that revises another ---
+// The toolbar is absolutely positioned, so it sits over its nearest positioned ancestor: on a revising call that must be
+// the code (`.code-body`), not the block whose first row is the REVISES header. And the chip's inner `code` must paint
+// no ground of its own, because in prose `.md code` gives inline code a grey and the same chip drew differently there.
+test("a revising exec call's toolbar sits over the code, not the revises header", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("tb", "retry it"));
+    await w.dispatch(agentStep("tb", 1, {
+        seq: 1, tool: "exec", result: "1", token: "@tool:abc1234", arguments: { code: "return 2;" },
+        renderIn: { type: "code", lang: "javascript", text: "return 2;",
+                    revision: { ref: "@tool:dead000", tool: "exec", seq: 0, before: "return 1;" } },
+    }));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    w.shadow.querySelector(".astep-head").click(); await w.tick();
+    const tools = w.shadow.querySelector(".code-tools");
+    assert.ok(tools, "the toolbar is drawn");
+    const body = tools.parentElement;
+    assert.ok(body.classList.contains("code-body"), "its box is the code part of the block");
+    assert.ok(!body.querySelector(".r-diff"), "the revises header is outside that box");
+    assert.ok(body.querySelector("pre.code"), "the code is inside it");
+});
+
+test("a call that revises nothing keeps its toolbar directly in the block", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("tb0", "run it"));
+    await w.dispatch(agentStep("tb0", 1, {
+        seq: 1, tool: "exec", result: "1", token: "@tool:abc1234", arguments: { code: "return 2;" },
+        renderIn: { type: "code", lang: "javascript", text: "return 2;" },
+    }));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    w.shadow.querySelector(".astep-head").click(); await w.tick();
+    const tools = w.shadow.querySelector(".code-tools");
+    assert.ok(tools.parentElement.classList.contains("code-block"));
+    assert.ok(!w.shadow.querySelector(".code-body"), "no extra wrapper without a revision");
+});
+
+test("the pointer chip's code paints no ground of its own, so it matches inside prose", () => {
+    const css = sidebarCss();
+    const rule = /\.tok-chip code \{([^}]*)\}/.exec(css);
+    assert.ok(rule, "the chip styles its code");
+    assert.match(rule[1], /background:\s*none/);
+    assert.match(rule[1], /padding:\s*0\b/);
+    assert.match(css, /\.code-body\s*\{[^}]*position:\s*relative/, "the toolbar's box is positioned");
+});
+
 // WHAT THE PILL SAYS depends on whether the model NAMED the output it is revising. A name it wrote is worth
 // more than a hex address; a name we invent is worth less than one.
 test("the revises pill shows the model's own name for the call, and the raw pointer when it has none", async () => {
