@@ -145,14 +145,20 @@ test("the depth guard fails closed toward WITHHELD, not toward keeping the subtr
     assert.deepEqual(await forStored({ nums }), { nums });
 });
 
-test("the fail-closed path (the config cannot be read) withholds values too, and not keys", T, async () => {
+test("the fail-closed path (the config cannot be read) withholds values, keeps a schema-shaped key, and drops a value used as one", T, async () => {
     // `_coldRegistryForTest` only empties the registry: the next `registryReady()` reads the mocked storage, succeeds
     // with nothing in it, and the scrub runs normally. To reach the catch in forStored a read it makes must THROW, and
     // the first one is the config's (`getConfig` is uncached, so patching `sync.get` is enough).
     const get = chrome.storage.sync.get;
     chrome.storage.sync.get = async () => { throw new Error("storage is gone"); };
     try {
-        const got = await forStored({ a: "anything", [VALUE]: "v" });
+        // Both halves of the rule, so neither can be deleted silently: the shape exception (`type` kept, or a record
+        // loses its schema) and the hole (a value used as a key is not kept). jani's finding, 7019075670.
+        const got = await forStored({ type: "x", [VALUE]: "v" });
         clean("forStored with no config", got);
+        assert.ok(Object.hasOwn(got, "type"), `a schema-shaped key survives, or a record loses its shape: ${JSON.stringify(got)}`);
+        assert.equal(Object.hasOwn(got, VALUE), false, `a value used as a key is withheld: ${JSON.stringify(got)}`);
+        assert.equal(got.type, "[withheld: the registered secrets could not be read]", "and every string is withheld, including one under a kept key");
+        assert.equal(Object.keys(got).length, 2, `two keys: the kept one and the placeholder: ${JSON.stringify(got)}`);
     } finally { chrome.storage.sync.get = get; }
 });
