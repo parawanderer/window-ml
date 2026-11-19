@@ -102,6 +102,7 @@ export const INVENTORY: readonly InventoryEntry[] = [
     session("ml_pinned_tabs", "run-state", "tab ids, meaningless in another browser"),
     session("ml_pkginstalls", "run-state", "the Python packages each run installed; dies with the run's namespace, and the wheels themselves are in the mirror"),
     session("ml_setting_declined", "run-state", "the guarded settings each run's person declined, which that run does not ask again; meaningless outside the run"),
+    session("ml_card_dismissed", "run-state", "the runs whose page card the person closed, so it stays closed across navigation; run hashes, meaningless in another browser"),
     session("ml_py_bridged", "run-state", "runs whose Python cell reached the browser's JavaScript, for their later cells' cards; dies with the namespace"),
     local("ml_policies_run", "policies", "run policies belong to one session and go with it when it is archived or restored"),
     local("ml_policies_archived", "policies", "what an archived session lost, told once"),
