@@ -462,8 +462,9 @@ export function measureSettingBreadth(p: PolicyProposal, deps: SettingMeasureDep
             if (budget.left <= 0) break;
             tried++; evaluations++;
             const facts = settingFacts({ key: key as keyof MlConfig & string, from, to, class: decl.class, widens: settingWidens(key, from, to) });
-            const r = evalPolicy(p.source, facts, p.effect, { stepBudget: Math.min(POLICY_STEPS, budget.left) });
-            budget.left -= Math.max(1, r.steps ?? 1);
+            const meter = { steps: 1 };
+            const r = evalPolicy(p.source, facts, p.effect, { stepBudget: Math.min(POLICY_STEPS, budget.left), meter });
+            budget.left -= Math.max(1, meter.steps);
             if (r.decision === p.effect) matched++;
             else if (r.broken && budget.left > 0) { broken++; brokeWith ??= r.broken; }
         }

@@ -18,8 +18,7 @@ export type PolicyEffect = "allow" | "deny" | "ask";
 
 /** One evaluation: the decision, or `undefined` for no opinion, why the policy is broken when it is, and, for an ALLOW
  *  that held over a fact that is `null` (unknown) and so did not fire, which fact. */
-/** `steps` is what the evaluation spent of its budget, the whole budget when it ran out. */
-export type PolicyResult = { decision: PolicyEffect | undefined; broken?: string; unknown?: string; steps?: number };
+export type PolicyResult = { decision: PolicyEffect | undefined; broken?: string; unknown?: string };
 
 /** The step budget of one policy evaluation. Policies run on every gated call, often several per call, so this is a
  *  fraction of a survey's: a predicate over an argv or an effect set uses a few hundred. */
@@ -131,21 +130,25 @@ function buildFacade(ev: Evaluator, facts: Record<string, unknown>): Record<stri
  * does reaches them.
  */
 export function evalPolicy(source: string, facts: Record<string, unknown>, effect: PolicyEffect = "allow",
-    opts: { stepBudget?: number } = {}): PolicyResult {
+    opts: { stepBudget?: number; meter?: { steps: number } } = {}): PolicyResult {
     let ev: Evaluator | undefined;
+    // `meter` is told what the evaluation spent of its budget, the whole budget when it ran out: for a caller that shares
+    // one budget across evaluations (a setting measure). The result itself is unchanged.
+    const spent = (): void => { if (opts.meter && ev) opts.meter.steps = ev.stepsSpent(); };
     try {
         const ast = parse(source);
         ev = new Evaluator(null, opts.stepBudget ?? POLICY_STEPS, "policy");
         const c = buildFacade(ev, facts);
         const fn = runSync(ev.eval(ast, Object.create(policyRoot())));
         const out = runSync(ev.callOwn(fn, [c]));
-        const steps = ev.stepsSpent();
-        if (typeof out !== "boolean") return { decision: undefined, broken: `returned ${out === null ? "null" : typeof out}, not true or false`, steps };
+        spent();
+        if (typeof out !== "boolean") return { decision: undefined, broken: `returned ${out === null ? "null" : typeof out}, not true or false` };
         // A fact that is null is UNKNOWN, and an ALLOW over an unknown never fires; a DENY or an ASK over one does, the narrow
         // direction (POLICIES.md, the tree's ruling of 2026-10-21). The deciding layer's rule, not one a writer must remember.
-        if (out && effect === "allow" && ev.nullRead !== undefined) return { decision: undefined, unknown: ev.nullRead, steps };
-        return { decision: out ? effect : undefined, steps };
+        if (out && effect === "allow" && ev.nullRead !== undefined) return { decision: undefined, unknown: ev.nullRead };
+        return { decision: out ? effect : undefined };
     } catch (e) {
-        return { decision: undefined, broken: reason(e), ...(ev ? { steps: ev.stepsSpent() } : {}) };
+        spent();
+        return { decision: undefined, broken: reason(e) };
     }
 }
