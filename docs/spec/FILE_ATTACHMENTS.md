@@ -903,13 +903,16 @@ preview, like any other exec value.
   It bounds what a session's runs keep on disk: the person's attachments do not count, run-made files do, at their
   stored size (not three times). Its value is the DevTools Settings flag `filesQuotaMB` (the coordinator's call,
   2026-11-19; owned by the session-store lane), default 1024 MiB per session, below the value store's budget; a stored
-  value that is not a positive whole number reads as the default, and a larger number widens it. Over it, a write
-  rejects with `ENOSPC` and the message names `ml.fs.rm` or the files panel. It is checked on every chunk appended, not
-  only at the commit.
-- **The commit point is UNDECIDED** (open with Shane, 2026-11-19): a file commits when it is closed, or every write of
-  a cell commits together when the cell succeeds (ruling 69's restricted cells, and possibly `full` ones too). The
-  reader's write side serves either: writes belong to a transaction that commits atomically over all of its files, and
-  a file committed on its own close is a transaction of one.
+  value that is not a positive whole number reads as the default, and a larger number widens it. The model may propose
+  a change to it (ruling 76, Shane, 2026-11-19) through `change_setting` (MODEL_SETTINGS.md, "The surface"), as for
+  `taskTurnChainMax`: the key is guarded, so a change always asks the person. Over the quota, a write rejects with
+  `ENOSPC`, and the message names `ml.fs.rm`, the files panel, and proposing a larger `filesQuotaMB` with
+  `change_setting`. It is checked on every chunk written, not only at the commit.
+- **The commit point, for now** (ruling 75, Shane, 2026-11-19, accepting the coordinator's call): a file commits when
+  it is CLOSED, in both modes, as Python's and Node's own files do; each file is atomic on its own, and a cell that
+  fails keeps the files it already closed. An `ml.fs` write member is a transaction of one (`writeFile` commits at its
+  end, a write handle at `close()`). The reader's write side stays a transaction that commits atomically over all of
+  its files, so committing every write of a cell together when it succeeds stays one switch away.
 - **A worker evicted mid-file.** A commit is atomic: an uncommitted file's pending part is discarded when its writer
   goes (a worker evicted, a kernel killed, a tab closed), the previous version stands, and the next turn's start
   message says which file was not written. Nothing is half-written.
