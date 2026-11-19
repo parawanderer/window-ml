@@ -13,6 +13,7 @@ import { evalPolicy, PolicyEffect } from "../readonly-exec";
 import { fromFetch, free, boundFor, EffectsData } from "../effects";
 import { defineState } from "../state-registry";
 import type { AskWhy, PersistGrant } from "../contract";
+import { effectiveRows, type PolicyRow, type PolicyInput } from "./sw-policy-view";
 import { validList, CONSUMERS, GLOBAL_POLICIES_KEY, POLICY_LABEL_MAX } from "./policy-valid";
 
 /** Which kind of call a policy is about; a policy is only ever evaluated over calls of its own consumer. `sh` is
@@ -353,6 +354,27 @@ export function policyView(): { global: StoredPolicy[]; runs: { hash: string; po
         builtin: BUILTIN_POLICY,
         broken: Object.fromEntries(brokenWhy),
     };
+}
+
+/** One session's effective policies as rows (sw-policy-view.ts), computed here beside {@link judgeCall} from the same lists. */
+export function sessionPolicies(hash: string): { rows: PolicyRow[]; builtin: typeof BUILTIN_POLICY } {
+    const input = (l: StoredPolicy[]): PolicyInput[] => l.map((p) => ({ id: p.id, consumer: p.consumer, label: p.label, source: p.source, effect: p.effect, origin: p.origin, created: p.created, ...(brokenWhy.has(p.id) ? { broken: brokenWhy.get(p.id) } : {}) }));
+    return { rows: effectiveRows(input(globals), input(byRun.get(hash) ?? []), BUILTIN_POLICY), builtin: BUILTIN_POLICY };
+}
+
+/**
+ * Remove one policy from a session's view, with the confirm a widening removal needs. A removal that only narrows is done at
+ * once; one that widens (a deny or an ask goes) is refused until the caller says it showed the entry and what becomes reachable
+ * (`confirmed`), and the refusal carries both, so a caller that did not ask first learns them.
+ * @param hash the session whose view the removal is made from; a policy of neither this session nor the global list is refused
+ * @param id the policy to remove
+ * @param confirmed whether the person was shown a widening removal's effect
+ */
+export function removeFromSession(hash: string, id: string, confirmed: boolean): { removed: true; class: "narrows" | "widens" } | { removed: false; why: "unknown" | "confirm"; row?: PolicyRow } {
+    const row = sessionPolicies(hash).rows.find((r) => r.layer !== "default" && r.entry.id === id);
+    if (!row?.removal) return { removed: false, why: "unknown" };
+    if (row.removal.class === "widens" && !confirmed) return { removed: false, why: "confirm", row };
+    return removePolicy(id) ? { removed: true, class: row.removal.class } : { removed: false, why: "unknown" };
 }
 
 /**
