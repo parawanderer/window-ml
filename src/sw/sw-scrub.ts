@@ -119,12 +119,16 @@ export async function forModel(text: string): Promise<{ text: string; changed: b
  * value. Copies, so the asker's array is left as it was. Fails closed by THROWING, so the call is never sent.
  * @param messages the call's messages
  * @returns the messages the backend may get
- * @throws when the config or the registry cannot be read, with nothing of either in the message
+ * @throws when the config or the registry cannot be read, with nothing of either in the message, or when a message's
+ *  content is not text
  */
 export async function forModelMessages(messages: NeutralMessage[]): Promise<NeutralMessage[]> {
     let secrets: SecretSub[];
     try { secrets = await configSecrets(); await registryReady(); } catch { throw new Error("The request was not sent: the registered secrets could not be read to check it."); }
     const subs = registrySubsNow();
+    // A message is text or nothing (NeutralMessage). Content of any other shape (an array of parts an asker built) is
+    // refused rather than sent unread: the scrub reads only strings.
+    if (messages.some((m) => m.content != null && typeof m.content !== "string")) throw new Error("The request was not sent: a message's content was not text.");
     const scrub = (t: string): string => scrubRegistry(scrubSecrets(t, secrets), subs).text;
     // The content, and an assistant turn's thinking, which a backend that asks for it is sent too.
     return messages.map((m) => ({ ...m, ...(typeof m.content === "string" && m.content ? { content: scrub(m.content) } : {}), ...(m.reasoning ? { reasoning: scrub(m.reasoning) } : {}) }));

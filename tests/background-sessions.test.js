@@ -695,6 +695,17 @@ test("with the registry unreadable the utility model is not called at all, for a
     assert.deepEqual(bodies, [], "nothing reached the backend");
 });
 
+test("a title asked with content that is not text (an array of parts) is not sent: the scrub reads only strings", T, async () => {
+    const { bg, bodies } = utilityWorld();
+    await flush();
+    const messages = [{ role: "user", content: [{ type: "text", text: `name this: ${SECRET.value}` }] }];
+    const r = await bg.send({ type: "SESSION_TITLE", payload: { hash: KEPT, messages } }, { url: "chrome-extension://test/chat.html" });
+    await flush();
+    assert.ok(!JSON.stringify(r).includes(SECRET.value));
+    assert.ok(!bodies.some((b) => b.includes(SECRET.value)), "no request carried the value");
+    assert.ok(!bodies.some((b) => b.includes("name this")), "nothing of it was sent");
+});
+
 test("models.list answers what the whitelist allows, with kinds and the default marked", T, async () => {
     const bg = loadBackground({
         config: { ...config, chatUrl: "http://host/api/chat/completions", model: "qwen3:14b", modelFilter: "^qwen" },
