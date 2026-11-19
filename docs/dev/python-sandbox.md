@@ -33,8 +33,10 @@ can `pd.merge` them; keys validated as Python identifiers by `pyVarNameError`, s
 (the same accommodate-don't-fight tack as the read_csv redirect; `tables` is a reserved key). A map sent as a JSON
 STRING (`"{\"df\": \"https://…\"}"`, how glm-4.7-flash reads the schema's `oneOf`) is that map (`tablesMapFromJson`,
 dom.ts); the loader and the consent check both decode through it, or a sheet inside the string would skip its card. A
-path on the page's site (`/sales.csv`, `./x.csv`) is resolved against the page and read from the fetch cache like the
-absolute URL. A map key that is not a variable name (models key the map by the URL itself) loads under a name
+path on the page's site (`/sales.csv`, `./x.csv`, `../x.csv`) is resolved against the page and read from the fetch cache
+like the absolute URL, by one rule on both hosts (`sitePathUrl`: the page's `_loadTable` and the worker's `workerTable`,
+which until 2026-11-19 sent a path to the DOM reader as a selector). No CSS selector starts with `/`, `./` or `../`;
+`x.csv` is a selector, and `//host/x` or a path the URL parser takes off the page's origin is not a path. A map key that is not a variable name (models key the map by the URL itself) loads under a name
 derived from it (`derivedTableName`: `…/sales.csv` → `sales`) with the key as its alias; a reserved name is still
 refused. Each source auto-dispatches by shape
 (`_loadTable`): **a `<table>`/ARIA-grid selector** is walked page-side (`extractTable`,
