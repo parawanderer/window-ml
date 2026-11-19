@@ -131,7 +131,8 @@ md("""
   session and about 220 MiB for eight (section 1b): about its 16 MiB cache per session plus a fixed cost, and
   sublinear in sessions. The eager load grew by its directory's size for every session (about 262 MiB each, 2 GiB for
   eight), which is the cost the ruling forbids: it scales with what the sessions hold, not with what they read.
-- **What eager would save is small.** For small files (section 2) it saves the per-file slice, a fraction of a
+- **What eager would save is small** (indicative only: this bullet argues from section 2's timings, taken under
+  load, and the ruling rests on the memory figures above). For small files (section 2) it saves the per-file slice, a fraction of a
   millisecond, plus route A's 0.26 ms a request: an "eager under T bytes" rule would buy that and cost a second code
   path and a mount whose memory depends on what a session holds. Not worth it.
 - **What the spec may say about memory:** the reader's resident cost is its cache (16 MiB a session here) plus a fixed

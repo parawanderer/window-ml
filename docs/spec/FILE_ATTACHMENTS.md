@@ -761,8 +761,8 @@ allocates a fresh buffer per chunk and lets V8 collect it holds garbage up to th
 session reading 1.25 GiB) until a collection runs, and at eight sessions that pushed the machine out of the normal
 memory-pressure level: **the reader copies into a fixed buffer** (route A's shared one), never a buffer per chunk.
 
-**Eager under a measured size, or not at all.** PROPOSED (an infra call, the coordinator's): **lazy only, at every
-size.** What an "eager under T" rule could save is time on small files, and the lab's timings were taken while other
+**Eager under a measured size, or not at all.** RULED 2026-11-19 (the coordinator, an infra call, on the collected
+figures above): **lazy only, at every size**; no eager mount under a threshold. What an "eager under T" rule could save is time on small files, and the lab's timings were taken while other
 test runs shared the machine, so none of them is used here; whatever it saves, it would cost a second code path and a
 mount whose memory depends on what a session holds, which is the cost the ruling removes. The decision rests on the
 memory figures above.
@@ -812,6 +812,14 @@ method smuggled as a value (`ml.fs.readFile` passed as a callback), each `NotInD
 tests (`readLines` over a file growing while it is read, a `readdir` recursion over a deep tree); a `CONVERTS` or
 `NO_CONVERSION` decision for each member; and a re-check of the whole contract. `ml.fs` is an object, so it is its own
 branch of `mlFacade`, beside `ml.fetch` (policy.ts:520-531 copies functions only).
+
+**Hidden and secret-looking files.** Every front end of the reader (`ml.fs`, the Python mount, the file browser)
+applies the hide list (ruling 34: hide and show entries, the most specific wins, a tie hides) BEFORE it answers. The
+rule's text and the answer's shape (listed by name or absent, the error code a read gets) are files-host's hide-list
+spec's (POLICIES.md, "Hiding files"), and this spec only references them. Slice 2 does not land `readFile` or any other
+read member in the read-only dialect before that rule exists. The invariant Python already has carries over: as a
+cell's `open()` of a file that looks like a secret asks, a dialect read of such a file through an `ml.fs` read member
+asks, and is never answered free.
 
 **The extra columns.** `ml.files.list()`'s rows (who made it, last read, whether a transcript cites it) become extra
 fields on the stat result, under one key that cannot be mistaken for Node's: `stat.ml = { madeBy, lastReadMs, cited }`.
@@ -899,12 +907,16 @@ preview, like any other exec value.
 
 #### `ml.files` is superseded
 
-`ml.fs` replaces the proposed `ml.files` ("The files API", below). Its rules are kept: `list()` is `readdir` with
+PROPOSED, pending Shane (the coordinator asks): ruling 23 gives `ml.fs` Node's syntax; that it REPLACES `ml.files` has
+not been ruled. `ml.fs` replaces the proposed `ml.files` ("The files API", below). Its rules are kept: `list()` is `readdir` with
 `stat`, a read the dialect may call; `remove(paths)` is `rm`/`unlink`, judged as written: the runs' files go free, the
 person's ask unless a policy allows, and a cited file keeps its frozen version. Nothing built or model-facing names
 `ml.files` (searched: only this spec), so the rename costs no code.
 
 #### Slice 3's `files` in Python
+
+The Python mount's design is not fixed until the packages lane's measurement of the mounts (ruling 36, "Python's view:
+two mounts", below); that slice is the packages lane's.
 
 RECOMMENDATION: **`files` becomes paths under `/files/`, read by range,** for every cell, the restricted dialect
 included. `files: { name: "@file:3fa91c2" }` binds `name` to the path `/files/attached/3fa91c2/<name>`; the loader
@@ -965,8 +977,9 @@ are what the model reads.
 2. `ml.fs` read members in the isolated world, the routing, the dialect entry with its tests, the scrub window, the
    red-team pass, and the Node parity corpus for the read members. Must not break: `ml.current`'s and `ml.sh`'s routing rows.
 3. `ml.fs` write members, the quota setting, and the parity corpus extended to them.
-4. The Python mount on route A's type over the reader, slice 3's `files` as paths, the restart's remount. Must not
-   break: route A's Stop rows, rerun on this server.
+4. The Python mount on route A's type over the reader, slice 3's `files` as paths, the restart's remount, once the
+   packages lane's measurement of the mounts (ruling 36) fixes its design. Must not break: route A's Stop rows, rerun
+   on this server.
 5. The file browser over the mounts, its listing command and event, and the menu's first command. Test obligation:
    the listing and one command round-trip through the chat page's web build against the fake host, with no `chrome`
    (the `chat-web` skill).
@@ -974,7 +987,7 @@ are what the model reads.
    document; the mount's slice reruns route A's Stop and cost rows (`notebooks/pyodide-mount/`) against this reader.
 
 **Owners.** The ranged reader and `ml.fs`: unassigned; the coordinator assigns after this spec merges. The Python
-mount: the Pyodide lane.
+mount (slice 4): the packages lane, whose measurement of the mounts (ruling 36) fixes its design.
 
 ### Host directories in the sandbox, and a cell's edits as diffs (proposed 2026-11-13)
 
@@ -1297,7 +1310,7 @@ into the repository's object store and hash every build output. A delete or over
 and that card, kept in the transcript, is the only record of it. A workspace that is not a git repository falls back
 to #1780's before copies for cells, and gets no diff for an `ml.sh` call (open).
 
-**The files API.** SUPERSEDED 2026-11-17 by `ml.fs` ("`/files/` read by range, and `ml.fs`", above), which keeps both
+**The files API.** To be SUPERSEDED by `ml.fs` (PROPOSED, pending Shane: "`ml.files` is superseded", above), which keeps both
 rules below: `list()` is `readdir` with `stat`, `remove(paths)` is `rm`/`unlink`. As proposed on 2026-11-13: the model
 lists, ages and clears its own files in code (use case 6), with the same names in JS and Python:
 
