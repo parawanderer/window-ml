@@ -32,6 +32,7 @@ done
 NB_REFRESH=1 node scripts/nb.mjs run notebooks/python-packages/pypi-compat.ipynb   # after the chunks finish
 .venv/bin/python -I tests/fixtures/pkg-pep/make-cases.py
 node scripts/gen-core-env.mjs   # python_install's core tags and environment, from the new env.json
+node notebooks/python-packages/probe.mjs core && node scripts/gen-pkg-core.mjs   # the platform scan's core tables; gen-pkg-core refuses tables measured on another core than the pin
 node --import tsx --test tests/pkg-verdict.test.mjs tests/pkg-pep.test.mjs   # re-pin PROBE_TABLE, YES_BUT and the figures
 ```
 

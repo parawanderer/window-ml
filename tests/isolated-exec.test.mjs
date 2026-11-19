@@ -33,27 +33,30 @@ const SCRIPTS = {
     sh: "return (await ml.sh.run([\"git\", \"status\"])).code",
     // ml.sh outranks a pointer: a pointer-naming script may fall back to the page's world, one naming ml.sh never does.
     shPointer: "return (await ml.sh.run([\"wc\", \"-l\"])).code + @tool:exec.length",
+    settings: "return ml.settings().theme.value",
 };
 
 test("what a script names is read lexically: pointers in any of their forms, ml.current, and nothing in a plain script", () => {
-    assert.deepEqual(execNames(SCRIPTS.plain), { current: false, pointers: false, sh: false });
-    assert.deepEqual(execNames(SCRIPTS.pointer), { current: false, pointers: true, sh: false });
-    assert.deepEqual(execNames(SCRIPTS.deref), { current: false, pointers: true, sh: false });
-    assert.deepEqual(execNames(SCRIPTS.current), { current: true, pointers: false, sh: false });
-    assert.deepEqual(execNames(SCRIPTS.both), { current: true, pointers: true, sh: false });
-    assert.deepEqual(execNames("return ml . current"), { current: true, pointers: false, sh: false }, "spacing does not hide it");
-    assert.deepEqual(execNames("const current = 1; return current"), { current: false, pointers: false, sh: false }, "a local named current is not ml.current");
-    assert.deepEqual(execNames(SCRIPTS.sh), { current: false, pointers: false, sh: true });
-    assert.deepEqual(execNames(SCRIPTS.shPointer), { current: false, pointers: true, sh: true });
-    assert.deepEqual(execNames("return ml\n  .sh.run(['ls'])"), { current: false, pointers: false, sh: true }, "a line break does not hide it");
-    assert.deepEqual(execNames("const sh = 1; return ml.shadowRoot ?? sh"), { current: false, pointers: false, sh: false }, "a local named sh, or a member starting with sh, is not ml.sh");
+    assert.deepEqual(execNames(SCRIPTS.plain), { current: false, pointers: false, sh: false, settings: false });
+    assert.deepEqual(execNames(SCRIPTS.pointer), { current: false, pointers: true, sh: false, settings: false });
+    assert.deepEqual(execNames(SCRIPTS.deref), { current: false, pointers: true, sh: false, settings: false });
+    assert.deepEqual(execNames(SCRIPTS.current), { current: true, pointers: false, sh: false, settings: false });
+    assert.deepEqual(execNames(SCRIPTS.both), { current: true, pointers: true, sh: false, settings: false });
+    assert.deepEqual(execNames("return ml . current"), { current: true, pointers: false, sh: false, settings: false }, "spacing does not hide it");
+    assert.deepEqual(execNames("const current = 1; return current"), { current: false, pointers: false, sh: false, settings: false }, "a local named current is not ml.current");
+    assert.deepEqual(execNames(SCRIPTS.sh), { current: false, pointers: false, sh: true, settings: false });
+    assert.deepEqual(execNames(SCRIPTS.shPointer), { current: false, pointers: true, sh: true, settings: false });
+    assert.deepEqual(execNames("return ml\n  .sh.run(['ls'])"), { current: false, pointers: false, sh: true, settings: false }, "a line break does not hide it");
+    assert.deepEqual(execNames("const sh = 1; return ml.shadowRoot ?? sh"), { current: false, pointers: false, sh: false, settings: false }, "a local named sh, or a member starting with sh, is not ml.sh");
+    assert.deepEqual(execNames(SCRIPTS.settings), { current: false, pointers: false, sh: false, settings: true });
+    assert.deepEqual(execNames("const settings = {}; return settings.theme"), { current: false, pointers: false, sh: false, settings: false }, "a local named settings is not ml.settings");
 });
 
 test("the route for every page, script and mechanism", () => {
     // [approved, script, userScripts, cdp] → where (how | reason)
     const ISO = [[true, true], [true, false], [false, true], [false, false]];
     const expect = (approved, kind, us, cdp) => {
-        const reason = !approved ? "unapproved-page" : kind.startsWith("sh") ? "sh" : (kind === "current" || kind === "both") ? "current" : kind === "plain" ? "plain" : "pointer";
+        const reason = !approved ? "unapproved-page" : kind.startsWith("sh") ? "sh" : (kind === "current" || kind === "both") ? "current" : kind === "settings" ? "settings" : kind === "plain" ? "plain" : "pointer";
         if (reason === "plain") return "main/plain";
         if (us) return `isolated/userScripts/${reason}`;
         if (cdp) return `isolated/cdp/${reason}`;

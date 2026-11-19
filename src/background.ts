@@ -33,7 +33,7 @@ import { fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw/sw-f
 import { executeServerTool, serverToolResult } from "./sw/sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw/sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw/sw-events";
-import { configureSessionCommands, handleSessionTitle, ingestSessionEvent, keepSession, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw/sw-sessions";   // the cross-tab session index the chat page reads
+import { configureSessionCommands, handleSessionTitle, ingestSessionEvent, keepSession, liveHeldSessions, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw/sw-sessions";   // the cross-tab session index the chat page reads
 import { backupAction, backupFailure } from "./sw/sw-backup";   // backup and restore, for Settings
 import { folderAction } from "./sw/sw-archive";   // the session archive's folder, for Settings
 import { ensureHubRuntime, hubDevices, hubLog, hubState, revokeHubDevice, stopHubRuntime } from "./sw/sw-hub";   // this browser as a runtime on a hub
@@ -45,7 +45,7 @@ import { costCalls } from "./sw/sw-prices";
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants } from "./sw/sw-consent";
 import { syncPresence, isVisible, presence, injectRunTools, injectPageScripts, SITE_REQUESTS_KEY } from "./sw/sw-presence";
 import { isExtensionSender, senderFacts, editSiteAccess, pageRefusal, agentRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, upgradeNotice, dismissUpgradeNotice } from "./sw/sw-site-access";
-import { policiesReady, forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView } from "./sw/sw-policies";
+import { policiesReady, forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView, sessionPolicies, removeFromSession } from "./sw/sw-policies";
 import { POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "./sw/policy-valid";
 import { addManifest, manifestView, removeManifest } from "./sw/sw-manifests";
 import { librariesReady, removeLibrary, storedLibraries } from "./sw/sw-libraries";
@@ -69,7 +69,8 @@ import { FilesRefused, cleanFiles, isPdfFile, pdfToPageRun, textFiles } from "./
 import { adoptOnTab } from "./sw/adopt-run";
 import { pageRebuild } from "./agent/run-assembly";
 import { runControlPayloadError } from "./sw/run-payload-check";
-import { forPage } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets
+import { forBackendFromPage, forPage } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets; a page's model request, without a registered secret
+import { secretRegistryOp } from "./sw/sw-secret-registry";
 import { pythonPrewarm, pythonExec, pythonInterrupt, relayPyStdout, deletePythonRun, dropPythonLibraries, pythonReaped, pythonStarted, pythonDone } from "./sw/sw-python";
 import { focusLineFor } from "./sw/sw-focus";
 import { chatHashFor, openChatPage } from "./sw/sw-open-chat";
@@ -116,7 +117,7 @@ void housekeeping.start();
 // rehydrate — so a run that came back keeps its own tab — release the ones that did not.
 void hydrationDone.then(() => reconcileTabPins());
 // The value store's idle sweep: now, and on an alarm, since a worker evicted mid-run never releases what its session held.
-startValueSweeps();
+startValueSweeps(liveHeldSessions);   // its first pass releases held rows no session can end any more
 
 // TEST-ONLY (reachable only from the SW realm via serviceWorker.evaluate, like __mlApprovals — no page can
 // reach it, and nothing in prod calls it): simulate an MV3 eviction by dropping all in-memory run state, then
@@ -733,7 +734,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     // (or a content script relaying for one) that could add or widen one would be approving itself.
     if (message.type === "POLICIES") {
         if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
-        const p = (message.payload || {}) as { op?: unknown; id?: unknown; effect?: unknown; source?: unknown; label?: unknown; consumer?: unknown };
+        const p = (message.payload || {}) as { op?: unknown; id?: unknown; hash?: unknown; confirm?: unknown; effect?: unknown; source?: unknown; label?: unknown; consumer?: unknown };
         const str = (v: unknown, max: number): string | undefined => (typeof v === "string" && v.trim() && v.length <= max ? v : undefined);
         const effect = p.effect === "allow" || p.effect === "deny" || p.effect === "ask" ? p.effect : undefined;
         // Awaits the store's first storage read: a page that listed policies in an earlier worker life names ids this one
@@ -742,7 +743,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             await policiesReady;
             if (p.op === "add") {
                 const source = str(p.source, POLICY_SOURCE_MAX), label = str(p.label, POLICY_LABEL_MAX);
-                const consumer = p.consumer === "sh" ? "sh" : p.consumer === undefined || p.consumer === "fetch" ? "fetch" : undefined;
+                const consumer = p.consumer === "sh" || p.consumer === "setting" ? p.consumer : p.consumer === undefined || p.consumer === "fetch" ? "fetch" : undefined;
                 if (!source || !label || !effect || !consumer) { sendResponse({ error: "a policy needs an effect (allow, deny or ask), a label and its code" }); return; }
                 addGlobalPolicy({ consumer, effect, source, label });
             } else if (p.op === "edit") {
@@ -751,6 +752,20 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             } else if (p.op === "remove") {
                 const id = str(p.id, 100);
                 if (!id || !removePolicy(id)) { sendResponse({ error: "no such policy" }); return; }
+            } else if (p.op === "session") {
+                // One session's effective view (docs/spec/POLICIES.md, "The effective view"): a read, so no change to answer with.
+                const hash = str(p.hash, 100);
+                if (!hash) { sendResponse({ error: "a session hash is needed" }); return; }
+                sendResponse({ data: sessionPolicies(hash) });
+                return;
+            } else if (p.op === "removeChecked") {
+                // A removal from a session's view: a widening one needs `confirm: true`, and refuses with the entry and what it would expose.
+                const hash = str(p.hash, 100), id = str(p.id, 100);
+                if (!hash || !id) { sendResponse({ error: "a session hash and a policy id are needed" }); return; }
+                const r = removeFromSession(hash, id, p.confirm === true);
+                if (!r.removed) { sendResponse(r.why === "confirm" ? { error: "confirm", data: { row: r.row } } : { error: "no such policy" }); return; }
+                sendResponse({ data: sessionPolicies(hash) });
+                return;
             } else if (p.op !== undefined && p.op !== "list") { sendResponse({ error: "unknown op" }); return; }
             sendResponse({ data: policyView() });
         })();
@@ -783,6 +798,13 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     // The tier 3 libraries stored for the read-only Python dialect (READONLY_LIBRARY_MANIFEST.md, "The runtime import
     // loop"): read them, remove one. EXTENSION PAGES ONLY. There is no add here: a library is stored only from a card the
     // person approved. A remove restarts every Python worker that was handed a library (ruling D): nothing unloads a module.
+    // The person's registered secrets (SECRET_HANDLES.md, "The scrub as built"): list, add, remove. EXTENSION PAGES ONLY,
+    // judged by the sender the browser reports; every answer is names and a count, never a value.
+    if (message.type === "SECRET_REGISTRY") {
+        if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
+        secretRegistryOp((message.payload || {}) as { op?: unknown; name?: unknown; value?: unknown }).then(sendResponse, (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
+        return true;
+    }
     if (message.type === "LIBRARIES") {
         if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
         const p = (message.payload || {}) as { op?: unknown; id?: unknown };
@@ -1101,7 +1123,10 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         if (rid) inflight.set(rid, ctl);
         const done = () => { if (rid) inflight.delete(rid); };
         // A page's call is its own: it may not file its generation under a run the worker built (sw-runs.ts).
-        fetchLLM(sender.tab ? withoutWorkerSession(message.payload) : message.payload, ctl.signal)
+        // A page's request leaves for the backend with no registered secret in any message, and nothing about it said back.
+        const fromPage = !!sender.tab && !isExtensionSender(sender);
+        (fromPage ? forBackendFromPage(withoutWorkerSession(message.payload)) : Promise.resolve(sender.tab ? withoutWorkerSession(message.payload) : message.payload))
+            .then((payload) => fetchLLM(payload, ctl.signal))
             // raw (ml.step) returns { content, tool_calls } as data; normal chat
             // returns the content string, with sources alongside only when present.
             .then((result: any) => {
@@ -1459,7 +1484,9 @@ chrome.runtime.onConnect.addListener((port) => {
         // The same origin gate as a one-shot request: a page's stream is a model call like any other.
         const refusal = port.sender ? await pageRefusal("FETCH_LLM", port.sender) : null;
         if (refusal) { if (!closed) port.postMessage({ type: "error", error: refusal }); return; }
-        streamLLM(port.sender?.tab ? withoutWorkerSession(message.payload) : message.payload, (delta) => { if (!closed) port.postMessage({ type: "chunk", delta }); }, ctl.signal)
+        const fromPage = !!port.sender?.tab && !isExtensionSender(port.sender);
+        (fromPage ? forBackendFromPage(withoutWorkerSession(message.payload)) : Promise.resolve(port.sender?.tab ? withoutWorkerSession(message.payload) : message.payload))
+            .then((payload) => streamLLM(payload, (delta) => { if (!closed) port.postMessage({ type: "chunk", delta }); }, ctl.signal))
             .then(({ content, sources, model, reasoning, usage }) => { if (!closed) port.postMessage({ type: "done", content, sources, model, reasoning, usage }); })
             .catch((err) => {
                 const error = String(err?.message || err);

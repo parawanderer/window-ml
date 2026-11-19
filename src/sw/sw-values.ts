@@ -195,11 +195,51 @@ export async function storeHeld(blob: Blob, format: ValueFormat, source: string,
 }
 
 /**
+ * Release the held rows whose session nothing can end any more: a held row is exempt from idle and budget eviction
+ * while it names a session, so one whose session died with the worker (an ephemeral chat's PDF, a run that left no
+ * snapshot, a record whose write failed) would otherwise be charged to the budget for good. The rows are read first
+ * and `live` is asked at the moment of each release, so a session that starts while this runs is live by then and
+ * keeps what it holds.
+ * @param live whether something can still end the session (a chat in memory, a saved session, a run, an open tab)
+ * @param store the value store (a test seam)
+ * @returns the sessions released
+ */
+export async function releaseOrphanedHeld(live: (session: string) => boolean, store: Pick<ValueStore, "rows" | "releaseSession"> | null = values()): Promise<string[]> {
+    if (!store) return [];
+    const sessions = new Set((await store.rows()).flatMap((r) => (r.held ? r.sessions : [])));
+    const released: string[] = [];
+    for (const session of sessions) {
+        if (live(session)) continue;
+        await store.releaseSession(session);
+        released.push(session);
+    }
+    return released;
+}
+
+/**
+ * A worker start's pass over the value store: the held rows no session can end released, then the sweep. The sweep runs
+ * whatever the release did: a live set that cannot be read (no session store, a store that will not open) or a release
+ * that fails releases nothing, and never stops the idle and budget eviction that follows.
+ * @param liveSessions what can still end a held row's session (absent: release nothing)
+ * @param sweep the idle and budget sweep
+ * @param store the value store (a test seam)
+ */
+export async function firstValuePass(liveSessions: (() => Promise<(session: string) => boolean>) | undefined, sweep: () => void,
+    store: Pick<ValueStore, "rows" | "releaseSession"> | null = values()): Promise<void> {
+    try {
+        if (liveSessions) await releaseOrphanedHeld(await liveSessions(), store);
+    } catch { /* cannot tell a live session from an ended one: release nothing */ }
+    sweep();
+}
+
+/**
  * The idle sweep, now and every hour. The alarm is what catches orphans when nothing else runs: a worker evicted mid-run
  * never releases its session, and its values would otherwise wait for the next write. Call once, at the worker's top
  * level, so the alarm listener is registered on every start.
+ * @param liveSessions what can still end a held row's session, for the first pass to release the rest
+ *   ({@link releaseOrphanedHeld}); it throws when that cannot be told (no session store), and then nothing is released
  */
-export function startValueSweeps(): void {
+export function startValueSweeps(liveSessions?: () => Promise<(session: string) => boolean>): void {
     if (!values()) return;
     defineJob({
         id: "value-store.sweep",
@@ -212,7 +252,7 @@ export function startValueSweeps(): void {
         },
     });
     const sweep = () => { void values()?.sweep().catch(() => {}); };
-    sweep();
+    void firstValuePass(liveSessions, sweep);
     if (!chrome.alarms) return;
     chrome.alarms.onAlarm.addListener((a) => { if (a.name === SWEEP_ALARM) sweep(); });
     void chrome.alarms.get(SWEEP_ALARM).then((a) => { if (!a) void chrome.alarms.create(SWEEP_ALARM, { periodInMinutes: SWEEP_EVERY_MIN }); }).catch(() => {});

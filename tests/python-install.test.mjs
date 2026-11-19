@@ -67,10 +67,10 @@ function serveLock(bg) {
 const call = (args, name = "python_install") => ({ name, args });
 
 /**
- * A worker-built run on tab 7 whose model makes `calls` in turn. `answer(card, send)` is the person: it gets the
- * emitted step (its renderIn) and a `send(decision, files)` that posts SET_APPROVAL; it defaults to denying.
+ * A worker-built run on tab 7 whose model makes `calls` in turn. `answer(card, send, bg)` is the person: it gets the
+ * emitted step (its renderIn) and a `send(decision, files)` that posts SET_APPROVAL, and `bg` to act as the run's other surfaces do (Stop); it defaults to denying.
  */
-async function installRun(calls, { answer = (_ev, send) => send(false), offered = true, index = new Map(), files = new Map(), onPyInstallTest } = {}) {
+async function installRun(calls, { answer = (_ev, send) => send(false), offered = true, index = new Map(), files = new Map(), onPyInstallTest, settled } = {}) {
     offer = offered;
     pypi = index;
     wheels = files;
@@ -79,7 +79,7 @@ async function installRun(calls, { answer = (_ev, send) => send(false), offered 
     const cards = [];
     let n = 0, bg;
     bg = loadBackground({
-        siteGate: true, indexedDB: idb, onPyInstallTest,
+        siteGate: true, indexedDB: idb, onPyInstallTest: onPyInstallTest && ((msg) => onPyInstallTest(msg, bg)),
         config: { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "default-model", apiFormat: "openai", ocrModel: "", debugMode: "off" },
         local: { ml_site_always: ["https://site.example"] },
         openTabs: [{ id: 7, url: SITE_URL, title: "Site" }],
@@ -97,7 +97,7 @@ async function installRun(calls, { answer = (_ev, send) => send(false), offered 
                 cards.push(card);
                 // Rows are rebuilt in the worker's realm, as a structured clone delivers them: rowsFromAnswer demands its own Object.prototype.
                 const send = (decision, files) => bg.send({ type: "SET_APPROVAL", payload: { runId: card.id, seq: card.seq, decision, ...(files !== undefined ? { files: vm.runInContext(`(${JSON.stringify(JSON.stringify(files))})`, bg.context) && vm.runInContext("JSON.parse", bg.context)(JSON.stringify(files)) } : {}) } });
-                void Promise.resolve(answer(card, send));
+                void Promise.resolve(answer(card, send, bg));
             }
             if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
             if (msg.payload.finish) return { result: "" };
@@ -108,7 +108,8 @@ async function installRun(calls, { answer = (_ev, send) => send(false), offered 
     serveLock(bg);
     bg.commit?.(7, { documentId: "doc-1", url: SITE_URL });
     const { hash } = await bg.context.__mlStartUserRunForTest(7, { task: "probe", surface: "hud", maxSteps: 20 });
-    for (let i = 0; i < 4000 && n <= calls.length; i++) await new Promise((r) => setTimeout(r, 0));
+    // `settled`: a run that will not call the model again (Stop) is done when the row says so, not at the loop's cap.
+    for (let i = 0; i < 4000 && n <= calls.length && !settled?.(); i++) await new Promise((r) => setTimeout(r, 0));
     for (let i = 0; i < 60; i++) await new Promise((r) => setTimeout(r, 0));
     const last = bg.calls.filter((c) => c.url.includes("/chat/completions")).at(-1);
     const results = last.body.messages.filter((m) => m.role === "tool").map((m) => String(m.content));
@@ -307,7 +308,7 @@ test("approving a card with a PyPI row downloads it, tests its import in a candi
     assert.deepEqual(v.files.map((f) => [f.source, f.sha256, f.size]), [["pypi", WHEEL_SHA, WHEEL.byteLength]]);
     assert.deepEqual(r.mismatches, []);
     assert.equal(r.results[0], INSTALLED);
-    assert.deepEqual(r.candidates, [{ type: "PY_INSTALL_TEST", run: r.hash, wheels: [{ filename: WHEEL_FN, sha256: WHEEL_SHA }], modules: ["tabulate"] }]);
+    assert.deepEqual(r.candidates, [{ type: "PY_INSTALL_TEST", run: r.hash, wheels: [{ filename: WHEEL_FN, sha256: WHEEL_SHA }], modules: ["tabulate"], scope: ["tabulate"] }]);
     assert.deepEqual(r.installs, [{ name: "tabulate", version: "0.9.0", source: "pypi", filename: WHEEL_FN, sha256: WHEEL_SHA, topLevel: ["tabulate"] }]);
     assert.deepEqual(r.pkgInstalls.map((l) => l.reason), ["ok"]);
 });
@@ -336,10 +337,95 @@ test("a candidate whose interpreter died is a failed install, and nothing is rec
     assert.deepEqual(r.pkgInstalls.map((l) => l.reason), ["died"]);
 });
 
+test("Stop pressed while the candidate runs, and an import that passes after it, records nothing and is logged as stopped", { ...T, skip: SKIP }, async () => {
+    let answered = false;
+    const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), settled: () => answered, onPyInstallTest: async (msg, bg) => {
+        bg.send({ type: "CANCEL_RUN", payload: { runId: msg.run } });
+        for (let i = 0; i < 10; i++) await new Promise((res) => setTimeout(res, 0));
+        answered = true;
+        return { ok: true };
+    } });
+    assert.deepEqual(r.candidates.map((m) => m.type), ["PY_INSTALL_TEST", "PY_INSTALL_STOP"], "the control: the candidate was asked, and Stop reached it");
+    assert.deepEqual(r.installs, [], "a pass after Stop is not recorded");
+    assert.deepEqual(r.pkgInstalls.map((l) => [l.reason, l.level]), [["stopped", "warn"]]);
+    assert.ok(!r.results.some((t) => t.startsWith("Installed")), JSON.stringify(r.results));
+});
+
+test("Stop pressed before the test is sent starts no candidate, records nothing and is logged as stopped", { ...T, skip: SKIP }, async () => {
+    let stopped = false;
+    const r = await installRun([call({ name: "tabulate" })], { index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), settled: () => stopped, answer: (card, send, bg) => {
+        send(true, rowsOf(card));
+        bg.send({ type: "CANCEL_RUN", payload: { runId: card.id } });
+        stopped = true;
+    } });
+    assert.deepEqual(r.candidates, [], "no candidate was asked");
+    assert.deepEqual(r.installs, []);
+    assert.deepEqual(r.pkgInstalls.map((l) => [l.reason, l.level]), [["stopped", "warn"]]);
+});
+
 test("a candidate whose import raises rolls back with the error", { ...T, skip: SKIP }, async () => {
     const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), onPyInstallTest: () => ({ ok: false, module: "tabulate", error: "SystemExit: 2" }) });
     assert.equal(r.results[0], `Not installed: importing tabulate failed: SystemExit: 2. ${KEPT}`);
     assert.deepEqual(r.installs, []);
+});
+
+// --- the platform scan's note (slice 4b, PACKAGES_INSTALL.md item 7) ---
+
+const SUBPROCESS = { kind: "call", what: "subprocess.run", in: "tabulate.cli", chain: ["tabulate", "tabulate.cli"] };
+const RESOURCE = { kind: "missing", what: "resource", in: "other", chain: ["other"] };
+
+test("a scan finding on an install that passes is a note after the result, and the run log keeps the findings", { ...T, skip: SKIP }, async () => {
+    const scan = { findings: [SUBPROCESS], reached: 2 };
+    const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), onPyInstallTest: () => ({ ok: true, scan }) });
+    assert.equal(r.results[0], `${INSTALLED} The platform scan found: tabulate.cli calls subprocess.run at import time, which fails in this sandbox. The import passed, so this is a note: those paths may fail when the code reaches them.`);
+    assert.equal(r.installs.length, 1, "a note is never a refusal");
+    assert.deepEqual(r.pkgInstalls.map((l) => [l.reason, l.detail.scan, l.detail.scanFindings, l.detail.scanReached, l.detail.modules]), [["ok", "call subprocess.run in tabulate.cli", 1, 2, "tabulate"]]);
+});
+
+test("no finding, and no scan at all, leave the result as it was", { ...T, skip: SKIP }, async () => {
+    for (const answer of [{ ok: true, scan: { findings: [], reached: 1 } }, { ok: true, scan: null }, { ok: true }]) {
+        const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), onPyInstallTest: () => answer });
+        assert.equal(r.results[0], INSTALLED, JSON.stringify(answer));
+    }
+});
+
+test("the run log's scan line is fitted to the string cap by whole findings, and keeps the count of every finding", { ...T, skip: SKIP }, async () => {
+    const findings = [0, 1, 2, 3, 4, 5].map((i) => ({ ...SUBPROCESS, in: `tabulate.m${i}`, chain: ["tabulate", `tabulate.m${i}`] }));
+    const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), onPyInstallTest: () => ({ ok: true, scan: { findings, reached: 7 } }) });
+    const d = r.pkgInstalls[0].detail;
+    assert.equal(d.scan, [0, 1, 2, 3, 4].map((i) => `call subprocess.run in tabulate.m${i}`).join("; "), "five whole findings: the sixth would pass 200 characters");
+    assert.ok(d.scan.length <= 200);
+    assert.equal(d.scanFindings, 6);
+    assert.equal("scanTruncated" in d, false);
+});
+
+test("a scan that stopped at its bounds is flagged in the run log, and one that did not answer is logged as lost", { ...T, skip: SKIP }, async () => {
+    const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), onPyInstallTest: () => ({ ok: true, scan: { findings: [SUBPROCESS], reached: 2000, truncated: true } }) });
+    assert.deepEqual([r.pkgInstalls[0].detail.scanTruncated, r.pkgInstalls[0].detail.scanFindings, r.pkgInstalls[0].detail.scanLost], [true, 1, undefined]);
+    const lost = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), onPyInstallTest: () => ({ ok: true, scan: null }) });
+    assert.deepEqual([lost.pkgInstalls[0].detail.scanLost, lost.pkgInstalls[0].detail.scanFindings], [true, undefined]);
+});
+
+test("a failed import's reason carries the scan's finding when it is reached from the failing module, and only then", { ...T, skip: SKIP }, async () => {
+    const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), onPyInstallTest: () => ({ ok: false, module: "tabulate", error: "OSError: [Errno 138] Not supported", scan: { findings: [SUBPROCESS, RESOURCE], reached: 3 } }) });
+    assert.equal(r.results[0], `Not installed: importing tabulate failed: OSError: [Errno 138] Not supported. The platform scan found: tabulate.cli calls subprocess.run at import time, which fails in this sandbox. ${KEPT}`);
+    assert.deepEqual(r.installs, []);
+    assert.deepEqual(r.pkgInstalls.map((l) => [l.reason, l.detail.scan, l.detail.scanFindings]), [["import", "call subprocess.run in tabulate.cli; missing resource in other", 2]]);
+    const other = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), onPyInstallTest: () => ({ ok: false, module: "tabulate", error: "SystemExit: 2", scan: { findings: [RESOURCE], reached: 1 } }) });
+    assert.equal(other.results[0], `Not installed: importing tabulate failed: SystemExit: 2. ${KEPT}`, "a finding under another module is not this failure's reason");
+});
+
+// --- an install the run recorded while this one was in its candidate (PACKAGES_INSTALL.md item 10, shape iv) ---
+
+test("shape (iv): a call whose run record changed while its candidate ran is not recorded, and says to ask again", { ...T, skip: SKIP }, async () => {
+    const landed = { name: "other", version: "1.0", source: "pypi", filename: "other-1.0-py3-none-any.whl", sha256: "e".repeat(64), topLevel: ["tabulate"] };
+    const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), onPyInstallTest: async (msg, bg) => {
+        await bg.context.chrome.storage.session.set({ [PKG_INSTALLS_KEY]: { [msg.run]: [landed] } });
+        return { ok: true };
+    } });
+    assert.equal(r.results[0], "Not installed: another install of this run finished while this one was tested, so this one was not tested beside it. Ask python_install again; the files approved here stay in the mirror and show as mirror on the next card.");
+    assert.deepEqual(r.installs, [landed], "the other install stands; this one, which takes the same name, is not added beside it");
+    assert.deepEqual(r.pkgInstalls.map((l) => [l.reason, l.level]), [["concurrent", "warn"]]);
 });
 
 test("a wheel whose top-level name a lock package takes is refused before any candidate", { ...T, skip: SKIP }, async () => {

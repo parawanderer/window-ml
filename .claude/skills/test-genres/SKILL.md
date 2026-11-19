@@ -18,7 +18,12 @@ npm test               # everything. Before you commit.
 node scripts/test.mjs --list      # what each genre holds
 node scripts/test.mjs --timings   # per-file durations, slowest first. SERIAL: the total is a sum, not a wall clock
 node scripts/test.mjs panel ext   # more than one
+node scripts/test.mjs --timings-baseline   # refresh tests/test-times-baseline.json from this machine's history (refuses a thin one; --force)
 ```
+
+**Read the end of the output.** A block starting `test timings — warnings for whoever ran this` means a test file outlived its
+tests (a leaked timer or server: the run held the queue's slot), or a test ran far past its own history or its peers. It never
+changes the exit code; find what the test left running and stop it. See "Test timings" in `docs/dev/working-in-the-repo.md`.
 
 ## Which genre
 
@@ -31,6 +36,7 @@ Match it to what you touched, not to what you hope passes:
 | `background.ts`, `sw-*.ts`, `content.ts`, `injected.ts` | `ext` |
 | `python-runtime.ts` / `python-worker.ts` | `python` |
 | `offscreen.ts`, `py-reap.ts`, `sw-python.ts` (the sandbox's host side) | `python-host` (`node scripts/test.mjs python-host`) |
+| the policy store's consumers or views (`sw-policies.ts`, `sw-policy-view.ts`, asks over a policy, the lifter, proposals) | `policy` (`node scripts/test.mjs policy`) |
 | anything security-relevant (a tool, a member, a page-started message) | `redteam` |
 | anything you are about to commit | `npm test` |
 

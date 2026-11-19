@@ -47,10 +47,12 @@ function StrLeaf({ s, cls, sep, allOpen }: { s: string; cls: string; sep: Compon
     const long = !allOpen && s.length > JT_STR_CUT;
     const text = long && !full ? <>{cutString(s)}…</> : JSON.stringify(s);
     const val = <>{text}{sep}</>;
+    // One closing newline would draw a blank last line in the card.
+    const cardText = s.replace(/\r?\n$/, "");
     const more = long ? <button class="jt-more" aria-expanded={full} onClick={(e) => { e.stopPropagation(); setFull(!full); }}>{full ? "show less" : `show all ${s.length.toLocaleString()} chars`}</button> : null;
     return <>
         {hasEscapes(s) || (long && !full)
-            ? <HoverCard class={cls} card={<pre class="hc-text">{s}</pre>}>{val}</HoverCard>
+            ? <HoverCard class={cls} card={<pre class="hc-text">{cardText}</pre>}>{val}</HoverCard>
             : <span class={cls}>{val}</span>}
         {more}
     </>;
@@ -168,7 +170,9 @@ export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, 
                 ? <span class="jt-val jt-number jt-time" {...cursorTipOn(`${new Date(v).toISOString()} (${v})`)}>{timeLabel(v)}{sep}</span>
                 : typeof v === "string"
                     ? <StrLeaf s={v} cls={`jt-val jt-${t} ${HLJS_OF[t] ?? ""}`} sep={sep} allOpen={allOpen} />
-                    : <span class={`jt-val jt-${t} ${HLJS_OF[t] ?? ""}`}>{String(v)}{sep}</span>}
+                    // highlight.js draws `true`, `false` and `null` as a literal WRAPPING a keyword, and a theme colours the inner one
+                    // (purple, where the literal's own colour is blue): the same two spans here, or the tree and the text disagree.
+                    : <span class={`jt-val jt-${t} ${HLJS_OF[t] ?? ""}`}>{t === "boolean" || t === "null" ? <span class="hljs-keyword">{String(v)}</span> : String(v)}{sep}</span>}
             {trail}
         </div>;
     }

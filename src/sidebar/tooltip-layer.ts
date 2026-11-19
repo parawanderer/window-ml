@@ -97,7 +97,9 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
         const w = doc.defaultView?.innerWidth ?? 1024;
         const h = doc.defaultView?.innerHeight ?? 768;
         const box = layer.getBoundingClientRect();
-        const style = tipStyle({ x: t.left + t.width / 2, y: t.top, w });
+        // THE TIP'S OWN WIDTH, so it flips only when it does not fit on the right: without it the side was guessed from the middle of
+        // the window, and a link a little past the middle drew its tip hanging off to the LEFT with room to spare on the right.
+        const style = tipStyle({ x: t.left + t.width / 2, y: t.top, w }, box.width > 0 ? { w: box.width, h: box.height } : undefined);
         Object.assign(layer.style, { left: "auto", right: "auto", ...style });
         // tipStyle decides the side; the vertical half needs the tooltip's own height, which only exists now.
         const above = t.top - box.height - MARGIN;

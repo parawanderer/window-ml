@@ -22,7 +22,7 @@ const ROOT = new URL("..", import.meta.url).pathname;
 
 // --- the route: every input ---
 
-const SCRIPTS = { plain: "document.title = 'x'; return 1", pointer: "return @tool:exec.length", current: "return ml.current.messages.length", sh: "return (await ml.sh.run([\"ls\"])).code" };
+const SCRIPTS = { plain: "document.title = 'x'; return 1", pointer: "return @tool:exec.length", current: "return ml.current.messages.length", settings: "return ml.settings().theme.value", sh: "return (await ml.sh.run([\"ls\"])).code" };
 /** Each policy that forces isolation, and none: [approved page, script]. */
 const FORCED = { pointer: [true, SCRIPTS.pointer], current: [true, SCRIPTS.current], sh: [true, SCRIPTS.sh], "unapproved-page": [false, SCRIPTS.plain], none: [true, SCRIPTS.plain] };
 const AVAIL = { userScripts: { userScripts: true, cdp: false }, cdp: { userScripts: false, cdp: true }, none: { userScripts: false, cdp: false } };
@@ -367,7 +367,7 @@ test("on the default build, a world-less read-only survey still auto-answers on 
 
 /** Every reason, placed: `page` keeps the survey's page leg, `script` is read off the script and loses it, `call` is
  *  never read off the script (the page's approval, the call's `world`, the default world). An unplaced one fails. */
-const LEG = { plain: "page", sh: "script", current: "script", pointer: "script", "unapproved-page": "call", requested: "call", default: "call" };
+const LEG = { plain: "page", sh: "script", current: "script", settings: "script", pointer: "script", "unapproved-page": "call", requested: "call", default: "call" };
 
 test("every route reason is placed for the survey's page leg, and only a plain script keeps it", () => {
     assert.deepEqual([...EXEC_REASONS].sort(), Object.keys(LEG).sort(), `a reason is not placed: ${EXEC_REASONS.filter((r) => !(r in LEG))}`);
@@ -386,12 +386,18 @@ test("every route reason is placed for the survey's page leg, and only a plain s
     assert.equal(surveyMayEnterPage(`${SCRIPTS.pointer}; ${SCRIPTS.sh}`), false);
 });
 
-test("on the default config, a survey naming ml.sh never reaches the page's leg: it goes to the gate and runs isolated", T, async () => {
+test("on the default config, a survey naming ml.sh never reaches the page's leg: the worker answers it, and a script that reaches past its dialect goes to the gate", T, async () => {
+    // ml.sh is a member of the worker's survey (docs/dev/readonly-exec.md, "ml.sh in the worker's survey"): a script of reads and program
+    // calls is answered there, each call judged when it is made, and the page is never asked.
     const r = await worldRun([{ js: SCRIPTS.sh }], { autoRO: true });
     assert.equal(r.execMsgs.filter((p) => p.readonlyTry).length, 0, "the page was asked to survey a script that reaches the process host");
-    assert.deepEqual(r.roLog, [["readonly-worker", "script-isolated"]]);
-    assert.deepEqual(r.log, [["exec-isolated", "sh"]]);
-    assert.equal(r.approvals, 1, "it went to the gate");
+    assert.deepEqual(r.roLog, [["readonly-worker", "no-page-reads"]]);
+    assert.equal(r.approvals, 0, "no gate on the script: its calls are what is judged");
+    // A script that names ml.sh and ALSO something the worker's dialect lacks, before any call, still goes to the person and runs isolated.
+    const out = await worldRun([{ js: `document.title; ${SCRIPTS.sh}` }], { autoRO: true });
+    assert.equal(out.execMsgs.filter((p) => p.readonlyTry).length, 0, "never the page's leg");
+    assert.deepEqual(out.log, [["exec-isolated", "sh"]]);
+    assert.equal(out.approvals, 1, "it went to the gate");
 });
 
 test("a run the PAGE built keeps the survey's page leg for any script: its exec runs in the page's world, so the survey answers where the exec would", T, async () => {

@@ -14,6 +14,7 @@ import type { Change, PolicyChange, SiteChange } from "../../backup/backup-setti
 import { formatBytes } from "../../resource/resource-model";
 import { downloadBlob } from "../export/download";
 import { useCopy } from "../copy-hash";
+import { SecretInput } from "../secret-input";
 
 // --- pure helpers ---
 
@@ -100,7 +101,7 @@ export const recoveryKeyText = (key: string): string =>
 export function SecretField(p: { value: string; disabled: boolean; wrong?: boolean; label?: string; onInput(v: string): void; onEnter?(): void }) {
     return (
         <label class="set-field"><span>{p.label ?? "Passphrase or recovery key"}</span>
-            <input type="password" autocomplete="off" value={p.value} disabled={p.disabled} class={p.wrong ? "err" : ""}
+            <SecretInput autocomplete="off" value={p.value} disabled={p.disabled} class={p.wrong ? "err" : ""}
                 onInput={(e: any) => p.onInput(e.target.value)} onKeyDown={(e: any) => { if (e.key === "Enter" && p.value && !p.disabled) p.onEnter?.(); }} /></label>
     );
 }
@@ -145,8 +146,8 @@ export function RecoveryKeyBody(p: {
             <div class="bk">
                 <div class="bk-title">Set up backup encryption</div>
                 <div class="set-hint">Choose a passphrase. It protects every encrypted backup and archive file: anyone who gets a file can read every transcript in it unless they also know the passphrase, and guessing a short one is cheap. Use a sentence you will remember, at least {MIN_PASSPHRASE} characters. It is turned into a key with a deliberately slow function (Argon2id), so setting up and unlocking take about a second.</div>
-                <label class="set-field"><span>Passphrase</span><input type="password" autocomplete="new-password" value={first} disabled={p.busy} onInput={(e: any) => setFirst(e.target.value)} /></label>
-                <label class="set-field"><span>Again</span><input type="password" autocomplete="new-password" value={again} disabled={p.busy} class={problem && again ? "err" : ""} onInput={(e: any) => setAgain(e.target.value)} /></label>
+                <label class="set-field"><span>Passphrase</span><SecretInput autocomplete="new-password" value={first} disabled={p.busy} onInput={(e: any) => setFirst(e.target.value)} /></label>
+                <label class="set-field"><span>Again</span><SecretInput autocomplete="new-password" value={again} disabled={p.busy} class={problem && again ? "err" : ""} onInput={(e: any) => setAgain(e.target.value)} /></label>
                 {problem ? <div class="set-err">{problem}</div> : null}
                 {p.message ? <div class="set-err">{p.message}</div> : null}
                 {p.busy ? <div class="bk-progress" role="status"><div class="pbar"><span /></div><span>Setting up…</span></div> : null}
@@ -533,9 +534,9 @@ export function ChangePassphraseBody(p: { busy: boolean; message: string; onChan
     return (
         <div class="bk">
             <div class="bk-title">Change passphrase</div>
-            <label class="set-field"><span>Current passphrase or recovery key</span><input type="password" autocomplete="off" value={old} disabled={p.busy} onInput={(e: any) => setOld(e.target.value)} /></label>
-            <label class="set-field"><span>New passphrase</span><input type="password" autocomplete="new-password" value={first} disabled={p.busy} onInput={(e: any) => setFirst(e.target.value)} /></label>
-            <label class="set-field"><span>Again</span><input type="password" autocomplete="new-password" value={again} disabled={p.busy} class={problem && again ? "err" : ""} onInput={(e: any) => setAgain(e.target.value)} /></label>
+            <label class="set-field"><span>Current passphrase or recovery key</span><SecretInput autocomplete="off" value={old} disabled={p.busy} onInput={(e: any) => setOld(e.target.value)} /></label>
+            <label class="set-field"><span>New passphrase</span><SecretInput autocomplete="new-password" value={first} disabled={p.busy} onInput={(e: any) => setFirst(e.target.value)} /></label>
+            <label class="set-field"><span>Again</span><SecretInput autocomplete="new-password" value={again} disabled={p.busy} class={problem && again ? "err" : ""} onInput={(e: any) => setAgain(e.target.value)} /></label>
             {problem ? <div class="set-err">{problem}</div> : null}
             <div class="set-hint">Files already written still open with the old passphrase and with the recovery key; new files use the new passphrase.</div>
             <div class="bk-actions"><button class="test-btn" disabled={p.busy || !old || !!passphraseProblem(first, again)} onClick={() => p.onChange(old, first)}>{p.busy ? "Changing…" : "Change passphrase"}</button></div>
