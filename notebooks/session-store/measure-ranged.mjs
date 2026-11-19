@@ -64,7 +64,7 @@ function pressure() {
     return { level, freePct };
 }
 
-/** Run `fn` while sampling the tree's RSS and the memory pressure every 200 ms; returns its result with the peak, the
+/** Run `fn` while sampling the tree's RSS and the memory pressure every 100 ms; returns its result with the peak, the
  *  baseline, the worst pressure level seen and the lowest free-memory percentage. */
 async function sampled(mark, fn) {
     const base = treeRssMiB(mark);
