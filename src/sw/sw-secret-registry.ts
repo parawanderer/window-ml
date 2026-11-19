@@ -46,6 +46,22 @@ function adopt(next: RegistryEntry[]): void {
     subs = registrySubs(next);
 }
 
+const changeListeners: (() => void)[] = [];   // state: plumbing — who re-sends what it scrubbed once the entries change or are first read
+
+/**
+ * Hear the entries become readable or change: a crossing that scrubbed at its exit and keeps no copy (a session row
+ * withheld before the first read, or sent before a value was registered) sends again.
+ * @param f the listener
+ */
+export function onRegistryChanged(f: () => void): void {
+    changeListeners.push(f);
+}
+
+/** Tell every listener; one listener's failure is not the rest's. */
+function changedNow(): void {
+    for (const f of changeListeners) { try { f(); } catch { /* the next one still hears */ } }
+}
+
 /**
  * The first read of the stored entries, started once; later changes arrive through `storage.onChanged`.
  * @returns when the entries are in memory; it rejects when the store could not be read, and the next call reads again
@@ -59,6 +75,7 @@ export function registryReady(): Promise<void> {
             // A change that arrived while the read was in flight is the later state: the read's list is older than it.
             if (changes === seen) adopt(parse(got[SECRET_REGISTRY_KEY]));
             ready = true;
+            changedNow();
         })();
         loaded = read;
         // The system failing closed on its own is a housekeeping event: no name and no value, only that it happened.
@@ -80,7 +97,7 @@ export function registryIsReady(): boolean {
 // starts here, so a crossing that cannot wait finds it done in all but the worker's first moments.
 if (typeof chrome !== "undefined") {
     chrome.storage?.onChanged?.addListener((changed, area) => {
-        if (area === "local" && SECRET_REGISTRY_KEY in changed) { changes++; adopt(parse(changed[SECRET_REGISTRY_KEY].newValue)); ready = true; }
+        if (area === "local" && SECRET_REGISTRY_KEY in changed) { changes++; adopt(parse(changed[SECRET_REGISTRY_KEY].newValue)); ready = true; changedNow(); }
     });
     void registryReady().catch(() => { /* read again by the first crossing that awaits it */ });
 }

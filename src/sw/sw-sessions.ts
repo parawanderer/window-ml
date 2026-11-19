@@ -44,6 +44,8 @@ import { attentionCodes, recomputeAttention, refreshBackendAttention, watchAtten
 import { appendSnapshot, measureEvents, summarizeStore, type StorageReport, type StorageSnapshot, type StoreBytes } from "../session/session-storage-stats";
 import { captureOwnTab, NOT_SHOWING } from "./sw-capture";
 import { shellCapabilities, refreshShell, onShellStatus, hostMissing, hostIsOutdated, SHELL_KEYS } from "./sw-shell";
+import { forRow, forRowText } from "./sw-scrub";
+import { onRegistryChanged } from "./sw-secret-registry";
 
 /**
  * Ask a tab's page something, PUTTING THE CONTENT SCRIPT BACK if it is not there.
@@ -345,6 +347,7 @@ export function configureSessionCommands(run: RunDeps): void {
         // does not already say.
         describe: () => { const { kind, contractVersion, capabilities } = localRuntime(); return { kind, contractVersion, capabilities }; },
         index: sessionServer.index,
+        shownRow: forRow,
         removeFromIndex: (id) => { sessionServer.remove(id); },
         listTabs: listTabsForPicker,
         listTabGroups,
@@ -616,11 +619,16 @@ if (sessionStore) defineJob({
 export const sessionServer = new SessionServer(new SessionIndex({ runtime: localRuntimeId(), spawn }), {
     runtime: localRuntime,
     command: runCommand,
+    // Every row leaves through the by-value scrub (SECRET_HANDLES.md, "A session row leaves the worker scrubbed").
+    row: forRow,
     ...(sessionStore ? {
         stored: (hash: string) => sessionStore.read(hash),
         // Only a kept session's events are stored, so only they have a position `session.backfill` can page from.
     } : {}),
 });
+
+// A row withheld before the registry's first read, or sent before a value was registered, is sent again scrubbed.
+onRegistryChanged(() => sessionServer.reshow());
 
 // What a previous worker saved, so an evicted service worker comes back with its list rather than with nothing. The
 // events stay on disk until something subscribes to that session.
@@ -796,7 +804,8 @@ export async function sessionStorageStats(): Promise<StoreBytes | null> {
     const rows = [];
     for (const row of await sessionStore.open()) {
         const events = await sessionStore.read(row.hash);
-        rows.push({ hash: row.hash, ...(row.summary.title ? { title: row.summary.title } : {}), events: events.length, ...measureEvents(events, seen) });
+        const title = row.summary.title ? forRowText(row.summary.title) : undefined;
+        rows.push({ hash: row.hash, ...(title ? { title } : {}), events: events.length, ...measureEvents(events, seen) });
     }
     return summarizeStore(rows, seen);
 }
