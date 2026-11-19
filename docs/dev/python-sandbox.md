@@ -510,10 +510,36 @@ ROOT C ([`docs/spec/PYTHON_DIALECT.md`](../spec/PYTHON_DIALECT.md), "The namespa
   `runPrincipals`, `runNsVars` and `nsLoss` entries. Called from `forgetRun` (`background.ts`, a deleted session), the
   session store's eviction as deleted or archived (`sw-sessions.ts`), and `releaseSessionTokens` (`sw-runs.ts`; a hook,
   `onSessionRelease`, since sw-python imports sw-runs). Also lost: the idle reap, a kill, the offscreen document closing.
-- **Loss is told.** `killWorker` (timeout, start timeout, crash) records `nsLoss` for every run `runPrincipals` lists on
-  the killed worker, whether or not one of its cells ever returned a scope manifest; the run's next cell opens its
-  stdout with `namespace reset at <ISO time>: <timeout|start-timeout|crashed>` and the result carries `nsReset`. The
-  offscreen document closing loses the dict without a record: the note comes only from a kill the document saw.
+- **Loss is told.** `killWorker` (timeout, start timeout, crash, the kernel's death) records `nsLoss` for every run
+  `runPrincipals` lists on the killed worker, whether or not one of its cells ever returned a scope manifest; the run's
+  next cell opens its stdout with `namespace reset at <ISO time>: <timeout|start-timeout|crashed|the interpreter
+  crashed>` and the result carries `nsReset`. A cell refused as outside the dialect does not take the line: its result is
+  discarded and the cell is asked again outside, which gets it. The offscreen document closing loses the dict without a
+  record: the note comes only from a kill the document saw.
+- **The kernel's death (ruling 26).** A fatal Pyodide error ends the interpreter, not the cell, in two shapes. A trap in a
+  wasm call (pillow's `PIL._imagingtk`, "function signature mismatch") answers the cell, after which every call throws
+  "Pyodide already fatally failed". A JS stack overflow in the parser never settles the cell's promise: the `RangeError`
+  escapes as an unhandled rejection on the worker's `self`, never as `error` and never as the host's `worker.onerror`
+  (measured in Chromium 2026-11-18, `tests/e2e/python-kernel-death.spec.mjs`). The worker (`python-worker.ts`) listens
+  for both events at module load, before the lockdown strips `addEventListener`, and after any failed cell. It kills the
+  kernel only on Pyodide's own verdict: it calls the interpreter once, and only "already fatally failed" counts, so an
+  ordinary rejection a cell's code left unhandled, after which the interpreter still answers, kills nothing (a
+  denial of service on the namespace otherwise). The dead worker answers the running cell and every later message with
+  `fatal: true`; the offscreen document gives the cell `kernelDied` (the cause, and that the run's variables, functions
+  and imports are gone) and kills the worker with reason `kernel-death`, so the next cell starts a fresh interpreter
+  and opens with the loss line. The cause is what Pyodide's own fatal-error handler caught (`_api.on_fatal`, set at
+  boot before the lockdown), not a rejection's reason or the cell's answer (those stand in only for a Pyodide without the
+  hook): a full-mode cell can queue
+  `js.Promise.reject("…")` or raise text of its own beside the crash (row in `tests/python-kernel-death.test.mjs`). A
+  full-mode cell can still reach Pyodide's internals and so choose it; a readonly cell cannot. `boundCause` makes it one
+  line of at most 300 characters, the last non-empty one (the exception a traceback ends with, never the cell's source
+  lines above it). Both deaths measured answer one line ("function signature mismatch", "Maximum call stack size exceeded"); the bound is for the fallback, whose length
+  the cell decides. Pyodide is not patched. The namespace-released record (the async lane's one writer,
+  reason "kernel-death") is to be called beside that kill in `offscreen.ts` once the writer is on main.
+- **Differs from CPython: how deep a source may nest.** CPython raises `RecursionError` for a too-deep expression;
+  Pyodide's parser overflows the JS stack first, which is fatal. Measured with `compile("obj" + ".a" * N + "()")`: a
+  Chromium worker compiles N = 3,000 and dies at 10,000 (2026-11-18); Node under the test harness also compiles 3,000
+  and dies at 30,000, while an import through `importlib` in Node dies near 2,000-3,000 (deeper stack per level).
 - **The state registry:** `python.run-namespace` (`defineState`, offscreen, audience `model`); its `read` is the last
   cell's scope manifest (`bench.vars`: names and type names).
 - **Deleting reaches every worker holding the run's dict**, the shared `full` one included (`runPrincipals` in
@@ -698,8 +724,9 @@ readonly cells can import it, and nothing else can.
   after the result, on a failed import they follow the error when they are reached from the failing module, and the
   run log keeps them as `detail.scan`. A source too deep for the parser or for the walk (a call chain of about 1,000
   attributes passes the recursion limit) is unparsed and skipped; from about 2,000 the parser overflows the JS stack
-  and kills the interpreter, and the cell never answers (the fatal error escapes it), so the candidate's deadline ends
-  the install as `died`. A scan that fails leaves the import test to decide, in a fresh worker, and the run log says
+  and kills the interpreter; the worker answers that cell as the kernel's death (the fatal error escapes it, and the
+  worker's listener catches it), so a scan that kills it is a scan that failed, and an import that kills it ends the
+  install as `died` with the bare cause, never the run's namespace-lost text: a candidate is not the run's interpreter. A scan that fails leaves the import test to decide, in a fresh worker, and the run log says
   `detail.scanLost`. The deadline and Stop end the whole candidate: the end is checked after every await before a cell
   (each mirror read, the scan), and `runInWorker` posts nothing for an ended candidate, so no later cell starts in a
   fresh worker, where it would have no timer of its own. Stop pressed while the candidate runs fails the install even
