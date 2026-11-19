@@ -135,6 +135,13 @@ export interface MlConfig {
      *  ended, whichever executor runs it. 1..60; a value outside reads as 60, the ceiling (docs/spec/ASYNC_CALLS.md,
      *  rule 4b). A call's own `timeoutMs` is clamped to it. */
     detachedTaskMaxMin: number;
+    /** A finished detached task starts the run's next turn by default (docs/spec/ASYNC_CALLS.md, rule 4b). On, a finished
+     *  task with no turn running only parks its result and says so in the transcript: it is read at the person's next
+     *  message. DevTools Settings only. */
+    taskNotifyOnly: boolean;
+    /** The most turns finished tasks start in a row, with no message from the person between them. 1..20; a value outside
+     *  reads as the default, 5. At the cap a finished task parks and says so, as with `taskNotifyOnly`. */
+    taskTurnChainMax: number;
     /** Move a session the store evicts (by retention or by the budget) into the long-term SQLite archive instead of
      *  deleting it. Off by default: it changes what "delete after N days" means. */
     sessionArchive: boolean;
@@ -233,6 +240,10 @@ export interface MlConfig {
     shellSandbox: boolean;
     /** The directories programs are looked up in, in order. Empty: the host's own default. */
     shellPath: string[];
+    /** The programs that reveal other processes (a manifest's `reveals`: `ps`, `lsof`, `top`) whose otherwise free calls
+     *  run without asking, by the manifest's `program`. Empty: every such call asks. A gate key: only the person writes
+     *  it (docs/spec/PROGRAM_MANIFEST.md, "Programs that reveal other processes"); not in `ml.config()`. */
+    shellRevealsAllow: string[];
     /** The most disk, in MB, the value store may hold: the whole bodies of fetched tables too large for their preview,
      *  kept so a later step can read every row by pointer. Least recently read goes first past it; the browser's own
      *  quota caps it further. */
@@ -324,6 +335,8 @@ export const DEFAULT_CONFIG: MlConfig = {
     sessionStoreBudgetMB: 256,
     pythonIdleMinutes: 10,
     detachedTaskMaxMin: 60,
+    taskNotifyOnly: false,
+    taskTurnChainMax: 5,
     sessionArchive: false,
     agentStartPage: "",
     priceSnapshotUrl: "",
@@ -350,6 +363,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     shellRoots: [],
     shellSandbox: true,                 // default on, and fails closed: no sandbox on this machine means every call says so
     shellPath: [],
+    shellRevealsAllow: [],              // default empty: a call to ps, lsof or top asks until the person lists the program
     protoStream: "auto",                // ask every time: one header, and a backend that won't serve it answers as it always did
     pierceClosedShadow: true,
     cdp: true,
@@ -418,12 +432,15 @@ export const SETTING_PLACES: Readonly<Partial<Record<keyof MlConfig, SettingPlac
     autoApprovePython: { tab: "advanced", section: "python" },
     pythonIdleMinutes: { tab: "advanced", section: "python" },
     detachedTaskMaxMin: { tab: "advanced", section: "python" },
+    taskNotifyOnly: { tab: "advanced", section: "python" },
+    taskTurnChainMax: { tab: "advanced", section: "python" },
     autoApproveSelfSource: { tab: "advanced", section: "fetch" },
     agentSeesFocus: { tab: "advanced", section: "focus" },
     shellEnabled: { tab: "advanced", section: "shell" },
     shellRoots: { tab: "advanced", section: "shell" },
     shellSandbox: { tab: "advanced", section: "shell" },
     shellPath: { tab: "advanced", section: "shell" },
+    shellRevealsAllow: { tab: "advanced", section: "shell" },
     selfIntrospection: { tab: "advanced", section: "introspection" },
     protoStream: { tab: "advanced", section: "protostream" },
     pierceClosedShadow: { tab: "advanced", section: "shadow" },

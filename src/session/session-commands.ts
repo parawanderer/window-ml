@@ -53,6 +53,9 @@ export interface CommandDeps {
      *  paired, so a page open across that change, and a key kept on disk, do not become a runtime that never existed. */
     ownsRuntime?(id: unknown): boolean;
     index: SessionIndex;
+    /** a row as `session.list` may answer it (the worker's by-value scrub, sw-scrub.ts `forRow`); absent → as the
+     *  index or the archive holds it */
+    shownRow?<T extends SessionSummary>(row: T): T;
     /** remove a session from the index and end its subscriptions */
     removeFromIndex(id: SessionId): void;
     /** a file sent ahead in `file.put` chunks (hub-runtime.ts), by its SHA-256, or null when this runtime does not
@@ -789,7 +792,9 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
         const limit = Math.min(Math.max(1, Math.floor(limitIn ?? 40)), 200);
         const cut = before ?? Number.MAX_SAFE_INTEGER;
         const q = query?.toLowerCase();
-        const live: ListedSession[] = archived === true ? [] : deps.index.list()
+        const shown = <T extends SessionSummary>(r: T): T => (deps.shownRow ? deps.shownRow(r) : r);
+        // Searched as shown: a query matches the text a client is sent, so it never finds what the row withholds.
+        const live: ListedSession[] = archived === true ? [] : deps.index.list().map(shown)
             .filter((s) => s.lastTs < cut)
             .flatMap((s) => {
                 if (!q) return [s];
@@ -801,7 +806,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
         const fromArchive = archived === false || !deps.listArchived ? [] : await deps.listArchived({ before: cut, limit: limit + 1, ...(query ? { query } : {}) }).catch(() => []);
         const liveHashes = new Set(live.map((s) => s.id.hash));
         const arch: ListedSession[] = fromArchive.filter((r) => !liveHashes.has(r.summary.id.hash))
-            .map((r) => ({ ...r.summary, id: { runtime: deps.runtime, hash: r.summary.id.hash }, archived: true as const, ...(r.snippet ? { match: { snippet: r.snippet } } : {}) }));
+            .map((r) => shown({ ...r.summary, id: { runtime: deps.runtime, hash: r.summary.id.hash }, archived: true as const, ...(r.snippet ? { match: { snippet: r.snippet } } : {}) }));
         const all = [...live, ...arch].sort((a, b) => b.lastTs - a.lastTs);
         return { sessions: all.slice(0, limit), more: all.length > limit };
     }

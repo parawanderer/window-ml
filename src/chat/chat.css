@@ -2225,6 +2225,10 @@ html[data-calm] .tt-layer { --notice: var(--accent); --notice-fg: var(--accent-f
 /* THE ONE THING WORTH COLOURING. In the run this was built for, two calls in the stretch were errors and that was
    the only signal in it; everything else here is grey on purpose so this is what the eye finds. */
 .astreak-bad { color: var(--err); font-size: .88em; }
+/* THE CALM VIEW DRAWS NO FAILURE COUNT ON A FOLDED STREAK. The model often recovers from a failed call, so a red
+   counter there asks for attention with nothing to act on; a failed call still draws red once the group is opened.
+   The dev view keeps the count. */
+.chat.calm .astreak-bad { display: none; }
 .astreak-ms { color: var(--fg-faint); font-size: .88em; font-style: italic; margin-left: auto; }
 .astreak.open > .astreak-head { margin-bottom: 4px; }
 /* THE SUMMARY LEAVES WHEN THE ROWS ARRIVE. Folded, the names and the failure count are the only account of what is

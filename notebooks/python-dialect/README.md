@@ -32,3 +32,8 @@ beside it (`make-<name>.py`, the file to edit) and its pinned inputs under `data
   mutation of plain data the cell did not make permitted, with a syntactic count (`cell-replay/stores.py`) of the stores
   behind each first refusal. The replay is `cell-replay/replay.mjs`; its extracts in
   `data/cell-replay/` hold features, never cell text. Generator: `make-cell-replay.py`.
+- [`reshape-edits.ipynb`](reshape-edits.ipynb): on the reshaping bench's multi-cell task (`reshape.bench.ts`), which
+  python_exec cells finish inside the dialect, why the rest ask, and for each refused edit who made the value: the
+  injected table, an earlier inside cell, an earlier asked cell, or an alias. A skeleton until the sweep runs (after the
+  widened vocabulary is on main); its classifier is checked on the cells of `tests/e2e/python-dialect-edits.spec.mjs`.
+  Reader: `reshape-edits/provenance.py`; rows pinned in `data/reshape-edits/cells.json`. Generator: `make-reshape-edits.py`.

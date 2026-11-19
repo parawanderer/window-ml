@@ -332,6 +332,15 @@ description, parameters); `propose_policy`'s is 1,199. Its description names `ml
 the old value; it quotes no setting's name or tooltip (those are the person's, on the card). The backend's
 `usage.prompt_tokens` delta is not measured yet: the next prompt review measures it with the bench, as for `task` above.
 
+## `propose_policy` names consumer `setting` (2026-11-19)
+
+`propose_policy` gains consumer `setting` (MODEL_SETTINGS.md, "Proposing a `setting` policy"): one clause in the
+description, the fields a setting rule reads, and `"setting"` in the `consumer` enum. It is 1,244 characters as sent
+(name, description, parameters), from 1,199; the test's measure (description and parameters) is 1,193 under its cap of
+1,200, held there by shortening "a function over the call returning a boolean" to "a predicate" and the field lists'
+"For act"/"true for navigate" to "Act"/"a navigate". The `usage.prompt_tokens` delta is measured at the next prompt
+review with the rest.
+
 ## Round 3, first finding: glm-4.7-flash's csv-total was the tool, not the prompt (2026-10-14)
 
 Round 2 left the `python_exec` cut unshipped because glm-4.7-flash lost csv-total under it. Reading its steps showed
