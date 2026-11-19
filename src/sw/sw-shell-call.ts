@@ -409,7 +409,7 @@ async function runCall(ctx: ShCallContext, req: ShRunRequest, started: (h: Shell
                     detail: { seq: ctx.seq, program: f.argv[0] ?? "", count: result.protectedChanged.length, changes: protectedChangesText(result.protectedChanged, !!result.protectedChangedTruncated, MAX_DETAIL_STRING),
                         ...(result.protectedChangedTruncated ? { truncated: true } : {}) } });
             }
-            if (verdict.askId) noteAskOutcome(ctx.runId, ctx.seq, verdict.askId, shOutcome(result));
+            if (verdict.askId) await noteAskOutcome(ctx.runId, ctx.seq, verdict.askId, shOutcome(result));
             const k = `${ctx.runId}:${ctx.seq}`;
             // A call no one was asked about is drawn under its step from this, in the card's words: what ran without
             // asking is never only in the run log.
@@ -742,7 +742,7 @@ export async function shPut(ctx: ShCallContext, args: readonly unknown[]): Promi
             const replaced = facts.exists;
             recordRunLog(ctx.runId, { subsystem: "shell", kind: "put", reason: v.by === "person" ? "person" : v.by === "builtin" ? "builtin" : "policy",
                 ms: Date.now() - startedMs, detail: { seq: ctx.seq, path: done.rel, size: done.size, ...(replaced ? { replaced: true } : {}) } });
-            if (v.askId) noteAskOutcome(ctx.runId, ctx.seq, v.askId, { put: { path: done.rel, size: done.size, sha256: done.sha256 } });
+            if (v.askId) await noteAskOutcome(ctx.runId, ctx.seq, v.askId, { put: { path: done.rel, size: done.size, sha256: done.sha256 } });
             if (v.by !== "person") {
                 const k = `${ctx.runId}:${ctx.seq}`;
                 const unasked: ShUnasked = { by: v.policy !== undefined ? "policy" : "default", ...(v.policy !== undefined ? { policy: v.policy } : {}),

@@ -18,6 +18,21 @@ import type {
     ExportEvent, ExportEventCost,
 } from "../../export-schema";
 import { EXPORT_SCHEMA_VERSION, schemaUrl } from "../../export-schema";
+import type { StepAsk } from "../../contract";
+
+/** What an export writes for the facts of an ask still waiting for the person. */
+export const ASK_FACTS_WAITING = { withheld: "the ask is waiting for the person; its facts are exported once it is answered" };
+
+/**
+ * A step's nested asks as both exports write them. A waiting ask is the one place the sidebar holds an ask's raw facts
+ * (the card the person answers from, sw-asks.ts); every other ask carries the copy the worker scrubbed. So a waiting
+ * one's facts are left out, and an export taken mid-ask holds no registered value.
+ * @param asks the step's asks
+ * @returns the asks, each waiting one without its facts
+ */
+export function exportedAsks(asks: readonly StepAsk[]): StepAsk[] {
+    return asks.map((a) => (a.state === "pending" ? { ...a, facts: { ...ASK_FACTS_WAITING } } : a));
+}
 import { eventsFrom } from "../resource/model-stats";
 import type { ResourceEvent } from "../../resource/resource-timeline";
 
@@ -74,7 +89,7 @@ function stepToJson(st: AgentStep): ExportStep {
         grants: st.grants?.length ? st.grants : undefined,
         askWhy: st.askWhy,
         reused: st.reused?.length ? st.reused : undefined,
-        asks: st.asks?.length ? st.asks : undefined,
+        asks: st.asks?.length ? exportedAsks(st.asks) : undefined,
         shCalls: st.shCalls?.length ? st.shCalls : undefined,
 
         elements: st.elements,

@@ -19,8 +19,14 @@ const DEBUG_BUFFER_CAP = 500;   // drop-oldest ring; screenshots are big, so kee
  *  newest per session and step means anything in a replay. */
 const COALESCED_DEBUG_KINDS = new Set(["agent-stream", "agent-turn"]);
 
-/** Buffer one debug event for an inspected tab and push it to every DevTools panel connected to that tab. */
-export function relayDebugEvent(tabId: number, event: unknown): void {
+/**
+ * Buffer one debug event for an inspected tab and push it to every DevTools panel connected to that tab.
+ * @param tabId the inspected tab
+ * @param event what a connected panel is sent now
+ * @param buffered what the ring keeps, when it differs: a step whose waiting ask's raw facts only a live card may show
+ *  is kept as its scrubbed copy (sw-asks.ts), so a panel opened later, or after the ask settled, replays none
+ */
+export function relayDebugEvent(tabId: number, event: unknown, buffered: unknown = event): void {
     let buf = debugBuffer.get(tabId);
     if (!buf) { buf = []; debugBuffer.set(tabId, buf); }
     // COALESCE the live deltas. A streamed turn sends one every ~100 ms, and in a 500-event ring they pushed out the
@@ -33,7 +39,7 @@ export function relayDebugEvent(tabId: number, event: unknown): void {
             if (o?.kind === ev.kind && o.step === ev.step && o.session?.hash === ev.session?.hash) { buf.splice(i, 1); break; }
         }
     }
-    buf.push(event);
+    buf.push(buffered);
     if (buf.length > DEBUG_BUFFER_CAP) buf.splice(0, buf.length - DEBUG_BUFFER_CAP);
     const ports = devtoolsPorts.get(tabId);
     if (ports) for (const p of ports) { try { p.postMessage({ __mlDebug: event }); } catch { /* port closing */ } }

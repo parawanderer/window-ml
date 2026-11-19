@@ -52,6 +52,17 @@ export type PendingApprovalDescriptor = PendingApprovalBase & (
 // A default "ui" run's gate can't be silently approved from outside — the driver must declare intent.
 export const externallyResolvable = (d: PendingApprovalDescriptor): boolean => d.routing === "both" || d.routing === "external";
 
+/**
+ * The pending gates an external approver may see (`__mlApprovals.list()`), as it sees them. A nested ask's `facts` are
+ * the raw copy a policy judges, kept in this worker only: the approver gets the kept copy (`arguments`) in that field
+ * too, as `run.approvals` does (sw-asks.ts).
+ * @returns the externally resolvable descriptors
+ */
+export function externalApprovals(): PendingApprovalDescriptor[] {
+    return [...pendingApprovals.values()].map((v) => v.descriptor).filter(externallyResolvable)
+        .map((d) => d.facts === undefined ? d : { ...d, facts: d.arguments as typeof d.facts } as PendingApprovalDescriptor);
+}
+
 interface PendingApproval { resolve: (d: ApprovalDecision) => void; descriptor: PendingApprovalDescriptor; }
 
 /** A Map that says when it changed: every path that opens or closes a gate writes the map, so its listeners hear all. */

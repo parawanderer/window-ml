@@ -45,6 +45,7 @@ import { attentionCodes, recomputeAttention, refreshBackendAttention, watchAtten
 import { appendSnapshot, measureEvents, summarizeStore, type StorageReport, type StorageSnapshot, type StoreBytes } from "../session/session-storage-stats";
 import { captureOwnTab, NOT_SHOWING } from "./sw-capture";
 import { shellCapabilities, refreshShell, onShellStatus, hostMissing, hostIsOutdated, SHELL_KEYS } from "./sw-shell";
+import { keptEvent } from "./sw-asks";
 import { forRow, forRowText } from "./sw-scrub";
 import { onRegistryChanged } from "./sw-secret-registry";
 
@@ -428,7 +429,7 @@ export function configureSessionCommands(run: RunDeps): void {
             } catch (e) { return { outcome: "none", error: (e as Error)?.message || String(e) }; }
         },
         history: async (hash) => (sessionStore ? await sessionStore.history(hash) : null),
-        ...(sessionStore ? { storedEvents: (hash: string) => sessionStore.read(hash) } : {}),
+        ...(sessionStore ? { storedEvents: readKept } : {}),
         adoptSession: async (tabId, hash, history) => {
             if (history.kind !== "agent" || !history.payload) return "none";
             // A run this worker holds on ANOTHER tab is MOVED there (MOVE_RUN.md), with the same checks and record as the HUD's
@@ -616,6 +617,15 @@ if (sessionStore) defineJob({
     log: { subsystem: "sessions", done: ["evict"], failed: ["archive-failed"] },
 });
 
+/**
+ * A kept session's events as they are served again (backfill, history paging): each step's nested asks through the
+ * stored scrub, so an ask stored before it was scrubbed leaves the store as one stored now does (sw-asks.ts `keptEvent`).
+ * @param hash the session
+ */
+async function readKept(hash: string): Promise<MlDebugEvent[]> {
+    return Promise.all((await sessionStore!.read(hash)).map((ev) => keptEvent(ev)));
+}
+
 /** The index and its server, for this worker's life. */
 export const sessionServer = new SessionServer(new SessionIndex({ runtime: localRuntimeId(), spawn }), {
     runtime: localRuntime,
@@ -623,7 +633,7 @@ export const sessionServer = new SessionServer(new SessionIndex({ runtime: local
     // Every row leaves through the by-value scrub (SECRET_HANDLES.md, "A session row leaves the worker scrubbed").
     row: forRow,
     ...(sessionStore ? {
-        stored: (hash: string) => sessionStore.read(hash),
+        stored: readKept,
         // Only a kept session's events are stored, so only they have a position `session.backfill` can page from.
     } : {}),
 });
