@@ -178,9 +178,17 @@ def _ml_inside_run(_src, _g):
     return _v
 `;
 
-/** The admitted module functions and ufuncs that write into the array their `out` parameter is given (filled by the
- *  fix that refuses it). */
-export const DIALECT_OUT_ARGS: [string, string, string][] = [];
+/** The admitted module functions and ufuncs that write into the array their `out` parameter is given, as [module, name,
+ *  parameter]: refused with it bound to anything but None (`dialectSetup`). The manifest marks each `mutates(the out
+ *  argument) when out= is given`; tests/python-dialect-out-args.test.mjs enumerates every admitted callable taking out
+ *  and holds the two to each other. No C method is here: its checker does not survive a * or ** call, so one with an
+ *  out argument is not listed at all (make-corpus-count.py's UNLISTED). */
+export const DIALECT_OUT_ARGS: [string, string, string][] = [
+    ["numpy", "abs", "out"],
+    ["numpy", "any", "out"],
+    ["numpy", "mean", "out"],
+    ["numpy", "sum", "out"],
+];
 
 /**
  * Make the interpreter ready to run cells inside the dialect, once per worker: the fork's modules present, its build
@@ -206,6 +214,32 @@ def _ml_dialect_setup(_files):
     # What the gate admitted, kept for a library's shape rule: it judges imports by exactly these tables.
     import sys, types
     sys.modules.setdefault("_ml_libraries", types.SimpleNamespace(pins={})).admitted = restricted.load_manifests(_dir)["modules"]
+    return _ml_out_args(_restricted, restricted)
+
+def _ml_out_args(_restricted, restricted):
+    # Each function in DIALECT_OUT_ARGS writes into the array its out parameter is given, from C, where the ownership
+    # check never sees it. So it is re-registered, lifted as load_manifests registered it, with a check that refuses out
+    # bound to anything but None, by keyword or by position, before the fork's own entry check; the call asks. A
+    # parameter the signature lacks is a reason, so every cell asks.
+    import importlib, inspect, json
+    for _mod, _name, _p in json.loads(${JSON.stringify(JSON.stringify(DIALECT_OUT_ARGS))}):
+        _f = getattr(importlib.import_module(_mod), _name, None)
+        if _f is None:
+            continue
+        try:
+            _sig = inspect.signature(_f).parameters
+        except (TypeError, ValueError):
+            return f"{_mod}.{_name}: its signature cannot be read, so its out check cannot be placed"
+        if _p not in _sig:
+            return f"{_mod}.{_name} has no parameter {_p} in this numpy, so its out check cannot be placed"
+        _at = list(_sig).index(_p) if _sig[_p].kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD) else None
+        _own = restricted.entry_check(_name, False) if _name in restricted._ENTRY_CHECKED else None
+        def _check(func, self, args, kwargs, _name=_name, _p=_p, _at=_at, _own=_own):
+            if (kwargs or {}).get(_p) is not None or (_at is not None and len(args) > _at and args[_at] is not None):
+                raise restricted.NotInDialect(f"not in dialect: {_name}({_p}=…) writes into the array it is given")
+            if _own is not None:
+                _own(func, self, args, kwargs)
+        _restricted.allow_call(_f, True, _check)
     return ""
 _ml_dialect_setup(${JSON.stringify(files)})
 `;

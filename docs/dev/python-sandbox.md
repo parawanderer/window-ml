@@ -316,7 +316,13 @@ worker drives with `autoApprovePython` on:
    marked `inside` (`grantRunPython`). `runPython` passes `inside` to the worker only for a `runGated` caller.
 2. The worker loads the allow tables once (`dialectSetup` in `python-dialect-run.ts`, from `dialect-data.ts`, which bundles
    `notebooks/python-dialect/data/`). It refuses to run anything inside on a core without `_restricted`, or one whose
-   `_restricted.build()` reports specialization, tier 2 or a JIT. On such a core every cell asks.
+   `_restricted.build()` reports specialization, tier 2 or a JIT. On such a core every cell asks. **A C callee's write
+   is invisible to the ownership check**, which sees only the interpreter's own store sites (an item assignment, an
+   in-place operator, a listed mutator read off an unowned value). So a module function or ufunc taking `out` is in
+   `DIALECT_OUT_ARGS`, re-registered with a check that refuses `out` bound to anything but None. A C method with an
+   argument that can write is not listed at all (`UNLISTED` in make-corpus-count.py, `ndarray.round`): a checker on a
+   C method does not survive a `*` or `**` call, which reaches the gate as the bound builtin rather than the descriptor
+   its tables key on. `tests/python-dialect-out-args.test.mjs` enumerates both.
 3. `wrapUserScript(…, inside)` runs the cell through `run_cell` (`INSIDE_CELL`, `python-dialect-run.ts`) in a COPY of the namespace that holds no `_` name.
    A bare trailing expression gets `return ` spliced in at its own column, so the value matches the full path.
 4. If it finishes, its bindings are copied back, except a builtin's name or one starting with `_`, and only if every
