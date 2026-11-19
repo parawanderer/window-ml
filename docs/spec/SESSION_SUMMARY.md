@@ -80,6 +80,15 @@ The session's slice of the resource panel, by mounting the existing components (
 the components gain a `hash` prop (a refactor in the resources PR, its call). On the chat page the panel exists only for
 a local runtime; elsewhere the tab says so in one line.
 
+Below the panel come the session's usage over time and its totals (ruled by Shane, 2026-11-19). The summary tab's "Tokens and
+cost so far" line is the short form of these totals.
+
+| Field | Status | Source today | Gap, and the lane that owns it |
+| --- | --- | --- | --- |
+| Tokens over time, and totals | have | `usageSamples` (`usage.tsx`, reducer): one `TokenUsage` per call, ordered by its step's or turn's `ts`; `promptTokens`, `completionTokens`, `cachedTokens`, `reasoningTokens` | — |
+| Cost over time, and total, for an external model | partial | `sessionCalls` priced through `services().priceCalls` against each call's own snapshot (`TokenUsage.prices`, `src/spend/price-book.ts`) | Extension pages only; no cost on the web or hub chat page (session-store). An unpriced call is counted, not costed. |
+| Energy for a local model, and its cost | partial | Measured on the box: the patched backend's `sample` frames carry GPU board watts and `compute.power_sources`, and the bench attributes them per session (`tests/e2e/bench/electricity.mjs`). Each call records the electricity price it ran under (`TokenUsage.electricity`) | The extension reads no power field yet. Owner: bench (ruling 53); the design is "Energy and its cost" below. A figure from a rated wattage draws nothing. |
+
 #### Energy and its cost
 
 Ruled by Shane (2026-11-19): the resources tab shows what a local model drew for the session, and its cost. Owner:
@@ -175,7 +184,7 @@ PR B: the policies row as a self-contained component on the ruled seam (`Session
 | Hide and show entries | need | — | Ruling 34 (files-host). |
 | Secret handles, by name only | need | No secret store; `SECRET_HANDLES.md` is an idea | Files-host's (ruling 18), after H16. |
 | Whether the page's origin is approved | partial | `site.levels`, `run.env` (local); `blankStart.granted` (host, blank page only) | Local only. |
-| Python network open or closed | need | Chosen per cell (`runPython` in `sw-python.ts`); no per-session flag | Ruling 37: closed by default; the gate's owner is not assigned. |
+| Python network open or closed | need | Chosen per cell (`runPython` in `sw-python.ts`); no per-session flag | Ruling 37: closed by default. The gate is the packages lane's (Shane, 2026-11-19). |
 | Installed Python packages | have (local) | `python.run-installs` (`sw-pkg-installs.ts`, lost on browser restart) | Local only. |
 
 ## Owners and order
@@ -189,7 +198,7 @@ Ruled by the coordinator (2026-11-18):
    strip, phone overlay, the "..." entry) with summary and access mounted (small-fixes).
 4. The resources tab (small-fixes).
 5. The files tab (files-host).
-6. Fields marked "need", when the session-store lane resumes on Shane's word; until then they draw nothing.
+6. Fields marked "need", each by its owning lane (session-store resumed 2026-11-19); until built they draw nothing.
 
 ## Ruled questions
 
