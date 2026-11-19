@@ -165,6 +165,10 @@ interface ManifestBase {
     credential?: ManifestCredential;
     /** What the credentialed profile may connect to. Only beside `credential`. */
     network?: ManifestNetwork;
+    /** The program shows other processes: their command lines, users, open files and sockets (`ps`, `lsof`, `top`). A
+     *  call that would otherwise be free asks unless the person listed the program in `shellRevealsAllow`
+     *  (PROGRAM_MANIFEST.md, "Programs that reveal other processes"). It only narrows, so any manifest may carry it. */
+    reveals?: "processes";
     /** The implementations the manifest tells apart (PROGRAM_MANIFEST.md, "Flavours"); absent, one description for
      *  every implementation, as before the field. Only with `version.range` `"*"`. */
     flavours?: ManifestFlavours;
@@ -682,9 +686,27 @@ function notLiteralPathspec(a: string): boolean {
 
 const COMMAND_KEYS = new Set(["effects", "paths", "noPaths", "terminator", "numericFlag", "clusters", "maxOperands", "flags", "subcommands", "syntax", "primaries", "okCodes", "echoes", "recursive", "harden", "optionsFirst", "dashIsPath", "repoWide", "pathspecs", "writtenOperands", "flavour", "script"]);
 const VERSION_KEYS = new Set(["range", "args", "pattern"]);
-const MANIFEST_KEYS = new Set(["$schema", "program", "version", "okCodes", "echoes", "env", "entrypoint", "credential", "network", "flavours", "command"]);
+const MANIFEST_KEYS = new Set(["$schema", "program", "version", "okCodes", "echoes", "env", "entrypoint", "credential", "network", "reveals", "flavours", "command"]);
 const OVERLAY_KEYS = new Set(["flags", "argOrder", "harden"]);
 const FLAVOUR_NAMES: ReadonlySet<string> = new Set<FlavourName>(["gnu", "bsd"]);
+
+/** The programs known to show other processes (ruling 31): a stored or proposed manifest for one carries
+ *  `reveals: "processes"` whatever its author wrote, so a draft cannot drop the gate before the shipped manifest lands. */
+export const REVEALING_PROGRAMS: readonly string[] = Object.freeze(["ps", "lsof", "top"]);
+
+/** The name in {@link REVEALING_PROGRAMS} a manifest describes, by its `program` or by the basename of the file it is
+ *  pinned to (the host's realpath, so a symlink named otherwise is caught), or undefined. */
+export function revealingName(m: { program?: unknown }, resolved?: string): string | undefined {
+    const file = resolved?.split("/").pop();
+    return [m.program, file].find((n): n is string => typeof n === "string" && REVEALING_PROGRAMS.includes(n));
+}
+
+/** Why a manifest that is not shipped may not describe a program as it does, or undefined: one whose `program`, or
+ *  the file it is pinned to, is in {@link REVEALING_PROGRAMS}, without the marker. */
+export function revealsRefusal(m: { program?: unknown; reveals?: unknown }, resolved?: string): string | undefined {
+    const name = revealingName(m, resolved);
+    return name && m.reveals !== "processes" ? `${name} shows other processes, so its manifest carries reveals: "processes"` : undefined;
+}
 
 /** Why a manifest that is not shipped may not carry `m`'s credential fields, or undefined: the host honours a
  *  credential only for manifest bytes it pinned, which are the shipped ones, so a stored `credential` or `network`
@@ -820,6 +842,7 @@ export function validateManifest(m: unknown): string[] {
     if (m.okCodes !== undefined) codes(m.okCodes, "$.okCodes");
     if (m.echoes !== undefined && typeof m.echoes !== "boolean") errs.push("$.echoes: boolean");
     if (m.env !== undefined && !(Array.isArray(m.env) && m.env.every((e) => typeof e === "string"))) errs.push("$.env: names");
+    if (m.reveals !== undefined && m.reveals !== "processes") errs.push('$.reveals: "processes"');
     const cred = m.credential;
     const provider = isObj(cred) && typeof cred.provider === "string" && Object.hasOwn(CREDENTIAL_PROVIDERS, cred.provider) ? CREDENTIAL_PROVIDERS[cred.provider] : undefined;
     if (cred !== undefined) {

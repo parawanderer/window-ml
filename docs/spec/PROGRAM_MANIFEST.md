@@ -104,6 +104,61 @@ then a file; several `-e` are joined by newlines), and the text is checked by a 
 - **A lone `-`** is a file to macOS sed and stdin to GNU (measured), so sed claims it as a path (`dashIsPath`); every
   awk reads stdin.
 
+### Programs that reveal other processes (`reveals`; ruling 31, 2026-11-18)
+
+`ps`, `lsof` and `top` read nothing in a workspace, yet they show every process's command line, user, open files and
+sockets: another program's arguments (a token passed on a command line), which files the person has open, what they are
+connected to. The effects algebra has no resource for "other processes" ([`EFFECTS.md`](EFFECTS.md): `process` is a
+program STARTED), so a manifest says it with a top-level marker:
+
+- **`reveals: "processes"`**, the one value in v1. A call to such a program that would otherwise be free is free only
+  when the manifest's `program` is in **`shellRevealsAllow`** (a `string[]`, default `[]`, a gate key:
+  [`MODEL_SETTINGS.md`](MODEL_SETTINGS.md)). Otherwise it asks, and the card says why ("ps shows other processes: their
+  arguments, users and open files"). One program in the list frees no other: `ps` in it leaves `lsof` asking.
+- **It frees nothing else.** A call that would ask without the marker still asks; a flag the manifest does not list
+  stays `unknown` (`ps -E` and procps `e`, which print each process's environment, are left out on purpose); the
+  output is scrubbed as every call's is. An allow policy does not stand in for the list: `judgeCall` lets neither the
+  free tier nor an allow policy answer a revealing call whose program is not in it, as for a credentialed call (`gh`
+  above), because a policy can be the model's proposal and a gate key cannot.
+- **It only narrows**, so a stored or proposed manifest may declare it too. A manifest without it reads exactly as
+  before (the upgrade: every vector under `tests/fixtures/program-calls/` describes and judges identically), and a
+  config saved before the key existed reads `[]`.
+- **A stored or proposed manifest cannot drop it.** A shipped program cannot be shadowed at all (B2 below, at store,
+  load and call time), so once `ps`, `lsof` and `top` ship marked, no stored manifest describes them. Until then, and
+  for a copy inside a workspace root, `REVEALING_PROGRAMS` (`ps`, `lsof`, `top`) holds, matched against the
+  manifest's `program` and against the basename of the file it is pinned to (the host's realpath, so `pss`, a symlink
+  to `/bin/ps`, is caught; `revealingName`): a draft for one of them gets
+  the marker whatever it said (`draftRequest`), and its card says so ("added whatever the draft said"); the store
+  refuses one without it (`revealsRefusal`), so an entry stored before this rule is dropped on load, and one that
+  arrives another way is skipped at call time and its calls are undescribed and ask. A program not in the list that
+  shows other processes (`pgrep`, `htop`) is marked only by its manifest's author; a model's draft for one reaches
+  the person on the card, as every draft does.
+- **Who writes the list**: only the person. DevTools Settings edits it, and the card of a call that asks only because
+  of the marker has a third answer, "Always allow `<program>`", which adds the program to the list and runs the call;
+  the sidebar writes the setting as the person's own action, never through `change_setting`. That answer is the one
+  exception to the card's two answers ([`SHELL.md`](SHELL.md), "Approval"): it widens a gate key, which no policy may
+  do, so the widening cannot be a policy. The chat page and the phone show the two answers only.
+- **Rows**: off, the call asks with the reason; on, it is free; one program listed frees no other; an allow policy
+  naming the program does not free it (`tests/sw-policies.test.mjs`, `tests/sh-reveals.test.mjs`); end to end through
+  the worker, with a config that lacks the key (`tests/ml-sh.test.mjs`); the card's third answer lists the program, then
+  approves (`tests/sidebar-asks.test.js`); `change_setting` refuses the key and `ml.config()` does not return it, a
+  stored manifest for a listed program without the marker is refused, dropped on load and skipped at call time, a draft
+  for one gets the marker and its card says so, a stored manifest's spawn names no manifest, and the third answer is
+  drawn only where the surface's services can write the list (`tests/sh-reveals.test.mjs`); `ml.settings()` shows it with `mode: "read"` once that surface lands. The marker rows
+  use a stored manifest, not a vector under `tests/fixtures/program-calls/`: those are copied to the host, whose reader
+  does not take the marker yet.
+- **A version probe** of a revealing program, whether shipped, stored or proposed, is judged with the marker too
+  (`versionOf`): by its manifest's `reveals` or by `revealingName`, and listed only by `shellRevealsAllow`. On a
+  manifest with a version range the probe is resolved but not started until the program is listed; until then the
+  version is unread, so its calls are undescribed and ask (`tests/ml-sh.test.mjs`, "a revealing program's version
+  probe is judged with the marker").
+- **The process host** does not take the marker today: its reader (`manifest.rs`) refuses unknown fields. It parses a
+  manifest only for a credential, and then only its own pinned copy of a shipped file, named by the sha256 the spawn
+  sends; a spawn never carries a manifest's bytes. So a stored manifest declaring `reveals` never reaches the host
+  (it cannot carry a credential, `shippedOnlyRefusal`), and its calls are described and judged by the extension
+  alone. The follow-up, before any shipped manifest or vector declares the marker: the host's reader takes
+  `reveals` (a window-ml-host PR), then the vectors carrying it are copied there.
+
 ## Pinning
 
 A library manifest is pinned to a content hash of one build. A program cannot be, in general: `git` is whatever the
@@ -385,6 +440,10 @@ rejects unknown fields, so a manifest with one is for this extension only.
 - **A Linux awk always asks** (2026-11-18). gawk, mawk and busybox are installed under their own names (`/usr/bin/awk`
   links to `gawk` or `mawk`), so `awk.json`, which declares only `bsd`, reads them as `other`. Follow-up: gawk and mawk
   flavours, each with its hardening measured against that binary.
+- **A copy of a revealing program under another name is not recognised** (2026-11-18). `REVEALING_PROGRAMS` matches the
+  manifest's `program` and the realpath's basename, so a symlink is caught, but a copy or a hard link (`cp /bin/ps
+  pss`) resolves to its own name, and a stored manifest for it without `reveals` is not refused. The draft card shows
+  the path it is pinned to; a fingerprint list of the system's own `ps`, `lsof` and `top` would close it.
 
 ## Related
 

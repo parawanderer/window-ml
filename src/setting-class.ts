@@ -78,6 +78,7 @@ export const SETTING_CLASSES: Readonly<{ [K in keyof MlConfig]: SettingDecl }> =
     autoApproveReadonly: { class: "gate", reason: "runs read-only page surveys without asking" },
     autoApprovePython: { class: "gate", reason: "runs Python without asking" },
     autoApproveSelfSource: { class: "gate", reason: "reads the agent's own source without asking" },
+    shellRevealsAllow: { class: "gate", reason: "runs the listed programs that show other processes without asking" },
 
     shellEnabled: { class: "guarded", reason: "lets ml.sh run programs on this machine", widens: on },
     shellRoots: { class: "guarded", reason: "the folders ml.sh may reach", widens: added },
