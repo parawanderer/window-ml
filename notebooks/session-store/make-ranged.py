@@ -4,8 +4,9 @@ sessions at once, each with a large directory (FILE_ATTACHMENTS.md, "`/files/` r
     .venv/bin/python notebooks/session-store/make-ranged.py && node scripts/nb.mjs run notebooks/session-store/ranged.ipynb
     (or: node scripts/nb.mjs make notebooks/session-store/ranged.ipynb)
 
-The cells are written here; edit this file, not the notebook. Every number is read from data/ranged.json, written by
-measure-ranged.mjs; the first cell prints its hash. Nothing is typed in.
+The cells are written here; edit this file, not the notebook. Every number is read from data/ranged.json and
+data/ranged-gc.json, written by measure-ranged.mjs (the second with `--gc`); the first cell prints their hashes.
+Nothing is typed in.
 """
 
 from pathlib import Path
@@ -54,8 +55,9 @@ import wmlnb
 HERE = wmlnb.ROOT / "notebooks" / "session-store"
 DATA = HERE / "data"
 D = json.loads((DATA / "ranged.json").read_text())
+G = json.loads((DATA / "ranged-gc.json").read_text())
 pd.set_option("display.width", 200)
-print(pd.DataFrame([{"file": "data/ranged.json", "sha256": wmlnb.sha256_file(DATA / "ranged.json")[:16]}]).to_string(index=False))
+print(pd.DataFrame([{"file": f"data/{f}", "sha256": wmlnb.sha256_file(DATA / f)[:16]} for f in ["ranged.json", "ranged-gc.json"]]).to_string(index=False))
 m = D["machine"]
 print(f"browser: Chromium {D['browser']}; {m['cpus']}, {m['ramGiB']} GiB RAM; at {D['at']}; quick={D['quick']}")
 print(f"load average before {m['load']}, after {m['loadAfter']}")
@@ -84,6 +86,29 @@ print(agg.to_string(index=False))
 """)
 
 md("""
+## 1b. What the lazy reader HOLDS: the same lazy runs, collected as they go
+
+Section 1's lazy peak grows with the bytes READ, not with the cache: one session reading 1.25 GiB through a 16 MiB
+cache grew by about the bytes it read. Each chunk is a fresh ArrayBuffer, and V8 had not collected the dropped ones
+before the run ended, so that figure is garbage not yet collected, not what the reader holds. A real reader copies into a
+fixed buffer (route A's shared one), which makes no such garbage. To measure what the reader holds, `--gc` runs the
+same lazy configurations in a browser started with `--expose-gc`, the page calling `gc()` after each file and each
+worker after every 32 chunks. Its eager runs are section 1's: an eager load holds what it loaded, collected or not.
+""")
+
+code("""
+gr = pd.DataFrame([{**r, "grew": r["rssPeakMiB"] - r["rssBaseMiB"]} for r in G["runs"]])
+print("gc runs:", len(gr), "; void:", int((~gr["valid"]).sum()), "; timings under load:", G.get("timingsUnderLoad"), "; other test-slot jobs at start:", G.get("otherTestSlotJobsAtStart"))
+gok = gr[gr["valid"]]
+gagg = gok.groupby("sessions").agg(valid_runs=("grew", "size"), grew_median=("grew", "median"), grew_min=("grew", "min"), grew_max=("grew", "max")).reset_index()
+eager = agg[agg["mode"] == "eager"][["sessions", "grew_median"]].rename(columns={"grew_median": "eager_grew_median"})
+both = gagg.merge(eager, on="sessions", how="left")
+both["lazy_per_session"] = (both["grew_median"] / both["sessions"]).round(0)
+both["eager_per_session"] = (both["eager_grew_median"] / both["sessions"]).round(0)
+print(both.to_string(index=False))
+""")
+
+md("""
 ## 2. Small files: what eager saves
 
 200 files of 4 KiB, each read whole once: lazily (one slice each), against loading every file first and reading from
@@ -102,7 +127,19 @@ print(pd.DataFrame([{"files": s["files"], "bytes each": s["fileBytes"], "lazy ms
 md("""
 ## What the amendment takes from this
 
-CONCLUSIONS
+- **Lazy only, no eager mount under any size.** Collected as it goes, the lazy reader held about 50 MiB for one
+  session and about 220 MiB for eight (section 1b): about its 16 MiB cache per session plus a fixed cost, and
+  sublinear in sessions. The eager load grew by its directory's size for every session (about 262 MiB each, 2 GiB for
+  eight), which is the cost the ruling forbids: it scales with what the sessions hold, not with what they read.
+- **What eager would save is small.** For small files (section 2) it saves the per-file slice, a fraction of a
+  millisecond, plus route A's 0.26 ms a request: an "eager under T bytes" rule would buy that and cost a second code
+  path and a mount whose memory depends on what a session holds. Not worth it.
+- **What the spec may say about memory:** the reader's resident cost is its cache (16 MiB a session here) plus a fixed
+  overhead, independent of the directory's size; a reader that allocates a buffer per chunk leaves garbage up to the
+  bytes it read until V8 collects it, so the reader copies into a fixed buffer. No latency or throughput figure here
+  is used: both runs were taken while other test runs shared the machine.
+- The plain lazy runs at eight sessions were all void (the memory pressure left the normal level), which is itself the
+  uncollected garbage pushing the machine: a reason for the fixed buffer, not a figure.
 """)
 
 nb = nbf.v4.new_notebook()

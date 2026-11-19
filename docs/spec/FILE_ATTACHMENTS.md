@@ -724,10 +724,20 @@ front ends call it and nothing else:
 
 MEASURED (`notebooks/session-store/`, `ranged.ipynb`; a lab, not the product: an extension page stands in for the
 offscreen document, a dedicated worker with a 16 MiB cache for the Pyodide worker, the channel to Python left out
-since route A measured it): RANGED_RESULTS.
+since route A measured it): each session's directory is two 128 MiB files, read lazily through 512 KiB chunks
+or loaded whole, for 1, 4 and 8 sessions at once in a fresh browser per configuration. Lazily, with the reader's
+garbage collected as it goes, the browser grew by about 51 MiB for one session, 169 MiB for four and 219 MiB for
+eight: the cache (16 MiB a session) and a fixed overhead, independent of the directory's size. Loaded whole, it grew
+by the directory for every session: about 262 MiB for one, 1.0 GiB for four, 2.0 GiB for eight. A reader that
+allocates a fresh buffer per chunk and lets V8 collect it holds garbage up to the bytes it READ (1.1 GiB for one
+session reading 1.25 GiB) until a collection runs, and at eight sessions that pushed the machine out of the normal
+memory-pressure level: **the reader copies into a fixed buffer** (route A's shared one), never a buffer per chunk.
 
-**Eager under a measured size, or not at all.** The ruled eager MEMFS stays only where it is as cheap: RANGED_SMALL.
-RANGED_EAGER_DECISION.
+**Eager under a measured size, or not at all.** PROPOSED (an infra call, the coordinator's): **lazy only, at every
+size.** What an "eager under T" rule could save is time on small files, and the lab's timings were taken while other
+test runs shared the machine, so none of them is used here; whatever it saves, it would cost a second code path and a
+mount whose memory depends on what a session holds, which is the cost the ruling removes. The decision rests on the
+memory figures above.
 
 **Stop still works**: the mount's blocked operations are route A's, with the `Atomics.notify` beside the Stop's store
 that route A requires; the 300-of-300 rows are rerun on this server before it lands.
