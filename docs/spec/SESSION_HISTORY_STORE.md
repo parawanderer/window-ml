@@ -136,7 +136,9 @@ still resume it. Those records:
 **A failed write is recorded and shown.** The store gets an `onError` (today the worker builds it with none,
 `sw-sessions.ts:565`, §2): a failed flush is recorded in the housekeeping log (subsystem `sessions`, kind
 `write-failed`, the session's hash and how many events and history positions were not written) and shown on the
-session as one line saying what was not saved. The run continues. This is the same slice as the row change.
+session as one line saying what was not saved. The run continues. A session's failure is reported once until
+one of its writes succeeds: the line is itself a write, and a failure that persists (a full disk, a quota) would
+otherwise fail, report and fail again without end. This is the same slice as the row change.
 
 **Eviction (ruled by the coordinator, 2026-11-17).** A protected session's excess is not paid for by the others:
 `planEviction` evicts down to `budget + protectedBytes`, where `protectedBytes` is what the protected sessions hold

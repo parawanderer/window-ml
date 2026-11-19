@@ -255,6 +255,8 @@ export class SessionStore {
     private urgent = false;
     /** sessions whose move to the archive failed, and when: kept, and not tried again for a while */
     private readonly archiveFailed = new Map<string, number>();
+    /** sessions whose last write failed and was reported: reported again only after one of their writes succeeds */
+    private readonly failing = new Set<string>(); // state: cache
     private flushing: Promise<void> = Promise.resolve();
     private ready: Promise<void> | null = null;
     /** the rows on disk have been read, so a row's `count` is its real length */
@@ -290,7 +292,11 @@ export class SessionStore {
             /** Something was written: what schedules the image compaction, which waits for the writes to stop. */
             onWrite?: () => void;
             onError?: (err: unknown) => void;
-            /** One session's write failed: what was not saved. The run goes on; the next write starts over. */
+            /**
+             * One session's write failed: what was not saved. The run goes on; the next write starts over. Called
+             * once per session until one of its writes succeeds: the worker says the failure on the session, which is
+             * itself a write, and a failure that persists (a full disk, a quota) would otherwise report itself forever.
+             */
             onWriteFailed?: (f: WriteFailure) => void;
             /** One record per session the upgrade moved, or failed to move. */
             onMigrated?: (m: Migrated) => void;
@@ -494,7 +500,7 @@ export class SessionStore {
     /** Forget a session: a delete, or an eviction. */
     async forget(hashes: string[]): Promise<void> {
         if (!hashes.length) return;
-        for (const hash of hashes) { this.rows.delete(hash); this.pending.delete(hash); this.queuedHistory.delete(hash); this.written.delete(hash); }
+        for (const hash of hashes) { this.rows.delete(hash); this.pending.delete(hash); this.queuedHistory.delete(hash); this.written.delete(hash); this.failing.delete(hash); }
         await this.backend.remove(hashes);
     }
 
@@ -569,6 +575,7 @@ export class SessionStore {
             try {
                 await this.backend.append(stored, w.from, w.events, w.hist?.write);
                 if (w.hist && this.isLive(w.row)) this.written.set(w.row.hash, w.hist.next); else this.written.delete(w.row.hash);
+                this.failing.delete(w.row.hash);
             } catch (err) {
                 // What was not saved is said, and the session goes on: the row is put back as it was, so the next
                 // write continues at the right position, and its history is written whole next time.
@@ -580,6 +587,8 @@ export class SessionStore {
                     if (w.queued && !this.queuedHistory.has(w.row.hash)) this.queuedHistory.set(w.row.hash, w.queued);
                 }
                 this.written.delete(w.row.hash);
+                if (this.failing.has(w.row.hash)) continue;
+                this.failing.add(w.row.hash);
                 this.opts.onWriteFailed?.({ hash: w.row.hash, events: w.events.length, positions: w.hist?.write.puts.length ?? 0, error: String((err as Error)?.message || err).slice(0, 200) });
             }
         }

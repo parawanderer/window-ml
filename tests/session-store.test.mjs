@@ -15,10 +15,12 @@ function backend() {
     const calls = { append: 0, remove: 0, rows: 0, puts: 0, writes: [] };
     const be = {
         failNext: false,
+        /** every append fails while set: a full disk or a quota */
+        failAll: false,
         rows: async () => { calls.rows++; return [...rows.values()]; },
         append: async (row, from, list, hw) => {
             calls.append++;
-            if (be.failNext) { be.failNext = false; throw new Error("disk full"); }
+            if (be.failNext || be.failAll) { be.failNext = false; throw new Error("disk full"); }
             rows.set(row.hash, row);
             if (hw) {
                 calls.writes.push({ hash: row.hash, puts: hw.puts.map(([p]) => p), cut: hw.cut, meta: hw.meta });
@@ -542,6 +544,43 @@ test("a failed write is reported, rolls the row back, and the next write starts 
     assert.equal(be._rows.get("aaaa0001").count, 2, "the event after the failed batch continues at the right seq");
     assert.deepEqual([...be._events.get("aaaa0001").keys()], [0, 1]);
     assert.equal(be._events.get("aaaa0001")[1].content, "answer 2");
+});
+
+test("a failure that persists is reported once per session until a write succeeds, though the report is itself a write", T, async () => {
+    // The worker says a failure on the session by ingesting a note, which puts an event and flushes at once
+    // (sw-sessions.ts, noteUnsaved). Reported on every failure, an always-failing disk fails, reports and fails again
+    // without end: 171 failed appends in 200 ms before the bound.
+    const be = backend();
+    const failures = [];
+    let store;
+    let seq = 1;
+    store = new SessionStore(be, { flushMs: 60_000, onWriteFailed: (f) => { failures.push(f); store.put(summary(f.hash, { status: "running" }), ev(f.hash, seq++)); } });
+    store.put(summary("aaaa0001", { status: "running" }), ev("aaaa0001", 0));
+    store.put(summary("aaaa0002", { status: "running" }), ev("aaaa0002", 0));
+    be.failAll = true;
+    await store.flush();
+    await new Promise((r) => setTimeout(r, 200));
+    await store.flush();
+    assert.deepEqual(failures.map((f) => f.hash).sort(), ["aaaa0001", "aaaa0002"], "each session reported once");
+    assert.ok(be.calls.append <= 4, `the write and its note's write, per session: ${be.calls.append} appends`);
+
+    // Still failing, the run's own next event is not reported again.
+    store.put(summary("aaaa0001", { status: "running" }), ev("aaaa0001", seq++));
+    await store.flush();
+    assert.equal(failures.length, 2);
+
+    // A write that succeeds re-arms the report for that session only.
+    be.failAll = false;
+    store.put(summary("aaaa0001", { status: "running" }), ev("aaaa0001", seq++));
+    await store.flush();
+    be.failAll = true;
+    store.put(summary("aaaa0001", { status: "running" }), ev("aaaa0001", seq++));
+    store.put(summary("aaaa0002", { status: "running" }), ev("aaaa0002", seq++));
+    await store.flush();
+    await new Promise((r) => setTimeout(r, 50));
+    await store.flush();
+    assert.equal(failures.filter((f) => f.hash === "aaaa0001").length, 2, "reported again after its success");
+    assert.equal(failures.filter((f) => f.hash === "aaaa0002").length, 1, "the other session, never written since, is not");
 });
 
 test("a chat history round-trips: messages from `history`, everything else from `runmeta`", T, async () => {
