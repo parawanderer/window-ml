@@ -297,6 +297,19 @@ export interface SessionSummary {
     pendingApprovals: number;
     /** the page the session started on; absent for a chat with no page */
     page?: { url: string; title?: string; tabId?: number };
+    /**
+     * The page a worker-hosted run's tab moved to after it started, when that is not the page it started on: from the
+     * browser's own navigation report, never a page's claim. Kept once the run ends, as the page it was last on.
+     * Absent: still on the page it started on, or not known (a page-hosted session, a runtime that does not report it).
+     * No title: the report carries none.
+     */
+    currentPage?: { url: string };
+    /**
+     * The session this one was forked from (`handle.fork()`, `history.fork()`), when the runtime could check it: the
+     * parent was on the same tab. Absent: not a fork, or not known. Not `lineage`, which is a session another
+     * session STARTED (a subagent).
+     */
+    forkedFrom?: SessionId;
     /** survives a restart of the runtime; false for an ephemeral console or page-script session */
     saved: boolean;
     /**

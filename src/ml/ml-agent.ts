@@ -28,6 +28,7 @@ export interface AgentControl {
     bg?: boolean;                 // the CURRENT run routed to the background → a mid-run say() steers via INJECT_MESSAGE
     tokens?: import("../pointers/token-pipe").TokenStore;   // the SESSION's `@tool:` pointer store — spans every turn (see AgentLoopOptions.tokenStore)
     synced?: number;              // a worker-hosted run: how much of `messages` the worker returned, so what was added since is sent as this turn's text
+    forkOf?: string;              // a fork's parent session, sent on its first run's start event (SessionRef.forkOf)
 }
 
 // Monotonic id per mid-run steer (a.say()), so the "seen" indicator can key an `agent-say-seen` event
@@ -63,6 +64,7 @@ export class AgentHandle implements MlAgentHandle, AgentControl {
     seqBase = 0;
     stepBase = 0;
     bg = false;   // set by ml.agent when the current run routes to the background (say() then uses INJECT_MESSAGE)
+    forkOf?: string;   // set by fork(): the session this handle was forked from
     private _maxSteps: number;
     private _ctrl = new AbortController();
     private _transcript: AgentTranscriptEntry[] = [];   // the WHOLE session's actions (accumulated across turns)
@@ -141,6 +143,7 @@ export class AgentHandle implements MlAgentHandle, AgentControl {
     fork(): MlAgentHandle {
         const f = new AgentHandle(this._ml, this._opts);
         f.messages = this.messages.map(m => ({ ...m }));
+        if (this.hash) f.forkOf = this.hash;
         return f;
     }
 }

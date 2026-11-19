@@ -220,7 +220,7 @@ export const agent = async function(this: MlApi, task: string, { host = null, to
     const mlApi = this as unknown as MlApi;   // typed self-ref for the deps' chatMeta (capabilities/ps)
     // The start event's task is the first message as the model got it, page context included; the bubble shows the task.
     const shownDisplay = _display ?? (pageCtx ? { typed: task, context: [] } : undefined);
-    if (firstTurn) emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task: firstUserTurn(task, pageCtx), images: turnImages.length ? turnImages : undefined, ...(shownDisplay ? { display: shownDisplay } : {}), model: runModel, maxSteps, pageUrl: location.href, pageTitle: document.title || undefined, config: {
+    if (firstTurn) emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0, ...(control.forkOf ? { forkOf: control.forkOf } : {}) }, task: firstUserTurn(task, pageCtx), images: turnImages.length ? turnImages : undefined, ...(shownDisplay ? { display: shownDisplay } : {}), model: runModel, maxSteps, pageUrl: location.href, pageTitle: document.title || undefined, config: {
         system: systemPrompt, customSystem: !!system,
         tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")), description: t.description, parameters: t.parameters, summary: t.summary, ...(t.remote ? { remote: t.remote } : {}) })),
         maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null,
@@ -307,6 +307,7 @@ export const agent = async function(this: MlApi, task: string, { host = null, to
                 // turn groups stay distinct on the background path too — otherwise turn N's step 1
                 // collides with turn 1's and the chat log scrambles).
                 stepBase: control.stepBase, seqBase: control.seqBase,
+                ...(firstTurn && control.forkOf ? { forkOf: control.forkOf } : {}),
             }, (result, data) => {
                 // Sync the run's final history back into the handle (page-authoritative). This is why
                 // a.messages populates + a follow-up run()/say() continues, on the background path too.

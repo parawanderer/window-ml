@@ -628,6 +628,156 @@ test("a session's title has one owner: every surface asking gets the worker's on
     assert.match((await bg.send({ type: "SESSION_TITLE", payload: { hash: "abcd0003", messages } }, tab(9))).error, /Refused/);
 });
 
+// --- the utility model's calls (titles, side.call) cross the by-value scrub like every other model-bound text ---
+
+const SECRET = { name: "PLUG_PASSWORD", value: "REALSECRET-4b1d-77" };
+const KEPT = "abcd0009";
+const SESSION = { runtime: "local", hash: KEPT };
+
+/**
+ * A worker with a utility model, one registered secret, and the bodies it sent to the backend.
+ * @param local the worker's local storage (the registry, or something that makes reading it fail)
+ * @returns the worker, its index page, and every request body the backend got
+ */
+function utilityWorld(local = { ml_secret_registry: [SECRET] }) {
+    const bodies = [];
+    const bg = loadBackground({
+        config: { ...config, utilityModel: "tiny", autoTitles: true },
+        local,
+        onFetch: (call) => {
+            if (call.body) bodies.push(JSON.stringify(call.body));
+            return jsonResponse({ choices: [{ message: { content: "Lamp hunt" } }] });
+        },
+    });
+    return { bg, bodies, page: openPage(bg) };
+}
+
+test("a registered value in a saved session's task never reaches the utility model in its title call", T, async () => {
+    const { bg, bodies, page } = utilityWorld();
+    await flush();
+    bg.context.__mlKeepSessionForTest(KEPT);
+    void bg.send({ type: "ML_DEBUG_EVENT", event: { ...start(KEPT), task: `log in with ${SECRET.value} please` } }, tab(7));
+    for (let i = 0; i < 100 && !page.rows().get(KEPT)?.title; i++) await new Promise((r) => setTimeout(r, 20));
+    assert.equal(page.rows().get(KEPT).title, "Lamp hunt", "the title call was made");
+    const sent = bodies.find((b) => /titles for a request/.test(b));
+    assert.ok(sent.includes(`[REDACTED:${SECRET.name}]`), sent);
+    assert.ok(!bodies.some((b) => b.includes(SECRET.value)), "no request carried the value");
+});
+
+test("side.call sends no registered value to the utility model, whatever the role", T, async () => {
+    const { bg, bodies, page } = utilityWorld();
+    await flush();
+    const messages = [{ role: "system", content: `rules ${SECRET.value}` }, { role: "user", content: `summarise: password ${SECRET.value}` }];
+    const sent = structuredClone(messages);
+    page.port.send({ type: "cmd", id: 1, command: { type: "side.call", runtime: "local", purpose: "summary", session: SESSION, messages, maxTokens: 32 } });
+    let reply;
+    for (let i = 0; i < 100 && !reply; i++) { await new Promise((r) => setTimeout(r, 10)); reply = page.port.messages.find((m) => m.type === "result" && m.id === 1); }
+    assert.equal(reply.result.ok, true);
+    const body = bodies.find((b) => b.includes("summarise"));
+    assert.ok(body.includes(`[REDACTED:${SECRET.name}]`), body);
+    assert.ok(!bodies.some((b) => b.includes(SECRET.value)), "no request carried the value");
+    assert.deepEqual(messages, sent, "the asker's messages are as they were");
+});
+
+test("with the registry unreadable the utility model is not called at all, for a title or a side.call", T, async () => {
+    // A value storage cannot clone makes every read of the registry throw.
+    const { bg, bodies, page } = utilityWorld({ ml_secret_registry: () => {} });
+    await flush();
+    bg.context.__mlKeepSessionForTest(KEPT);
+    void bg.send({ type: "ML_DEBUG_EVENT", event: { ...start(KEPT), task: `log in with ${SECRET.value} please` } }, tab(7));
+    page.port.send({ type: "cmd", id: 1, command: { type: "side.call", runtime: "local", purpose: "summary", session: SESSION, messages: [{ role: "user", content: `x ${SECRET.value}` }], maxTokens: 32 } });
+    let reply;
+    for (let i = 0; i < 100 && !reply; i++) { await new Promise((r) => setTimeout(r, 10)); reply = page.port.messages.find((m) => m.type === "result" && m.id === 1); }
+    await flush();
+    assert.equal(reply.result.ok, false, "the side call failed rather than went out");
+    assert.ok(!JSON.stringify(reply).includes(SECRET.value));
+    assert.equal(page.rows().get(KEPT)?.title, undefined, "no title: the list shows the task");
+    assert.deepEqual(bodies, [], "nothing reached the backend");
+});
+
+test("a title asked with content that is not text (an array of parts) is not sent: the scrub reads only strings", T, async () => {
+    const { bg, bodies } = utilityWorld();
+    await flush();
+    const messages = [{ role: "user", content: [{ type: "text", text: `name this: ${SECRET.value}` }] }];
+    const r = await bg.send({ type: "SESSION_TITLE", payload: { hash: KEPT, messages } }, { url: "chrome-extension://test/chat.html" });
+    await flush();
+    assert.ok(!JSON.stringify(r).includes(SECRET.value));
+    assert.ok(!bodies.some((b) => b.includes(SECRET.value)), "no request carried the value");
+    assert.ok(!bodies.some((b) => b.includes("name this")), "nothing of it was sent");
+});
+
+// --- every way a call reaches the utility backend, and what guards it ---
+// 1. SESSION_TITLE (extension pages) and side.call on the sessions port (any purpose): utilityCall -> forModelMessages.
+//    Rows above (title, side.call, unreadable registry, non-text content) and the tool_calls row below.
+// 2. An extension frame's FETCH_LLM with extend "utility" (services-ext.ts sideCall: the HUD's summary, explain notes,
+//    the code summaries): the router's forBackendFromPage on every utility payload. Rows below (sent, unreadable).
+// 3. The same on the LLM_STREAM port with extend "utility": same guard in the router; no sender builds one today.
+// 4. A page's FETCH_LLM / LLM_STREAM with extend "utility" (ml.chat({extend:"utility"})): forBackendFromPage as for
+//    every page call (tests/redteam-forpage.test.mjs).
+// 5. A run's worker-side utility reader (fetch_url ASK mode, python_exec's ml.chat extend "utility"): meteredChat ->
+//    forModelMessages (src/sw/worker-tools.ts). Rows: "a worker run's utility call ..." in tests/worker-media.test.mjs
+//    (sent with the marker; unreadable registry sends nothing), through runChat, which every worker-side call ends in.
+// 6. settings.tsx's "test utility model" ping and popup.ts's "Reply with exactly: OK": constant text, no registered value.
+// 7. ocr / vision readers (ocrRequest, workerVisionChat): the reader model, not the utility profile.
+
+test("an extension frame's utility FETCH_LLM (the HUD summary) sends no registered value to the backend", T, async () => {
+    const { bg, bodies } = utilityWorld();
+    await flush();
+    const messages = [{ role: "system", content: `rules ${SECRET.value}` }, { role: "user", content: `summarise: password ${SECRET.value}` }];
+    const sent = structuredClone(messages);
+    const r = await bg.send({ type: "FETCH_LLM", payload: { messages, extend: "utility", maxTokens: 48, think: false } }, { url: "chrome-extension://test/sidebar/sidebar.html" });
+    await flush();
+    assert.equal(r.data, "Lamp hunt", "the call was made");
+    const body = bodies.find((b) => b.includes("summarise"));
+    assert.ok(body.includes("[REDACTED]"), body);
+    assert.ok(!bodies.some((b) => b.includes(SECRET.value)), "no request carried the value");
+    assert.deepEqual(messages, sent, "the asker's messages are as they were");
+});
+
+test("a utility FETCH_LLM's tool call with OBJECT arguments sends no registered value, in a value or a key, and stays an object", T, async () => {
+    const { bg, bodies } = utilityWorld();
+    await flush();
+    const messages = [
+        { role: "user", content: "go" },
+        { role: "assistant", content: "", tool_calls: [{ id: "c1", name: "type", arguments: { text: SECRET.value, byColumn: { [SECRET.value]: 1 } } }] },
+        { role: "tool", tool_call_id: "c1", content: "ok" },
+    ];
+    const r = await bg.send({ type: "FETCH_LLM", payload: { messages, extend: "utility", maxTokens: 48 } }, { url: "chrome-extension://test/sidebar/sidebar.html" });
+    await flush();
+    assert.equal(r.data, "Lamp hunt", "the call was made");
+    const body = bodies.find((b) => b.includes("tool_calls"));
+    assert.ok(body && !bodies.some((b) => b.includes(SECRET.value)), body);
+    const args = JSON.parse(JSON.parse(body).messages[1].tool_calls[0].function.arguments);
+    assert.deepEqual(args, { text: "[REDACTED]", byColumn: { "[REDACTED]": 1 } });
+});
+
+test("an extension frame's utility FETCH_LLM is not sent at all when the registry cannot be read", T, async () => {
+    const { bg, bodies } = utilityWorld({ ml_secret_registry: () => {} });
+    await flush();
+    const r = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: `x ${SECRET.value}` }], extend: "utility", maxTokens: 48 } }, { url: "chrome-extension://test/sidebar/sidebar.html" });
+    await flush();
+    assert.ok(r.error, "refused");
+    assert.ok(!JSON.stringify(r).includes(SECRET.value));
+    assert.deepEqual(bodies, [], "nothing reached the backend");
+});
+
+test("a title or side.call turn's tool_calls arguments are scrubbed too, and the asker's array is left as it was", T, async () => {
+    const { bg, bodies } = utilityWorld();
+    await flush();
+    const messages = [
+        { role: "assistant", content: "", tool_calls: [{ id: "c1", name: "type", arguments: `{"text":"${SECRET.value}"}` }, { id: "c2", name: "type", arguments: { text: SECRET.value, nested: [SECRET.value] } }] },
+        { role: "user", content: "name this" },
+    ];
+    const sent = structuredClone(messages);
+    const r = await bg.send({ type: "SESSION_TITLE", payload: { hash: KEPT, messages } }, { url: "chrome-extension://test/chat.html" });
+    await flush();
+    assert.equal(r.data, "Lamp hunt", "the call was made");
+    const body = bodies.find((b) => b.includes("name this"));
+    assert.ok(body.includes(`[REDACTED:${SECRET.name}]`), body);
+    assert.ok(!bodies.some((b) => b.includes(SECRET.value)), "no request carried the value");
+    assert.deepEqual(messages, sent, "the asker's messages are as they were");
+});
+
 test("models.list answers what the whitelist allows, with kinds and the default marked", T, async () => {
     const bg = loadBackground({
         config: { ...config, chatUrl: "http://host/api/chat/completions", model: "qwen3:14b", modelFilter: "^qwen" },
