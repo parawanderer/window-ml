@@ -362,6 +362,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 session: {
                     get: async (keys) => Object.fromEntries((Array.isArray(keys) ? keys : [keys]).filter((k) => k in sessionStore).map((k) => [k, structuredClone(sessionStore[k])])),
                     set: async (obj) => { const changes = changesOf(sessionStore, obj); Object.assign(sessionStore, structuredClone(obj)); fireChanged(changes, "session"); },
+                    remove: async (keys) => { for (const k of Array.isArray(keys) ? keys : [keys]) delete sessionStore[k]; },
                 },
             },
             // GET_INVOCATION reads the manifest's suggested key + the contextMenus permission.
