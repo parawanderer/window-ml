@@ -3,7 +3,7 @@
 import { getConfig } from "./sw-llm";
 import { mapErrorStrings, mergeSecrets, scrubSecrets, secretsOf, type SecretSub } from "../secret-scrub";
 import type { MlConfig } from "../contract/contract-config";
-import type { NeutralMessage } from "../contract/contract-chat";
+import type { NeutralMessage, ToolCall } from "../contract/contract-chat";
 import { heldTail, redactedLine, scrubRegistry, type RegistrySub } from "../secret-registry";
 import { registryIsReady, registryReady, registrySubsNow } from "./sw-secret-registry";
 
@@ -131,7 +131,14 @@ export async function forModelMessages(messages: NeutralMessage[]): Promise<Neut
     if (messages.some((m) => m.content != null && typeof m.content !== "string")) throw new Error("The request was not sent: a message's content was not text.");
     const scrub = (t: string): string => scrubRegistry(scrubSecrets(t, secrets), subs).text;
     // The content, and an assistant turn's thinking, which a backend that asks for it is sent too.
-    return messages.map((m) => ({ ...m, ...(typeof m.content === "string" && m.content ? { content: scrub(m.content) } : {}), ...(m.reasoning ? { reasoning: scrub(m.reasoning) } : {}) }));
+    // An assistant turn's calls carry their arguments as text (or an object whose string leaves are text) too.
+    const deep = (v: unknown): unknown => typeof v === "string" ? scrub(v) : Array.isArray(v) ? v.map(deep) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, deep(x)])) : v;
+    return messages.map((m) => ({
+        ...m,
+        ...(typeof m.content === "string" && m.content ? { content: scrub(m.content) } : {}),
+        ...(m.reasoning ? { reasoning: scrub(m.reasoning) } : {}),
+        ...(Array.isArray(m.tool_calls) ? { tool_calls: m.tool_calls.map((tc) => tc && typeof tc === "object" ? { ...tc, arguments: deep(tc.arguments) as ToolCall["arguments"] } : tc) } : {}),
+    }));
 }
 
 /**

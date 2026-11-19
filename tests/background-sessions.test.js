@@ -706,6 +706,60 @@ test("a title asked with content that is not text (an array of parts) is not sen
     assert.ok(!bodies.some((b) => b.includes("name this")), "nothing of it was sent");
 });
 
+// --- every way a call reaches the utility backend, and what guards it ---
+// 1. SESSION_TITLE (extension pages) and side.call on the sessions port (any purpose): utilityCall -> forModelMessages.
+//    Rows above (title, side.call, unreadable registry, non-text content) and the tool_calls row below.
+// 2. An extension frame's FETCH_LLM with extend "utility" (services-ext.ts sideCall: the HUD's summary, explain notes,
+//    the code summaries): the router's forBackendFromPage on every utility payload. Rows below (sent, unreadable).
+// 3. The same on the LLM_STREAM port with extend "utility": same guard in the router; no sender builds one today.
+// 4. A page's FETCH_LLM / LLM_STREAM with extend "utility" (ml.chat({extend:"utility"})): forBackendFromPage as for
+//    every page call (tests/redteam-forpage.test.mjs).
+// 5. A run's worker-side utility reader (fetch_url ASK mode, python_exec's ml.chat extend "utility"): meteredChat ->
+//    forModelMessages (src/sw/worker-tools.ts). Needs no row here: it is the same function as 1, whose rows cover it.
+// 6. settings.tsx's "test utility model" ping and popup.ts's "Reply with exactly: OK": constant text, no registered value.
+// 7. ocr / vision readers (ocrRequest, workerVisionChat): the reader model, not the utility profile.
+
+test("an extension frame's utility FETCH_LLM (the HUD summary) sends no registered value to the backend", T, async () => {
+    const { bg, bodies } = utilityWorld();
+    await flush();
+    const messages = [{ role: "system", content: `rules ${SECRET.value}` }, { role: "user", content: `summarise: password ${SECRET.value}` }];
+    const sent = structuredClone(messages);
+    const r = await bg.send({ type: "FETCH_LLM", payload: { messages, extend: "utility", maxTokens: 48, think: false } }, { url: "chrome-extension://test/sidebar/sidebar.html" });
+    await flush();
+    assert.equal(r.data, "Lamp hunt", "the call was made");
+    const body = bodies.find((b) => b.includes("summarise"));
+    assert.ok(body.includes("[REDACTED]"), body);
+    assert.ok(!bodies.some((b) => b.includes(SECRET.value)), "no request carried the value");
+    assert.deepEqual(messages, sent, "the asker's messages are as they were");
+});
+
+test("an extension frame's utility FETCH_LLM is not sent at all when the registry cannot be read", T, async () => {
+    const { bg, bodies } = utilityWorld({ ml_secret_registry: () => {} });
+    await flush();
+    const r = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: `x ${SECRET.value}` }], extend: "utility", maxTokens: 48 } }, { url: "chrome-extension://test/sidebar/sidebar.html" });
+    await flush();
+    assert.ok(r.error, "refused");
+    assert.ok(!JSON.stringify(r).includes(SECRET.value));
+    assert.deepEqual(bodies, [], "nothing reached the backend");
+});
+
+test("a title or side.call turn's tool_calls arguments are scrubbed too, and the asker's array is left as it was", T, async () => {
+    const { bg, bodies } = utilityWorld();
+    await flush();
+    const messages = [
+        { role: "assistant", content: "", tool_calls: [{ id: "c1", name: "type", arguments: `{"text":"${SECRET.value}"}` }, { id: "c2", name: "type", arguments: { text: SECRET.value, nested: [SECRET.value] } }] },
+        { role: "user", content: "name this" },
+    ];
+    const sent = structuredClone(messages);
+    const r = await bg.send({ type: "SESSION_TITLE", payload: { hash: KEPT, messages } }, { url: "chrome-extension://test/chat.html" });
+    await flush();
+    assert.equal(r.data, "Lamp hunt", "the call was made");
+    const body = bodies.find((b) => b.includes("name this"));
+    assert.ok(body.includes(`[REDACTED:${SECRET.name}]`), body);
+    assert.ok(!bodies.some((b) => b.includes(SECRET.value)), "no request carried the value");
+    assert.deepEqual(messages, sent, "the asker's messages are as they were");
+});
+
 test("models.list answers what the whitelist allows, with kinds and the default marked", T, async () => {
     const bg = loadBackground({
         config: { ...config, chatUrl: "http://host/api/chat/completions", model: "qwen3:14b", modelFilter: "^qwen" },

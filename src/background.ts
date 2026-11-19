@@ -1111,7 +1111,8 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // A page's call is its own: it may not file its generation under a run the worker built (sw-runs.ts).
         // A page's request leaves for the backend with no registered secret in any message, and nothing about it said back.
         const fromPage = !!sender.tab && !isExtensionSender(sender);
-        (fromPage ? forBackendFromPage(withoutWorkerSession(message.payload)) : Promise.resolve(sender.tab ? withoutWorkerSession(message.payload) : message.payload))
+        // The utility profile's calls (an extension frame's HUD summary included) leave with no registered secret too.
+        (fromPage || message.payload?.extend === "utility" ? forBackendFromPage(withoutWorkerSession(message.payload)) : Promise.resolve(sender.tab ? withoutWorkerSession(message.payload) : message.payload))
             .then((payload) => fetchLLM(payload, ctl.signal))
             // raw (ml.step) returns { content, tool_calls } as data; normal chat
             // returns the content string, with sources alongside only when present.
@@ -1471,7 +1472,7 @@ chrome.runtime.onConnect.addListener((port) => {
         const refusal = port.sender ? await pageRefusal("FETCH_LLM", port.sender) : null;
         if (refusal) { if (!closed) port.postMessage({ type: "error", error: refusal }); return; }
         const fromPage = !!port.sender?.tab && !isExtensionSender(port.sender);
-        (fromPage ? forBackendFromPage(withoutWorkerSession(message.payload)) : Promise.resolve(port.sender?.tab ? withoutWorkerSession(message.payload) : message.payload))
+        (fromPage || message.payload?.extend === "utility" ? forBackendFromPage(withoutWorkerSession(message.payload)) : Promise.resolve(port.sender?.tab ? withoutWorkerSession(message.payload) : message.payload))
             .then((payload) => streamLLM(payload, (delta) => { if (!closed) port.postMessage({ type: "chunk", delta }); }, ctl.signal))
             .then(({ content, sources, model, reasoning, usage }) => { if (!closed) port.postMessage({ type: "done", content, sources, model, reasoning, usage }); })
             .catch((err) => {

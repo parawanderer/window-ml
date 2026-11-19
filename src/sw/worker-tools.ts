@@ -44,6 +44,7 @@ import { invocationInfo } from "./sw-invocation";
 import { senderTrust } from "./sw-consent";
 import { htmlToMarkdownOffscreen } from "./sw-offscreen";
 import { fetchLLM, getConfig } from "./sw-llm";
+import { forModelMessages } from "./sw-scrub";
 import { typeFromExtension } from "../dom/dom";
 import type { PageTableData } from "./worker-page-read";
 
@@ -256,6 +257,8 @@ export function retabWorkerRun(runId: string, to: number): void {
  * @returns the reply's text
  */
 async function meteredChat(ctx: RunCtx, payload: FetchLlmPayload): Promise<string> {
+    // The utility reader (fetch_url's ASK mode, python's `ml.chat(.., {extend:"utility"})`) is handed text the run read: no registered value goes with it.
+    if (payload.extend === "utility" && Array.isArray(payload.messages)) payload = { ...payload, messages: await forModelMessages(payload.messages) };
     const r = await fetchLLM(payload) as { content?: string | null; model?: string | null; usage?: TokenUsage | null };
     const p = r.usage?.promptTokens || 0, c = r.usage?.completionTokens || 0;
     const s = ctx.spent;
