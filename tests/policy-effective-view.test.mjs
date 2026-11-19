@@ -170,6 +170,20 @@ for (const [name, order] of [["throws", () => { throw new Error("boom"); }], ["s
     });
 }
 
+test("an order broken for one pair loses that pair only: a usable pair keeps the order's own answer, and the view still widens", () => {
+    // D (deny) and A1 contradict each other (each beats the other); A2 beats A1, which strictness alone would never say of two allows.
+    const says = { "D>A1": true, "A1>D": true, "A2>A1": true, "A1>A2": false, "D>A2": true, "A2>D": false, [`D>${V.DEFAULT_ROW_ID}`]: true };
+    V.registerPrecedence("order-one-bad-pair", (a, b) => says[`${a.id}>${b.id}`] === true);
+    const mk = (id, effect) => ({ id, consumer: "order-one-bad-pair", label: id, source: "(c) => true", effect });
+    const rows = V.effectiveRows([], [mk("D", "deny"), mk("A1", "allow"), mk("A2", "allow")], { label: "d", source: "" });
+    const by = (id) => rows.find((r) => r.entry.id === id);
+    assert.deepEqual(by("A2").overrides, ["A1"], "the usable pair keeps the consumer's own precedence");
+    assert.ok(by("D").overrides.includes("A1"), "the contradictory pair reads by strictness: the deny beats the allow");
+    assert.deepEqual([...by("A1").overriddenBy].sort(), ["A2", "D"]);
+    assert.equal(by("A1").wins, false);
+    assert.equal(by("A2").removal.class, "widens", "an allow's removal widens too, because the view held a pair it could not trust");
+});
+
 test("a trusted order leaves other removals alone: the fallback is for the view that held an untrusted one", () => {
     const mk = (id, effect) => ({ id, consumer: "fetch", label: id, source: "(c) => true", effect });
     const rows = V.effectiveRows([], [mk("a", "allow")], { label: "d", source: "" });
