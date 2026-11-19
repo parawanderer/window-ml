@@ -90,9 +90,9 @@ then a file; several `-e` are joined by newlines), and the text is checked by a 
   `@include`, `@load` and indirect calls), no `|` outside `||`, and no `>` after its first `print` (every output
   redirection needs a `print` or `printf` before its `>`). A program that compares with `>` after a print, or prints
   the word `system`, is refused too: that only asks. Each test runs on the raw text and again with every
-  backslash-newline removed, so a word split across lines (`sys\<newline>tem`) is read as an awk that splices it reads
-  it. Only `-F`, `-v` and `--` are listed; an operand of the form `name=value` (`AWK_ASSIGNMENT`) is an assignment awk
-  never opens, so it is no path.
+  backslash-newline removed (backslash-CR-LF too), so a word split across lines (`sys\<newline>tem`) is read as an
+  awk that splices it reads it. Only `-F`, `-v` and `--` are listed; an operand of the form `name=value`
+  (`AWK_ASSIGNMENT`) is an assignment awk never opens, so it is no path.
 - **Flavours.** sed declares both: `-i` is GNU's attached suffix (`attachedValue`, `values: [""]`: `-i` and `-ni`
   described, `-i.bak` and `-in` not) and BSD's separate one (`value`, `values: [""]`: `-i ''` described, `-i -e …`,
   where `-e` is the suffix, not); `-l` takes a value in GNU only; GNU permutes and is hardened with `--sandbox` (4.3+:

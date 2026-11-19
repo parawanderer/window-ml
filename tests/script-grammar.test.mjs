@@ -125,6 +125,8 @@ test("a word or a redirection split by a backslash-newline is refused as the spl
         ["{prin\\\nt \"x\" > \"out\"}", /> after a print/], ["{pr\\\nintf \"x\" >> \"out\"}", /> after a print/],
         // The raw text is checked too, so a | that only splices into || still asks.
         ["a |\\\n| b {print}", /a \| that is not \|\|/],
+        // A CR-LF line end splices too.
+        ["BEGIN{sys\\\r\ntem(\"id\")}", /"system"/], ["{prin\\\r\nt \"x\" > \"out\"}", /> after a print/],
     ]) assert.match(awkProgramRefusal(p) ?? "DESCRIBED", why, JSON.stringify(p));
     // A backslash-newline that splices nothing refused stays described.
     for (const p of ["{print \\\n$1}", "NR>1\\\n{print}"]) assert.equal(awkProgramRefusal(p), undefined, JSON.stringify(p));
