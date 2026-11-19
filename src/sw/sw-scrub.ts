@@ -125,7 +125,9 @@ export async function forModelMessages(messages: NeutralMessage[]): Promise<Neut
     let secrets: SecretSub[];
     try { secrets = await configSecrets(); await registryReady(); } catch { throw new Error("The request was not sent: the registered secrets could not be read to check it."); }
     const subs = registrySubsNow();
-    return messages.map((m) => typeof m.content === "string" && m.content ? { ...m, content: scrubRegistry(scrubSecrets(m.content, secrets), subs).text } : m);
+    const scrub = (t: string): string => scrubRegistry(scrubSecrets(t, secrets), subs).text;
+    // The content, and an assistant turn's thinking, which a backend that asks for it is sent too.
+    return messages.map((m) => ({ ...m, ...(typeof m.content === "string" && m.content ? { content: scrub(m.content) } : {}), ...(m.reasoning ? { reasoning: scrub(m.reasoning) } : {}) }));
 }
 
 /**

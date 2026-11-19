@@ -802,7 +802,8 @@ export async function sessionStorageStats(): Promise<StoreBytes | null> {
     return summarizeStore(rows, seen);
 }
 
-/** A small model call on the utility profile: `side.call`, and the runtime's own titles. The messages cross the by-value scrub first (a task can hold a registered secret); a failed scrub rejects, so nothing raw is sent. */
+/** A small model call on the utility profile: `side.call`, and the runtime's own titles. The messages cross the by-value
+ *  scrub first (a task can hold a registered secret); a failed scrub rejects, so nothing raw is sent. */
 async function utilityCall({ messages, schema, maxTokens, session }: { messages: NeutralMessage[]; schema?: object; maxTokens: number; session?: string }): Promise<{ content: string; usage?: unknown }> {
     const r = await fetchLLM({
         messages: await forModelMessages(messages), extend: "utility", maxTokens, think: false,
