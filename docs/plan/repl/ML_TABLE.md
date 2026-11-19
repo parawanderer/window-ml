@@ -1,8 +1,8 @@
 # `ml.table`: a cell reads its own tables (design note for ruling 68, 2026-11-19)
 
 Written by packages (session `19f583d1`, `claude-opus-5-5`) for Shane, through the coordinator (repl-specs). NOTHING here
-is built until the spec PR that follows it. Shane's rulings 69 to 72, 75, 76 and 77 to 84 are written as settled. One
-question is open: the money rule (item 12).
+is built until the spec, [`docs/spec/ML_TABLE.md`](../../spec/ML_TABLE.md), is named. Shane's rulings 69 to 72 and
+75 to 87 are written as settled; none is open.
 
 Each claim is marked:
 - **[code]**: read from the code at main 293e3bf7, with the place.
@@ -15,13 +15,13 @@ Each claim is marked:
 | --- | --- | --- |
 | How a cell waits on `ml.table` | ruling 77: synchronous, `t = ml.table(src)` over JSPI, no fork change; nothing but the cell's own chain runs on its namespace while it waits | 1 |
 | What a Python cell gets | ruling 78: a pandas DataFrame | 1 |
-| `tables` on `python_exec` | ruling 79: removed. Tests and fixtures that use it are rewritten to `name = ml.table(src)`. Whether `ml.pythonExec`'s page option goes too is asked of Shane; the draft assumes yes | 5 |
+| `tables` on `python_exec` | ruling 79: removed. Tests and fixtures that use it are rewritten to `name = ml.table(src)`. Ruling 87: `ml.pythonExec`'s page option is removed too | 5 |
 | A computed Sheet in an approved cell | ruling 80: a nested ask; a refusal is an error; an approval goes into the same store of approved sources the hoisted literals use | 2 |
-| `rm`, `mv` and an overwrite | ruling 81: free in the model's own folder `/files/agent/<model>/`; everything else under `/files` is read-only to the model. The exact private unit is asked of Shane | 7 |
+| `rm`, `mv` and an overwrite | rulings 81 and 86: free under `/files/agent/`, the model's home directory (no per-model subfolder); everything else under `/files` is read-only to the model | 7 |
 | Lazy parse on fetch | ruling 82: yes, and the fetch result says in words that it is not the full table | 11 |
 | Dtypes from a prefix | ruling 83: allowed, with a warning that they are a guess, naming the call that gives exact types | 11 |
 | The engine past the memory cap | ruling 84: pyarrow, with a large CSV converted to Parquet first | 12 |
-| Money columns as `decimal128` | **open**. Recommendation: only when the cell names the column (`decimal=[...]`) or its header names a currency, never by decimal places alone | 12 |
+| Money columns as `decimal128` | ruling 85: only when the cell names the column (`decimal=[...]`) or its header names a currency, never by decimal places alone | 12 |
 
 ## What ruling 68 changes
 
@@ -92,7 +92,7 @@ one the cell made and owns, and the same member exists in JS.
     - Rows owed by e3: each of the three writers tried during a suspension, with the inside cell's namespace
       unchanged. For (1) and (3), the row also asserts that the scheduler is refused inside, so admitting one turns
       the row red.
-  - **Ruled (77): JSPI.** `t = ml.table(src)` is a synchronous call, the same spelling inside and outside the
+  - **Ruled (77): JSPI.** The spec is [`docs/spec/ML_TABLE.md`](../../spec/ML_TABLE.md). `t = ml.table(src)` is a synchronous call, the same spelling inside and outside the
     dialect, with no fork change and no Await rule. The requirement above stands with the route, and e3's rows are
     owed with the first PR that adds the member. The fork's `Await` route (above) is not taken.
 - **Size.** A wire answer over `WIRE_VALUE_CAP` (1 MiB, `sw-ml-wire.ts:27`) comes back as a pointer **[code]**.
@@ -119,7 +119,7 @@ one the cell made and owns, and the same member exists in JS.
     `pd.read_csv(url)` find it afterwards.
 - **A page-built run** (`ml.pythonExec` from a page script, stateless) opens a wire client too (`src/sw/sw-python.ts:275`,
   `run: null`) **[code]**, so `ml.table` exists there with the same rule; what it cannot have is a run's fetch cache.
-  Whether `ml.pythonExec` keeps its `tables` option is asked of Shane (item 5); this draft assumes it goes.
+  `ml.pythonExec`'s `tables` option is removed (ruling 87, item 5).
 
 ## 2. The approval rule (ruling 70, settled)
 
@@ -229,8 +229,8 @@ the mount exists. Why it stays:
   - Every test, fixture and bench spec that passes `tables` is rewritten to the call in its code. `PRELUDE_LOADERS`'
     redirect of `read_csv` to an injected frame goes too (item 4).
   - The model-facing text names only `ml.table` (item 10).
-  - **`ml.pythonExec`'s page option** (a page script's `tables`) is asked of Shane. This draft assumes it goes too,
-    so a page script calls `ml.table` in its code like the model **[assumed, not ruled]**.
+  - **`ml.pythonExec`'s page option** (a page script's `tables`) is removed too (ruling 87), so a page script calls
+    `ml.table` in its code like the model.
   - The worker's path bug goes with the loader. `/sales.csv` is sent to the DOM reader and fails as "not a valid CSS
     selector", because only the page loader resolves a path (`ml-python.ts:~172`, `worker-tools.ts:376-381`). The
     member has one resolver for both hosts.
@@ -264,14 +264,15 @@ Recommendation: the bytes are the original, and the table is a view of them.
 - `ml.table(src).source` (the kept bytes) stays reachable, in Python as `bytes`, in JS as text or a Uint8Array.
 - In Python, pandas' own casting replaces ours (item 4). `dtype=str` is the lossless read pandas users already know.
 
-## 7. A cell writes its own folder (rulings 69, 75, 76, 81)
+## 7. A cell writes its own folder (rulings 69, 75, 76, 81, 86)
 
-**The model's own folder (ruling 81) is `/files/agent/<model>/`.** There "the model can do whatever it wants in that
-python allows": write, overwrite, `rm` and `mv`, unasked.
+**The model's own folder is `/files/agent/`** (ruling 81, corrected by ruling 86: "every model has `/files/`. It's like
+the home directory"; there is no per-model subfolder). There "the model can do whatever it wants in that python
+allows": write, overwrite, `rm` and `mv`, unasked, in subfolders it makes too.
 - Everything else under `/files` is the person's, and read-only to the model: `attached/`, and any other folder.
 - The model cannot create a folder at the `/files/` level.
-- Another model's folder is not reachable; cross-model access is deferred.
-- The exact private unit (per model per session is the coordinator's reading) is asked of Shane.
+- `/files` is per session, as the files spec already has it. No cross-model rule is built.
+- A relative path resolves against `/files/agent/`.
 - No per-run "this run made it" tracking is needed.
 
 A cell inside the dialect writes its own folder unasked. The limit is the session quota and nothing
@@ -316,7 +317,7 @@ in the offscreen document on every chunk (#1999's slice 1, not on main).
   from a bound method held in a name (e3's `f = d.to_string; f(*[], **{…})`). Then it applies session-store's rule:
   - lexical normalisation with `/` as the session root, `/files/x` the same as `/x`, and `..` stopping at the root;
   - a write, `rm` or `mv` is admitted only when the normalised target (both paths for `mv`) is under
-    `/files/agent/<model>/`, the model taken from the run record, never from the script; anything else under `/files`
+    `/files/agent/`; anything else under `/files`
     is refused, `attached/` included (EROFS), and so is a new folder at the `/files/` level;
   - a hidden-list name (ruling 34) asks;
   - no symlinks exist, so the lexical path is the real one.
@@ -324,12 +325,12 @@ in the offscreen document on every chunk (#1999's slice 1, not on main).
   check cannot normalise asks. The C-method lesson of #1993 applies: a C method with a path argument is not listed
   until the fork maps a bound builtin to its descriptor.
 - **A cell saving a fetch to its own `/files`.** `r = ml.fetch(u)` and then a write of `r.text`, or
-  `t = ml.table(u)` and then `t.to_parquet("/files/agent/<model>/x.parquet")`, falls out of the rules above. Two cases do not:
+  `t = ml.table(u)` and then `t.to_parquet("/files/agent/x.parquet")`, falls out of the rules above. Two cases do not:
   - **The result crossed as a view, not the whole.** A body past the parse cap is a preview with the whole in the
     value store (`valueKey`). A wire answer over 1 MiB crosses as a pointer. Writing the view would save a prefix under
     the whole file's name. So the copy is made from the stored whole, never from the view:
-    - in JS, `ml.fs.cp(<the fetch's @tool: pointer or valueKey>, "/files/agent/<model>/x.csv")`;
-    - in Python, `ml.fs.cp(r, "/files/agent/<model>/x.csv")`, with `r` the fetch result or its `MlPointer`.
+    - in JS, `ml.fs.cp(<the fetch's @tool: pointer or valueKey>, "/files/agent/x.csv")`;
+    - in Python, `ml.fs.cp(r, "/files/agent/x.csv")`, with `r` the fetch result or its `MlPointer`.
     The copy runs in the offscreen document from the value store to the shelf, so no byte crosses the cell. Writing a
     value marked `truncated` with `open()`/`to_csv` is refused, and the message names `ml.fs.cp`.
   - **Byte-exact copies.** `r.text` is decoded text, and a table is a cast view. Neither is the body.
@@ -343,7 +344,7 @@ in the offscreen document on every chunk (#1999's slice 1, not on main).
     refused attempt, rerun on the full path after approval, would have written once before the person answered.
   - session-store writes it in slice 1's spec.
 - **What e3 attacks:** `..` past the root; `/files/attached`, `./attached/../attached/x`; a write, `rm` or `mv` outside
-  `/files/agent/<model>/` (another model's folder, the person's folders, a new folder at `/files/`); an `mv` from the
+  `/files/agent/` (the person's folders, a new folder at `/files/`); an `mv` from the
   model's folder out of it; a hidden name; a path in another session (it must resolve inside its own root by
   construction); a link, if any API can make one; a write
   over quota (ENOSPC, the old version intact); a write then a refusal in the same cell; each write leaf by every
@@ -404,7 +405,7 @@ Every probe ends as a committed row or a one-line reason.
     (`python-tool.ts:103-104`) and "No network or filesystem here". Its `tables` and `tableRaw` parameters go
     (ruling 79), with the `tables` text in `tool-details.ts:14-31` and the `current` hint (`python-tool.ts:82-89`).
   - It gains one line: `t = ml.table(src)` reads a page table, a fetched URL, a Sheet or a pointer;
-    `pd.read_csv(<fetched url>)` works; and the model's own folder is `/files/agent/<model>/`.
+    `pd.read_csv(<fetched url>)` works; and the model's own folder is `/files/agent/`.
   - `fetch_url`'s "pass the same URL to `python_exec`'s `tables`" (`tool-details.ts:83-84, 197-198`) and
     `tablePreview`'s line (`table-data.ts:300-301`) name `ml.table`.
   - `PYTHON_CLAUSE` (`agent/prompts.ts:215-218`) is unchanged.
@@ -511,12 +512,12 @@ of the heap.
   model's own folder, and queried there. The conversion's own bound is still to be measured: the writer reached 745 MiB
   at 16 MB blocks, and a small block size was not tried. Until it is measured, a CSV past the materialise cap is
   answered with pandas `chunksize` (the 130-155 MiB row above), or refused.
-- **Exactness: the one open question, because it is an inference on the person's data.** `decimal128` sums are exact
+- **Exactness (ruled, 85).** `decimal128` sums are exact
   and do not move with block size, while float64 drifted by up to 0.17 cents per region **[measured]**.
   - The rule first drafted, "a column with at most 2 decimal places in the first block is money", fails on a
     2-decimal measurement column (a temperature, a weight). It would be summed as decimal, then refuse a `mean` that
     needs more places, or overflow `decimal128(18,2)` past 10^16.
-  - Recommendation: never infer money from decimal places alone. A column is read as decimal only when the cell says
+  - Ruled (85): never infer money from decimal places alone. A column is read as decimal only when the cell says
     so (`ml.table(src, decimal=["amount"])`), or when its header names a currency (`amount_usd`, `price €`). The
     summary says which columns were read as decimal and why. Every other numeric column is float64, and its sum is
     labelled float.

@@ -319,8 +319,9 @@ survey could not do and which answers the manifest spec's "granularity of a refu
 1. **Per run AND per mode?** Dissolved: there is no `mode`. A cell can never hold a live network handle, because no
    cell ever gets one; `ml` is a callback that returns copies, and the dialect refuses what it does not list. The
    namespace holds data and handles, never capabilities.
-2. **What the injected names mean on the second call.** `df`, `tables` and `img` become ordinary assignments at the top
-   of the cell that passes them, and nothing resets them. A later cell without the parameter sees the earlier table,
+2. **What the injected names mean on the second call.** `img` becomes an ordinary assignment at the top of the cell
+   that passes it, and nothing resets it (`df` and `tables` are no longer injected: a cell reads a table with
+   `ml.table`, [`ML_TABLE.md`](ML_TABLE.md), rulings 79 and 87). A later cell without the parameter sees the earlier table,
    which is what a notebook does and what models assume. The tool's text says so, once, in place of the two sentences
    that contradict each other today.
 3. **Lifetime and loss.** The next cell's result opens with "namespace reset at <time>: <reason>" from the housekeeping
@@ -417,12 +418,14 @@ running a Python script via `ml.sh.run(["python3", "script.py", ...])` do not sh
   for native leaves). It has no `open()`, `os`, `sys`, `argparse` or `subprocess`, and halts within the step budget with
   write-barrier rollback on failure. RULED 2026-10-28 (for `FILE_ATTACHMENTS.md` slice 3): an attached file reaches a cell
   the way a stored table does, as an injected value (`files: { name: "@file:…" }` giving the bytes; a tabular one through
-  `tables`), never as a path under a mounted directory; a cell's `open("<name>")` is caught by the redirect that catches
-  `pd.read_csv('current')`, resolving the attachment by name. A paged document (a PDF) is injected as its pages:
+  `ml.table`, [`ML_TABLE.md`](ML_TABLE.md)), never as a path under a mounted directory; the `read_csv` redirect is
+  replaced by ML_TABLE.md's served `read_csv`. A paged document (a PDF) is injected as its pages:
   each page's `text`, `kind` and `measure`, and `png(scale)`, a bounded on-demand render through the offscreen
   document, beside the bytes (`FILE_ATTACHMENTS.md`, "Python"). REOPENED 2026-11-12 (Shane, in the coordinator's
   session) for approved and `full` cells, which get a mounted `/files/` with a read-only `/files/attached/`
-  (`FILE_ATTACHMENTS.md`, "A session's files as a directory"); this dialect keeps the injected value and the redirect.
+  (`FILE_ATTACHMENTS.md`, "A session's files as a directory"); this dialect writes only under `/files/agent/`, through
+  the manifest's listed writers, and reads through `ml.table` and the served `read_csv` ([`ML_TABLE.md`](ML_TABLE.md),
+  rulings 69 and 86).
 - **Subprocess CLI (`ml.sh.run(["python3", ...])`):** Spawns a fresh OS process with `CO_RESTRICTED` off, because a CLI
   script legitimately uses `sys.argv`, `argparse`, `pathlib` and `open()`. While an agent is actively writing and editing
   an ad-hoc script (`tmp/scratch.py`, whose `sha256` changes on every turn), it is bounded by the OS sandbox (Seatbelt /

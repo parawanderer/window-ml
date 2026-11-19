@@ -50,11 +50,12 @@ A yes/no "readonly" flag is not enough. Each function carries an effect signatur
 | `cache` | keeps internal state no caller can observe (a memo table) | allowed. The test is OBSERVATIONAL: same results, same order, same identities with or without the cache. A cache that changes iteration order or object identity fails it and is `external`. |
 | `reads-external` | reads state the arguments did not carry (the clock, a random source, a global) | allowed or refused per dialect: it is not an effect, but it makes the result non-deterministic |
 | `external` | any observable effect outside the interpreter | refused |
+| `writes(path arg)` | writes the file its path argument names | allowed only when an entry check proves, before the call, that the path is under the model's writable folder (`/files/agent/`, [`ML_TABLE.md`](ML_TABLE.md), "Writing files"); refused otherwise. The offscreen document re-checks the write. |
 
 An effect may depend on an argument's VALUE: pandas `df.sort_values(…, inplace=True)` mutates `df`, and with
 `inplace=False` it is pure. So an effect signature can be a function of the arguments, like a cost (below).
 
-These five terms are the authoring vocabulary. What a policy reads is their projection onto the shared algebra of
+These terms are the authoring vocabulary (`writes(path arg)` added 2026-11-19, ruling 69). What a policy reads is their projection onto the shared algebra of
 (operation, resource) pairs in [`EFFECTS.md`](EFFECTS.md): `mutates(i)` is `write(heap(arg i))`, which the interpreter
 resolves to owned or unowned at the call; `reads-external` is `read(entropy)`; `external` is `unknown` unless the manifest
 names the resource. The algebra is what lets one policy read a library call, a program call and a fetch alike.
