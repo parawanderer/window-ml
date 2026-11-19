@@ -102,6 +102,18 @@ test("a revealing program asks, saying why, until the person lists it; a config 
     }
 });
 
+test("a shellRevealsAllow of another type, written to storage by hand, lists nothing: ps still asks, and the call answers without throwing", T, async () => {
+    for (const value of ["ps", "xxps", 7, { ps: true }, [["ps"]], ["ps", 1]]) {
+        const host = fakeNativeHost({ done: () => ({ out: "PID\n", err: "", code: 0 }) });
+        const ask = answering(true);
+        const { results } = await runOn("userScripts", [runs(["ps", "-e"])], { ...NO_FETCH, onNative: host.onNative, configExtra: { ...ON, shellRevealsAllow: value }, localExtra: storedPs(), onStep: ask.onStep });
+        const label = JSON.stringify(value);
+        assert.equal(valueOf(results[0]).ok, true, label);
+        assert.equal(ask.asked.length, 1, label);
+        assert.deepEqual([ask.asked[0].why?.cause, ask.asked[0].why?.program], ["reveals", "ps"], label);
+    }
+});
+
 test("a revealing program's version probe is judged with the marker: it starts only once the program is listed", T, async () => {
     const ranged = storedPs();
     ranged.ml_manifests_global[0].manifest.version = { range: ">=3", args: ["--version"], pattern: "^ps (\\d+)" };

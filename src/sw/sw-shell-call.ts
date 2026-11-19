@@ -14,7 +14,7 @@ import type { EffectsData } from "../effects";
 import type { ShCallSpan, ShUnasked } from "../contract";
 import type { TokenStore } from "../pointers/token-pipe";
 import { bytesOf, HostError, hostTakesEnvelope, READ_CHUNK, type HostClient, type HostPutFacts, type HostEnvelope, type HostFacts, type HostStream } from "../shell/host-protocol";
-import { credentialFor, envelopeFor, envelopeMismatch, envelopeText, manifestFor, manifestsFor, parseShRun, planSpawn, protectedChangesText, shFacts, shOut, shOutcome, shResult, wireCodeOf, REVEALS_CAUSE, ShRefused, SH_HEAD_BYTES, SH_HOST_TIMEOUT_MS, SH_LEASE_MS, type ShFacts, type ShOut, type ShResult, type ShRunRequest } from "../shell/sh-call";
+import { credentialFor, envelopeFor, envelopeMismatch, envelopeText, manifestFor, manifestsFor, parseShRun, planSpawn, protectedChangesText, shFacts, shOut, shOutcome, shResult, wireCodeOf, REVEALS_CAUSE, revealsAllowOf, revealsListed, ShRefused, SH_HEAD_BYTES, SH_HOST_TIMEOUT_MS, SH_LEASE_MS, type ShFacts, type ShOut, type ShResult, type ShRunRequest } from "../shell/sh-call";
 import { OUTPUT_CAP } from "../contract/contract-pointers";
 import { detachedCapMs, detachTask, type TailAnswer, type TaskOutcome } from "./sw-tasks";
 import { toolToken } from "../util";
@@ -311,7 +311,7 @@ async function runCall(ctx: ShCallContext, req: ShRunRequest, started: (h: Shell
             await manifestsReady;
             const stored = storedManifests();
             // Read at each call, so a program the person lists (or unlists) counts from the next call on.
-            const revealsAllow = (await getConfig()).shellRevealsAllow ?? [];
+            const revealsAllow = await revealsAllowList();
             // No session mounts an uploads folder yet (FILE_ATTACHMENTS.md H16), so no call passes `files` and `/files`
             // stays the browser sandbox's; once one does, `hostMapsFiles(h.hello)` gates it.
             const plan = planSpawn(req, { cwd, roots, stored, tilde: h.hello.tilde === true });
@@ -450,6 +450,11 @@ function envelopeDetail(r: ShResult): Record<string, string | number | boolean> 
     };
 }
 
+/** `shellRevealsAllow` from the config, through {@link revealsAllowOf}: never the raw stored value. */
+export async function revealsAllowList(): Promise<readonly string[]> {
+    return revealsAllowOf((await getConfig()).shellRevealsAllow);
+}
+
 /**
  * The version the program reports, for a manifest written against a version range (the coordinator's ruling): an
  * ordinary call of the manifest's own version args, effects empty, judged like any other; free only under the OS
@@ -483,7 +488,7 @@ export async function versionOf(ctx: Pick<ShCallContext, "runId" | "seq" | "sign
     // Judged with no effects, and that same judged object derives its envelope below (ruled 2026-10-19: the approved
     // claims are the judge's facts, so `git --version` gets write none like any other probe).
     // A revealing program's probe carries the marker, by its manifest or by its name (`revealingName`), as its call does.
-    const reveals = m.reveals || revealingName(m, facts.program.path) ? { what: "processes" as const, program: m.program, allowed: revealsAllow.includes(m.program) } : null;
+    const reveals = m.reveals || revealingName(m, facts.program.path) ? { what: "processes" as const, program: m.program, allowed: revealsListed(revealsAllow, m.program) } : null;
     const judged: ShFacts = { ...shFacts(probe), effects: [], reveals };
     const j = judgeCall(ctx.runId, "sh", asPolicyFacts(judged), "host-sandbox");
     // Only an allow starts it: a store not loaded yet, an `ask` policy or no answer would need a card, which a probe never raises.

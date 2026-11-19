@@ -16,9 +16,8 @@ import { manifestKey, storeRefusal, type ManifestOrigin, type ManifestRequest, t
 import { addManifest, manifestsReady, markEvidence, storedManifests } from "./sw-manifests";
 import { judgeCall } from "./sw-policies";
 import { recordRunLog } from "./sw-run-log";
-import { PROBE_TIMEOUT_MS, ranCalls, versionOf } from "./sw-shell-call";
+import { PROBE_TIMEOUT_MS, ranCalls, revealsAllowList, versionOf } from "./sw-shell-call";
 import { withShell, type ShellHost } from "./sw-shell";
-import { getConfig } from "./sw-llm";
 
 /** A draft the worker checked: the entry it would store, and why B3 forced its scope, when it did. */
 export interface CheckedManifest {
@@ -98,7 +97,7 @@ export async function draftCardNote(step: Pick<ProposalStep, "runId" | "seq">, c
         return await withShell(async (h) => {
             const roots = h.configured.roots.map((r) => r.path);
             const entry = asDraftEntry(c.request);
-            const revealsAllow = (await getConfig()).shellRevealsAllow ?? [];
+            const revealsAllow = await revealsAllowList();
             const readings: DraftReading[] = [];
             for (const call of callsOfDraft(c.request, ranCalls(step.runId), roots)) {
                 if (call.env.set.length) { readings.push({ argv: call.argv, skipped: "it set environment variables, whose values are not kept" }); continue; }
@@ -165,7 +164,7 @@ export async function evidenceRun(step: ProposalStep, entry: StoredManifest): Pr
             if (!h.configured.sandboxed) { log("not-sandboxed"); return "This host does not run calls under the OS sandbox, so no evidence run was made; it describes calls only under the sandbox."; }
             const roots = h.configured.roots.map((r) => r.path);
             const list = manifestsFor([entry], roots).list;
-            const revealsAllow = (await getConfig()).shellRevealsAllow ?? [];
+            const revealsAllow = await revealsAllowList();
             let passed = 0, unread = 0;
             for (const call of callsOfDraft(entry, ranCalls(step.runId), roots)) {
                 if (call.env.set.length) continue;

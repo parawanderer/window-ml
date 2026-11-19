@@ -438,6 +438,22 @@ export const revealsText = (program: string): string => `${program} shows other 
 const secretBeneath = (containsSecret: boolean | null | undefined): boolean => containsSecret !== undefined && containsSecret !== false;
 
 /**
+ * `shellRevealsAllow` as every reader takes it: the stored value when it is an array of strings, else an empty list, so
+ * a value of another type (a bare string, whose `includes` matches a substring; a number; an object) lists nothing and
+ * the program's calls ask.
+ * @param v the stored `shellRevealsAllow`, of whatever type storage holds
+ */
+export const revealsAllowOf = (v: unknown): readonly string[] =>
+    Array.isArray(v) && v.every((x) => typeof x === "string") ? v : [];
+
+/**
+ * Whether `shellRevealsAllow` lists a program, through {@link revealsAllowOf}.
+ * @param list the stored `shellRevealsAllow`, of whatever type storage holds
+ * @param program the manifest's program
+ */
+export const revealsListed = (list: unknown, program: string): boolean => revealsAllowOf(list).includes(program);
+
+/**
  * The facts of one call, from the host's resolution, described again by the manifest over the resolved paths.
  * @param facts what `spawn` answered
  * @param version the version the program reported, or null when it was not read (a manifest with a range then
@@ -500,7 +516,7 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
         mode: facts.mode, sandboxed: facts.sandboxed, placement: facts.placement,
         credential: credentialOf(facts, m),
         // Absent list, absent from the config: nothing is listed, so a revealing call asks.
-        reveals: m?.reveals ? { what: m.reveals, program: m.program, allowed: (place?.revealsAllow ?? []).includes(m.program) } : null,
+        reveals: m?.reveals ? { what: m.reveals, program: m.program, allowed: revealsListed(place?.revealsAllow, m.program) } : null,
         tilde: (facts.tilde ?? []).map((t) => ({ ...t })),
         files: (facts.files ?? []).map((m) => ({ ...m })),
     };
