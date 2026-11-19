@@ -50,6 +50,7 @@ let sitePackages = "";   // state: plumbing — read once at boot, before the lo
 let interruptFlag: Int32Array | null = null;   // state: plumbing — set once, from the first message
 // `/files` (files-host.ts): the channel's memory, posted once before the runtime boots, to a worker-hosted run's worker only.
 let filesShared: FilesShared | null = null;   // state: plumbing — set once, from the offscreen document
+let filesHome: string | undefined;   // state: plumbing — where the run writes (the reader's `home`), posted with `filesShared`
 let filesMount: ReturnType<typeof makeFilesMount> | null = null;   // state: plumbing — built at boot, before the lockdown
 let filesWords: ((on: boolean) => void) | null = null;   // state: plumbing — the open wrappers' switch (FILES_OPEN_WORDS)
 
@@ -137,7 +138,7 @@ function getPyodide(by: "prewarm" | "run" = "run"): Promise<any> {
         // `/files` is built here, BEFORE the lockdown: the requester keeps `post` and the shared memory in its closure.
         if (filesShared) {
             const { call, data, Interrupted } = makeRequester(filesShared, post as never, interruptFlag);
-            const mount = makeFilesMount({ FS: py.FS, ERRNO_CODES: py.ERRNO_CODES, call, data, Interrupted });
+            const mount = makeFilesMount({ FS: py.FS, ERRNO_CODES: py.ERRNO_CODES, call, data, Interrupted, home: filesHome });
             filesMount = mount;
             mount.remount();
             // A hidden file's refusal in the reader's words, not "Permission denied": the model acts on the text.
@@ -541,7 +542,12 @@ function onMessage(e: MessageEvent): void {
     const buf = (e.data as { interruptBuffer?: unknown })?.interruptBuffer;
     if (buf instanceof Int32Array && !interruptFlag && !pyodideReady) { interruptFlag = buf; return; }
     const fsh = (e.data as { filesShared?: FilesShared })?.filesShared;
-    if (fsh && fsh.ctl instanceof SharedArrayBuffer && fsh.data instanceof SharedArrayBuffer && !filesShared && !pyodideReady) { filesShared = fsh; return; }
+    if (fsh && fsh.ctl instanceof SharedArrayBuffer && fsh.data instanceof SharedArrayBuffer && !filesShared && !pyodideReady) {
+        filesShared = fsh;
+        const home = (e.data as { filesHome?: unknown }).filesHome;
+        if (typeof home === "string" && (home === "/files/agent" || home.startsWith("/files/agent/"))) filesHome = home;
+        return;
+    }
     if (!msg || typeof msg.id !== "number") return;
     // A dead kernel answers everything with its death: its chain may never settle again (the cell that killed it did not).
     if (fatal !== null) { post({ id: msg.id, ok: false, stdout: "", error: fatal, fatal: true }); return; }

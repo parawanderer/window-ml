@@ -23,6 +23,8 @@ export interface FilesMountDeps {
     ERRNO_CODES: Record<string, number>;
     call: Call;
     data: Uint8Array;
+    /** Where the run writes (`/files/agent`, from the reader's `home`): the working directory at every mount. */
+    home?: string;
     /** The requester's class for an interrupted wait (a Stop): raised as EINTR. */
     Interrupted: new (...a: any[]) => Error;
     /** When a file's commit or a txn's abort fails after the stream is gone: the cell's log, never the model's reply. */
@@ -137,8 +139,6 @@ export function makeFilesMount(deps: FilesMountDeps) {
     }
     /** A child's path under a directory's (the root's is ""). */
     const join = (dir: string, name: string) => (dir ? `${dir}/${name}` : name);
-    /** Whether a path is one the agent may write: under `agent/`, never `agent` itself. */
-    const writable = (p: string) => p.startsWith("agent/");
 
     // Every node carries write bits: Emscripten checks the mode before it calls the mount and would answer EACCES, where
     // the refusal is EROFS ("The layout"). What may be written is decided here and by the reader, never by the mode.
@@ -202,8 +202,9 @@ export function makeFilesMount(deps: FilesMountDeps) {
                 return makeNode(parent, name, st);
             },
             mknod(parent: any, name: string, mode: number) {
+                // Where a model run may write is the READER'S to say (under agent/), and its errno is passed through
+                // unchanged: EROFS at the root and in attached/.
                 const p = join(pathOf(parent), name);
-                if (!writable(p)) throw new FS.ErrnoError(ERRNO_CODES.EROFS);
                 const now = Date.now();
                 if (FS.isDir(mode)) {
                     once((txn) => req("mkdir", [p, txn]));
@@ -255,13 +256,17 @@ export function makeFilesMount(deps: FilesMountDeps) {
                     stream.fd_ = r.fd; stream.size = r.size;
                     return;
                 }
-                if (!writable(p)) throw new FS.ErrnoError(ERRNO_CODES.EROFS);
                 if (node.writer) throw new FS.ErrnoError(ERRNO_CODES.EBUSY);   // one writer per file in a mount
                 const flag = node.fresh || stream.flags & O_TRUNC ? "w" : stream.flags & O_APPEND ? "a" : "r+";
                 const txn = req("begin", []) as number;
                 let w: { wfd: number; size: number };
                 try { w = req("openWrite", [p, flag, txn]); }
-                catch (e) { try { req("abortTx", [txn]); } catch { /* */ } throw e; }
+                catch (e) {
+                    try { req("abortTx", [txn]); } catch { /* */ }
+                    // A file `mknod` made for this open exists only here: a refused open must not leave it as a phantom.
+                    if (node.fresh) { try { FS.destroyNode(node); } catch { /* already gone */ } stale(node); }
+                    throw e;
+                }
                 node.fresh = false;
                 stream.wfd = w.wfd; stream.txn = txn; stream.size = w.size; stream.wbuf = null;
                 node.writer = stream;
@@ -352,6 +357,8 @@ export function makeFilesMount(deps: FilesMountDeps) {
         try { FS.unmount(FILES_AT); } catch { /* not mounted yet */ }
         FS.mkdirTree(FILES_AT);
         FS.mount(type, {}, FILES_AT);
+        // Where the run writes is the working directory, so a relative path lands there (`/files/agent`).
+        if (deps.home) { try { FS.chdir(deps.home); } catch { /* the reader refused it: the cwd stays where it was */ } }
     }
     /**
      * The reader's message for this cell's refusal of `path` (an absolute Python path), or for the newest refusal when

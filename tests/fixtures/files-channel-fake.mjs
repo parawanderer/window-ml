@@ -174,6 +174,10 @@ export function makeFakeFiles({ quotaBytes = 1 << 30, hidden = [] } = {}) {
         const txnOf = (s, opts, syscall) => (opts && opts.txn != null ? getTxn(s, opts.txn, syscall) : undefined);
 
         return {
+            /** Where a run writes, and Python's working directory: `/files/agent` (ruling 86), once a session is set. */
+            get home() {
+                return session === null ? undefined : "/files/agent";
+            },
             setSession(hash, opts) {
                 session = hash;
                 attemptTxn = opts?.attemptTxn;

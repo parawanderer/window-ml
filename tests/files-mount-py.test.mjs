@@ -68,7 +68,8 @@ before(async () => {
     });
     await import("../src/python/python-worker.ts");
     handler({ data: { interruptBuffer: flag } });
-    handler({ data: { filesShared: shared } });
+    // As files-host posts it: the channel's memory and where the run writes, the reader's `home` (ruling 86).
+    handler({ data: { filesShared: shared, filesHome: "/files/agent" } });
 }, { timeout: 180000 });
 
 after(() => {
@@ -115,9 +116,26 @@ test("nothing outside agent/ is writable: the root, attached/ and agent itself a
         "print(code(lambda: os.rename('/files/attached/h1/notes.txt', '/files/agent/notes.txt')))",
         "print(code(lambda: os.unlink('/files/attached/h1/notes.txt')))",
         "print(code(lambda: os.symlink('/files/attached/h1/notes.txt', '/files/agent/link')))",
+        "print(os.path.exists('/files/new.txt'))",
     ].join("\n"));
-    assert.deepEqual(out.split("\n"), ["EROFS", "EROFS", "EROFS", "EROFS", "EROFS", "EROFS", "EPERM"]);
+    // The reader's errno, passed through; and a refused open leaves no file behind in the mount.
+    assert.deepEqual(out.split("\n"), ["EROFS", "EROFS", "EROFS", "EROFS", "EROFS", "EROFS", "EPERM", "False"]);
     assert.equal(text(await ctl("committed", "s1", "attached/h1/notes.txt")), "hello from the person\n");
+});
+
+test("the working directory is /files/agent/: a relative path lands there, and ../attached/ reads but never writes", T, async () => {
+    const out = await ok([
+        "import errno, os",
+        "print(os.getcwd())",
+        "open('rel.txt', 'w').write('relative')",
+        "os.makedirs('sub/deeper', exist_ok=True); open('sub/deeper/n.txt', 'w').write('n')",
+        "print(open('../attached/h1/notes.txt').read(), end='')",
+        "try: open('../attached/h1/x.txt', 'w'); print('wrote')",
+        "except OSError as e: print(errno.errorcode.get(e.errno))",
+    ].join("\n"));
+    assert.deepEqual(out.split("\n"), ["/files/agent", "hello from the person", "EROFS"]);
+    assert.equal(text(await ctl("committed", "s1", "agent/rel.txt")), "relative");
+    assert.equal(text(await ctl("committed", "s1", "agent/sub/deeper/n.txt")), "n");
 });
 
 test("a hidden file is listed by name, and reading it is refused in the reader's words, not as 'Permission denied'", T, async () => {

@@ -42,6 +42,11 @@ export type Txn = number;
  * Read descriptors and write descriptors share one number space, and `read`/`fstat` take either.
  */
 export interface FilesChannel {
+    /**
+     * Where a model run writes and Python's working directory, absolute, valid after `setSession`: `/files/agent`
+     * (ruling 86, which withdrew ruling 81's folder per model). The reader's to say, never a caller's.
+     */
+    readonly home?: string;
     /** The session of the cell in flight, or null between cells; `attemptTxn` joins every `openWrite` to that txn. */
     setSession(hash: string | null, opts?: { attemptTxn?: Txn }): void;
     stat(path: string, opts?: { txn?: Txn }): Promise<FileStat>;

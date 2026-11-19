@@ -751,9 +751,12 @@ disposes it when the worker dies, which aborts every write still open.
 - **Commits on close** (ruling 75): `close()` is `closeWrite` plus `commitTx` of a txn of one; a failed cell keeps what
   it closed. A refused write (ENOSPC) fails its writer: later writes raise the same errno and the close aborts, so no
   file lands with part of what was written. A per-cell commit stays possible (the txn shape covers it) and is not built.
-- **Refusals.** The modes carry write bits on purpose: Emscripten checks them before calling the mount and would say
-  EACCES where the answer is EROFS. Writes outside `agent/` are EROFS (the mount and the reader both check), a symlink
-  is EPERM.
+- **Refusals are the reader's.** Where a run may write is the reader's to say, and the mount passes its errno through
+  unchanged: EROFS at the root and in `attached/`, free under `agent/` (ruling 86). The modes carry write bits on
+  purpose: Emscripten checks them before calling the mount and would say EACCES where the answer is EROFS. A symlink is
+  EPERM. A refused first `open` destroys the node `mknod` made for it, so no phantom file is left in the mount.
+- **The working directory is `/files/agent`**, the reader's `home`, posted with the channel's memory and entered at
+  every mount, so a relative `open()` lands where the run writes; `../attached/` reads, and never writes.
 - **A hidden file is refused in the reader's words**, since the model acts on the text and an errno carries none. The
   mount keeps this cell's EACCES messages by path; `open`, `io.open` and `os.open`, wrapped at boot
   (`FILES_OPEN_WORDS`), set the `PermissionError`'s `strerror` from them, and a failed cell's error is rewritten from

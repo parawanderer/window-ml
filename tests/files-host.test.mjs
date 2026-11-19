@@ -13,7 +13,7 @@ const worker = () => ({ posted: [], postMessage(m) { this.posted.push(m); } });
 function recordingChannel() {
     const calls = [];
     const ch = new Proxy({}, {
-        get: (_t, k) => (k === "then" ? undefined : (...a) => { calls.push([k, ...a]); return Promise.resolve(k === "stat" ? { kind: "dir" } : undefined); }),
+        get: (_t, k) => (k === "then" ? undefined : k === "home" ? "/files/agent" : (...a) => { calls.push([k, ...a]); return Promise.resolve(k === "stat" ? { kind: "dir" } : undefined); }),
         has: () => true,
     });
     return { ch, calls };
@@ -49,6 +49,8 @@ test("only a worker-hosted run's worker gets a channel, with the run's session, 
         assert.deepEqual(opened[0].calls, [["setSession", "abc123"]]);
         assert.equal(w.posted.length, 1);
         assert.ok(w.posted[0].filesShared.ctl instanceof SharedArrayBuffer && w.posted[0].filesShared.data instanceof SharedArrayBuffer);
+        // Where the run writes is the reader's, posted as it gave it: the worker never derives it.
+        assert.equal(w.posted[0].filesHome, "/files/agent");
         // The worker's end disposes the channel: every descriptor closes and every open txn aborts.
         detachFiles("run:abc123");
         assert.deepEqual(opened[0].calls.at(-1), ["dispose"]);

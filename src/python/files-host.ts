@@ -33,7 +33,8 @@ export function attachFiles(principal: string, w: Worker): void {
     const channel = openChannel();
     channel.setSession(session);
     served.set(principal, { channel, handle: serveFiles(shared, channel).handle });
-    w.postMessage({ filesShared: shared });
+    // Where the run writes, as the reader gives it (`/files/agent`, ruling 86): the mount's working directory.
+    w.postMessage({ filesShared: shared, ...(channel.home ? { filesHome: channel.home } : {}) });
 }
 
 /**
