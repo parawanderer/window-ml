@@ -1496,7 +1496,7 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   effective policies as rows), #2004 (773be7f7, the conflict-marker check), window-ml-host#53 (cd82e8cc, the awk
   splice check).
 - **Shane's rulings 77 to 85 (2026-11-19, said in the coordinator's session): the nine questions of the `ml.table`
-  note.** The note is `docs/plan/repl/ML_TABLE.md`; the spec is packages' #2028 (docs/spec/ML_TABLE.md, not merged).
+  note.** The note is `docs/plan/repl/ML_TABLE.md`; the spec is packages' #2028 (docs/spec/ML_TABLE.md, merged as 5a2eb664).
   - **77.** To "take the synchronous route, t = ml.table(src), with no fork change": "Sure." The call blocks over
     JSPI. The requirement that comes with it: while an inside cell is suspended, nothing but its own awaited chain
     runs Python on its namespace. Packages' account: a second run message is held by `runChain`; an asyncio task
@@ -1560,9 +1560,11 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     panel.
 - **The `ml.table` build order (the coordinator's call, ruling 54).** The spec PR (#2028); the JS member; the Python
   member with the hold and the `tables` removal; `read_csv` from kept bytes; the `/files` writers; the lazy table.
-  No code before the spec is named. The JS member's owner is not assigned yet.
-  - #2028 at e940a898: the coordinator asked five changes (the materialise cap's value, the unmeasured bound of the
-    CSV to Parquet conversion, one name for the kept bytes, two sentences in PYTHON_DIALECT.md). None changes a rule.
+  The JS member's owner is packages (the coordinator's call); V1 goes first if both are ready.
+  - #2028 merged as 5a2eb664 (verified): the coordinator asked five changes at e940a898 and named dda4405d. The spec
+    is `docs/spec/ML_TABLE.md`. Two figures in it are provisional: `MATERIALISE_CAP_BYTES` (100 MiB of source bytes)
+    and `LAZY_GROUP_CAP` (100 000). The CSV to Parquet conversion's memory bound is unmeasured; the measurement is
+    owed before the lazy-table PR.
 - **Findings and heads, 2026-11-19 (late).**
   - #2018 (flaky-ci, apt retries and job timeouts): janitor-2 asked a change at d525852c. The 480 s attempt timeout
     is under the day's green installs (517 to 652 s). The coordinator's call: retry on the outage signature, or 900 s
@@ -1584,6 +1586,22 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
 - **Merged 2026-11-19 (late), each verified.** #2021 (7982acee, the `ml.table` note), #2023 (72e299cd, the plan),
   #2025 (ae046b18, JSPI measured), #2027 (e2afbc85, rulings 77 to 84 in the note), #2016 (c3ba3a03, calm view hides
   the failed count), #2019 (e0fd7ab3, the revises chip's background).
+- **H13, the snapshot report (the coordinator's calls, 2026-11-19).** files-host built it locally on host#54's
+  branch and asked seven questions; all accepted, written into FILE_ATTACHMENTS.md under H13. Orphans are H13b, a
+  later host change. Three conditions: an orphan's `ended` carries a null diff with a reason, never an absent one;
+  a patch left out past 1000 withheld paths is stated in the body and summary; the protocol doc states that a pipe
+  snapshots its first stage's repository only. The report is always on (the lane's measurement: about 170 ms a call
+  on a clone this size). No PR until host#54 merges; e3's rows before a janitor names it.
+- **Heads and reviews, 2026-11-19 (night), each verified.**
+  - e3's rows landed: #2008 at bb0540ac (to janitor-2), #2012 at 122b1b45 (to janitor-3), #1993 at 05310d04 (the
+    head is owed by packages, then janitor-3).
+  - #2002 at 5a025ce6 (a merge of main), to janitor-3. #2020's head is 2633dbd8; it passes ruling 13.
+  - #2018 at 9db4ab83: the repair janitor-2 asked (two 900 s attempts, retried on the outage signature); back to
+    janitor-2 when green.
+  - #2017: flaky-ci asked one change at f17b2258 (a multi-turn row that fails under the old expression).
+  - #2030 (e3, the answer-bundle guard row over every top-level bundle) at ce8deba9: flaky-ci reviews.
+- **Merged 2026-11-19 (night), each verified.** #2028 (5a2eb664, the `ml.table` spec), #2029 (7ac7141d, the plan),
+  #2005 (f25c57c2, the pinned-row long press test).
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like

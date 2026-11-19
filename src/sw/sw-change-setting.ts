@@ -219,6 +219,12 @@ export async function settingDeps(): Promise<SettingCheckDeps> {
     return { config: await getConfig(), modelIds: () => listAvailableModels().then((r) => r.ids, () => null) };
 }
 
+/** What a `setting` proposal is measured over (policy-proposal.ts): the stored config, and the server's model ids, read once. */
+export async function settingMeasureDeps(): Promise<{ config: MlConfig; modelIds: string[] | null }> {
+    const d = await settingDeps();
+    return { config: d.config, modelIds: await d.modelIds().catch(() => null) };
+}
+
 /**
  * Everything before a card, in the spec's order: check, then judge. A change a policy frees is held for the write.
  * @param runId the run

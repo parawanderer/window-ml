@@ -19,7 +19,10 @@ import { genTitle } from "../debug-reducer";
 export const cardSelectedHash = signal<string>("");        // which run's card is showing ("" → auto-pick)
 export const cardDetail = signal(true);                    // multi-run: tabbed DETAIL (true) ⇄ calm summary toast (false)
 export const cardCollapsedSet = signal<Set<string>>(new Set());   // run hashes collapsed to a toast (finished cards)
-export const cardDismissedSet = signal<Set<string>>(new Set());   // run hashes the user dismissed (× on a card)
+export const cardDismissedSet = signal<Set<string>>(new Set());   // state: ui (kept across a navigation in `ml_card_dismissed`, below)
+// Has the stored set been read yet? Until it has, no run is card-worthy: a replayed run must not flash its card
+// on a fresh page just because the dismissal that hides it is still being read.
+export const cardDismissLoaded = signal(false);   // state: ui
 export const cardSteerHash = signal<string>("");   // a LIVE run whose HUD card is showing the inline steer box (orb → "Steer this run…")
 /** Has this run's HUD card been folded to its pill? */
 export const isCardCollapsed = (h: string): boolean => cardCollapsedSet.value.has(h);
@@ -33,7 +36,48 @@ export const setCardCollapsed = (h: string, v: boolean): void => {
 export const dismissCardRun = (h: string): void => {
     const s = new Set(cardDismissedSet.value); s.add(h); cardDismissedSet.value = s;
     if (cardSelectedHash.value === h) cardSelectedHash.value = "";   // let the reconciler auto-pick the next
+    persistDismissed(h, true);
 };
+/** Bring a dismissed run's card back (the popup's Show): forgets the dismissal here and in the store. */
+export const undismissCardRun = (h: string): void => {
+    if (!isCardDismissed(h)) return;
+    const s = new Set(cardDismissedSet.value); s.delete(h); cardDismissedSet.value = s;
+    persistDismissed(h, false);
+};
+
+// THE DISMISSAL OUTLIVES THE PAGE. This app is a fresh iframe on every document, and the worker replays a live (or
+// just-finished) run's whole history into it after each same-site navigation, so a set held only here brought the
+// dismissed card straight back. The set of dismissed run hashes is kept in `chrome.storage.session`: reachable from
+// this extension frame and not from the page, gone when the browser closes, and a hash names one run, so a NEW run
+// still shows. Oldest dropped past the cap. A write reads, changes and writes the stored list, so a dismissal made in
+// another frame is not undone.
+export const DISMISSED_KEY = "ml_card_dismissed";
+const DISMISSED_CAP = 200;
+const sessionArea = (): chrome.storage.StorageArea | null => {
+    try { const a = typeof chrome !== "undefined" ? chrome.storage?.session : undefined;
+        return a && typeof a.get === "function" && typeof a.set === "function" ? a : null; } catch { return null; }
+};
+/** Add or remove one hash in the stored list (read, change, write: another frame's entries are kept). */
+function persistDismissed(h: string, add: boolean): void {
+    const area = sessionArea();
+    if (!area) return;
+    void area.get(DISMISSED_KEY).then((o: Record<string, unknown>) => {
+        const stored = Array.isArray(o?.[DISMISSED_KEY]) ? (o[DISMISSED_KEY] as unknown[]).filter((x): x is string => typeof x === "string") : [];
+        const next = stored.filter(x => x !== h);
+        if (add) next.push(h);
+        return area.set({ [DISMISSED_KEY]: next.slice(-DISMISSED_CAP) });
+    }).catch(() => { /* no storage: the dismissal still holds for this page */ });
+}
+/** Read the stored set once at load; until then {@link cardRuns} is empty. A store that cannot be read counts as empty. */
+function loadDismissed(): void {
+    const area = sessionArea();
+    if (!area) { cardDismissLoaded.value = true; return; }
+    void area.get(DISMISSED_KEY).then((o: Record<string, unknown>) => {
+        const stored = Array.isArray(o?.[DISMISSED_KEY]) ? (o[DISMISSED_KEY] as unknown[]).filter((x): x is string => typeof x === "string") : [];
+        cardDismissedSet.value = new Set([...cardDismissedSet.value, ...stored]);
+    }).catch(() => { /* unreadable: nothing stored */ }).finally(() => { cardDismissLoaded.value = true; });
+}
+loadDismissed();
 // cardShowWorkHash + revealSeq now live in ./store (shared with the answer-render provenance jump).
 export const cardMaximizedHash = signal<string>("");   // the run whose card is MAXIMISED (a near-full-page corner window)
 export const composerOpen = signal(false);          // the Spotlight composer — the HUD morphs into a task input
@@ -121,7 +165,7 @@ export const hasPendingGate = (s: Session): boolean => (s.steps || []).some(st =
 // order by createdTs so tabs don't reshuffle as runs emit.
 export const cardWorthy = (s: Session): boolean => s.kind === "agent" && !s.agentConfig?.silent && !isCardDismissed(s.hash);
 /** The runs the HUD should show, oldest first — not dismissed, and worth a card. */
-export const cardRuns = (): Session[] => [...sessionMap.values()].filter(cardWorthy).sort((a, b) => a.createdTs - b.createdTs);
+export const cardRuns = (): Session[] => !cardDismissLoaded.value ? [] : [...sessionMap.values()].filter(cardWorthy).sort((a, b) => a.createdTs - b.createdTs);
 // The run whose card is showing. STICKY (badge-don't-steal): keep the current selection while it's still
 // card-worthy — a new concurrent run adds a tab, it never hijacks the view. Auto-pick only when nothing
 // valid is selected: prefer a run awaiting approval (it needs you), else the most recently active.

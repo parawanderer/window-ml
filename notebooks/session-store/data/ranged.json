@@ -1,0 +1,446 @@
+{
+  "quick": false,
+  "at": "2026-11-18T00:19:21.983Z",
+  "machine": {
+    "cpus": "Apple M5 Pro",
+    "ramGiB": 24,
+    "load": [
+      2.63720703125,
+      2.09619140625,
+      2.39501953125
+    ],
+    "loadAfter": [
+      2.68603515625,
+      2.2958984375,
+      2.42578125
+    ]
+  },
+  "files": 2,
+  "fileMiB": 128,
+  "chunkBytes": 524288,
+  "cacheChunks": 32,
+  "freshBrowserPerRun": true,
+  "runs": [
+    {
+      "mode": "lazy",
+      "sessions": 1,
+      "dirMiBPerSession": 256,
+      "readMiB": 1280,
+      "chunkMsMedian": 0.2,
+      "chunkMsP90": 0.4,
+      "mbPerS": 1669,
+      "rssBaseMiB": 851,
+      "rssPeakMiB": 1930,
+      "ms": 804,
+      "rep": 0,
+      "pressureStart": {
+        "level": 1,
+        "freePct": 50
+      },
+      "pressureEnd": {
+        "level": 1,
+        "freePct": 47
+      },
+      "maxPressureLevel": 1,
+      "minFreePct": 47,
+      "valid": true
+    },
+    {
+      "mode": "eager",
+      "sessions": 1,
+      "dirMiBPerSession": 256,
+      "readMiB": 256,
+      "rssBaseMiB": 853,
+      "rssPeakMiB": 1115,
+      "ms": 2603,
+      "rep": 0,
+      "pressureStart": {
+        "level": 1,
+        "freePct": 47
+      },
+      "pressureEnd": {
+        "level": 1,
+        "freePct": 47
+      },
+      "maxPressureLevel": 1,
+      "minFreePct": 47,
+      "valid": true
+    },
+    {
+      "mode": "lazy",
+      "sessions": 4,
+      "dirMiBPerSession": 256,
+      "readMiB": 5120,
+      "chunkMsMedian": 0.5,
+      "chunkMsP90": 1.1,
+      "mbPerS": 2337,
+      "rssBaseMiB": 852,
+      "rssPeakMiB": 3327,
+      "ms": 2297,
+      "rep": 0,
+      "pressureStart": {
+        "level": 1,
+        "freePct": 49
+      },
+      "pressureEnd": {
+        "level": 2,
+        "freePct": 44
+      },
+      "maxPressureLevel": 2,
+      "minFreePct": 34,
+      "valid": false
+    },
+    {
+      "mode": "eager",
+      "sessions": 4,
+      "dirMiBPerSession": 256,
+      "readMiB": 1024,
+      "rssBaseMiB": 852,
+      "rssPeakMiB": 1885,
+      "ms": 5792,
+      "rep": 0,
+      "pressureStart": {
+        "level": 2,
+        "freePct": 45
+      },
+      "pressureEnd": {
+        "level": 2,
+        "freePct": 46
+      },
+      "maxPressureLevel": 2,
+      "minFreePct": 45,
+      "valid": false
+    },
+    {
+      "mode": "lazy",
+      "sessions": 8,
+      "dirMiBPerSession": 256,
+      "readMiB": 10240,
+      "chunkMsMedian": 0.9,
+      "chunkMsP90": 4.3,
+      "mbPerS": 1854,
+      "rssBaseMiB": 856,
+      "rssPeakMiB": 4406,
+      "ms": 5792,
+      "rep": 0,
+      "pressureStart": {
+        "level": 2,
+        "freePct": 46
+      },
+      "pressureEnd": {
+        "level": 1,
+        "freePct": 61
+      },
+      "maxPressureLevel": 2,
+      "minFreePct": 33,
+      "valid": false
+    },
+    {
+      "mode": "eager",
+      "sessions": 8,
+      "dirMiBPerSession": 256,
+      "readMiB": 2048,
+      "rssBaseMiB": 852,
+      "rssPeakMiB": 2910,
+      "ms": 10200,
+      "rep": 0,
+      "pressureStart": {
+        "level": 1,
+        "freePct": 62
+      },
+      "pressureEnd": {
+        "level": 1,
+        "freePct": 64
+      },
+      "maxPressureLevel": 1,
+      "minFreePct": 62,
+      "valid": true
+    },
+    {
+      "mode": "lazy",
+      "sessions": 1,
+      "dirMiBPerSession": 256,
+      "readMiB": 1280,
+      "chunkMsMedian": 0.2,
+      "chunkMsP90": 0.3,
+      "mbPerS": 2147,
+      "rssBaseMiB": 855,
+      "rssPeakMiB": 1933,
+      "ms": 625,
+      "rep": 1,
+      "pressureStart": {
+        "level": 1,
+        "freePct": 64
+      },
+      "pressureEnd": {
+        "level": 1,
+        "freePct": 64
+      },
+      "maxPressureLevel": 1,
+      "minFreePct": 64,
+      "valid": true
+    },
+    {
+      "mode": "eager",
+      "sessions": 1,
+      "dirMiBPerSession": 256,
+      "readMiB": 256,
+      "rssBaseMiB": 853,
+      "rssPeakMiB": 1115,
+      "ms": 2613,
+      "rep": 1,
+      "pressureStart": {
+        "level": 1,
+        "freePct": 64
+      },
+      "pressureEnd": {
+        "level": 1,
+        "freePct": 65
+      },
+      "maxPressureLevel": 1,
+      "minFreePct": 64,
+      "valid": true
+    },
+    {
+      "mode": "lazy",
+      "sessions": 4,
+      "dirMiBPerSession": 256,
+      "readMiB": 5120,
+      "chunkMsMedian": 0.4,
+      "chunkMsP90": 0.5,
+      "mbPerS": 3623,
+      "rssBaseMiB": 854,
+      "rssPeakMiB": 5132,
+      "ms": 1482,
+      "rep": 1,
+      "pressureStart": {
+        "level": 1,
+        "freePct": 65
+      },
+      "pressureEnd": {
+        "level": 1,
+        "freePct": 65
+      },
+      "maxPressureLevel": 1,
+      "minFreePct": 65,
+      "valid": true
+    },
+    {
+      "mode": "eager",
+      "sessions": 4,
+      "dirMiBPerSession": 256,
+      "readMiB": 1024,
+      "rssBaseMiB": 857,
+      "rssPeakMiB": 1889,
+      "ms": 5836,
+      "rep": 1,
+      "pressureStart": {
+        "level": 1,
+        "freePct": 65
+      },
+      "pressureEnd": {
+        "level": 1,
+        "freePct": 66
+      },
+      "maxPressureLevel": 1,
+      "minFreePct": 65,
+      "valid": true
+    },
+    {
+      "mode": "lazy",
+      "sessions": 8,
+      "dirMiBPerSession": 256,
+      "readMiB": 10240,
+      "chunkMsMedian": 0.8,
+      "chunkMsP90": 1.5,
+      "mbPerS": 2574,
+      "rssBaseMiB": 853,
+      "rssPeakMiB": 7880,
+      "ms": 4171,
+      "rep": 1,
+      "pressureStart": {
+        "level": 1,
+        "freePct": 66
+      },
+      "pressureEnd": {
+        "level": 1,
+        "freePct": 64
+      },
+      "maxPressureLevel": 2,
+      "minFreePct": 34,
+      "valid": false
+    },
+    {
+      "mode": "eager",
+      "sessions": 8,
+      "dirMiBPerSession": 256,
+      "readMiB": 2048,
+      "rssBaseMiB": 853,
+      "rssPeakMiB": 2912,
+      "ms": 10264,
+      "rep": 1,
+      "pressureStart": {
+        "level": 1,
+        "freePct": 65
+      },
+      "pressureEnd": {
+        "level": 1,
+        "freePct": 66
+      },
+      "maxPressureLevel": 1,
+      "minFreePct": 65,
+      "valid": true
+    },
+    {
+      "mode": "lazy",
+      "sessions": 1,
+      "dirMiBPerSession": 256,
+      "readMiB": 1280,
+      "chunkMsMedian": 0.2,
+      "chunkMsP90": 0.3,
+      "mbPerS": 2154,
+      "rssBaseMiB": 852,
+      "rssPeakMiB": 1930,
+      "ms": 623,
+      "rep": 2,
+      "pressureStart": {
+        "level": 1,
+        "freePct": 66
+      },
+      "pressureEnd": {
+        "level": 1,
+        "freePct": 66
+      },
+      "maxPressureLevel": 1,
+      "minFreePct": 66,
+      "valid": true
+    },
+    {
+      "mode": "eager",
+      "sessions": 1,
+      "dirMiBPerSession": 256,
+      "readMiB": 256,
+      "rssBaseMiB": 852,
+      "rssPeakMiB": 1113,
+      "ms": 2629,
+      "rep": 2,
+      "pressureStart": {
+        "level": 1,
+        "freePct": 66
+      },
+      "pressureEnd": {
+        "level": 1,
+        "freePct": 67
+      },
+      "maxPressureLevel": 1,
+      "minFreePct": 66,
+      "valid": true
+    },
+    {
+      "mode": "lazy",
+      "sessions": 4,
+      "dirMiBPerSession": 256,
+      "readMiB": 5120,
+      "chunkMsMedian": 0.4,
+      "chunkMsP90": 0.5,
+      "mbPerS": 3628,
+      "rssBaseMiB": 853,
+      "rssPeakMiB": 5134,
+      "ms": 1480,
+      "rep": 2,
+      "pressureStart": {
+        "level": 1,
+        "freePct": 67
+      },
+      "pressureEnd": {
+        "level": 1,
+        "freePct": 68
+      },
+      "maxPressureLevel": 1,
+      "minFreePct": 67,
+      "valid": true
+    },
+    {
+      "mode": "eager",
+      "sessions": 4,
+      "dirMiBPerSession": 256,
+      "readMiB": 1024,
+      "rssBaseMiB": 854,
+      "rssPeakMiB": 1887,
+      "ms": 5872,
+      "rep": 2,
+      "pressureStart": {
+        "level": 1,
+        "freePct": 67
+      },
+      "pressureEnd": {
+        "level": 1,
+        "freePct": 67
+      },
+      "maxPressureLevel": 1,
+      "minFreePct": 67,
+      "valid": true
+    },
+    {
+      "mode": "lazy",
+      "sessions": 8,
+      "dirMiBPerSession": 256,
+      "readMiB": 10240,
+      "chunkMsMedian": 0.8,
+      "chunkMsP90": 1.4,
+      "mbPerS": 2616,
+      "rssBaseMiB": 854,
+      "rssPeakMiB": 8042,
+      "ms": 4105,
+      "rep": 2,
+      "pressureStart": {
+        "level": 1,
+        "freePct": 67
+      },
+      "pressureEnd": {
+        "level": 1,
+        "freePct": 65
+      },
+      "maxPressureLevel": 2,
+      "minFreePct": 34,
+      "valid": false
+    },
+    {
+      "mode": "eager",
+      "sessions": 8,
+      "dirMiBPerSession": 256,
+      "readMiB": 2048,
+      "rssBaseMiB": 852,
+      "rssPeakMiB": 2910,
+      "ms": 10321,
+      "rep": 2,
+      "pressureStart": {
+        "level": 1,
+        "freePct": 65
+      },
+      "pressureEnd": {
+        "level": 1,
+        "freePct": 67
+      },
+      "maxPressureLevel": 1,
+      "minFreePct": 65,
+      "valid": true
+    }
+  ],
+  "browser": "151.0.7922.34",
+  "small": {
+    "files": 200,
+    "fileBytes": 4096,
+    "getAllMs": 24.6,
+    "lazyReadAllMs": 24.9,
+    "eagerLoadMs": 12.3,
+    "eagerReadMs": 0.1,
+    "x": 25989
+  },
+  "otherBrowsersAtStart": 0,
+  "otherTestSlotJobsAtStart": 0,
+  "reps": 3,
+  "lazyPasses": 5,
+  "timingsUnderLoad": false,
+  "otherBrowsersAtEnd": 0
+}

@@ -22,7 +22,7 @@ import type { MintToken } from "../python/python-tool";
 import { spendOf } from "../contract/contract-chat";
 import { fetchTool, defineTool, pythonTool, type KeepText } from "../ml/ml-tool-factories";
 import { storeText } from "./sw-values";
-import { _loadTable, isTableValue, tableSpecs } from "../ml/ml-python";
+import { _loadTable, isTableValue, sitePathUrl, tableSpecs } from "../ml/ml-python";
 import { googleSheetCsvUrl, googleSheetId } from "../dom/dom";
 import { runPython } from "./sw-python";
 import { leaseCell, pyKernelBusy, type PyDetached } from "./sw-python-task";
@@ -347,10 +347,11 @@ function runMl(ctx: RunCtx): MlApi {
 }
 
 /** One `tables` source, loaded in the worker: a table by value (the page's own loader, which needs no DOM), a URL this
- *  run's fetch_url read (its cache), a Google Sheet (an external one, or `"current"` on a sheet's page), read with the
- *  person's cookies only when this call was approved for it, or a page table (a CSS selector, or `"current"` on any other
- *  page), which the page reads from its DOM and the worker checks (worker-page-read.ts). */
-async function workerTable(ctx: RunCtx, name: string, src: unknown, raw: boolean): Promise<Awaited<ReturnType<typeof _loadTable>>> {
+ *  run's fetch_url read (its cache; a path on the tab's site, `sitePathUrl`, is that URL), a Google Sheet (an external
+ *  one, or `"current"` on a sheet's page), read with the person's cookies only when this call was approved for it, or a
+ *  page table (a CSS selector, or `"current"` on any other page), which the page reads from its DOM and the worker checks
+ *  (worker-page-read.ts). Exported for its tests. */
+export async function workerTable(ctx: Pick<RunCtx, "tabId" | "tabUrl" | "cache" | "pyCall" | "media">, name: string, src: unknown, raw: boolean): Promise<Awaited<ReturnType<typeof _loadTable>>> {
     if (isTableValue(src)) return _loadTable.call({} as MlApi, name, src, raw);   // the by-value branch reads no DOM
     // A source is a URL string or nothing: a wrapped one (`[url]`, `{s:[url]}`) is NOT coerced back with
     // String(src). The gate's scan finds a sheet at any depth now (externalSheetIds), so the person sees it
@@ -359,7 +360,9 @@ async function workerTable(ctx: RunCtx, name: string, src: unknown, raw: boolean
     if (typeof src !== "string") throw new Error(`pythonExec tables — "${name}" is not a loadable source: pass a URL string or a table value, not a ${Array.isArray(src) ? "list" : typeof src}.`);
     // `current` on a Google Sheet's page is that sheet, as the page's loader reads it (ml-python.ts `_loadTable`).
     const sheetPage = src === "current" && googleSheetCsvUrl(ctx.tabUrl()) ? ctx.tabUrl() : null;
-    const url = sheetPage ?? src;
+    // A path on the tab's site is that URL, by the page's own rule (`sitePathUrl`), and is then read from the run's
+    // fetches only, as a full URL is: never fetched here, never sent to the DOM reader as a selector.
+    const url = sheetPage ?? sitePathUrl(src, ctx.tabUrl()) ?? src;
     const csvUrl = /^https?:\/\//i.test(url) ? googleSheetCsvUrl(url) : null;
     if (csvUrl) {
         const id = googleSheetId(url);

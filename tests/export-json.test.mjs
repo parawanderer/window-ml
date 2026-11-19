@@ -398,6 +398,13 @@ test("an allowed ask's outcome exports verbatim: the sandbox the host applied an
     assert.deepEqual(sessionToJson(s).session.steps[1].asks[0].outcome, outcome);
 });
 
+test("a step's ml.sh span exports the held files it carries, verbatim", () => {
+    const shCalls = [{ program: "ls", durationMs: 4, unasked: { by: "default", argv: ["ls"], hiddenSecrets: ["/w/.env"], outcome: { ran: "host-sandbox", envelope: null, protectedChanged: null } } }];
+    const s = agentSession();
+    s.steps[1] = { ...s.steps[1], shCalls };
+    assert.deepEqual(sessionToJson(s).session.steps[1].shCalls[0].unasked.hiddenSecrets, ["/w/.env"]);
+});
+
 test("a step's ml.sh calls export verbatim, a call no one was asked about with what allowed it and the argv the host got", () => {
     const shCalls = [{ program: "ls", durationMs: 4, unasked: { by: "default", argv: ["ls", "-la"], outcome: { ran: "host-sandbox", envelope: null, protectedChanged: null } } }];
     const s = agentSession();

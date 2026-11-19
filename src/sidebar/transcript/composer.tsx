@@ -126,14 +126,14 @@ function pendingSummary(d: PendingFile): string {
 /** The text files waiting in a box, as pills with their reasons: a refused one says why and is not sent.
  *  @group sidebar/transcript
  *  @gallery {"docs": [{"name": "server.log", "type": "text/plain", "text": "a\nb\n"}, {"name": "x.bin", "type": "application/octet-stream", "why": "x.bin is not a text file"}], "reasons": [null, "x.bin is not a text file"], "onRemove": null} */
-export function FileStrip({ docs, reasons, onRemove, progress }: { docs: PendingFile[]; reasons: (string | null)[]; onRemove: (i: number) => void; progress?: FileProgress[] }) {
+export function FileStrip({ docs, reasons, onRemove, progress }: { docs: PendingFile[]; reasons: (string | null)[]; onRemove: (i: number) => void; progress?: (FileProgress | undefined)[] }) {
     if (!docs.length) return null;
     return (
         <div class="cfiles">
             {docs.map((d, i) => {
                 const pill = <FilePill key={`${i}${d.name}`} summary={pendingSummary(d)} refusal={reasons[i]} onRemove={() => onRemove(i)} />;
                 // A box that keeps its files while it sends (the start page) draws each one's upload under its own chip.
-                const up = progress?.find((p) => p.name === d.name);
+                const up = progress?.[i];
                 return up ? <span class="cupload" key={`${i}${d.name}`} data-progress={up.fraction}>{pill}<UploadBar fraction={up.fraction} /></span> : pill;
             })}
         </div>
@@ -148,17 +148,21 @@ function UploadBar({ fraction }: { fraction: number }) {
 /** A fraction as a whole percentage, clamped to 0..100. */
 const pctOf = (fraction: number): number => Math.round(Math.min(1, Math.max(0, fraction || 0)) * 100);
 
+/** One file of a send still uploading, keyed by the send (a counter per composer) and its position in that send, since
+ *  two files can share a name and two sends can be in flight at once. */
+export type SendUpload = FileProgress & { send: number };
+
 /** The files of a send still going to the runtime, each as its chip with a bar of the share the runtime has accepted:
  *  the composer has emptied, and nothing else shows the message until the runtime says it arrived. `data-progress`
  *  carries the figure the bar was last given, for a test to record.
  *  @group sidebar/transcript
- *  @gallery {"uploads": [{"name": "paper.pdf", "fraction": 0.4}, {"name": "notes.txt", "fraction": 1}]} */
-export function UploadStrip({ uploads }: { uploads: FileProgress[] }) {
+ *  @gallery {"uploads": [{"send": 1, "index": 0, "name": "paper.pdf", "fraction": 0.4}, {"send": 1, "index": 1, "name": "notes.txt", "fraction": 1}]} */
+export function UploadStrip({ uploads }: { uploads: SendUpload[] }) {
     if (!uploads.length) return null;
     return (
         <div class="cfiles cuploads" role="status">
             {uploads.map((u) => (
-                <span class="cupload" key={u.name} data-progress={u.fraction}>
+                <span class="cupload" key={`${u.send}:${u.index}`} data-progress={u.fraction}>
                     <FilePill summary={`${u.name} · sending, ${pctOf(u.fraction)}%`} />
                     <UploadBar fraction={u.fraction} />
                 </span>
@@ -264,7 +268,8 @@ export function Composer({ s, multiline, tools, keys }: { s: Session; multiline?
         files: { target: () => (s.kind === "agent" ? "agent" : "chat"), accepts: () => services().acceptsFiles(key), acceptsPdf: () => services().acceptsPdf(key), initial: () => loadDraftFiles(key) },
     });
     const type = (t: string) => { setText(t); saveDraft(key, t); };
-    const [uploads, setUploads] = useState<FileProgress[]>([]);   // state: ui — the files of a send still uploading
+    const [uploads, setUploads] = useState<SendUpload[]>([]);   // state: ui — the files of every send still uploading
+    const sends = useRef(0);   // state: plumbing — the id the next send is known by in `uploads`
     // Another session in the same box: its own draft. Not on mount, which `useState` already read: an effect runs after
     // paint, and a keystroke landing before it would be overwritten by what was saved before that keystroke.
     const shown = useRef(key);
@@ -295,8 +300,12 @@ export function Composer({ s, multiline, tools, keys }: { s: Session; multiline?
         const imgs = att.imgs, files = att.sendable;
         setText(""); att.clear();
         // A file going ahead in chunks reports each accepted one; the strip goes when the send has its answer.
-        const progress = (p: FileProgress) => setUploads((u) => (u.some((x) => x.name === p.name) ? u.map((x) => (x.name === p.name ? p : x)) : [...u, p]));
-        void sendHeld(key, t, imgs, () => services().sendToSession(key, t, imgs, files, progress), files).finally(() => setUploads([]));
+        // Keyed by (send, index): a second send started mid-upload keeps its bars when the first finishes, and two
+        // files of one name stay two bars.
+        const id = ++sends.current;
+        const same = (x: SendUpload, p: FileProgress) => x.send === id && x.index === p.index;
+        const progress = (p: FileProgress) => setUploads((u) => (u.some((x) => same(x, p)) ? u.map((x) => (same(x, p) ? { ...p, send: id } : x)) : [...u, { ...p, send: id }]));
+        void sendHeld(key, t, imgs, () => services().sendToSession(key, t, imgs, files, progress), files).finally(() => setUploads((u) => u.filter((x) => x.send !== id)));
     };
     const act = () => (stop ? cancel() : send());
     // Grow to fit, to a cap — measured from `scrollHeight`, which needs the height reset first or it only ever
