@@ -242,6 +242,13 @@ export class SessionServer {
         for (const session of rows) this.broadcastIndex({ type: "upsert", session });
     }
 
+    /** A tab's top frame moved (the browser's report); send the rows whose current page changed, and return them. */
+    pageMoved(tabId: number, url: string): SessionSummary[] {
+        const rows = this.index.pageMoved(tabId, url);
+        for (const session of rows) this.broadcastIndex({ type: "upsert", session });
+        return rows;
+    }
+
     /** A session the client asked to keep (`ephemeral` absent on the command that started it). Returns the events it
      *  had already emitted before it could be marked, which the caller saves; nothing when it was already marked. */
     markSaved(hash: string): MlDebugEvent[] {

@@ -65,12 +65,12 @@ the shared `sessionMap` `Session` (`src/sidebar/store.ts`), and "local" the `DUM
 | Agent run or chat | have | `SessionSummary.kind` (host) | — |
 | Model | have | `SessionSummary.model` (host); a switched model in `run.model` (local) | — |
 | Runtime | have | `SessionId.runtime` → `RuntimeInfo` name, kind, online (host) | — |
-| Current page | partial | `SessionSummary.page` is the page it STARTED on (host); `run.page` (local) | No current-page field; `tabs.list` joined on `tabId` needs the `drive` scope (session-store). Until then the line says "started on". |
+| Current page | partial | `SessionSummary.currentPage` (host, 2026-11-19): a worker-hosted run's tab after it moved, from the browser's navigation report; `SessionSummary.page` is the page it started on; `run.page` (local) | A page-hosted session has no current page (its page went with its document), and the report carries no title. Absent: the line says "started on". |
 | Capabilities | partial | `RuntimeInfo.capabilities` (host, per runtime); `run.init` (local, per run) | Nothing per session over the host (session-store). |
 | Started at, and by whom | have | `SessionSummary.createdTs`, `startedBy` (host) | — |
 | Open asks | have | `SessionSummary.pendingApprovals` (host); details in `run.approvals` (local) | — |
 | Tokens and cost so far | partial | Tokens: `usageSamples`, `sessionSubcall` (`usage.tsx`, reducer). Cost: `sessionCalls` priced through `services().priceCalls` (extension pages) | No cost on the web or hub chat page (session-store). |
-| Fork parent | need | `fork()` in `ml-agent.ts` and `ml-chat.ts` records no parent; `SessionSummary.lineage` is for subagents and unfilled | A fork's parent is not recorded (session-store). |
+| Fork parent | have | `SessionSummary.forkedFrom` (host, 2026-11-19): `fork()` in `ml-agent.ts` and `ml-chat.ts` sends `session.forkOf`, kept when the parent is on the same tab | Absent means not known: a parent on another tab, or one the runtime no longer holds, is not recorded. A worker-hosted chat (`sw-chat.ts`) has no `fork()`. |
 
 ### Resources tab
 

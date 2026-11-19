@@ -61,6 +61,9 @@ const BAD_STARTS = [
     ["images a string", goodStart({ images: "data:x" })], ["an image that is an object", goodStart({ images: [{}] })],
     ["rebuild a string", goodStart({ rebuild: "x" })], ["rebuild.toolNames a string", goodStart({ rebuild: { toolNames: "click" } })],
     ["stepBase a string", goodStart({ stepBase: "9" })],
+    ["forkOf a number", goodStart({ forkOf: 7 })], ["forkOf an object", goodStart({ forkOf: { hash: "aaaa0001" } })], ["forkOf an array", goodStart({ forkOf: ["aaaa0001"] })],
+    ["forkOf empty", goodStart({ forkOf: "" })], ["forkOf too long", goodStart({ forkOf: "a".repeat(10_000) })], ["forkOf with a colon", goodStart({ forkOf: "a:b" })],
+    ["forkOf with a slash", goodStart({ forkOf: "../x" })], ["forkOf __proto__", goodStart({ forkOf: "__proto__" })], ["forkOf null", goodStart({ forkOf: null })],
     ["an unknown labelMatch", goodStart({ labelMatch: 5 })], ["crossPage a string", goodStart({ crossPage: "no" })],
     ["100,000 tools", goodStart({ tools: Array.from({ length: 100_000 }, (_, i) => ({ ...RUN_TOOLS()[0], name: `t${i}` })) })],
     ["100,000 images", goodStart({ images: Array.from({ length: 100_000 }, () => "data:image/png;base64,AA") })],
@@ -461,5 +464,17 @@ test("a handle's next turn is accepted with the history the worker itself return
         assert.ok(Array.isArray(r1.messages) && r1.messages.some((m) => m.tool_calls?.length), `${what}: the worker returned the history with the call`);
         const r2 = await sendBounded(bg, { type: "START_RUN", payload: goodStart({ runId: "handle1", tools, task: "next", resumeMessages: r1.messages, stepBase: r1.stepCount, seqBase: r1.seqCount }) }, page, 5000);
         assert.equal(r2?.data?.summary, "done", `${what}: the handle's next turn ran (${JSON.stringify(r2)?.slice(0, 240)})`);
+    }
+});
+
+// --- forkOf: the parent a fork names, checked as a run id before the worker puts it on the start event ---
+
+test("START_RUN forkOf is a run id: a valid one passes the checker, a malformed one is refused with a readable error", async () => {
+    const { runControlPayloadError } = await import("../src/sw/run-payload-check.ts");
+    for (const ok of ["aaaa0001", "0123456789abcdef0123456789abcdef", "run_1.x-2", undefined]) {
+        assert.equal(runControlPayloadError("START_RUN", goodStart({ forkOf: ok })), null, `forkOf ${JSON.stringify(ok)}`);
+    }
+    for (const bad of [7, true, null, {}, [], "", "a b", "a:b", "../x", "__proto__", "a".repeat(10_000)]) {
+        assert.match(runControlPayloadError("START_RUN", goodStart({ forkOf: bad })) || "", /forkOf/, `forkOf ${JSON.stringify(bad)?.slice(0, 20)}`);
     }
 });

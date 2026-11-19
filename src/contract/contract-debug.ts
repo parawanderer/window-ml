@@ -15,6 +15,11 @@ import type { RenderDescriptor, ToolFeedback, AnswerMedia } from "./contract-ren
 export interface SessionRef {
     hash: string;
     turn: number;
+    /**
+     * On a fork's events (`handle.fork()`, `history.fork()`): the hash of the session it was forked from. The page's
+     * claim; the session index keeps it as `SessionSummary.forkedFrom` only when that session is on the same tab.
+     */
+    forkOf?: string;
 }
 
 /** What was ASKED of the model on one chat turn, as the sidebar and the exports replay it: the messages that

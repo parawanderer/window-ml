@@ -194,6 +194,9 @@ export interface StartRunPayload {
      *  max step/seq ride back in the response so the page can advance them for the next turn. */
     stepBase?: number;
     seqBase?: number;
+    /** A fork's first run: the session it was forked from (`SessionRef.forkOf`), carried onto the start event, where the
+     *  session index checks it. */
+    forkOf?: string;
     /** Which lexical metric ranks a near-miss on a pointer label (config `labelMatch`); carried so a
      *  background-hosted run resolves labels the same way a page-hosted one does. */
     labelMatch?: LexicalMetric;
