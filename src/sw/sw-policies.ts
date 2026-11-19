@@ -15,6 +15,7 @@ import { defineState } from "../state-registry";
 import type { AskWhy, PersistGrant } from "../contract";
 import { effectiveRows, type PolicyRow, type PolicyInput } from "./sw-policy-view";
 import { validList, CONSUMERS, GLOBAL_POLICIES_KEY, POLICY_LABEL_MAX } from "./policy-valid";
+import { REVEALS_CAUSE, revealsText } from "../shell/sh-call";
 
 /** Which kind of call a policy is about; a policy is only ever evaluated over calls of its own consumer. `sh` is
  *  `ml.sh` (docs/spec/SHELL.md), whose facts its own consumer builds. `setting` is `change_setting`
@@ -417,6 +418,9 @@ export function judgeCall(runId: string | undefined, consumer: PolicyConsumer, f
     // A call the host sends the person's credential with ALWAYS asks: no allow policy and no free tier answers it
     // (SHELL.md, "GH UNDER THE SANDBOX RULED"). A deny or an ask policy above still does.
     if (isCredentialed(facts)) return { decision: undefined, broken };
+    // A call to a program that reveals other processes asks unless the person listed it: no allow policy and no free tier
+    // answers it, since a policy can be the model's proposal and the list is a gate key (PROGRAM_MANIFEST.md, ruling 31).
+    if (revealsUnlisted(facts)) return { decision: undefined, broken };
     if (allow) return { decision: "allow", by: { ...allow }, broken };
     if (free(facts.effects, boundFor(placement))) return { decision: "allow", by: "builtin", broken };
     const gone = lapsedCover(runId, consumer, facts);
@@ -426,6 +430,33 @@ export function judgeCall(runId: string | undefined, consumer: PolicyConsumer, f
 /** Whether a call's facts say the host will inject a credential into it (`ShFacts.credential.held`). */
 const isCredentialed = (facts: Record<string, unknown>): boolean =>
     typeof facts.credential === "object" && facts.credential !== null && (facts.credential as { held?: unknown }).held === true;
+
+/** Whether a call's facts say its program reveals other processes and is not in `shellRevealsAllow`
+ *  (`ShFacts.reveals.allowed` false). */
+const revealsUnlisted = (facts: Record<string, unknown>): boolean =>
+    typeof facts.reveals === "object" && facts.reveals !== null && (facts.reveals as { allowed?: unknown }).allowed !== true;
+
+/**
+ * Why a call asks when the ONLY thing between it and running unasked is that its program reveals other processes and is
+ * not listed: judged again as if it were listed, it is allowed. Its card then offers "Always allow". Undefined for any
+ * other call, a call that asks for another reason too included.
+ * @param j the call's judgement
+ * @param runId the run's session hash
+ * @param consumer the kind of call
+ * @param facts the call's facts
+ * @param placement where the call runs
+ */
+export function revealsAskWhy(j: PolicyJudgement, runId: string | undefined, consumer: PolicyConsumer, facts: Record<string, unknown> & { effects: EffectsData },
+    placement: Parameters<typeof boundFor>[0]): AskWhy | undefined {
+    if (j.decision !== undefined || !revealsUnlisted(facts)) return undefined;
+    const r = facts.reveals as { program?: unknown };
+    if (typeof r.program !== "string") return undefined;
+    if (judgeCall(runId, consumer, { ...facts, reveals: { ...r, allowed: true } }, placement).decision !== "allow") return undefined;
+    const program = speakable(r.program);
+    return { line: `Asking because ${revealsText(program)}. "Always allow ${program}" adds it to the programs that may.`,
+        detail: `This call needed approval because ${program} shows other processes and the person has not listed it in Settings, Programs (ml.sh); it would otherwise have run without asking.`,
+        cause: REVEALS_CAUSE, program: r.program };
+}
 
 /** The most recent gone policy that would have allowed this call, or undefined. Evaluated like a live one, but its answer
  *  only becomes text on the ask: nothing here is read by the decision. */

@@ -42,6 +42,11 @@
       "description": "What the credentialed profile may connect to. Only beside `credential`.",
       "$ref": "#/$defs/ManifestNetwork"
     },
+    "reveals": {
+      "description": "The program shows other processes: their command lines, users, open files and sockets (`ps`, `lsof`, `top`). A call that would otherwise be free asks unless the person listed the program in `shellRevealsAllow` (PROGRAM_MANIFEST.md, \"Programs that reveal other processes\"). It only narrows, so any manifest may carry it.",
+      "type": "string",
+      "const": "processes"
+    },
     "flavours": {
       "description": "The implementations the manifest tells apart (PROGRAM_MANIFEST.md, \"Flavours\"); absent, one description for every implementation, as before the field. Only with `version.range` `\"*\"`.",
       "$ref": "#/$defs/ManifestFlavours"
