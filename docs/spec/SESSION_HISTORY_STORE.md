@@ -354,8 +354,10 @@ In order. Each is one PR, with what it must not break.
    Medium. Must not break: resume of a session saved by today's code (the upgrade fixture), a run resumed after
    worker eviction, `ml.resumeChat`, the Storage page's figures.
    BUILT (`session-store.ts`): version 2 creates `history`, `runmeta`, and `marks` and `views` empty (so slice 5 needs
-   no version); the writer compares by identity, then by a 32-bit print and length, so a page's chat (new objects at
-   every save) writes only what changed too; `checkImmutable` is the test build's check of the rule; a failed write
+   no version); the writer compares by identity, then by length and a 64-bit print (two independent 32-bit hashes),
+   so a page's chat (new objects at every save) writes only what changed too. A collision (a changed message of the
+   same length and print) is NOT written and nothing reports it: about 2^-64 per changed position, reachable only by
+   a page crafting one against its own chat; a message that cannot be serialized gets no print and is always written; `checkImmutable` is the test build's check of the rule; a failed write
    rolls its row back, is recorded (`sessions/write-failed`) and said on the session as an `agent-note`; `migrate`
    moves each version-1 row in one transaction, and any other write of such a row moves it in the same transaction.
    Left for later slices: the pass walks the rows `open()` already holds, not a cursor (slice 3 stops `open()` loading

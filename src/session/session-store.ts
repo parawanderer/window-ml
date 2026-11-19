@@ -195,14 +195,25 @@ export interface WriteFailure { hash: string; events: number; positions: number;
 /** One session moved to the version-2 form by {@link SessionStore.migrate}, or one that failed to move. */
 export interface Migrated { hash: string; positions: number; bytes: number; error?: string }
 
-/** A message's serialized length and a 32-bit FNV-1a of its JSON: how a position is compared when its object is not
- *  the one last written, and what its size counts as. */
-function measureMessage(m: NeutralMessage): { len: number; print: number } {
+/**
+ * A message's serialized length and a 64-bit print of its JSON: how a position is compared when its object is not the
+ * one last written, and what its size counts as. Two independent 32-bit hashes (FNV-1a, and a murmur3-style mix with
+ * its own seed), so a changed message of the same length is skipped with probability about 2^-64, and only a page
+ * crafting a collision against its own chat could reach that. A message that cannot be serialized gets no print
+ * (`""`), which never matches: it is always written.
+ */
+function measureMessage(m: NeutralMessage): { len: number; print: string } {
     let json: string;
-    try { json = JSON.stringify(m) ?? ""; } catch { json = ""; }
-    let h = 0x811c9dc5;
-    for (let i = 0; i < json.length; i++) { h ^= json.charCodeAt(i); h = Math.imul(h, 0x01000193); }
-    return { len: json.length, print: h >>> 0 };
+    try { json = JSON.stringify(m) ?? ""; } catch { return { len: 0, print: "" }; }
+    let a = 0x811c9dc5, b = 0x9747b28c;
+    for (let i = 0; i < json.length; i++) {
+        const c = json.charCodeAt(i);
+        a = Math.imul(a ^ c, 0x01000193);
+        b = Math.imul(b ^ Math.imul(c, 0xcc9e2d51), 0x1b873593);
+        b = (b << 13) | (b >>> 19);
+    }
+    b ^= json.length; b = Math.imul(b ^ (b >>> 16), 0x85ebca6b); b ^= b >>> 13;
+    return { len: json.length, print: `${(a >>> 0).toString(16)}.${(b >>> 0).toString(16)}` };
 }
 
 /** A history split into what goes to `history` and what goes to `runmeta`. */
@@ -221,7 +232,7 @@ function joinHistory(meta: RunMeta, messages: NeutralMessage[]): SessionHistory 
 
 /** What the writer last wrote for a live session: the message objects (references; the loop already holds them),
  *  each position's length and print, and the `runmeta` record's print. */
-interface Written { refs: NeutralMessage[]; lens: number[]; prints: number[]; metaPrint: number }
+interface Written { refs: NeutralMessage[]; lens: number[]; prints: string[]; metaPrint: string }
 
 /**
  * The saved sessions, as the worker uses them: rows in memory, writes batched, eviction applied as it writes.
@@ -593,7 +604,7 @@ export class SessionStore {
     private planHistory(hash: string, h: SessionHistory): { write: HistoryWrite; next: Written } {
         const { messages, meta } = splitHistory(h);
         const last = this.written.get(hash);
-        const refs = messages.slice(), lens: number[] = [], prints: number[] = [];
+        const refs = messages.slice(), lens: number[] = [], prints: string[] = [];
         const puts: [number, NeutralMessage][] = [];
         for (let i = 0; i < messages.length; i++) {
             const m = messages[i];
@@ -604,13 +615,13 @@ export class SessionStore {
             }
             const got = measureMessage(m);
             lens.push(got.len); prints.push(got.print);
-            if (last && i < last.refs.length && last.prints[i] === got.print && last.lens[i] === got.len) continue;
+            if (last && i < last.refs.length && got.print && last.prints[i] === got.print && last.lens[i] === got.len) continue;
             puts.push([i, m]);
         }
         const metaPrint = measureMessage(meta as unknown as NeutralMessage).print;
         const write: HistoryWrite = { puts };
         if (!last || messages.length < last.refs.length) write.cut = messages.length;
-        if (!last || last.metaPrint !== metaPrint) write.meta = meta;
+        if (!last || !metaPrint || last.metaPrint !== metaPrint) write.meta = meta;
         return { write, next: { refs, lens, prints, metaPrint } };
     }
 

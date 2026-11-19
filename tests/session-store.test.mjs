@@ -432,6 +432,21 @@ test("a replaced message is put again, alone; a new object with the same content
     assert.deepEqual(be.calls.writes.map((w) => w.puts), [[]], "same content in a new object: nothing to put");
 });
 
+test("a same-length change is put again, and a message that cannot be serialized always is", T, async () => {
+    // The print is what decides a position whose object is new: a change of the same length must not be read as
+    // the same message, and a message with no print (JSON.stringify throws) must never match one.
+    const be = backend();
+    const store = new SessionStore(be, { flushMs: 60_000 });
+    const odd = { role: "user", content: "x", n: 1n };
+    store.put(summary("aaaa0001", { status: "running" }), ev("aaaa0001", 0));
+    store.putHistory("aaaa0001", agentH([{ role: "user", content: "abcd" }, odd]));
+    await store.flush();
+    be.calls.writes.length = 0;
+    store.putHistory("aaaa0001", agentH([{ role: "user", content: "abce" }, { ...odd }]));
+    await store.flush();
+    assert.deepEqual(be.calls.writes.map((w) => w.puts), [[0, 1]], "both positions: a same-length change, and one with no print");
+});
+
 test("a shorter history deletes the tail, and the shorter one is what reads back", T, async () => {
     const be = backend();
     const store = new SessionStore(be, { flushMs: 60_000 });
