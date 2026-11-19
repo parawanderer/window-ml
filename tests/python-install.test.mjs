@@ -67,8 +67,8 @@ function serveLock(bg) {
 const call = (args, name = "python_install") => ({ name, args });
 
 /**
- * A worker-built run on tab 7 whose model makes `calls` in turn. `answer(card, send)` is the person: it gets the
- * emitted step (its renderIn) and a `send(decision, files)` that posts SET_APPROVAL; it defaults to denying.
+ * A worker-built run on tab 7 whose model makes `calls` in turn. `answer(card, send, bg)` is the person: it gets the
+ * emitted step (its renderIn) and a `send(decision, files)` that posts SET_APPROVAL, and `bg` to act as the run's other surfaces do (Stop); it defaults to denying.
  */
 async function installRun(calls, { answer = (_ev, send) => send(false), offered = true, index = new Map(), files = new Map(), onPyInstallTest, settled } = {}) {
     offer = offered;
@@ -97,7 +97,7 @@ async function installRun(calls, { answer = (_ev, send) => send(false), offered 
                 cards.push(card);
                 // Rows are rebuilt in the worker's realm, as a structured clone delivers them: rowsFromAnswer demands its own Object.prototype.
                 const send = (decision, files) => bg.send({ type: "SET_APPROVAL", payload: { runId: card.id, seq: card.seq, decision, ...(files !== undefined ? { files: vm.runInContext(`(${JSON.stringify(JSON.stringify(files))})`, bg.context) && vm.runInContext("JSON.parse", bg.context)(JSON.stringify(files)) } : {}) } });
-                void Promise.resolve(answer(card, send));
+                void Promise.resolve(answer(card, send, bg));
             }
             if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
             if (msg.payload.finish) return { result: "" };
@@ -349,6 +349,18 @@ test("Stop pressed while the candidate runs, and an import that passes after it,
     assert.deepEqual(r.installs, [], "a pass after Stop is not recorded");
     assert.deepEqual(r.pkgInstalls.map((l) => [l.reason, l.level]), [["stopped", "warn"]]);
     assert.ok(!r.results.some((t) => t.startsWith("Installed")), JSON.stringify(r.results));
+});
+
+test("Stop pressed before the test is sent starts no candidate, records nothing and is logged as stopped", { ...T, skip: SKIP }, async () => {
+    let stopped = false;
+    const r = await installRun([call({ name: "tabulate" })], { index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), settled: () => stopped, answer: (card, send, bg) => {
+        send(true, rowsOf(card));
+        bg.send({ type: "CANCEL_RUN", payload: { runId: card.id } });
+        stopped = true;
+    } });
+    assert.deepEqual(r.candidates, [], "no candidate was asked");
+    assert.deepEqual(r.installs, []);
+    assert.deepEqual(r.pkgInstalls.map((l) => [l.reason, l.level]), [["stopped", "warn"]]);
 });
 
 test("a candidate whose import raises rolls back with the error", { ...T, skip: SKIP }, async () => {

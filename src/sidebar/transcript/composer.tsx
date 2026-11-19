@@ -328,7 +328,7 @@ export function Composer({ s, multiline, tools, keys }: { s: Session; multiline?
     const narrow = useNarrowScreen();
     const placeholder = running
         ? (agent ? (narrow ? "Steer, or queue a follow-up…" : "Steer this run, or send to queue a follow-up…") : (narrow ? "Sending…" : "Sending… or stop this turn"))
-        : narrow ? "Send a message…" : `Send a message (or paste ${att.canFiles && att.acceptsFiles ? "an image or a file" : "an image"}) to continue…`;
+        : narrow ? "Send a message…" : "Send a message to continue…";
     return (
         <div class="composer" data-rev={r} onDragOver={att.onDragOver} onDrop={att.onDrop}>
             <ThumbStrip imgs={att.imgs} loading={att.loading} onRemove={att.remove} />

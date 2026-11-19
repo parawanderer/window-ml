@@ -51,6 +51,10 @@ export interface SidebarServices {
     /** Answer a site's start card (docs/spec/SITE_ACCESS_SLICE3.md 1.1). Only the surfaces that may show the card have
      *  it: the HUD card, the overlay and the DevTools panel (Q7). Absent elsewhere, and the card is then not drawn. */
     answerStart?(requestId: string, decision: "allow" | "always" | "deny"): void;
+    /** Add a program to `shellRevealsAllow`, as the person's own action on a card's "Always allow" (PROGRAM_MANIFEST.md,
+     *  ruling 31); resolves once it is written. Only the extension's own frames have it: absent, the card draws the two
+     *  answers only (the chat page and the phone). */
+    revealsAllow?(program: string): Promise<void>;
     /** A message to a session: steers a running agent, or starts its next turn. Resolves when the host knows whether it
      *  was taken, so the composer can put the text back on a failure (drafts.ts); never rejects. `progress` hears how
      *  far each file's upload has got, on a surface that sends files ahead in chunks (the hub); others never call it. */

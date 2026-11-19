@@ -419,7 +419,11 @@ Three tiers, decided per CALL, on the final argv:
 
 **The card has two answers: allow this call, or deny it (with a note)**, never a menu of guessed generalisations;
 widening is a policy, written deliberately, and a card may link to "make a rule from this" (Shane, 2026-10-13). The
-design and the reasons: [`POLICIES.md`](POLICIES.md), "Widening is a policy, never a button on a card".
+design and the reasons: [`POLICIES.md`](POLICIES.md), "Widening is a policy, never a button on a card". The one
+exception (ruling 31, 2026-11-18): a call that asks only because its program reveals other processes has a third
+answer, "Always allow `<program>`", which writes the gate key `shellRevealsAllow` as the person's action; no policy may
+widen a gate key, so this widening cannot be one ([`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md), "Programs that reveal
+other processes").
 
 **A call no one was asked about is still shown to the person.** A call a policy or the built-in default allowed has no
 card, so it is drawn as a line under its step, in the sidebar and both exports: the argv the host got, as it is, who

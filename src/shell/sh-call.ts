@@ -7,7 +7,7 @@
 // script supplies the argv, the cwd and the environment additions, and nothing else.
 
 import type { CallDescription, Flavour, ProgramManifest } from "./program-manifest";
-import { CREDENTIAL_PROVIDERS, describeCall, flavourOf, hardenArgv } from "./program-manifest";
+import { CREDENTIAL_PROVIDERS, describeCall, flavourOf, hardenArgv, revealsRefusal } from "./program-manifest";
 import { claimsTopLevelName, type EffectsData, type Resource } from "../effects";
 import type { HostDone, HostDoneEnvelope, HostEnvelope, HostFacts, HostPathArg, HostPlacement, HostProtectedChange, HostSpawn, HostStream, HostTilde, HostFilesMapped } from "./host-protocol";
 import { binaryKind } from "../sw/body-read";
@@ -54,7 +54,8 @@ export interface ManifestPlace { cwd: string; roots: readonly string[]; rootOf?:
  *  global. */
 export function manifestsFor(stored: readonly StoredManifest[] | undefined, roots: readonly string[]): { list: readonly ProgramManifest[]; rootOf: (m: ProgramManifest) => string | undefined; entryOf: (m: ProgramManifest) => StoredManifest | undefined } {
     // B2 at call time too: the store and its load refuse an entry for a shipped program, and this keeps one from shadowing it if any arrives another way.
-    const here = applicable(stored ?? [], roots).filter((s) => !SHIPPED_MANIFESTS[s.manifest.program]);
+    // Ruling 31 likewise: a stored manifest for a program that shows other processes never drops the marker.
+    const here = applicable(stored ?? [], roots).filter((s) => !SHIPPED_MANIFESTS[s.manifest.program] && !revealsRefusal(s.manifest, s.pin?.path));
     const byManifest = new Map(here.map((s) => [s.manifest, s]));
     return {
         list: here.length ? [...here.map((s) => s.manifest), ...SHIPPED_LIST] : SHIPPED_LIST,
@@ -423,6 +424,9 @@ export interface ShFacts {
      *  will inject it (the call then always asks, `judgeCall`); null when the manifest names none. `hosts` is null when
      *  a host holds it without naming hosts (a build from before the proxy), whose profile reaches any host on `ports`. */
     credential: { provider: string; sends: string; held: boolean; ports: readonly number[]; hosts: readonly string[] | null } | null;
+    /** The call's program shows other processes (its manifest's `reveals`), and whether the person listed it in
+     *  `shellRevealsAllow`: one not listed always asks (`judgeCall`); null when the manifest says nothing of it. */
+    reveals: { what: "processes"; program: string; allowed: boolean } | null;
     /** The arguments whose leading `~` the host expanded (`argv` and the paths already carry the expansion); `[]` from a
      *  host that expands nothing. */
     tilde: HostTilde[];
@@ -452,8 +456,31 @@ export function tildeLines(tilde: readonly HostTilde[]): ShCardLine[] {
     return tilde.map((t) => ({ label: "~", value: t.to ? `${t.from} is ${t.to}` : `${t.from} stays literal (${t.reason ?? "no home"})`, ...(t.to ? {} : { warn: true }) }));
 }
 
+/** The `AskWhy.cause` of a call that asks only because its program reveals other processes and is not in
+ *  `shellRevealsAllow`: its card has a third answer, "Always allow" (PROGRAM_MANIFEST.md, ruling 31). */
+export const REVEALS_CAUSE = "reveals";
+
+/** What a program that reveals other processes shows, in the card's words (PROGRAM_MANIFEST.md, ruling 31). */
+export const revealsText = (program: string): string => `${program} shows other processes: their arguments, users and open files`;
+
 /** A walked directory whose walk found a secret, or could not tell, counts as one. */
 const secretBeneath = (containsSecret: boolean | null | undefined): boolean => containsSecret !== undefined && containsSecret !== false;
+
+/**
+ * `shellRevealsAllow` as every reader takes it: the stored value when it is an array of strings, else an empty list, so
+ * a value of another type (a bare string, whose `includes` matches a substring; a number; an object) lists nothing and
+ * the program's calls ask.
+ * @param v the stored `shellRevealsAllow`, of whatever type storage holds
+ */
+export const revealsAllowOf = (v: unknown): readonly string[] =>
+    Array.isArray(v) && v.every((x) => typeof x === "string") ? v : [];
+
+/**
+ * Whether `shellRevealsAllow` lists a program, through {@link revealsAllowOf}.
+ * @param list the stored `shellRevealsAllow`, of whatever type storage holds
+ * @param program the manifest's program
+ */
+export const revealsListed = (list: unknown, program: string): boolean => revealsAllowOf(list).includes(program);
 
 /**
  * The facts of one call, from the host's resolution, described again by the manifest over the resolved paths.
@@ -518,13 +545,15 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
         effects, described, why, runner,
         mode: facts.mode, sandboxed: facts.sandboxed, placement: facts.placement,
         credential: credentialOf(facts, m),
+        // Absent list, absent from the config: nothing is listed, so a revealing call asks.
+        reveals: m?.reveals ? { what: m.reveals, program: m.program, allowed: revealsListed(place?.revealsAllow, m.program) } : null,
         tilde: (facts.tilde ?? []).map((t) => ({ ...t })),
         files: (facts.files ?? []).map((m) => ({ ...m })),
     };
 }
 
 /** Where a call's facts are described: the roots, the manifests, and `hello.platform` (for `flavourOf`). */
-export type ShFactsPlace = { roots: readonly string[]; manifests?: readonly ProgramManifest[]; stored?: readonly StoredManifest[]; platform?: string };
+export type ShFactsPlace = { roots: readonly string[]; manifests?: readonly ProgramManifest[]; stored?: readonly StoredManifest[]; platform?: string; revealsAllow?: readonly string[] };
 
 /** The manifest a call's facts are described by, chosen as `shFacts` chooses it, and the stored manifests it came from. */
 function factsManifest(facts: HostFacts, place?: ShFactsPlace): { m: ProgramManifest | undefined; st: ReturnType<typeof manifestsFor> | undefined } {
@@ -745,6 +774,7 @@ export function shCardLines(f: ShFacts, applied?: HostDoneEnvelope | null, asked
     if (secretBeneath(f.cwd.containsSecret)) lines.push({ label: "Reads", value: f.cwd.containsSecret ? "the whole directory, which has secret-looking files in it" : "the whole directory, too large to check for secrets", warn: true });
     if (f.repoConfigRunsCode) lines.push({ label: "Repository", value: `its own config makes git run a program: ${f.repo?.reasons.join(", ") || "see .git/config"}`, warn: true });
     if (f.runner) lines.push({ label: "Starts", value: "another program, which this card does not show", warn: true });
+    if (f.reveals) lines.push({ label: "Shows", value: revealsText(f.reveals.program), ...(f.reveals.allowed ? {} : { warn: true }) });
     lines.push({ label: "Does", value: effectsText(f.effects), tip: doesTip(f), ...(f.effects === "unknown" || f.effects.some(claimsTopLevelName) ? { warn: true } : {}) });
     if (!f.described && f.why.length) lines.push({ label: "Why unknown", value: f.why.join("; ") });
     return lines;

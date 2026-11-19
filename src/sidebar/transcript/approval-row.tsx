@@ -1,4 +1,5 @@
-// approval-row.tsx — the answer row every approval card draws: approve, deny, deny with a note, and keep where a call has grants.
+// approval-row.tsx — the answer row every approval card draws: approve, deny, deny with a note, keep where a call has
+// grants, and "Always allow" where a call asks only because its program reveals other processes.
 
 import { useState, useRef } from "preact/hooks";
 import { Dialog } from "../dialog";
@@ -16,7 +17,7 @@ import { cursorTipOn } from "../ui-kit";
  *
  * Pure and exported so a test can read the sentences without rendering an approval.
  */
-export function approvalMechanics({ grants, arrival }: { grants: boolean; arrival?: "ask" | "deny" }): string[] {
+export function approvalMechanics({ grants, arrival, always }: { grants: boolean; arrival?: "ask" | "deny"; always?: string }): string[] {
     // A run held on the page its tab arrived on (src/sw/nav-arrival.ts): the answers are about the page, not a call.
     if (arrival === "deny") return ["Go back returns the tab to the page before. The run carries on there.", "End run stops the run here."];
     if (arrival === "ask") return ["Approve lets the run act on this page, and as you on its origin, for the rest of the run.", "Deny takes the tab back to the page before. The run carries on there."];
@@ -24,6 +25,7 @@ export function approvalMechanics({ grants, arrival }: { grants: boolean; arriva
         "Approve runs this one call. The agent asks again the next time it wants something.",
         "Deny refuses this call. The run carries on and the agent may try another way.",
         ...(grants ? ["Keep approves it AND stops the agent asking for these URLs for the rest of this session; what it fetches is cached."] : []),
+        ...(always ? [`Always allow ${always} runs this call AND adds ${always} to the programs that may show other processes (Settings, Programs), so its calls that would otherwise run without asking stop asking. Remove it there to undo.`] : []),
     ];
 }
 
@@ -39,11 +41,13 @@ export function approvalMechanics({ grants, arrival }: { grants: boolean; arriva
  * to something you read once. A dialog costs nothing until it is asked for and nothing after it is dismissed. The
  * control is deliberately not a warning colour: nothing is wrong, there is simply more to know.
  */
-export function ApprovalRow({ grants, decide, arrival, dismissOnly }: { grants: boolean; decide: (ok: boolean, persist?: boolean, feedback?: string) => void; arrival?: "ask" | "deny"; dismissOnly?: boolean }) {
+export function ApprovalRow({ grants, decide, arrival, dismissOnly, always }: { grants: boolean; decide: (ok: boolean, persist?: boolean, feedback?: string) => void; arrival?: "ask" | "deny"; dismissOnly?: boolean;
+    /** The program a third answer, "Always allow", lists in `shellRevealsAllow` before approving; absent draws no such answer. */
+    always?: { program: string; allow: () => void } }) {
     const [why, setWhy] = useState(false);
     const [saying, setSaying] = useState(false);
     const note = useRef<HTMLTextAreaElement>(null);
-    const lines = approvalMechanics({ grants, arrival });
+    const lines = approvalMechanics({ grants, arrival, ...(always ? { always: always.program } : {}) });
     const list = <ul class="appr-why-list">{lines.map((l) => <li key={l}>{l}</li>)}</ul>;
     return (
         <>
@@ -68,6 +72,7 @@ export function ApprovalRow({ grants, decide, arrival, dismissOnly }: { grants: 
                 </span>
                 <button class="appr-btn yes" onClick={() => decide(true)}>Approve</button>
                 {grants ? <button class="appr-btn yes remember" onClick={() => decide(true, true)}>Keep</button> : null}
+                {always ? <button class="appr-btn yes remember appr-always" onClick={always.allow}>Always allow {always.program}</button> : null}
                 </>}
             </div>
             {saying ? (

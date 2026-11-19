@@ -245,6 +245,38 @@ test("judgeCall: a credentialed call is answered by no allow policy and no free 
     assert.equal(P.judgeCall("h-cred-ask", "sh", gh(true), "host-sandbox").decision, "ask");
 });
 
+// --- a call to a program that reveals other processes asks unless the person listed it (PROGRAM_MANIFEST.md, ruling 31) ---
+
+test("judgeCall: a revealing program not in shellRevealsAllow is answered by no allow policy and no free tier; a deny or an ask policy still answers", () => {
+    const ps = (allowed, program = "ps") => ({ argv: [program, "-ef"], credential: null, reveals: { what: "processes", program, allowed }, effects: [] });
+    assert.equal(P.judgeCall("h-none", "sh", ps(true), "host-sandbox").decision, "allow", "listed: the free tier answers");
+    assert.equal(P.judgeCall("h-none", "sh", ps(true), "host-sandbox").by, "builtin");
+    assert.equal(P.judgeCall("h-none", "sh", ps(false), "host-sandbox").decision, undefined, "off: the person is asked");
+    assert.equal(P.judgeCall("h-none", "sh", { ...ps(true), reveals: { what: "processes", program: "ps" } }, "host-sandbox").decision, undefined, "no allowed field is not listed");
+    P.addRunPolicy("h-rev", { consumer: "sh", effect: "allow", source: '(c) => c.argv[0] === "ps"', label: "ps", origin: "person" });
+    assert.equal(P.judgeCall("h-rev", "sh", ps(false), "host-sandbox").decision, undefined, "an allow policy naming the program does not stand in for the list");
+    P.addRunPolicy("h-rev-deny", { consumer: "sh", effect: "deny", source: '(c) => c.argv[0] === "ps"', label: "no ps", origin: "person" });
+    assert.equal(P.judgeCall("h-rev-deny", "sh", ps(true), "host-sandbox").decision, "deny", "listed, a deny still refuses");
+    P.addRunPolicy("h-rev-ask", { consumer: "sh", effect: "ask", source: "(c) => c.reveals !== null", label: "reveals", origin: "person" });
+    assert.equal(P.judgeCall("h-rev-ask", "sh", ps(true), "host-sandbox").decision, "ask", "listed, an ask still asks");
+    assert.equal(P.judgeCall("h-none", "sh", { ...ps(false), reveals: null }, "host-sandbox").decision, "allow", "the control: a manifest without the marker reads as before");
+});
+
+test("revealsAskWhy: only a call the list alone stands between gets the reason and the program for \"Always allow\"", () => {
+    const ps = (allowed, effects = []) => ({ argv: ["ps", "-ef"], credential: null, reveals: { what: "processes", program: "ps", allowed }, effects });
+    const why = (f, run = "h-none") => P.revealsAskWhy(P.judgeCall(run, "sh", f, "host-sandbox"), run, "sh", f, "host-sandbox");
+    const w = why(ps(false));
+    assert.equal(w?.cause, "reveals");
+    assert.equal(w?.program, "ps");
+    assert.match(w.line, /ps shows other processes: their arguments, users and open files/);
+    assert.match(w.detail, /has not listed it/);
+    assert.equal(why(ps(true)), undefined, "listed: nothing asks");
+    assert.equal(why(ps(false, "unknown")), undefined, "a call that asks for another reason too gets no third answer");
+    assert.equal(why({ ...ps(false), credential: { provider: "github", held: true } }), undefined, "nor a credentialed one");
+    assert.equal(why(ps(false), "h-rev-deny"), undefined, "nor a denied one");
+    assert.equal(why(ps(false), "h-rev")?.cause, "reveals", "with an allow policy that answers once listed, the list is still all that stands between");
+});
+
 // --- SHELL.md's name-immutable top level at the judge (2026-10-19): a name claim at the top level is not the builtin's allow ---
 
 test("judgeCall: a shell call that claims a top-level name in a root is not the builtin's allow", () => {

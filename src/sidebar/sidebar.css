@@ -3527,7 +3527,9 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .tok-chip { display: inline-flex; align-items: center; gap: 5px; padding: 0 6px; cursor: pointer;
     font-size: 0.72em; line-height: 1.6; color: var(--fg-dim); background: none;
     border: 1px solid var(--border); border-radius: 999px; }
-.tok-chip code { font-family: var(--mono, ui-monospace, monospace); font-size: 1em; color: var(--fg-dim); }
+/* No ground of its own: in prose `.md code` paints an inline-code grey and padding, which made the same chip draw
+   differently inline than in a step. */
+.tok-chip code { font-family: var(--mono, ui-monospace, monospace); font-size: 1em; color: var(--fg-dim); background: none; padding: 0; }
 /* A fixed-size glyph rather than a hover-only word: the chip is right-aligned, so anything that changes its
    width on hover slides the pointer text sideways under the cursor that just arrived at it. The copy and
    check icons share a box, so the confirmation does not move it either. */
@@ -3801,6 +3803,9 @@ button.ui-step-now:hover { background: var(--panel-2); color: var(--fg); }
     opacity: 0.35; transition: opacity 0.15s ease;
 }
 .code-block:hover .code-tools, .code-tools:focus-within { opacity: 1; }
+/* `.code-body`: the code part of a block that REVISES another call (CodeBody), the positioning box for `.code-tools`
+   so the toolbar sits over the code and not over the REVISES header above it. */
+.code-body { position: relative; }
 /* A command to paste (CopyableCode): one line, so the copy button sits beside it rather than over its end. */
 .copyable-code .code { padding: 3px 28px 3px 7px; }
 /* Above a code theme's `pre code.hljs { padding: 1em }`, also where a page scopes the theme under `:root:not(…)`. */
@@ -3816,7 +3821,7 @@ button.ui-step-now:hover { background: var(--panel-2); color: var(--fg); }
    toolbar steps aside while it is open. */
 .code-block:focus { outline: none; }
 .code-block:focus-visible { outline: 1px solid var(--fg-faint); outline-offset: 1px; }
-.code-block:has(> .code-find) > .code-tools { display: none; }
+.code-block:has(> .code-find) > .code-tools, .code-block:has(> .code-find) > .code-body > .code-tools { display: none; }
 /* The find bar's holder: a ZERO-HEIGHT sticky row, so the bar stays in view while you read further down a block
    taller than the panel, and takes no room from the code. The bar itself is positioned inside it as usual. */
 .code-find { position: sticky; top: 4px; height: 0; z-index: 4; }
@@ -4676,7 +4681,6 @@ html[data-calm] .task-say > .task-dev, html[data-focus] .task-say > .task-dev { 
     border-radius: 8px; box-shadow: 0 6px 24px rgba(0, 0, 0, .35); font-weight: normal; text-align: left; cursor: auto;
 }
 .hc-text { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; font-size: .92em; color: var(--fg); tab-size: 4; }
-=======
 /* `.code-morph`: the characters of a reformatted script flying from where the live call had them to their new places
    (code-morph.ts). The real text is hidden while they fly; the layer is removed when they land. */
 pre.code.morphing { position: relative; }
