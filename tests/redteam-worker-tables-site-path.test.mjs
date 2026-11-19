@@ -80,6 +80,19 @@ test("RED TEAM (#2012): `//host/x` and `/\\host/x` are never read as a URL, even
     }
 });
 
+test("RED TEAM: `//host/x` naming the page's OWN host is still not a path, even when this run fetched that URL", T, async () => {
+    // The origin check alone passes this shape (it resolves to http://site.test/x.csv), so only the start rule's
+    // `(?!\/)` keeps it a selector: the row the off-origin shapes above cannot pin.
+    const own = "http://site.test/x.csv";
+    assert.equal(sitePathUrl("//site.test/x.csv", PAGE), null);
+    const { ctx, seen } = ctxFor(PAGE, [[own, csv(own)]]);
+    const r = await workerTable(ctx, "df", "//site.test/x.csv", false);
+    assert.equal(r.source.kind, "dom", "a protocol-relative source stays a selector");
+    assert.deepEqual(seen, ["//site.test/x.csv"]);
+    // Positive control: the same file as a path is this run's fetch.
+    assert.equal((await workerTable(ctxFor(PAGE, [[own, csv(own)]]).ctx, "df", "/x.csv", false)).source.kind, "fetch");
+});
+
 test("RED TEAM (#2012): a path is never a selector and a selector is never a path", T, async () => {
     const cache = [["http://site.test/x.csv", csv("http://site.test/x.csv")]];
     const { ctx, seen } = ctxFor(PAGE, cache);
