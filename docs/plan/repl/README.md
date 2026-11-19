@@ -1495,6 +1495,95 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
 - **Merged 2026-11-19 (evening), each verified.** #2014 (293e3bf7, the plan), #1975 (f7b8ab06, a session's
   effective policies as rows), #2004 (773be7f7, the conflict-marker check), window-ml-host#53 (cd82e8cc, the awk
   splice check).
+- **Shane's rulings 77 to 85 (2026-11-19, said in the coordinator's session): the nine questions of the `ml.table`
+  note.** The note is `docs/plan/repl/ML_TABLE.md`; the spec is packages' #2028 (docs/spec/ML_TABLE.md, not merged).
+  - **77.** To "take the synchronous route, t = ml.table(src), with no fork change": "Sure." The call blocks over
+    JSPI. The requirement that comes with it: while an inside cell is suspended, nothing but its own awaited chain
+    runs Python on its namespace. Packages' account: a second run message is held by `runChain`; an asyncio task
+    cannot exist for an inside cell; if a scheduler is ever admitted inside, the hold is built first. e3's rows come
+    with the first PR that adds the member.
+  - **78.** A Python cell gets a pandas DataFrame: "2 is fine". JS keeps `TableLike`.
+  - **79.** `tables`: "I would honestly get rid of it and in any test data rewrite those with the
+    `name = ml.table(src)` call if it is used in any tests. Too confusing/too much for the model to keep track of.
+    What I like about the functions is that it lets the model look up and discover what it actually needs when it
+    does." `tables` and `tableRaw` leave `python_exec`; tests, fixtures and bench specs are rewritten to the call.
+  - **80.** A computed Sheet in an approved cell: "your call is fine, just throw an error if it fails. If the user
+    approves it you would reuse the same preserved store of approved URLs as the static analysis." A nested ask; a
+    refusal raises in the cell; an approval goes in the one store.
+  - **81.** Where a cell writes: "every model run has its own private `/files` that other models can't access
+    (letting another model access another model's files would be a separate topic for later; deferred right now)".
+    "Attachments always stay read-only for the model, and the user can delete them from the UI if they want to."
+    "the owner of `/files/*` is the user with readonly permissions for the model, except for `/files/agent/*` which
+    is owned by the agent." The folder name in this ruling is corrected by ruling 86.
+  - **82.** Lazy parse on fetch: "6 is fine if the model is told it's not the full table".
+  - **83.** Dtypes from a prefix: "That's fine, maybe warn the model if we didn't read all the column types that
+    it's a guess based on whatever and how it can investigate further or get a more accurate cast."
+  - **84.** pyarrow past the memory cap, a large CSV converted to Parquet: "Yeah that's fine".
+  - **85.** Money as exact decimal only when the cell names the column or the header names a currency: "Sure".
+- **Shane's rulings 86 to 88 (2026-11-19, said in the coordinator's session).**
+  - **86. The writable folder.** "Sorry typo. That is meant to be `/files/agent/<model slop file>` So every model
+    has `/files/`. It's like the home directory. Currently multiple models don't see each other's file system."
+    - The coordinator's reading: no per-model subfolder. `/files` is one private file system per session, as #1999
+      specs it. The model writes under `/files/agent/` (its own subfolders allowed); rm, mv and overwrite are free
+      there. The rest of `/files` is the person's and read-only to the model.
+    - Open with Shane: a second model in the same session sees the first's files under this reading. Asked; not
+      answered.
+    - Withdrawn (the coordinator had relayed them from a wrong reading of ruling 81): a per-model folder, ENOENT for
+      another model's folder, EACCES at agent/ itself.
+  - **87.** Removing `tables` also removes `ml.pythonExec`'s page option: "Yeah".
+  - **88. The multi-cell sweep stays.** The coordinator first recommended dropping the sweep and ruling 58 as moot
+    under `ml.table`. Bench corrected it: ruling 64's hit class is an edit on a value an EARLIER CELL made, never the
+    injected table, so removing injection makes the sweep more central. The coordinator withdrew the recommendation.
+    Shane then quoted the original question and said "Sure your answer is fine." The coordinator reads that as the
+    corrected position and has asked Shane to say if they meant drop. Nothing is dropped.
+    - The sweep's gate is now: `ml.table` on main, the first vocabulary PR on main, Shane's yes in bench's own
+      session. The instrument (the hint sentence, the tables route classes, the injected names) is rewritten to the
+      call, and each run records whether the cell calling `ml.table` finished inside the dialect. Bench's sweep
+      preparation is frozen until then.
+- **Coordinator's calls on `/files` after rulings 75 and 86 (2026-11-19).**
+  - **The commit point.** A full cell commits each file on close. An attempt INSIDE the dialect is one transaction:
+    its closed files commit only if the attempt succeeds, and a refusal or a failure aborts them, as its namespace
+    rolls back. The transaction stays uncalled until the note's item 7 writers land. A read on an open descriptor
+    returns its pinned version until close.
+  - **The reader's premise, corrected by async.** A run's cells go to the run's own worker, so the session is fixed
+    per worker and comes from the channel's run record. The `full`, `own` and page workers get no mount. This
+    replaces session-store's amendment (one worker, several sessions), which the coordinator had accepted.
+  - **Rows for slice 1's spec.** A handle from another session, or used between cells, answers EBADF. Setting the
+    session is offscreen-only. An open writer counts against its own session's quota, and its pending part is
+    discarded when the worker drops that session's namespace without a close, or the worker goes. A non-run worker
+    opening the files volume is refused.
+  - **The layout.** The working directory and relative `ml.fs` paths resolve against `/files/agent/` (this amends
+    #1999's "against /files/"). The `/files/` root and attached/ answer EROFS to the model. `ml.fs.cp`'s destination
+    is under `/files/agent/`. The model makes no entry at the `/files/` level. The quota is per session. No
+    restorable rm.
+  - session-store's account: a person cannot upload into agent/ but can rename, move and delete there from the files
+    panel.
+- **The `ml.table` build order (the coordinator's call, ruling 54).** The spec PR (#2028); the JS member; the Python
+  member with the hold and the `tables` removal; `read_csv` from kept bytes; the `/files` writers; the lazy table.
+  No code before the spec is named. The JS member's owner is not assigned yet.
+  - #2028 at e940a898: the coordinator asked five changes (the materialise cap's value, the unmeasured bound of the
+    CSV to Parquet conversion, one name for the kept bytes, two sentences in PYTHON_DIALECT.md). None changes a rule.
+- **Findings and heads, 2026-11-19 (late).**
+  - #2018 (flaky-ci, apt retries and job timeouts): janitor-2 asked a change at d525852c. The 480 s attempt timeout
+    is under the day's green installs (517 to 652 s). The coordinator's call: retry on the outage signature, or 900 s
+    twice with the caps composed. A new head is owed.
+  - #2007 (the utility-call scrub, files-host): a third raw crossing (`meteredChat`) found and scrubbed, head
+    dd3bb79a.
+  - #2020 (small-fixes): its e2e failed on a real change (an empty mailbox now draws a `.jt-empty` leaf); the
+    assertion is updated, no test removed, so it stays under ruling 13.
+  - New PRs: #2022 (flaky-ci, the python-bench-stop hang, 5cc8002b, janitor-2 first); #2024 (small-fixes,
+    `CodeRevision.seq`, a0da4866, flaky-ci); #2026 (async, Python's `/files` mount, be71384d, held for review until
+    #1999 merges, dormant until session-store's reader is set).
+  - Repair heads: #1950 19b06faa, #1929 fcdcaf42, #2006 ac9d34f5, #2008 49a72a4d, #2013 a3dba4b3, #2015 b8f1fd2e.
+  - No CI repair has merged yet: #2018 has a change asked, #2022 and #2013 are in review.
+- **Queues, 2026-11-19 (late).** janitor-2: #2022, #1989, #2007, #2015, #1950, #2001, #1998; it holds #2003 until
+  #2008 merges. janitor-3: #1993, #2013, #2005 (green at d7a022ec), #2011's code, #2012 after e3's rows, #2000, #1929,
+  #1991, #2002; later #2026. flaky-ci: the #2018 repair, then #2017, #1999's scripts, #2024, #1995, #1997. e3:
+  #2012's rows and #1993's alias rows, then #2008, #2006, #2007, #1991, #2001, #1998, #2003, window-ml-host#54.
+  files-host builds H13 locally and opens no PR until window-ml-host#54 merges.
+- **Merged 2026-11-19 (late), each verified.** #2021 (7982acee, the `ml.table` note), #2023 (72e299cd, the plan),
+  #2025 (ae046b18, JSPI measured), #2027 (e2afbc85, rulings 77 to 84 in the note), #2016 (c3ba3a03, calm view hides
+  the failed count), #2019 (e0fd7ab3, the revises chip's background).
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
