@@ -77,3 +77,21 @@ test("a mentioned link and a real one in the same sentence", () => {
     assert.equal(links.length, 1);
     assert.equal(links[0].id, "def5678");
 });
+
+// --- a revises chip's navigation target ---
+
+test("the revises chip targets the step carrying the revised call's token, not revision.seq", async () => {
+    const { revisionStepSeq } = await import("../src/sidebar/transcript/step-scroll.ts");
+    // Shape of a multi-turn session: stored seq 11 is turn-local step 1, so the revision's own `seq: 1` would hit the first call.
+    const steps = [{ seq: 1, tool: "look" }, { seq: 3, tool: "exec", token: "15fe24b" }, { seq: 11, tool: "exec", token: "1a5fef4" }, { seq: 12, tool: "exec", token: "9d3822f" }];
+    assert.equal(revisionStepSeq("@tool:1a5fef4", steps), 11);
+    assert.equal(revisionStepSeq("@tool:1a5fef4:in", steps), 11);
+    assert.equal(revisionStepSeq("1a5fef4", steps), 11);
+});
+
+test("a revises chip whose target is not in the session has no target (does nothing, never the first call)", async () => {
+    const { revisionStepSeq } = await import("../src/sidebar/transcript/step-scroll.ts");
+    assert.equal(revisionStepSeq("@tool:deadbee", [{ seq: 1, tool: "look" }, { seq: 2, tool: "exec", token: "15fe24b" }]), undefined);
+    assert.equal(revisionStepSeq("@tool:deadbee", undefined), undefined);
+    assert.equal(revisionStepSeq("@tool:", [{ seq: 1, tool: "look" }]), undefined);
+});
