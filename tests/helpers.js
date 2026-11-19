@@ -979,7 +979,7 @@ function closeSidebarWorlds() {
 // document (sidebar.html): renders into #root, no shadow root. In the real
 // extension the content-script shell relays __mlDebug in from the parent window;
 // in jsdom window.parent === window, so dispatch posts with source: win.
-async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), sessionTitle = () => ({ data: null }), vram = [], info = null, holdInfo = null, invocation = null, psError = null, caps = null, pythonExec = null, listModels = null, embed = null, serverTools = null, housekeeping = [], indexedDB = null, priceCalls = null, siteLists = null, siteAccess = null, accessRequests = null, sessionStore = null } = {}) {
+async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), sessionTitle = () => ({ data: null }), vram = [], info = null, holdInfo = null, invocation = null, psError = null, caps = null, pythonExec = null, listModels = null, embed = null, serverTools = null, housekeeping = [], indexedDB = null, priceCalls = null, siteLists = null, siteAccess = null, accessRequests = null, sessionStore = null, holdSessionRead = null } = {}) {
     const unloadCalls = [];
     const pyCalls = [];   // PYTHON_EXEC payloads the app sent (the bench)
     const hkCalls = [];   // DUMP_HOUSEKEEPING payloads (the Settings → Housekeeping log)
@@ -1079,8 +1079,9 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
             },
             // chrome.storage.session, only when a test passes `sessionStore` (a plain object it may share between worlds, as the
             // browser shares it between a page's successive documents): a fresh document's frame reads what the last one wrote.
+            // `holdSessionRead` is a promise every read waits on, so a test can hold the card's load-time read open.
             ...(sessionStore ? { session: {
-                get: async (key) => ({ [key]: JSON.parse(JSON.stringify(sessionStore[key] ?? null)) }),
+                get: async (key) => { if (holdSessionRead) await holdSessionRead; return { [key]: JSON.parse(JSON.stringify(sessionStore[key] ?? null)) }; },
                 set: async (obj) => { Object.assign(sessionStore, JSON.parse(JSON.stringify(obj))); },
             } } : {}),
             onChanged: { addListener: (fn) => changeListeners.push(fn), removeListener: (fn) => { const i = changeListeners.indexOf(fn); if (i >= 0) changeListeners.splice(i, 1); } }

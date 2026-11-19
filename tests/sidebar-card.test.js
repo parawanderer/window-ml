@@ -1087,6 +1087,30 @@ test("card dismissal: a dismissed run's card stays gone on the next document, an
     assert.match(second.window.document.querySelector(".card-answer").textContent, /Answer B/, "a new run shows its card");
 });
 
+test("card dismissal: nothing shows while the stored dismissals are still being read, and the dismissed run stays gone after", async () => {
+    let release;
+    const hold = new Promise((r) => { release = r; });
+    const sessionStore = { ml_card_dismissed: ["A"] };
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" }, sessionStore, holdSessionRead: hold });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+    // The replay lands while the read is open: a card must not flash for a run the store is about to hide.
+    await w.dispatch(cStart("A", "task A", 1000));
+    await w.dispatch(cResult("A", "Answer A.", 1100));
+    await w.flush();
+    assert.ok(!w.window.document.querySelector(".card-head"), "no card while the read is unresolved");
+    assert.ok(!w.window.document.querySelector(".card-answer"), "no answer while the read is unresolved");
+
+    release();
+    await w.flush();
+    assert.ok(!w.window.document.querySelector(".card-head"), "still no card for the dismissed run once the read lands");
+
+    await w.dispatch(cStart("B", "task B", 2000));
+    await w.dispatch(cResult("B", "Answer B.", 2100));
+    await w.flush();
+    assert.match(w.window.document.querySelector(".card-answer").textContent, /Answer B/, "a new run shows");
+});
+
 test("card dismissal: the popup's Show brings a dismissed run back, and it stays back on the next document", async () => {
     const sessionStore = { ml_card_dismissed: ["A"] };
     const boot = async () => {
