@@ -32,7 +32,7 @@ default: [`../spec/EFFECTS.md`](../spec/EFFECTS.md). The language a policy is wr
 | The lifter: a source that fits the tree's fragment, as a tree ("The lifter" below) | `src/readonly-exec/policy-lift.ts` |
 
 State is declared in the registry as `policies.global` and `policies.run` (audience `model`, exposed as
-`ml.current.policies`). Both keep a policy as `StoredPolicy`: `id`, `scope`, `consumer` (`"fetch"`, and `"sh"` for `ml.sh`, whose facts its own consumer builds),
+`ml.current.policies`). Both keep a policy as `StoredPolicy`: `id`, `scope`, `consumer` (`"fetch"`, `"sh"` for `ml.sh`, whose facts its own consumer builds, `"act"`, and `"setting"` for `change_setting`),
 `effect`, `source`, `label`, `origin` (`person`, `card`, or `proposed` for one the model proposed and the person approved) and `created`.
 
 ## Scopes and lifetime
@@ -252,8 +252,9 @@ reached the tab's ledger for a worker-hosted run. The remember button never help
   for the store's keys, which it duplicates rather than import worker code (a test holds the two lists together).
 - **A card already showing is judged again** on every change (`onPoliciesChanged` → `rejudgePending`, `sw-consent.ts`).
   Only a pending entry whose descriptor carries `consumer` and `facts` is judged: the facts the WORKER resolved when the
-  card opened (the `fetch_url` card of a run whose fetch the worker runs, and lane 4's nested `sh` asks). Only consumer
-  `fetch` or `sh`, and only when `facts.effects` is present: a card whose effects nobody resolved is left to the person,
+  card opened (the `fetch_url` card of a run whose fetch the worker runs, lane 4's nested `sh` asks, and an ordinary
+  key's `change_setting` card). Only consumer `fetch`, `sh` or `setting` (never a guarded setting, whose card carries
+  no facts and is skipped by class besides), and only when `facts.effects` is present: a card whose effects nobody resolved is left to the person,
   since an `allow` that never reads `c.effects` would otherwise answer it (repl-specs, #719). A new `deny` closes it as refused, a
   new `allow` as answered (an `ask` matching leaves the card to the person, whatever else matches), both with `source: "policy"` on the decision, which only the worker sets (every resolver
   that takes a person's or an orchestrator's answer builds its own decision). The model reads "Denied by a policy the
@@ -314,6 +315,22 @@ The model never adds a policy; it asks for one, and the person answers a card (`
 - **Added only in the gate's resolve**, when the answer approves, from the proposal the card showed (`addRunPolicy`,
   origin `proposed`), with a `policy`/`added` run-log record. The tool's own `run` only reports whether the run now
   holds that policy. Its descriptor carries no `consumer`/`facts`, so `rejudgePending` never answers its card.
+
+## The `setting` consumer (`change_setting`)
+
+`docs/spec/MODEL_SETTINGS.md`; the worker half is `src/sw/sw-change-setting.ts`.
+
+- **Before any card**, in `autoApprove` through `deps.settingPolicy` (`settingBeforeCard`): the key and value are checked
+  (`checkSettingChange`), a guarded key the person declined this run is refused, `agentStartPage` is judged as the
+  navigation it causes (a `fetch` `deny` of its host refuses it), then `judgeCall(runId, "setting", settingFacts(c))`.
+  A `deny` refuses with no card; an `allow` frees an ORDINARY change only, holding it with `by: "policy"`. A guarded
+  change always reaches the card, in both directions, whatever an `allow` says.
+- **The card is checked again** (`settingCard`, in the gate's approve): what changed since is refused with no card, and
+  the change is held with `by: "person"` against the value the card shows. A `chrome.storage.onChanged` for the key
+  closes the card with `source: "worker"`, a denial no one gave.
+- **The write** is the tool's own `run` (`changeSettingApproved`): a compare-and-set of the held change, then a
+  `setting`/`changed` run-log record whose reason is who answered. A held change is consumed by its write.
+- **The policy page** offers `setting` in the add form's consumer select; `ADD` accepts it (`background.ts`).
 
 ## The policy corpus
 

@@ -8,6 +8,8 @@
 import { judgeCall, fetchFacts, runPolicies } from "./sw-policies";
 import { checkProposals } from "./policy-proposal";
 import { proposePolicyTool } from "../tools/propose-policy-tool";
+import { changeSettingTool } from "../tools/change-setting-tool";
+import { changeSettingApproved } from "./sw-change-setting";
 import { proposeManifestTool } from "../tools/propose-manifest-tool";
 import { pythonInstallTool } from "../tools/python-install-tool";
 import { installOutcome } from "./sw-pkg-install";
@@ -481,5 +483,6 @@ export function buildWorkerTools(runId: string, tabId: number, tabUrl: () => str
         : n === "task" ? taskTool(defineTool, { act: (a) => taskAction(runId, a) })
         : n === "propose_manifest" ? proposeManifestTool(defineTool, { outcome: (a) => isLibraryDraft(a) ? libraryOutcome(runId, a) : proposalOutcome(runId, a) })
         : n === "python_install" ? pythonInstallTool(defineTool, { outcome: (a) => installOutcome(runId, a) })
+        : n === "change_setting" ? changeSettingTool(defineTool, { write: (a) => changeSettingApproved(runId, a) })
         : null)).filter((t): t is MlTool => !!t);
 }
