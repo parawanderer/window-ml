@@ -948,3 +948,42 @@ test("~: with no usable HOME the argument stays literal and the card warns", T, 
         assert.equal(f.argv[1], "~/notes.txt");
     }
 });
+
+// --- the files the sandbox holds unreadable (host PR #46, facts.hiddenSecrets) ---
+
+test("hiddenSecrets: an older host's facts give [] in ShFacts, no card line and nothing in the answer", T, async () => {
+    const host = fakeNativeHost({ sandbox: false, done: () => ({ out: "", err: "", code: 0 }) });
+    const ask = answering(true);
+    const { results } = await runOn("userScripts", [runs(["git", "status"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep });
+    assert.equal(JSON.stringify(ask.asked[0].facts.hiddenSecrets), "[]");
+    assert.equal(shCardLines(ask.asked[0].facts).some((l) => l.label === "Held"), false);
+    const r = valueOf(results[0]);
+    assert.equal("hiddenSecrets" in r || "hiddenSecretsMore" in r, false);
+});
+
+test("hiddenSecrets: the list reaches the card, the answer, the run log and the unasked span", T, async () => {
+    const held = ["/w/proj/.env", "/w/proj/.netrc"];
+    const host = fakeNativeHost({ hiddenSecrets: held, done: () => ({ out: "", err: "", code: 0 }) });
+    const { results, spans, bg, hash } = await spansOf([runs(["ls"])], { onNative: host.onNative });
+    const r = valueOf(results[0]);
+    assert.deepEqual(r.hiddenSecrets, held);
+    assert.equal(r.hiddenSecretsMore, undefined);
+    assert.deepEqual(spans[0].unasked.hiddenSecrets, held);
+    assert.deepEqual(unaskedLines(spans[0].unasked).filter((l) => l.label === "Held").map((l) => l.value), held.map((p) => `${p} (unreadable to this call)`));
+    const run = (await bg.context.__mlRunLog.all()).find((x) => x.run === hash && x.subsystem === "shell" && x.kind === "run");
+    assert.equal(run.detail.hiddenSecrets, 2, "the log counts them");
+    const ask = answering(true);
+    const asked = fakeNativeHost({ sandbox: true, hiddenSecrets: held, done: () => ({ out: "", err: "", code: 0 }) });
+    await runOn("userScripts", [runs(["git", "status"])], { ...NO_FETCH, onNative: asked.onNative, configExtra: ON, onStep: ask.onStep });
+    assert.deepEqual(shCardLines(ask.asked[0].facts).filter((l) => l.label === "Held").map((l) => l.value), held.map((p) => `${p} (unreadable to this call)`), "the approval card");
+});
+
+test("hiddenSecrets: 20 held files are 16 paths and a count of 4 in the answer", T, async () => {
+    const held = Array.from({ length: 20 }, (_, i) => `/w/proj/p${i}/.env`);
+    const host = fakeNativeHost({ hiddenSecrets: held, done: () => ({ out: "", err: "", code: 0 }) });
+    const { results, spans } = await spansOf([runs(["ls"])], { onNative: host.onNative });
+    const r = valueOf(results[0]);
+    assert.deepEqual(r.hiddenSecrets, held.slice(0, 16));
+    assert.equal(r.hiddenSecretsMore, 4);
+    assert.equal(spans[0].unasked.hiddenSecrets.length, 20, "the record behind the card keeps all of them");
+});

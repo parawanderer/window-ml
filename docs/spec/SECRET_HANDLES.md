@@ -663,3 +663,43 @@ does; Shane's line that a default-held value must never reach the model without 
   and the model's history holds the placeholder while the stored session is unchanged.
 - No page, content script or model tool can send the scan message, change `scrubPersonInput` or learn a name (e3's
   rows), and a janitor reads the build.
+
+### A session row leaves the worker scrubbed (RULED 2026-11-19: Shane, ruling 61, in the coordinator's session)
+
+**The rule.** A session row (`SessionSummary`) is scrubbed by registered value wherever it leaves the worker:
+
+- the session server's index updates and the snapshot a page gets when it attaches;
+- the sinks, the hub's among them, which seal and publish it to every paired device;
+- the hub runtime's list;
+- `sessions.list` and `sessions.search`, live and archived rows and a search's snippet;
+- the HUD's bring-here list, a held run's page URL included;
+- the Settings storage report's titles.
+
+Every string in the row but its identifiers (`id`, `kind`, `status`, `model`, `startedBy.id` and `.kind`, `lineage`'s
+ids; `ROW_IDENTIFIERS` in [`session-row-scrub.ts`](../../src/session/session-row-scrub.ts)) is text and is scrubbed:
+the task, the title, the page's URL and title, a device's name, and a field a later build adds, without naming it. A
+match is `[REDACTED:<NAME>]`, as in the person's own turn. The index keeps its rows as they are and each exit scrubs, so
+a value registered after a row was sent is sent again scrubbed (`onRegistryChanged`), and a row an older build stored
+leaves scrubbed. A live search matches the text a client is sent, so a query holding a value finds nothing and confirms
+no guess. By registered value only: a token-shaped string that is not registered is the shape detector's (ruling 39,
+"Two detectors").
+
+**Fails closed.** The scrub is synchronous, since the index is sent from synchronous code. Before the registry's first
+read, a row's text is withheld: a client reads the field as absent, and a page whose URL is withheld is dropped whole.
+The row is sent again once the read succeeds.
+
+**What the person sees.** A task they typed with a registered value in it shows on every device, the chat page in
+the extension included, as their words with `[REDACTED:<NAME>]` in place of the value, and so does a title made from
+it. Ruling 39's transcript shows the same placeholder. A value the person sent on purpose ("send as is",
+`scrubInput: false`, `scrubPersonInput` off) is scrubbed from the row too: the exemption covers the model and the
+store, and the row is one of the "other crossings" that still scrub it. Shane ruled it so (ruling 61); the other
+reading, honouring the turn's exemption in the row, was declined. The row scrub reads no digest of the turn's, so
+honouring it later is an addition. Its cost: on a phone, a session's transcript shows a sent-as-is value while its
+list row shows the marker.
+
+**Known limits.** Until ruling 39's turn scrub is built, the stored turn holds a registered value the person typed,
+so the transcript shows it while the row shows the marker. An archived session's search runs over its stored text
+in the archive, so a query holding a value can match it; the row and snippet that come back are scrubbed. A link
+built from a scrubbed URL opens the URL with the marker in it. A row's keys are scrubbed as its text is (two that
+scrub to one text are numbered); before the registry's first read, a key is kept only when it has a schema's shape
+(letters only, lowercase first, at most 32), so a registered value of that shape used as a key survives that path.

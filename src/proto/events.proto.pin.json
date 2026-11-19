@@ -2,7 +2,7 @@
   "_": "WHERE THIS SCHEMA COMES FROM. It describes the NDJSON `/api/events` serves and lives BESIDE THE ENCODER in the ollama fork (`api/events.proto`), where `api/events_proto_test.go` fails whenever the proto and the Go encoder disagree on a JSON path. This copy is pinned by blob id so `git hash-object src/proto/events.proto` proves it is byte-for-byte the file at that commit, offline. `npm run gen-proto -- --check` also asks GitHub whether upstream has moved on. Do not edit events.proto: replace it wholesale, update `commit` and `blob`, and re-run the generator.",
   "repo": "parawanderer/ollama",
   "path": "api/events.proto",
-  "commit": "10b026a3eff8c57bb86b5445a4a0d08fcd891782",
-  "blob": "aecfdd883720dff6c854deeb4542c1587a7a8f7b",
+  "commit": "2e95b297a095f8c15ace146d87338fa4be5c9f76",
+  "blob": "b6aff9b2cc93d76a6eeb93bf3c003e8e9965dc2e",
   "branch": "slop"
 }

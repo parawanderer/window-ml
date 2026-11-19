@@ -310,18 +310,50 @@ _m = sys.modules.get("_rt_p2")
 // misses a plain callback the loop holds (`call_soon`/`call_later` make a Handle, never a Task), and it never runs when
 // the epilogue (the result's serialization, run outside the cell's own try) is ended by a BaseException.
 
-/** Plant a recorder module `tag`, run `schedule` in a hardened cell, then report what the recorder holds a moment later. */
+/** Plant a recorder module `tag`, run `schedule` in a hardened cell, then report what the recorder holds a moment later.
+ *  The recorder carries the PHASE a callback ran in (`_where()`): "in-cell" until the later cell below sets `_m.after`,
+ *  "later" after. The later cell is what makes the property readable — a callback that runs DURING the cancel (the loop
+ *  turns, and a timer already due fires there; PYTHON_CANCEL_GAPS allows it) is "in-cell", and only a run after the
+ *  result returned can read "later". */
 async function scheduledThenAsk(tag, body) {
     // A wrapper the epilogue ended throws out of runPythonAsync; what the test asks is what ran AFTER, so it is caught.
     await cell(`
 import asyncio, types, sys
 _m = types.ModuleType("${tag}")
 _m.woke = []
+_m.after = False
+def _where():
+    return "later" if _m.after else "in-cell"
 sys.modules["${tag}"] = _m
 ${body}
 `, { later: 0.15 }).catch(async () => { await py.runPythonAsync("import asyncio\nawait asyncio.sleep(0.15)"); });
+    // The result has returned: from here on, anything the first cell scheduled that fires reads "later". A bare cell,
+    // no pump of its own, so the rows that follow are not moved by this one.
+    await cell(`import sys
+_m = sys.modules.get("${tag}")
+if _m is not None:
+    _m.after = True
+"x"`);
     return (await cell(`import sys\n_m = sys.modules.get("${tag}")\n{"woke": list(_m.woke) if _m else "NO MARKER"}`)).value;
 }
+
+/** The property every row below asserts: the body reached its "armed" mark, and nothing it scheduled ran after the first
+ *  cell's result returned. A callback that ran during the cancel ("in-cell") is allowed and passes. */
+function assertNoneLater(r, what, allow = []) {
+    assert.ok(r && Array.isArray(r.woke), `${what}: the recorder was not found: ${JSON.stringify(r)}`);
+    assert.ok(r.woke.includes("armed"), `${what}: the body did not reach its armed mark: ${JSON.stringify(r)}`);
+    const later = r.woke.filter((w) => !String(w).endsWith("in-cell") && !allow.includes(w));
+    assert.deepEqual(later, ["armed"], `${what}: something ran after the result returned: ${JSON.stringify(r)}`);
+}
+
+test("P2-handle control: the phase this file asserts fails a callback that ran after the result", () => {
+    // The rows above rest on `_where()`: "in-cell" until the later cell sets `_m.after`, "later" after. A "later" entry
+    // can only exist for a callback that ran once the result had returned, and this shows the assertion rejects it —
+    // the phase is not a relabelling that would let a late run pass. It also fails a body that never reached "armed".
+    assert.throws(() => assertNoneLater({ woke: ["in-cell", "armed", "later"] }, "synthetic"), /ran after the result returned/);
+    assert.throws(() => assertNoneLater({ woke: [] }, "synthetic"), /did not reach its armed mark/);
+    assert.doesNotThrow(() => assertNoneLater({ woke: ["in-cell", "armed"] }, "synthetic"));
+});
 
 test("P2-handle: a callback a hardened cell hands the loop with call_later does not run once its result is returned", { skip }, async () => {
     // Positive control: the same recorder, written by a Task, is cancelled, so the probe can tell a run from no run.
@@ -331,63 +363,72 @@ test("P2-handle: a callback a hardened cell hands the loop with call_later does 
 asyncio.ensure_future(_t())
 "x"`);
     assert.deepEqual(control, { woke: [] }, `control: a scheduled Task is cancelled, got ${JSON.stringify(control)}`);
-    const r = await scheduledThenAsk("_rt_p2h", `asyncio.get_event_loop().call_later(0.01, lambda: _m.woke.append("ran"))
+    // PHASE assertion: the cancel's spend turns the loop, and a handle already due fires in that turn — a run the
+    // ruling on "after the result" (PYTHON_CANCEL_GAPS) permits, and this row's original `woke === []` failed it.
+    const r = await scheduledThenAsk("_rt_p2h", `asyncio.get_event_loop().call_later(0.01, lambda: _m.woke.append(_where()))
+_m.woke.append("armed")
 "x"`);
-    assert.deepEqual(r, { woke: [] }, `a call_later callback must not run after the result returned, got ${JSON.stringify(r)}`);
+    assertNoneLater(r, "a call_later callback");
 });
 
-// Routes past loop.call_later: each must still end in a Handle the cancel's gc sweep reaches. Each schedules a plain callback that writes "ran", then writes "armed" (so a body that
-// failed to schedule is a failure, not a pass), and expects only "armed" once the result has returned.
+// Routes past loop.call_later: each must still end in a Handle the cancel's gc sweep reaches. Each schedules a plain
+// callback that records the PHASE it ran in (`_where()`), then writes "armed" (so a body that failed to schedule is a
+// failure, not a pass), and expects no entry that ran once the result had returned. A callback the loop turns during
+// the cancel is "in-cell" and passes (PYTHON_CANCEL_GAPS allows it); one that runs afterwards is "later" and fails.
 const handleRoutes = [
     ["a method of a Task SUBCLASS the cell defines", `async def _c(): pass
 class _T(asyncio.Task):
-    def evil(self): _m.woke.append("ran")
+    def evil(self): _m.woke.append(_where())
 _t = _T(_c())
 asyncio.get_event_loop().call_later(0.01, _t.evil)`],
-    ["type(loop).call_later(loop, ...), the class route past an instance patch", `type(asyncio.get_event_loop()).call_later(asyncio.get_event_loop(), 0.01, lambda: _m.woke.append("ran"))`],
-    ["type(loop).call_soon(loop, ...)", `type(asyncio.get_event_loop()).call_soon(asyncio.get_event_loop(), lambda: _m.woke.append("ran"))`],
-    ["type(loop).call_at(loop, ...)", `_l = asyncio.get_event_loop()\ntype(_l).call_at(_l, _l.time() + 0.01, lambda: _m.woke.append("ran"))`],
-    ["call_soon_threadsafe", `asyncio.get_event_loop().call_soon_threadsafe(lambda: _m.woke.append("ran"))`],
+    ["type(loop).call_later(loop, ...), the class route past an instance patch", `type(asyncio.get_event_loop()).call_later(asyncio.get_event_loop(), 0.01, lambda: _m.woke.append(_where()))`],
+    ["type(loop).call_soon(loop, ...)", `type(asyncio.get_event_loop()).call_soon(asyncio.get_event_loop(), lambda: _m.woke.append(_where()))`],
+    ["type(loop).call_at(loop, ...)", `_l = asyncio.get_event_loop()\ntype(_l).call_at(_l, _l.time() + 0.01, lambda: _m.woke.append(_where()))`],
+    ["call_soon_threadsafe", `asyncio.get_event_loop().call_soon_threadsafe(lambda: _m.woke.append(_where()))`],
     ["a Future's done-callback (add_done_callback, then set_result)", `_f = asyncio.get_event_loop().create_future()
-_f.add_done_callback(lambda f: _m.woke.append("ran"))
+_f.add_done_callback(lambda f: _m.woke.append(_where()))
 _f.set_result(1)`],
     ["a Future's done-callback on a future that is resolved LATER by a callback", `_f = asyncio.get_event_loop().create_future()
-_f.add_done_callback(lambda f: _m.woke.append("ran"))
+_f.add_done_callback(lambda f: _m.woke.append(_where()))
 asyncio.get_event_loop().call_later(0.01, _f.set_result, 1)`],
     ["the loop's private schedulers (loop._call_soon, loop._call_at, where the loop has them)", `_l = asyncio.get_event_loop()
 if hasattr(_l, "_call_soon"):
-    _l._call_soon(lambda: _m.woke.append("ran"), None)
+    _l._call_soon(lambda: _m.woke.append(_where()), None)
 if hasattr(_l, "_call_at"):
-    _l._call_at(_l.time() + 0.01, lambda: _m.woke.append("ran"), None)`],
+    _l._call_at(_l.time() + 0.01, lambda: _m.woke.append(_where()), None)`],
 ];
 for (const [what, body] of handleRoutes) {
     test(`P2-handle route: ${what} does not run once the result is returned`, { skip }, async () => {
         const r = await scheduledThenAsk("_rt_p2r", `${body}\n_m.woke.append("armed")\n"x"`);
-        assert.deepEqual(r, { woke: ["armed"] }, `nothing scheduled by this route may run after the result returned, got ${JSON.stringify(r)}`);
+        assertNoneLater(r, "this route");
     });
 }
 
 test("P2-handle route: loop.run_in_executor runs its callable inside the cell, never after the result", { skip }, async () => {
     const r = await scheduledThenAsk("_rt_p2x", `try:
-    asyncio.get_event_loop().run_in_executor(None, lambda: _m.woke.append("exec"))
+    asyncio.get_event_loop().run_in_executor(None, lambda: _m.woke.append("exec:" + _where()))
 except BaseException:
     _m.woke.append("refused")
 _m.woke.append("armed")
 "x"`);
-    assert.ok(r.woke[0] === "refused" || (r.woke[0] === "exec" && r.woke[1] === "armed" && r.woke.length === 2), `the executor callable must run before the result (or be refused), got ${JSON.stringify(r)}`);
+    // A thread may land during the cancel ("exec:in-cell") or be refused outright; it may not land afterwards.
+    assertNoneLater(r, "run_in_executor", ["refused"]);
 });
 
 test("P2-handle control: a Future done-callback DOES run when the cell lets the loop turn", { skip }, async () => {
     const r = await scheduledThenAsk("_rt_p2f", `_f = asyncio.get_event_loop().create_future()
-_f.add_done_callback(lambda f: _m.woke.append("ran"))
+_f.add_done_callback(lambda f: _m.woke.append(_where()))
 _f.set_result(1)
 await asyncio.sleep(0.05)
 _m.woke.append("armed")
 "x"`);
-    assert.deepEqual(r, { woke: ["ran", "armed"] }, `control: the done-callback must run while the cell awaits, got ${JSON.stringify(r)}`);
+    assert.deepEqual(r, { woke: ["in-cell", "armed"] }, `control: the done-callback must run while the cell awaits, got ${JSON.stringify(r)}`);
 });
 
 test("P2-handle residual: pyodide.webloop.scheduleCallback, a captured JS function, schedules without the loop", { skip }, async () => {
+    // STRICT, not the phase assertion: this is a JS timer the cell's revoke is what stops, as the four JS routes below
+    // are, so a run during the cancel here would mean the revoke had been dropped. The assertion fails on ANY entry
+    // besides its own "sched-ok".
     const r = await scheduledThenAsk("_rt_p2s", `try:
     import pyodide.webloop as _w
     from pyodide.ffi import create_once_callable as _co
@@ -398,17 +439,17 @@ except BaseException as e:
 _m.woke.append("armed")
 "x"`);
     assert.ok(!String(r.woke[0]).startsWith("sched-fail:"), `positive control: scheduleCallback must accept the callable, got ${JSON.stringify(r)}`);
-    assert.deepEqual(r, { woke: ["sched-ok", "armed"] }, `got ${JSON.stringify(r)}`);
+    assert.deepEqual(r, { woke: ["sched-ok", "armed"] }, `nothing this route schedules may run, during the cancel or after: ${JSON.stringify(r)}`);
 });
 
 test("P2-handle: a done-callback on a task the cell made does not run once the result is returned", { skip }, async () => {
     const r = await scheduledThenAsk("_rt_p2d", `async def _c():
     await asyncio.sleep(10)
 _t = asyncio.ensure_future(_c())
-_t.add_done_callback(lambda f: _m.woke.append("ran"))
+_t.add_done_callback(lambda f: _m.woke.append(_where()))
 _m.woke.append("armed")
 "x"`);
-    assert.deepEqual(r, { woke: ["armed"] }, `got ${JSON.stringify(r)}`);
+    assertNoneLater(r, "a done-callback on a task");
 });
 
 // A task the cell STARTED (it awaits a tick, so the coroutine is suspended inside its try) and KEPT on a module. Its
@@ -458,9 +499,12 @@ await asyncio.sleep(0.05)
 
 // JS callback registries the lockdown KEEPS (setTimeout/setInterval refuse a string argument but take a
 // callable; queueMicrotask and Promise.then take one too). None of them makes an asyncio.Handle, so the
-// cancel's gc sweep finds nothing and the callback runs after the result. The `scheduleCallback` todo below
-// is one door into this class; these are the others. Each body reports "sched-ok" so a refused schedule is a
-// failure, not a pass.
+// cancel's gc sweep finds nothing; what stops them is the cell's `revoke()`, which runs BEFORE the cancel's
+// loop turns — so a callback here is neither "in-cell" nor "later", and these rows keep the exact list. Each
+// body reports "sched-ok" so a refused schedule is a failure, not a pass.
+// The revoke is compiled into the wrapper at boot (`wrapUserScript`), so no row can rebind it; the mutation
+// (`revoke()` → `pass`, run by hand at b5f685d5) reds these four routes plus the P2-bound regression row, as
+// it did on the base.
 const jsRoutes = [
     ["js.setTimeout + create_once_callable", `_rt_p2js1`, `try:
     from js import setTimeout
@@ -499,7 +543,11 @@ for (const [what, tag, body] of jsRoutes) {
         // Positive control first: the schedule itself succeeded (the body reached "sched-ok").
         assert.ok(r.woke.includes("sched-ok") || r.woke[0]?.startsWith("sched-fail:"), `probe must report how the schedule went, got ${JSON.stringify(r)}`);
         assert.ok(!String(r.woke[0]).startsWith("sched-fail:"), `positive control: the JS registry must accept the callable, got ${JSON.stringify(r)}`);
-        assert.deepEqual(r, { woke: ["sched-ok", "armed"] }, `nothing this route schedules may run after the result returned, got ${JSON.stringify(r)}`);
+        // STRICT, not the phase assertion: the cell's revoke is what stops these, and it stops them before the cancel
+        // runs, so the callback cannot be "in-cell" either. Measured: with revoke() replaced by pass, all four of these
+        // routes fire during the cancel — as they did on the base, where only this file's P2-bound regression row also
+        // caught it. A phase assertion here would let the mutation pass, so they keep the exact list.
+        assert.deepEqual(r, { woke: ["sched-ok", "armed"] }, `nothing this route schedules may run, during the cancel or after: ${JSON.stringify(r)}`);
     });
 }
 
@@ -577,7 +625,10 @@ await asyncio.sleep(0)
     const freed = await cell(`import sys\nsys.modules["_rt_ps"].stop = True\nlen(sys.modules["_rt_ps"].woke)`);
     assert.match(String(r.error), /left a task running that would not stop: stubborn \(.*_stubborn\)/, `got ${JSON.stringify(r)}`);
     assert.equal(r.value, null, `the refused cell's value must not be returned, got ${JSON.stringify(r)}`);
-    assert.equal(freed.value, 8, `positive control: the task caught each of the 8 rounds' cancels, got ${JSON.stringify(freed)}`);
+    // The control is that EVERY round's cancel was taken, not the exact total: one extra `cell("1 + 1")` earlier in this
+    // file moves the total from 8 to 9 (measured), so the row failed on edits that changed only how many cells ran
+    // before it. A file the spend cannot reach leaves 0 and still fails here.
+    assert.ok(freed.value >= 8, `positive control: the task caught each of the 8 rounds' cancels, got ${JSON.stringify(freed)}`);
     const after = await cell(`1`);
     assert.deepEqual([after.error, after.value], [null, 1], "the freed task was spent; the next cell is not refused");
 });
@@ -679,7 +730,7 @@ test("P2-bound: a finally that runs after the bound stopped its task is stopped 
 // in child processes, so the hung one is killed rather than left in the suite.
 test("P2-bound property (pin 18): the raising-settrace case is stopped at the finally's first line, and bound off it hangs (child processes)", { skip, timeout: 300000 }, async () => {
     const case4s = AFTER_LATE(`            _m.log.append("finally ran")\n            import time\n            t0 = time.monotonic()\n            while time.monotonic() - t0 < 4: pass`);
-    const [bounded, unbounded] = await Promise.all([childCell(case4s, "host", 10000), childCell(case4s, "wrapper", 10000)]);
+    const [bounded, unbounded] = await Promise.all([childCell(case4s, "host", 45000), childCell(case4s, "wrapper", 10000)]);
     assert.ok(bounded.done && STOPPED.test(bounded.out), `the bound stops the case and refuses the cell: ${bounded.out.slice(-400)}`);
     assert.equal(unbounded.done, false, "the bound off (the wrapper's unbounded spend): the case hangs in its two-line busy loop");
 });
@@ -734,7 +785,7 @@ async def _left():
         raise
 asyncio.ensure_future(_left()).set_name("leftover")
 await asyncio.sleep(0)
-"x"`, "host", 10000);
+"x"`, "host", 45000);
     assert.ok(r.done, `the spend returned: ${r.out.slice(-400)}`);
     assert.match(r.out, /left a sys\.monitoring tool registered: cell-tool \(id 3\)/);
 });
@@ -975,7 +1026,7 @@ test("P2-bound inside the dialect: a cell's rebind of the wrapper's revoke hook 
     assert.deepEqual(seen["_ml_cell_revoke = None"], { refused: null, unchanged: true }, "a bare assignment runs, in the dialect's copy of the namespace, and binds nothing the wrapper reads");
 });
 
-/** One cell in a CHILD process (lockdown included), given `limitMs` once the cell starts; whether it finished. */
+/** One cell in a CHILD process (lockdown included), given `limitMs` once the runtime is READY; whether it finished. */
 function childCell(code, cancel, limitMs) {
     const script = `
 import { loadPyodide } from ${JSON.stringify(path.join(PYODIDE_DIR, "pyodide.mjs"))};
@@ -986,7 +1037,7 @@ await py.loadPackage(["numpy", "pillow", "pandas"]);
 const held = await lockdownReadonly(py, {});
 rt.injectInputs(py.globals, null, null, held.harness);
 const script = rt.wrapUserCode(${JSON.stringify(code)}, true, false, ${JSON.stringify(cancel)});
-console.log("START");
+console.log("READY");
 const r = ${JSON.stringify(cancel)} === "host" ? await rt.hostRunScript(held.harness, script, py.globals) : await py.runPythonAsync(script);
 console.log("DONE " + JSON.stringify(r ?? null));
 process.exit(0);
@@ -995,9 +1046,11 @@ process.exit(0);
         const child = spawn(process.execPath, ["--import", "tsx", "--import", NO_CDN_URL, "--input-type=module", "-e", script], { stdio: ["ignore", "pipe", "pipe"] });
         let out = "";
         let timer = setTimeout(() => child.kill("SIGKILL"), 120000);   // the boot's own bound
+        // READY is printed after the packages and the lockdown, so the load never counts against `limitMs`; a loaded
+        // 2-core runner took ~13 s just to boot a child (#2013).
         child.stdout.on("data", (d) => {
             out += d;
-            if (out.includes("START") && timer) { clearTimeout(timer); timer = null; setTimeout(() => child.kill("SIGKILL"), limitMs); }
+            if (out.includes("READY") && timer) { clearTimeout(timer); timer = null; setTimeout(() => child.kill("SIGKILL"), limitMs); }
         });
         child.on("exit", () => resolve({ done: out.includes("DONE "), out }));
     });
@@ -1008,8 +1061,11 @@ test("P2-bound mutation and the C-function path, in child processes", { skip, ti
     const cLoop = `import asyncio, collections, itertools\nasync def _left():\n    try:\n        await asyncio.sleep(10)\n    except BaseException:\n        collections.deque(itertools.count(), maxlen=0)\nasyncio.ensure_future(_left()).set_name("leftover")\nawait asyncio.sleep(0)\n"x"`;
     // A finally that spins after the bound stopped its task: with a hook CPython took down at the first raise, only the kill ended it.
     const finallySpin = AFTER_LATE("            while True: pass");
-    // The two that must finish run apart from the two that spin for their whole limit, so neither shares the CPU with a spinner.
-    const [bounded, afterLate] = await Promise.all([childCell(spin, "host", 10000), childCell(finallySpin, "host", 10000)]);
+    // The two that must finish run apart from the two that spin for their whole limit, ONE AFTER THE OTHER: a loaded
+    // 2-core runner killed the control 10 s after READY, before its bound could refuse it (#2013). The limit is the
+    // margin for a stop, not for a load, so it is generous, and the finishers never share the CPU with each other.
+    const bounded = await childCell(spin, "host", 45000);
+    const afterLate = await childCell(finallySpin, "host", 45000);
     const [unbounded, inC] = await Promise.all([childCell(spin, "wrapper", 10000), childCell(cLoop, "host", 10000)]);
     assert.ok(bounded.done && STOPPED.test(bounded.out), `control: with the bound the cell finishes, refused: ${bounded.out.slice(-400)}`);
     assert.equal(unbounded.done, false, "the bound off (the wrapper's unbounded spend): the same cell never finishes");

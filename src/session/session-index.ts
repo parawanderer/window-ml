@@ -302,6 +302,9 @@ export class SessionIndex {
     /** Update the session's derived state (status, gates, row fields) from one event. */
     private fold(s: Indexed, ev: MlDebugEvent): void {
         if (ev.save) s.summary.saved = true;
+        // A turn a finished task started has no message of the person's to open it, and its first sign is the result it reads:
+        // it is running from then on, as a turn opened by `agent-say` is. (A worker-only kind, outside the event union.)
+        if ((ev as { kind: string }).kind === "agent-task-say") { s.lastResultKey = null; s.ended = false; s.interrupted = false; return; }
         switch (ev.kind) {
             case "agent":
                 s.hasStart = true;

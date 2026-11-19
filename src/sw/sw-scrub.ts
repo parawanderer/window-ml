@@ -6,6 +6,8 @@ import type { MlConfig } from "../contract/contract-config";
 import type { NeutralMessage } from "../contract/contract-chat";
 import { heldTail, redactedLine, scrubRegistry, type RegistrySub } from "../secret-registry";
 import { registryIsReady, registryReady, registrySubsNow } from "./sw-secret-registry";
+import { rowForEgress, textForEgress } from "../session/session-row-scrub";
+import type { SessionSummary } from "../session/session-host";
 
 /** The settings `secretsOf` reads. With the legacy site list, exactly the `secret` class of
  *  setting-class.ts (tests/setting-class.test.mjs holds the two together). */
@@ -246,4 +248,27 @@ export async function forModelHistory(messages: NeutralMessage[]): Promise<numbe
         if (r.changed) { messages[i] = { ...m, content: r.text }; changed++; }
     }
     return changed;
+}
+
+/**
+ * A session row as it leaves the worker (the session server's index updates and snapshot, the hub's list, `session.list`,
+ * the HUD's bring-here list): every registered value in its text as `[REDACTED:<NAME>]`, exempt or not (ruling 61,
+ * SECRET_HANDLES.md). Synchronous, since the index is sent from synchronous code;
+ * fails closed: before the registry's first read, the row's text is withheld (`onRegistryChanged` sends it again once it
+ * can be scrubbed). By registered value only.
+ * @param row the row
+ * @returns the row a client may read
+ */
+export function forRow<T extends SessionSummary>(row: T): T {
+    return rowForEgress(row, registryIsReady() ? registrySubsNow() : null);
+}
+
+/**
+ * One text sent beside a row (a held run's page URL in the bring-here list, a title in the storage report), as
+ * {@link forRow} sends a row's.
+ * @param text the text
+ * @returns the text, or undefined when it is withheld
+ */
+export function forRowText(text: string): string | undefined {
+    return textForEgress(text, registryIsReady() ? registrySubsNow() : null);
 }

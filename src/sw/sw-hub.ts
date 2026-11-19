@@ -97,7 +97,7 @@ export function ensureHubRuntime(): Promise<void> {
                 files: fileChunks,
                 side: {
                     localIds: [localRuntimeId(), LOCAL_RUNTIME],
-                    list: () => sessionServer.index.list(),
+                    list: () => sessionServer.shownList(),
                     watch: (sink) => sessionServer.watch(sink),
                     command: (c, from) => runSessionCommand(c, from),
                 },

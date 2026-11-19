@@ -319,6 +319,40 @@ test("every model-bound read of a stored whole (a pointer read, a pipe's head, g
     }
 });
 
+// --- the files the sandbox held unreadable: their names are strings of the answer like any other ---
+
+test("a held file whose name holds a registered value is scrubbed in the answer the model reads, the step's span, and both exports", T, async () => {
+    const held = [`/w/s0/${VALUE}/.env`, "/w/s0/.netrc"];
+    const host = fakeNativeHost({ hiddenSecrets: held, done: () => ({ out: "", err: "", code: 0 }) });
+    native = host.onNative;
+    sync.shellRoots = [`/w/s${++rootN}`];
+    const r = await shRun(ctxFor("held01"), [["ls"]]);
+    assert.deepEqual(r.ok.hiddenSecrets, held, "the worker hands the script the host's names");
+    const span = { program: "ls", durationMs: 1, unasked: { by: "default", argv: ["ls"], hiddenSecrets: r.ok.hiddenSecrets, outcome: {} } };
+    let turn = 0;
+    const emits = [], sent = [];
+    await runAgentLoop("go", { tools: [{ name: "exec" }], maxSteps: () => 3, tokenStore: new TokenStore(), toolTokens: true, runHash: "abc12345" }, {
+        callModel: async () => (turn++ === 0 ? { content: "", tool_calls: [{ id: "c1", name: "exec", arguments: { js: "1" } }] } : { content: "done", tool_calls: [] }),
+        approve: async () => true, autoApprove: () => null,
+        buildMessages: (task) => [{ role: "user", content: task }],
+        pushAssistant: (m, msg) => m.push({ role: "assistant", ...msg }),
+        runTool: async () => ({ result: JSON.stringify({ hiddenSecrets: r.ok.hiddenSecrets }), shCalls: [span] }),
+        pushToolResult: (m, call, content) => { m.push({ role: "tool", tool_call_id: call.id, content }); sent.push(content); },
+        emit: (ev) => emits.push(ev),
+        forModel: async (_n, t) => (await forModel(t)).text,
+        scrubText: (t, live) => (live ? forLive(t) : forPerson(t)),
+        scrubStored: forStored,
+    });
+    assert.ok(sent.length && sent.every((c) => !leaks(c)) && sent[0].includes(MARK), `model: ${sent[0]}`);
+    const done = emits.find((e) => e.tool === "exec" && e.result != null);
+    assert.ok(!leaks(JSON.stringify(done.shCalls)) && JSON.stringify(done.shCalls).includes(MARK), "the stored span");
+    const session = { hash: "abc12345", kind: "agent", model: "m", tag: "session", createdTs: 1, lastTs: 2, status: "ok", config: {}, turns: [], task: "go", maxSteps: 3,
+        steps: [{ step: 1, seq: 1, ts: 1, tool: "exec", arguments: { js: "1" }, result: done.result, shCalls: done.shCalls, ...(done.modelResult ? { modelResult: done.modelResult } : {}) }], answers: [], summary: "" };
+    assert.ok(!leaks(JSON.stringify(sessionToJson(session))), "the JSON export");
+    const { md } = serializeSession(session);
+    assert.ok(!leaks(md) && md.includes("Held:"), "the Markdown export");
+});
+
 // --- what a page is answered: its error strings, with no name ---
 
 test("an error answered to a page has a registered value as a bare [REDACTED], and no name", async () => {

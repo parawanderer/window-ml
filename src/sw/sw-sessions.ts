@@ -45,6 +45,8 @@ import { appendSnapshot, measureEvents, summarizeStore, type StorageReport, type
 import { captureOwnTab, NOT_SHOWING } from "./sw-capture";
 import { shellCapabilities, refreshShell, onShellStatus, hostMissing, hostIsOutdated, SHELL_KEYS } from "./sw-shell";
 import { keptEvent } from "./sw-asks";
+import { forRow, forRowText } from "./sw-scrub";
+import { onRegistryChanged } from "./sw-secret-registry";
 
 /**
  * Ask a tab's page something, PUTTING THE CONTENT SCRIPT BACK if it is not there.
@@ -346,6 +348,7 @@ export function configureSessionCommands(run: RunDeps): void {
         // does not already say.
         describe: () => { const { kind, contractVersion, capabilities } = localRuntime(); return { kind, contractVersion, capabilities }; },
         index: sessionServer.index,
+        shownRow: forRow,
         removeFromIndex: (id) => { sessionServer.remove(id); },
         listTabs: listTabsForPicker,
         listTabGroups,
@@ -527,7 +530,7 @@ export function configureSessionCommands(run: RunDeps): void {
         hostsChat: (hash) => isBackgroundChat(hash),
         utilityConfigured: () => utilityModelSet,
         sideCall: utilityCall,
-        title: titleSession,
+        title: shownTitle,
         captureTab: async (tabId, opts) => {
             for (let attempt = 0; ; attempt++) {
                 try { return await captureOwnTab(tabId, opts); }
@@ -626,11 +629,16 @@ async function readKept(hash: string): Promise<MlDebugEvent[]> {
 export const sessionServer = new SessionServer(new SessionIndex({ runtime: localRuntimeId(), spawn }), {
     runtime: localRuntime,
     command: runCommand,
+    // Every row leaves through the by-value scrub (SECRET_HANDLES.md, "A session row leaves the worker scrubbed").
+    row: forRow,
     ...(sessionStore ? {
         stored: readKept,
         // Only a kept session's events are stored, so only they have a position `session.backfill` can page from.
     } : {}),
 });
+
+// A row withheld before the registry's first read, or sent before a value was registered, is sent again scrubbed.
+onRegistryChanged(() => sessionServer.reshow());
 
 // What a previous worker saved, so an evicted service worker comes back with its list rather than with nothing. The
 // events stay on disk until something subscribes to that session.
@@ -793,7 +801,9 @@ export async function storageReport(): Promise<StorageReport> {
     const [history, now, largest] = await Promise.all([storageHistory(), store.snapshot(), store.largest()]);
     // Only when it is on: asking would start SQLite for a page that has never used the archive.
     const archive = archiveOn ? await archiveCall<NonNullable<StorageReport["archive"]>>("stats").catch(() => undefined) : undefined;
-    return { history, now, largest, ...(archive ? { archive } : {}) };
+    // A largest session's title leaves as a row's title does (a hub's `storage.stats` asks for this report too).
+    const shown = largest.map(({ title, ...r }) => { const t = title ? forRowText(title) : undefined; return { ...r, ...(t ? { title: t } : {}) }; });
+    return { history, now, largest: shown, ...(archive ? { archive } : {}) };
 }
 
 /**
@@ -806,7 +816,8 @@ export async function sessionStorageStats(): Promise<StoreBytes | null> {
     const rows = [];
     for (const row of await sessionStore.open()) {
         const events = await sessionStore.read(row.hash);
-        rows.push({ hash: row.hash, ...(row.summary.title ? { title: row.summary.title } : {}), events: events.length, ...measureEvents(events, seen) });
+        const title = row.summary.title ? forRowText(row.summary.title) : undefined;
+        rows.push({ hash: row.hash, ...(title ? { title } : {}), events: events.length, ...measureEvents(events, seen) });
     }
     return summarizeStore(rows, seen);
 }
@@ -889,7 +900,19 @@ export async function handleSessionTitle(payload: unknown, sender: chrome.runtim
     const p = (payload || {}) as { hash?: unknown; messages?: unknown };
     if (typeof p.hash !== "string" || !p.hash || !Array.isArray(p.messages) || !p.messages.length) return { error: "SESSION_TITLE needs a hash and messages" };
     if (!utilityModelSet) return { error: "no utility model is set" };
-    return { data: await titleSession(p.hash, p.messages as NeutralMessage[]) };
+    return { data: await shownTitle(p.hash, p.messages as NeutralMessage[]) };
+}
+
+/**
+ * {@link titleSession} as it leaves the worker (`side.call` purpose title, `SESSION_TITLE`): scrubbed as a row's title
+ * is, and null while the registry is unread.
+ * @param hash the session
+ * @param messages the asker's title prompt
+ * @returns the title as shown, or null
+ */
+async function shownTitle(hash: string, messages: NeutralMessage[]): Promise<string | null> {
+    const t = await titleSession(hash, messages);
+    return t == null ? t : forRowText(t) ?? null;
 }
 
 /**
