@@ -652,7 +652,7 @@ does; Shane's line that a default-held value must never reach the model without 
 - No page, content script or model tool can send the scan message, change `scrubPersonInput` or learn a name (e3's
   rows), and a janitor reads the build.
 
-### A session row leaves the worker scrubbed (RULED 2026-11-19 (Shane, ruling 61, in the coordinator's session))
+### A session row leaves the worker scrubbed (RULED 2026-11-19: Shane, ruling 61, in the coordinator's session)
 
 **The rule.** A session row (`SessionSummary`) is scrubbed by registered value wherever it leaves the worker:
 
@@ -680,9 +680,10 @@ The row is sent again once the read succeeds.
 the extension included, as their words with `[REDACTED:<NAME>]` in place of the value, and so does a title made from
 it. Ruling 39's transcript shows the same placeholder. A value the person sent on purpose ("send as is",
 `scrubInput: false`, `scrubPersonInput` off) is scrubbed from the row too: the exemption covers the model and the
-store, and the row is one of the "other crossings" that still scrub it (ruling 61). The other reading, not taken, would
-honour the turn's exemption in the row; the row scrub reads no digest of the turn's, so that would be an addition. The
-cost: on a phone, a session's transcript shows a sent-as-is value while its list row shows the marker.
+store, and the row is one of the "other crossings" that still scrub it. Shane ruled it so (ruling 61); the other
+reading, honouring the turn's exemption in the row, was declined. The row scrub reads no digest of the turn's, so
+honouring it later is an addition. Its cost: on a phone, a session's transcript shows a sent-as-is value while its
+list row shows the marker.
 
 **Known limits.** Until ruling 39's turn scrub is built, the stored turn holds a registered value the person typed,
 so the transcript shows it while the row shows the marker. An archived session's search runs over its stored text
