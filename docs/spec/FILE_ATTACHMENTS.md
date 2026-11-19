@@ -1439,6 +1439,16 @@ delete of one git cannot undo asks, for a cell and for an `ml.sh` call whose man
   over the cap (hash only the stat-changed files, or a cache by basis); H13's orphan report keeps the private object
   directory beside the ledger; a copied index breaks on a split index (`sharedindex`), so H10 falls back to building
   the tree from `HEAD`.
+- AMENDED 2026-11-19 (host lane, H12, each measured first). The before-hash of a file over the cap comes from a cache
+  keyed by the whole stat (device, inode, size, mtime and ctime to the nanosecond), held for a call's two snapshots,
+  with a budget of 2 GiB of uncached bytes per snapshot; past the budget a big file is listed with its size and no
+  hash. "Not captured" means out of the tree, tracked or not, so a file that crosses the cap or turns unreadable
+  during a call shows as an add or a delete in the tree diff, and H13's report reconciles that with the lists. Git
+  lists no FIFO, socket or device, so the host finds them by type in the directories the listings reached and never
+  opens one; an ignored one is left out except in the uploads folder. Known limit: one in a directory holding no file
+  git lists is not found, and it is in no tree either. `WALK_CAP` counts tracked and untracked files, not ignored
+  ones, and is checked before any file is read. A changed set whose listing passes 1 MiB (about 25 500 files) errors
+  where it once hung.
 
 **Ruled with it** (Shane, 2026-11-13): the three settlements, the argv refusal replaced by a mapping in path positions
 (H9), the snapshot writing nothing into the repository (H10), and the sandbox and `gitUndoable` both holding (the

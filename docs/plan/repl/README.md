@@ -1343,6 +1343,51 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   e3's rows, in order: #1989, #2007, #2008, #2006, #2001, #1998, #2003, #1991, #1993.
 - **Merged 2026-11-19.** #1990, #1994, #1992 (usage rows in the Session summary spec), window-ml-host#52 (sed and awk,
   host side; #1989 waits on e3's rows).
+- **Rulings of the afternoon of 2026-11-19 (coordinator, infra, each overridable by Shane).**
+  - The read-only Python vocabulary (ruling 63), from packages' note on bench's replay (#1997; 129 cells, 46 inside;
+    the lane's counterfactual with read_csv served: 84). It is built as two PRs by packages.
+    - V1: the inert attributes (DataFrame columns, shape, dtypes; Series dtype and iloc, read-only; np.rint under
+      #1993's out check; Series.str only with the methods the corpus names), plus the stdlib manifest's callables made
+      callable inside. The fork's manifest loader admits a stdlib name as an attribute and never as a call, so
+      decimal.Decimal, io.StringIO, io.BytesIO and csv.DictReader have never run inside. V1 registers them on
+      window-ml's side from the manifest, with an ENUMERATED row (every stdlib name callable or carrying a reason) and
+      an AGREE row. Decimal's context flags and traps are saved and restored around a cell: arithmetic sets them on a
+      shared context the ownership check cannot see (probed). V1 starts on main after #1993 merges. The fork repair is
+      issue #2010; window-ml's copy is dropped at the next core bump.
+    - V2: `pd.read_csv` of a source this call loaded through `tables` is answered from the text the worker already
+      fetched (kept per source, capped), parsed with an allowlist of keywords, and of a buffer the cell owns.
+      Everything else asks, a URL not in `tables` included (25 of the 41 replayed read_csv cells). The return is a
+      new frame; the original is never handed out (ruling 57).
+    - `sum((generator), start)`: a fork change at the next core bump, not now (5 cells, 4 of them behind Decimal).
+  - The multi-cell measurement (ruling 62, the coordinator's wording). Three arms: the neutral and the staged wording,
+    each ending "Fetch each file with fetch_url and pass the four URLs to python_exec's `tables`.", and the neutral
+    wording without it. The notebook sorts each run by the route its first cell took and counts refused edits only in
+    runs that load through `tables`, per cell and per run with denominators. Built as #2011 (bench). The fixture as
+    built: 611 returns, 10 target pairs, one top pair 10 points of target ahead, whole cents.
+  - The sweep's gate: V1, V2 and #2012 on main, and Shane's yes in bench's own session. ASKED of Shane, not answered:
+    the repeats (3 now, a setting; the coordinator recommends 10) and a decision rule written before the sweep.
+  - A defect bench's probe found: in a worker-built run a site path in `tables` went to the DOM reader as a selector.
+    The repair is #2012 (bench): one rule on both hosts, read from the run's fetches only, nothing fetched.
+  - H12 (window-ml-host#54, files-host), the lane's calls accepted, in `docs/spec/FILE_ATTACHMENTS.md`: the
+    before-hash cache keyed by the whole stat with a 2 GiB budget per snapshot; "not captured" means out of the tree,
+    tracked or not; FIFOs, sockets and devices found by type and never opened; `WALK_CAP` counts tracked and
+    untracked files and is checked before any read.
+- **Findings of the afternoon of 2026-11-19, each with its owner.**
+  - #1989 (sed and awk): an awk keyword split by a backslash-newline passed the check when the awk's flavour is
+    undetected (janitor-2). The check now also reads the text with every such splice removed. e3's failing row first,
+    then the manifest lane's repair; the host port is window-ml-host#53. The lane's account: no live call reaches
+    that function on host main.
+  - #2007 (the utility-call scrub): the HUD's block summary reaches the utility model from an extension frame
+    unscrubbed, and the worker's scrub misses a tool call's arguments (janitor-2). files-host repairs both and
+    enumerates every caller of the utility backend, each with a row or a reason.
+  - The flaky row at line 364 of `tests/redteam-python-sandbox.test.mjs` is the row, not the sandbox (e3): a timer
+    already due fires inside the cancel's loop turn, which the cancel ruling allows. #2013 asserts the phase a
+    callback ran in; one that runs after the result returns still fails.
+  - e3's plant probe: a file planted under an admitted Python package never runs. Its one write, a bound
+    `to_string` called with a `buf` spread, ran on main and is the defect #1991 repairs.
+  - `tests/python-bench-stop.test.mjs` hung for 900 s once on #2005's CI. No owner yet; a second hang goes to Shane.
+- **Merged 2026-11-19, each verified.** #2009 (b06d2cf8, the plan), #1979 (71f2016e, test timings),
+  window-ml-host#51 (20b394ea, H11), #1977 (d7a799da, the reveals gate, ruling 31).
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
