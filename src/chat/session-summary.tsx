@@ -12,7 +12,7 @@ import type { ChatStore } from "./chat-store";
 import { Dialog } from "../sidebar/dialog";
 import { fmtAge } from "../sidebar/timestamps";
 import { truncate } from "../sidebar/format";
-import { approvalsPending, STATUS_LABEL } from "./session-list";
+import { approvalsPending, STATUS_LABEL } from "./status-words";
 
 /** The session whose summary is open, by key, or null. One at a time, drawn by `SessionSummaryDialog`, which reads the
  *  row and the runtime LIVE from the store so the page follows the session while it is open. */
@@ -72,7 +72,7 @@ const EMPTY_TAB: Record<Exclude<SummaryTab, "summary">, string> = {
 /**
  * One session's summary page: its title and id, a tab strip, and the open tab. Drawn inside whatever frame the
  * surface gives it (the dialog below; the gallery draws it bare).
- * @gallery {"s":{"id":{"runtime":"local","hash":"a1b2c3d4"},"kind":"agent","status":"waiting","title":"Plot the fare prices","model":"qwen3:32b","createdTs":1763500000000,"lastTs":1763503000000,"pendingApprovals":2,"saved":true,"page":{"url":"https://flights.example/search","title":"Flights AMS → LIS"},"startedBy":{"id":"local","kind":"local","name":"This browser"}},"rt":{"id":"local","name":"This browser","kind":"browser","online":true,"contractVersion":1,"capabilities":{},"grants":[]},"title":"Plot the fare prices","now":1763503120000}
+ * @gallery {"s":{"id":{"runtime":"local","hash":"a1b2c3d4"},"kind":"agent","status":"waiting","title":"Plot the fare prices","model":"qwen3:32b","createdTs":1795100000000,"lastTs":1795103000000,"pendingApprovals":2,"saved":true,"page":{"url":"https://flights.example/search","title":"Flights AMS → LIS"},"startedBy":{"id":"local","kind":"local","name":"This browser"}},"rt":{"id":"local","name":"This browser","kind":"browser","online":true,"contractVersion":1,"capabilities":{},"grants":[]},"title":"Plot the fare prices","now":1795103120000}
  * @group chat
  */
 export function SessionSummaryPage({ s, rt, title, now = Date.now() }: { s: SessionSummary; rt: RuntimeInfo; title: string; now?: number }) {

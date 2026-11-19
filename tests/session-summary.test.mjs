@@ -4,8 +4,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
+// The session list FIRST, as a page loads it (the gallery did): the page's status words once came through an import
+// cycle from it, and loaded in this order they were still undefined, so the state line went missing.
+await import("../src/chat/session-list.tsx");
 const { summaryLines } = await import("../src/chat/session-summary.tsx");
-const { STATUS_LABEL } = await import("../src/chat/session-list.tsx");
+const { STATUS_LABEL } = await import("../src/chat/status-words.ts");
 
 const NOW = Date.UTC(2026, 10, 19, 12, 0, 0);
 const rt = (over = {}) => ({ id: "local", name: "This browser", kind: "browser", online: true, contractVersion: 1, capabilities: {}, grants: [], ...over });
