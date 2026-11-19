@@ -604,7 +604,9 @@ test("K3b: a call the person allowed carries its outcome on the ask, so the card
     const host = fakeNativeHost({ landlockAbi: null, done: () => ({ out: "", err: "", code: 0, envelope: { write: "today", exec: "any" }, protectedChanged: changes, protectedChangedTruncated: true }) });
     const ask = answering(true);
     const seen = [];
-    const { results } = await runOn("userScripts", [runs(["python3", "x.py"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON,
+    // The outcome the step's event keeps has crossed the stored scrub, which takes out the backend's host: the harness's
+    // is `host`, which `host-sandbox` contains, so this row names another.
+    const { results } = await runOn("userScripts", [runs(["python3", "x.py"])], { ...NO_FETCH, onNative: host.onNative, configExtra: { ...ON, chatUrl: "http://llm.test/api/chat/completions" },
         onStep: async (bg, ev) => { await ask.onStep(bg, ev); for (const a of ev.asks ?? []) seen.push(a); } });
     assert.equal(valueOf(results[0]).approvedBy, "person");
     const after = seen.filter((a) => a.state === "allowed" && a.outcome);

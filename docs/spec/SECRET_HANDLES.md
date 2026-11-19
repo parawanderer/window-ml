@@ -170,6 +170,15 @@ on real captured output in its PR.
   - what the run keeps beside a tool result (`forStored`, the loop's `scrubStored`): the tool's Out render, which the
     sidebar and both exports draw, and so a pointer's fuller capture, which a later `@tool:` read hands a script or the
     model. Every string in it is scrubbed as the result is, without the count line; image data is not scanned;
+  - a nested ask as the step's event keeps it ([`sw-asks.ts`](../../src/sw/sw-asks.ts), `forStored` through
+    `AskRun.keep`, ruled 2026-11-19): its facts, why it asks, the person's note and the call's outcome, each failing
+    closed to withheld. The session server and so the chat page, the phone and a backfill, the store, the DevTools
+    ring, the cross-page replay and both exports hold that copy, a registered value as `[REDACTED:<NAME>]`. The raw
+    facts of an ask still waiting reach only the live card the person answers from (the page's card and overlay, a
+    DevTools panel already open) and are dropped when it settles; an export taken while it waits leaves its facts out.
+    A policy judges the raw facts, held in the worker's memory; `run.approvals` and the external approver read the kept
+    copy. A nested ask offers no "remember", and its run-log records carry only its kind and seq. A step an older build
+    stored with its ask's raw facts is scrubbed as it is read back from the store, which is not rewritten;
   - an error answered to a page (`forPage`): every string under an error key, at any depth beneath it, the config's
     secrets and then each registered value as a bare `[REDACTED]`, so a page never learns a name. It waits for the
     registry and fails closed to "The request failed."
