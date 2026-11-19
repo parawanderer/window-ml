@@ -1,6 +1,8 @@
 // fatal-worker-driver.mjs — the real python-worker.ts under a fake `self` and the real Pyodide in Node (as
 // python-worker-bridges.test.mjs boots it), in a process of its own: it posts a control cell, then an import that kills
-// Pyodide, and prints one JSON line of what came back and where the fatal error went, then exits. A child process,
+// Pyodide, and prints one JSON line of what came back and where the fatal error went, then exits. Node reports an unhandled
+// rejection on `process`, a browser worker on `self`: this forwards the one to the listener the worker put on the other,
+// as tests/fixtures/kernel-death-driver.mjs does. A child process,
 // because the dead interpreter's leftover work outlives anything a test runner can contain
 // (tests/pkg-install-fatal-worker.test.mjs). Run: node --import tsx tests/fixtures/fatal-worker-driver.mjs
 
@@ -12,10 +14,11 @@ import { pathToFileURL } from "node:url";
 import { wheel } from "./wheel-zip.mjs";
 
 const DIST = path.resolve(import.meta.dirname, "../../dist");
+const on = { message: null, unhandledrejection: null, error: null };
 const rejections = [];
-process.on("unhandledRejection", (e) => { rejections.push(String(e?.message ?? e)); });
+process.on("unhandledRejection", (e) => { rejections.push(String(e?.message ?? e)); on.unhandledrejection?.({ reason: e }); });
 const errors = [];
-process.on("uncaughtException", (e) => { errors.push(String(e?.message ?? e)); });
+process.on("uncaughtException", (e) => { errors.push(String(e?.message ?? e)); on.error?.({ error: e, message: String(e?.message ?? e) }); });
 
 const shim = fs.mkdtempSync(path.join(os.tmpdir(), "wml-worker-"));
 fs.mkdirSync(path.join(shim, "pyodide"));
@@ -23,12 +26,11 @@ fs.writeFileSync(path.join(shim, "pyodide", "pyodide.mjs"),
     `import { loadPyodide as real } from ${JSON.stringify(pathToFileURL(path.join(DIST, "pyodide", "pyodide.mjs")).href)};\n` +
     `export const loadPyodide = (o) => real({ ...o, indexURL: ${JSON.stringify(path.join(DIST, "pyodide") + "/")}, packageBaseUrl: ${JSON.stringify(path.join(DIST, "pyodide") + "/")} });\n`);
 const posted = [];
-let handler = null;
 globalThis.self = Object.assign(Object.create(globalThis), {
     name: "readonly",
     location: { href: pathToFileURL(shim + "/").href },
     postMessage: (m) => { posted.push(m); },
-    addEventListener: (type, fn) => { if (type === "message") handler = fn; },
+    addEventListener: (type, fn) => { if (type in on) on[type] = fn; },
 });
 await import("../../src/python/python-worker.ts");
 
@@ -36,10 +38,10 @@ let nextId = 1;
 /** Post one cell as the offscreen document does; its answer, or "no answer" after `ms`. */
 async function cell(code, extra = {}, ms = 120_000) {
     const id = nextId++;
-    handler({ data: { id, code, image: null, hardened: true, tables: null, ...extra } });
+    on.message({ data: { id, code, image: null, hardened: true, tables: null, ...extra } });
     for (let i = 0; i < ms / 10; i++) {
-        const done = posted.find((m) => m.id === id && !m.partial && !m.started && !m.booted);
-        if (done) return { ok: done.ok, error: done.error ?? null, stdout: done.stdout ?? "" };
+        const done = posted.find((m) => m.id === id && !m.partial && !m.started && !m.booted && !m.spending);
+        if (done) return { ok: done.ok, error: done.error ?? null, stdout: done.stdout ?? "", ...(done.fatal ? { fatal: true } : {}) };
         await new Promise((r) => setTimeout(r, 10));
     }
     return "no answer";

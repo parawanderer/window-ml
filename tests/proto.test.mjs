@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { readFileSync, rmSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkPin, protocVersion, generate } from "../scripts/gen-proto.mjs";
+import { checkPin, protocVersion, generate, withoutProtocVersion } from "../scripts/gen-proto.mjs";
 import { readVarint, createFrameReader, MAX_FRAME_BYTES } from "../src/protostream.ts";
 
 test("the vendored schema is byte-for-byte the file at the pinned commit", () => {
@@ -24,11 +24,12 @@ test("the checked-in decoder is what the schema generates", () => {
     // supposed to make impossible — so where protoc IS present, regenerate and diff. Skipped otherwise rather
     // than failing a machine that never asked for a protobuf toolchain (the same rule the CPython tests use).
     if (!protocVersion()) return;
+    const code = withoutProtocVersion;   // another protoc release writes another version line, not another decoder
     const tmp = mkdtempSync(join(tmpdir(), "protogen-"));
     try {
         const fresh = generate(tmp);
         const shipped = readFileSync(new URL("../src/proto/chat.gen.ts", import.meta.url), "utf8");
-        assert.equal(fresh, shipped, "src/proto/chat.gen.ts is stale — run `npm run gen-proto`");
+        assert.equal(code(fresh), code(shipped), "src/proto/chat.gen.ts is stale — run `npm run gen-proto`");
     } finally { rmSync(tmp, { recursive: true, force: true }); }
 });
 
