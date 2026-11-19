@@ -1343,6 +1343,22 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   e3's rows, in order: #1989, #2007, #2008, #2006, #2001, #1998, #2003, #1991, #1993.
 - **Merged 2026-11-19.** #1990, #1994, #1992 (usage rows in the Session summary spec), window-ml-host#52 (sed and awk,
   host side; #1989 waits on e3's rows).
+- **Shane's ruling 64 (2026-11-19): the multi-cell sweep runs 10 repeats, under a decision rule written first.** 10
+  repeats per arm and model: 20 runs per arm, 60 in all. The unit is the run, not the cell. The rule, fixed before
+  any run: build ruling 58 if at least a quarter of the counted runs in the hinted arms have a refused edit on a
+  value an earlier cell made; drop it if under a tenth do; in between, read which edits they are. A counted run is
+  one whose first cell loads the files through `tables`. The sweep still needs Shane's yes in bench's own session.
+- **Shane's ruling 65 (2026-11-19): window-ml-flaky-ci is resumed, as a third janitor and for flaky tests that block
+  other lanes.** Its first work: the 900 s hang of `tests/python-bench-stop.test.mjs` and retries on CI's apt steps
+  (the coordinator's infra call, after an Ubuntu mirror outage turned #2005 and #2007 red), each its own PR; then
+  the reviews of #2004, #2000, #1997, #1999 and #1995. async, Chat Page and move-run stay halted.
+- **Shane's ruling 66 (2026-11-19): the one-describer spike starts as soon as #1989 merges**, ahead of the manifest
+  lane's version-probe follow-up. The decision itself stays open until the spike reports. The awk splice is its
+  evidence both ways: two repairs and a ruling to keep the ports equal, and a defect both ports shared with no
+  vector carrying it.
+- **Shane's ruling 67 (2026-11-19): small-fixes takes a calm-view UI batch beside its queue**, which stays first. A
+  piece whose files pass ruling 13's line merges on green; the revises chip's navigation and the HUD's dismissal
+  across a same-site navigation are behaviour and state, and go to a janitor.
 - **Rulings of the afternoon of 2026-11-19 (coordinator, infra, each overridable by Shane).**
   - The read-only Python vocabulary (ruling 63), from packages' note on bench's replay (#1997; 129 cells, 46 inside;
     the lane's counterfactual with read_csv served: 84). It is built as two PRs by packages.
@@ -1364,8 +1380,8 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     wording without it. The notebook sorts each run by the route its first cell took and counts refused edits only in
     runs that load through `tables`, per cell and per run with denominators. Built as #2011 (bench). The fixture as
     built: 611 returns, 10 target pairs, one top pair 10 points of target ahead, whole cents.
-  - The sweep's gate: V1, V2 and #2012 on main, and Shane's yes in bench's own session. ASKED of Shane, not answered:
-    the repeats (3 now, a setting; the coordinator recommends 10) and a decision rule written before the sweep.
+  - The sweep's gate: V1, V2 and #2012 on main, and Shane's yes in bench's own session. Its size and its decision
+    rule are ruling 64.
   - A defect bench's probe found: in a worker-built run a site path in `tables` went to the DOM reader as a selector.
     The repair is #2012 (bench): one rule on both hosts, read from the run's fetches only, nothing fetched.
   - H12 (window-ml-host#54, files-host), the lane's calls accepted, in `docs/spec/FILE_ATTACHMENTS.md`: the
