@@ -1054,6 +1054,82 @@ test("card concurrency: dismissing the shown run falls back to the OTHER run, no
     assert.ok(!w.window.document.querySelector(".card-answer"), "dismissing the last run hides the card");
 });
 
+test("card dismissal: a dismissed run's card stays gone on the next document, and a NEW run still shows", async () => {
+    // One storage.session across both worlds, as the browser keeps it between a tab's successive documents.
+    const sessionStore = {};
+    const boot = async () => {
+        const w = await loadSidebarWorld({ sync: { debugMode: "off" }, sessionStore });
+        w.window.postMessage = () => {};
+        await w.raw({ __mlSidebarSurface: "card" });
+        return w;
+    };
+    const first = await boot();
+    await first.dispatch(cStart("A", "task A", 1000));
+    await first.dispatch(cResult("A", "Answer A.", 1100));
+    await first.flush();
+    assert.match(first.window.document.querySelector(".card-answer").textContent, /Answer A/);
+    pointerDown(first.window, first.window.document.querySelector(".card-head .card-x"));
+    await first.flush();
+    assert.ok(!first.window.document.querySelector(".card-answer"), "dismissed on the first document");
+
+    // The same-site navigation: a fresh frame, and the worker replays the run's whole history into it.
+    const second = await boot();
+    await second.dispatch(cStart("A", "task A", 1000));
+    await second.dispatch(cResult("A", "Answer A.", 1100));
+    await second.flush();
+    assert.ok(!second.window.document.querySelector(".card-answer"), "the replayed, dismissed run does not come back");
+    assert.ok(!second.window.document.querySelector(".card-head"), "no card at all for it");
+
+    // A new run on the same page is not suppressed by the old one's dismissal.
+    await second.dispatch(cStart("B", "task B", 2000));
+    await second.dispatch(cResult("B", "Answer B.", 2100));
+    await second.flush();
+    assert.match(second.window.document.querySelector(".card-answer").textContent, /Answer B/, "a new run shows its card");
+});
+
+test("card dismissal: nothing shows while the stored dismissals are still being read, and the dismissed run stays gone after", async () => {
+    let release;
+    const hold = new Promise((r) => { release = r; });
+    const sessionStore = { ml_card_dismissed: ["A"] };
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" }, sessionStore, holdSessionRead: hold });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+    // The replay lands while the read is open: a card must not flash for a run the store is about to hide.
+    await w.dispatch(cStart("A", "task A", 1000));
+    await w.dispatch(cResult("A", "Answer A.", 1100));
+    await w.flush();
+    assert.ok(!w.window.document.querySelector(".card-head"), "no card while the read is unresolved");
+    assert.ok(!w.window.document.querySelector(".card-answer"), "no answer while the read is unresolved");
+
+    release();
+    await w.flush();
+    assert.ok(!w.window.document.querySelector(".card-head"), "still no card for the dismissed run once the read lands");
+
+    await w.dispatch(cStart("B", "task B", 2000));
+    await w.dispatch(cResult("B", "Answer B.", 2100));
+    await w.flush();
+    assert.match(w.window.document.querySelector(".card-answer").textContent, /Answer B/, "a new run shows");
+});
+
+test("card dismissal: the popup's Show brings a dismissed run back, and it stays back on the next document", async () => {
+    const sessionStore = { ml_card_dismissed: ["A"] };
+    const boot = async () => {
+        const w = await loadSidebarWorld({ sync: { debugMode: "off" }, sessionStore });
+        w.window.postMessage = () => {};
+        await w.raw({ __mlSidebarSurface: "card" });
+        return w;
+    };
+    const first = await boot();
+    await first.dispatch(cStart("A", "task A", 1000));
+    await first.dispatch(cResult("A", "Answer A.", 1100));
+    await first.flush();
+    assert.ok(!first.window.document.querySelector(".card-answer"), "stored dismissal hides it");
+    await first.raw({ __mlShowRun: { hash: "A" } });
+    await first.flush();
+    assert.match(first.window.document.querySelector(".card-answer").textContent, /Answer A/, "Show undismisses it");
+    assert.deepEqual(sessionStore.ml_card_dismissed, [], "and the store forgets the dismissal");
+});
+
 test("card concurrency: a single run behaves exactly as before (no tab strip)", async () => {
     const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
     w.window.postMessage = () => {};

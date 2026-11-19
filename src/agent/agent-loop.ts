@@ -1165,6 +1165,11 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 try { tr = { ...tr, renderOut: await deps.scrubStored(tr.renderOut) }; }
                 catch { tr = { ...tr, renderOut: undefined }; }
             }
+            // The step's ml.sh spans (argv, held file names) are stored and exported too.
+            if (tr?.shCalls && deps.scrubStored) {
+                try { tr = { ...tr, shCalls: await deps.scrubStored(tr.shCalls) }; }
+                catch { tr = { ...tr, shCalls: undefined }; }
+            }
             const entry: AgentTranscriptEntry = { tool: call.name, arguments: args, result };
             // Real result nodes ride the transcript ENTRY too (page-side only — undefined for the delegated
             // path). They reach the caller's res.transcript / onStep, never the model.

@@ -176,6 +176,9 @@ export interface HostFacts {
     credential?: { provider: string; ports: number[]; hosts?: string[]; profile: string } | null;
     /** The arguments that began with `~`, as the host expanded them (`hello.tilde`); absent from an older host. */
     tilde?: HostTilde[];
+    /** The dotenv-like files at the top of each root (`.env`, `.netrc`, …) the sandbox holds unreadable for this call
+     *  (host PR #46); `[]` unsandboxed, absent from an older host. */
+    hiddenSecrets?: string[];
     /** The `/files` arguments the host mapped (`spawn.files`): `argv`, the cwd and the paths already carry the real
      *  path, and `from` is what the call wrote. Absent when nothing was mapped or from an older host. */
     files?: HostFilesMapped[];

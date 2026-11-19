@@ -145,6 +145,45 @@ offscreen document:
   answered only for our own id with no tab, and name a cell by an id only the worker made. A `cell` on a `PY_RUN` is
   honoured only from the worker and only for the wire's own `run:<id>` principal.
 
+## A finished task starts a turn (rule 4b, slice C)
+
+`finish` (`sw-tasks.ts`) parks a result when no turn is live, and then calls `startTurnFor`. It is the only place that decides.
+The awaits come first (the two settings, the chain count, `chrome.tabs.get` of the run's tab); then ONE synchronous stretch checks
+every condition and ends in the start, so two completions finishing together cannot both start:
+
+- Checked in this order, each failure parking the result and logging `task`/`not-started` with a lowercase reason: `page-run`
+  (not `isWorkerRun`), `busy` (an inbox, a controller or a `startingControllers` entry: a live or starting turn reads the result
+  through `openTasks`), `no-tab` (no stored run, or its tab is gone: nothing starts on a run with no tab), `own-page` (the tab is
+  not http or https: an extension page hosts no run), `notify-only` and `chain-cap` (both also say a line in the transcript through
+  `noteRunLine`, `task <id> done; its result is read at your next message…`). `start-refused` (warn) is the host failing to start,
+  such as the page not answering the adopt; the chain count is given back.
+- A result that arrives for a run that was archived or released (its table is gone) or a task already ended is dropped: `task`/`dropped`
+  with reason `run-ended` or `late-result`. Nothing starts.
+- The start is `userRunAction(runId, "continue", {}, undefined, undefined, { line, ready })` (`sw-run-start.ts`), registered with `setTaskTurnHost`
+  because the run host imports `sw-tasks.ts`, never the other way. It is the person's Continue path: the stored payload, the stored
+  step budget, `adoptOnTab`, `hostRun` with a `RESUME_RUN` whose task is "". `ready` is `taskTurnHasWork(runId)` (below), awaited once the adopt has answered; `line` (`Turn started by task <id> (done after N s).`) is
+  said as an `agent-note` just before the turn is hosted, so the transcript and both exports carry it (the reducer's `notes`). The turn
+  has no `PromptOrigin` of its own: nobody typed it, so the run's last origin stands, as it does for a task's result in the inbox.
+  There is no model-facing note: the first step drains the inbox (the parked results, queued by `openTasks`) as user messages, so the
+  model never sees an empty user turn. A result that an `await` or another turn read while the page was being adopted would
+  leave nothing for the turn to read, so `userRunAction` asks `taskTurnHasWork` (`sw-tasks.ts`) once the adopt has answered and
+  before anything is announced or hosted: with no unread ended result it starts nothing, says no line, gives the chain count back
+  and logs `task`/`not-started` with reason `empty-inbox`.
+- `session-index.ts` folds `agent-task-say` as "the turn is running": a started turn has no `agent-say` of the person's to open it.
+
+**Coalescing.** A completion that arrives while the turn is starting (the adopt is in flight) sees `startingControllers` and parks
+as `busy`; `openTasks` queues every undelivered result when the turn opens. A PERSON'S message sent in the same window is held in
+`pendingSteers` (`sw-run-start.ts`) and steered into the turn's inbox once `hostRun` has opened it; a start that never hosts says
+`Your message was not sent: the run's turn did not start.` and takes back the pointers the message added. This applies to any resume
+that is starting, not only a task's: it used to answer "busy" and lose the message.
+
+**The chain.** `ml_task_chain:<runId>` (`chrome.storage.session`, `defineState` `run.taskChain`, classified in `backup-inventory.ts`
+beside `ml_tasks:`) is the number of turns tasks started in a row. `startTurnFor` raises it before it starts and gives it back when
+the start fails. It is reset by `resetTaskChain` wherever the person's word is delivered: `noteSend` (every delivered message:
+a steer, a turn or a held one), a person's Continue, `steerRun` (the hub's steer into a live turn), and `INJECT_MESSAGE` from an extension
+frame (`background.ts`). `endTasks` removes it. A key that is absent reads as 0, which is also what a table written by slice B has.
+The settings are `taskNotifyOnly` (default false) and `taskTurnChainMax` (1..20, default 5, a value outside reads as 5), DevTools Settings only.
+
 ## A page change (rule 4a)
 
 Each executor declares where its call runs: `TaskExecutor.pageBound` (`sw-tasks.ts`; `ml.sh` and `python_exec` say `false`, absent

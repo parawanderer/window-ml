@@ -251,6 +251,8 @@ export interface ShUnasked {
     argv: string[];
     /** The arguments whose leading `~` the host expanded (`HostTilde`), when any did: the line shows `~/x is /real/x`. */
     tilde?: { index: number | "cwd" | "path"; from: string; to: string | null; reason?: string }[];
+    /** The files at the roots' tops the sandbox held unreadable for the call, when any were: one line each. */
+    hiddenSecrets?: string[];
     /** The `/files` arguments the host mapped to the uploads folder (`HostFilesMapped`), when any were: the line shows
      *  `/files/x is /real/x`, the argv the model wrote beside the one the process got. */
     files?: { index: number | "cwd"; from: string; to: string }[];
