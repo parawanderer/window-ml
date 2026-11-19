@@ -319,6 +319,14 @@ worker drives with `autoApprovePython` on:
    `_restricted.build()` reports specialization, tier 2 or a JIT. On such a core every cell asks.
 3. `wrapUserScript(…, inside)` runs the cell through `run_cell` (`INSIDE_CELL`, `python-dialect-run.ts`) in a COPY of the namespace that holds no `_` name.
    A bare trailing expression gets `return ` spliced in at its own column, so the value matches the full path.
+   Around the run, every writeable numpy array the namespace reaches is read-only (`_ml_freeze`, `_ml_thaw` after,
+   however the cell ends): the ownership check sees only the interpreter's own stores, never a C callee writing into an
+   array it was handed (`out=`, a `*`/`**` call), so numpy's own flag stops those (`ValueError: output array is
+   read-only`). An array the cell owns is thawed by its undo copy on its first logged write (`_ml_snapshots`, which
+   replaces the fork's pair), and the cell's undo copies, totalled in bytes, may not pass its memory cap: numpy's
+   allocator is outside the cap's count, so the write is refused before the copy and the cell asks. A view the cell
+   makes of an older array is born read-only and stays so after the cell; a full cell writes it after `w = w.copy()`,
+   or after setting `w.flags.writeable = True` itself.
 4. If it finishes, its bindings are copied back, except a builtin's name or one starting with `_`, and only if every
    new binding and the value are DATA (`_ml_not_inert`, an allowlist on the exact type: scalars, the builtin containers,
    numpy arrays, pandas frames, series and indexes, object values walked), or exactly what the cell's own import

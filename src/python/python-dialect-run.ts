@@ -137,13 +137,89 @@ def _ml_imported(_src):
     return _out
 def _ml_what(_name):
     return _name if _name.startswith("the ") else "'" + _name + "'"
+def _ml_freeze(_roots, _cap=2000000):
+    # Every numpy array reachable from _roots that is writeable, set read-only for the cell; or why not (nothing frozen):
+    # the walk passed _cap, or a view could not be thawed again. The ownership check sees only the interpreter's own stores
+    # (b[0] = 1, b += 1, a listed mutator), never a C callee writing into an array it was handed (out=, a spread call),
+    # so numpy's own flag is the barrier for those: a cell cannot reach .flags or setflags to turn it back. An owned
+    # array is thawed by its undo copy (_ml_snapshots) on its first logged write. Walked: the builtin containers, any
+    # function's defaults and closure, object arrays' elements, pandas objects' object values; a pandas block is not
+    # frozen (copy on write replaces it), nor is anything held only by an object's attributes or a module.
+    import sys as _sys, types as _t, collections as _co
+    _np, _pd = _sys.modules.get("numpy"), _sys.modules.get("pandas")
+    if _np is None:
+        return []
+    _seq = {list, tuple, set, frozenset, _co.deque}
+    _map = {dict, _co.OrderedDict, _co.Counter, _co.defaultdict}
+    _pdobj = (_pd.DataFrame, _pd.Series, _pd.Index) if _pd else ()
+    _plain = {type(None), bool, int, float, complex, str, bytes}
+    _out, _seen, _stack, _n = [], set(), list(_roots), 0
+    while _stack:
+        _x = _stack.pop()
+        _n += 1
+        if _n > _cap:
+            return "the namespace is too large to set its arrays read-only for the cell"
+        _ty = type(_x)
+        if _ty in _plain or id(_x) in _seen:
+            continue
+        _seen.add(id(_x))
+        if _ty in _seq or _ty in _map:
+            _n += len(_x)
+            _stack.extend(_y for _y in (_x.values() if _ty in _map else _x) if type(_y) not in _plain)
+        elif _ty is _t.FunctionType:
+            _stack.extend(_x.__defaults__ or ()); _stack.extend((_x.__kwdefaults__ or {}).values())
+            _stack.extend(_c.cell_contents for _c in (_x.__closure__ or ()) if _ml_cell_full(_c))
+        elif isinstance(_x, _np.ndarray):
+            if _x.dtype.hasobject:
+                _n += _x.size
+                _stack.extend(_x.ravel().tolist())
+            if _x.flags.writeable:
+                _out.append(_x)
+        elif _pdobj and isinstance(_x, _pdobj):
+            if isinstance(_x, _pd.DataFrame):
+                _stack.extend(_x.iloc[:, _i] for _i in range(_x.shape[1]) if _x.dtypes.iloc[_i] == object)
+            elif _x.dtype == object:
+                _n += len(_x)
+                _stack.extend(_x.to_numpy().tolist())
+    # A writeable view of a base that is read-only already could never be made writeable again: numpy refuses.
+    _ids = {id(_a) for _a in _out}
+    for _a in _out:
+        _b = _a.base
+        while isinstance(_b, _np.ndarray):
+            if not _b.flags.writeable and id(_b) not in _ids:
+                return "the namespace holds a writeable view of a read-only array, which could not be made writeable again after the cell"
+            _b = _b.base
+    for _a in _out:
+        _a.flags.writeable = False
+    return _out
+def _ml_thaw(_frozen):
+    # Undo _ml_freeze: each array writeable again, a base before the views of it (numpy refuses a view's flag while its
+    # base is read-only). An array made read-only some other way during the run (a view made of a frozen base) stays so.
+    import sys as _sys
+    _np = _sys.modules.get("numpy")
+    def _depth(_a):
+        _d = 0
+        while isinstance(_a.base, _np.ndarray):
+            _a, _d = _a.base, _d + 1
+        return _d
+    for _a in sorted(_frozen, key=_depth):
+        _a.flags.writeable = True
 def _ml_inside_run(_src, _g):
     global _ml_not_in_dialect
-    import builtins as _bi, _restricted as _r, restricted as _rs
+    import builtins as _bi, sys as _sys, _restricted as _r, restricted as _rs
     _keep = lambda _k: not _k.startswith("_") and not hasattr(_bi, _k)
     _ns = {_k: _v for _k, _v in _g.items() if not _k.startswith("_")}
+    _undo = _sys.modules.get("_ml_undo")
+    if _undo is None:
+        _ml_not_in_dialect = "the dialect's undo copies are not set up in this worker"
+        return None
+    _frozen = _ml_freeze(list(_ns.values()))
+    if isinstance(_frozen, str):
+        _ml_not_in_dialect = _frozen
+        return None
+    _undo.frozen, _undo.total, _undo.cap = {id(_a): _a for _a in _frozen}, 0, _r.DEFAULT_MEMORY
     try:
-        _v = _rs.run_cell(_ml_trailing_return(_src), _ns, frozenset(${JSON.stringify(nodes)}))
+        _v = _rs.run_cell(_ml_trailing_return(_src), _ns, frozenset(${JSON.stringify(nodes)}), memory=_undo.cap)
     except (_r.NotInDialect, SystemError) as _e:
         # SystemError: the undo log did not replay cleanly, so nothing about the run is trusted.
         _msg = str(_e) or type(_e).__name__
@@ -159,6 +235,9 @@ def _ml_inside_run(_src, _g):
                 _msg += " (line " + str(_ln) + ")"
         _ml_not_in_dialect = _msg
         return None
+    finally:
+        _undo.frozen = {}
+        _ml_thaw(_frozen)
     # A finished run's new bindings, and its value, must be DATA: a function, class or generator it made carries a body
     # the gate never ran, and a builtin it captured (f = open) is a call the gate refused, either of which a later
     # full-path cell would run ungated. Anything not shown to be data puts the cell outside, so it asks. The one
@@ -202,7 +281,60 @@ def _ml_dialect_setup(_files):
     # What the gate admitted, kept for a library's shape rule: it judges imports by exactly these tables.
     import sys, types
     sys.modules.setdefault("_ml_libraries", types.SimpleNamespace(pins={})).admitted = restricted.load_manifests(_dir)["modules"]
+    _ml_snapshots(_restricted, sys.modules.setdefault("_ml_undo", types.SimpleNamespace(frozen={}, total=0, cap=0)))
     return ""
+def _ml_snapshots(_restricted, _undo):
+    # The undo log's copy of an array or frame, re-registered over the fork's own (Lib/restricted.py, _register_snapshots;
+    # a second allow_snapshot replaces the pair) for two things it does not do. A BOUND: a cell's undo copies, totalled
+    # in bytes, may not pass its memory cap (numpy's data allocator is outside the cap's count, so an unbounded copy of
+    # an old array is a write the cap never sees); the write is refused before the copy, and the cell asks. A THAW: an
+    # array _ml_freeze set read-only becomes writeable once its contents are logged, with any frozen array it is a view
+    # of logged first (write_barrier), which must be the cell's own. The copy is shallow for an object array or column
+    # (the element references, a pointer each, which nbytes counts), so the elements themselves are not copied or counted.
+    def _size(_n):
+        return "%.1f GiB" % (_n / 2 ** 30) if _n >= 2 ** 30 else "%d MiB" % (_n // 2 ** 20) if _n >= 2 ** 20 and _n % 2 ** 20 == 0 else "%.1f MiB" % (_n / 2 ** 20)
+    def _charge(_n):
+        if _undo.total + _n > _undo.cap:
+            _with = ", " + _size(_undo.total + _n) + " with the cell's earlier ones" if _undo.total else ""
+            raise _restricted.NotInDialect("not in dialect: a write whose undo copy (" + _size(_n) + _with
+                                           + ") would exceed the read-only cell's memory limit (" + _size(_undo.cap) + ")")
+        _undo.total += _n
+    try:
+        import numpy
+    except ImportError:
+        return
+    def _snapshot_array(_obj):
+        if not _obj.flags.writeable and id(_obj) not in _undo.frozen:
+            return None                 # read-only before the cell: no write reaches it, so nothing to copy
+        _b = _obj.base
+        while isinstance(_b, numpy.ndarray):
+            if id(_b) in _undo.frozen and not _b.flags.writeable:
+                if not _restricted.owned(_b):
+                    raise _restricted.NotInDialect("not in dialect: a write into an array that shares its memory with one the cell did not make")
+                _restricted.write_barrier(_b)
+            _b = _b.base
+        _charge(_obj.nbytes)
+        _state = _obj.copy()
+        if id(_obj) in _undo.frozen:
+            _obj.flags.writeable = True
+        return _state
+    def _restore_array(_obj, _state):
+        if _state is not None:
+            _obj.flags.writeable = True     # thawed by its copy already; the replay runs before _ml_thaw
+            numpy.copyto(_obj, _state)
+    _restricted.allow_snapshot(numpy.ndarray, _snapshot_array, _restore_array)
+    try:
+        import pandas
+    except ImportError:
+        return
+    def _snapshot_frame(_obj):
+        _charge(int(_obj.memory_usage(index=True, deep=False).sum()) if isinstance(_obj, pandas.DataFrame)
+                else int(_obj.memory_usage(index=True, deep=False)))
+        return _obj.copy(deep=True)
+    def _restore_frame(_obj, _state):
+        _obj._update_inplace(_state)
+    for _cls in (pandas.DataFrame, pandas.Series):
+        _restricted.allow_snapshot(_cls, _snapshot_frame, _restore_frame)
 _ml_dialect_setup(${JSON.stringify(files)})
 `;
 
