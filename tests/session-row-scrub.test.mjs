@@ -69,6 +69,14 @@ test("an empty registry sends the row as it is, the same object", () => {
     assert.equal(rowForEgress(row, []), row);
 });
 
+test("text deeper than the scrub looks is withheld, never sent as it is; a deep subtree with no text is kept", () => {
+    const row = { ...fullRow(), later: { a: { b: { c: { d: { note: `key ${VALUE}` } } } } }, counts: { a: { b: { c: { d: { n: 3 } } } } } };
+    const out = rowForEgress(row, SUBS);
+    assert.ok(holds(row, VALUE), "positive control: the value is in the row");
+    assert.ok(!holds(out, VALUE), JSON.stringify(out.later));
+    assert.equal(out.counts.a.b.c.d.n, 3);
+});
+
 // --- the session server: every exit crosses `row` ---
 
 function server() {
@@ -182,6 +190,32 @@ test("in the worker: the HUD's bring-here list names a session with the marker",
     assert.equal(mine.length, 1, "positive control: the session is offered");
     assert.ok(!holds(mine, VALUE) && holds(mine, MARK));
 });
+
+test("in the worker: side.call purpose title answers a session's stored title with the marker", T, async () => {
+    const bg = loadBackground({ config: { ...config, utilityModel: "tiny" }, local: REG });
+    for (let i = 0; i < 20; i++) await tick();
+    const page = openPage(bg);
+    void bg.send({ type: "ML_DEBUG_EVENT", event: start("abcd0013", "look it up") }, tab(7, "https://site.example/"));
+    for (let i = 0; i < 20; i++) await tick();
+    const session = { runtime: "local", hash: "abcd0013" };
+    await page.cmd({ type: "session.rename", session, title: `Use ${VALUE}` });
+    for (let i = 0; i < 20; i++) await tick();
+    const r = await page.cmd({ type: "side.call", runtime: "local", purpose: "title", session, messages: [{ role: "user", content: "name this" }], maxTokens: 16 });
+    assert.equal(r?.ok && r.data?.content, `Use ${MARK}`, JSON.stringify(r));
+});
+
+// --- every command whose answer carries a session's text to a hub or a phone, and what guards it ---
+// sessions.list, sessions.search: CommandDeps.shownRow (the list and search row above).
+// side.call purpose title, and SESSION_TITLE (extension pages): shownTitle, through forRowText (the side.call row above; e3's rows).
+// storage.stats: storageReport's `largest` titles through forRowText (e3's row in tests/redteam-session-row-egress.test.mjs).
+// side.call purpose summary/explain: the utility model's reply to messages the asker sent, no row text (#2007 scrubs what it is sent).
+// session.rename: answers the title the asking device sent, its own words; the row it changes leaves through broadcastIndex.
+// session.backfill, session.resume: events, not the row; a stored turn's text is ruling 39's turn scrub (SECRET_HANDLES.md, known limits).
+// runtime.info, models.list, device.*: the runtime's own description, model names and device records, no session text.
+// tabs.list: tabs, not sessions: outside this rule (a tab's title and URL are what the person's browser shows).
+// chat.start, agent.start, session.send, .cancel, .continue, .delete, .pin, .model, .unarchive, approval.answer,
+// page.highlight, tab.focus, file.put, file.have: ids, booleans and status only.
+// tab.screenshot: an image of the tab.
 
 test("upgrade: a row an older build stored with the value in its task and page is listed by a restarted worker with the marker", T, async () => {
     const { IDBFactory } = await import("fake-indexeddb");

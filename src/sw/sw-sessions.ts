@@ -529,7 +529,7 @@ export function configureSessionCommands(run: RunDeps): void {
         hostsChat: (hash) => isBackgroundChat(hash),
         utilityConfigured: () => utilityModelSet,
         sideCall: utilityCall,
-        title: titleSession,
+        title: shownTitle,
         captureTab: async (tabId, opts) => {
             for (let attempt = 0; ; attempt++) {
                 try { return await captureOwnTab(tabId, opts); }
@@ -791,7 +791,9 @@ export async function storageReport(): Promise<StorageReport> {
     const [history, now, largest] = await Promise.all([storageHistory(), store.snapshot(), store.largest()]);
     // Only when it is on: asking would start SQLite for a page that has never used the archive.
     const archive = archiveOn ? await archiveCall<NonNullable<StorageReport["archive"]>>("stats").catch(() => undefined) : undefined;
-    return { history, now, largest, ...(archive ? { archive } : {}) };
+    // A largest session's title leaves as a row's title does (a hub's `storage.stats` asks for this report too).
+    const shown = largest.map(({ title, ...r }) => { const t = title ? forRowText(title) : undefined; return { ...r, ...(t ? { title: t } : {}) }; });
+    return { history, now, largest: shown, ...(archive ? { archive } : {}) };
 }
 
 /**
@@ -888,7 +890,19 @@ export async function handleSessionTitle(payload: unknown, sender: chrome.runtim
     const p = (payload || {}) as { hash?: unknown; messages?: unknown };
     if (typeof p.hash !== "string" || !p.hash || !Array.isArray(p.messages) || !p.messages.length) return { error: "SESSION_TITLE needs a hash and messages" };
     if (!utilityModelSet) return { error: "no utility model is set" };
-    return { data: await titleSession(p.hash, p.messages as NeutralMessage[]) };
+    return { data: await shownTitle(p.hash, p.messages as NeutralMessage[]) };
+}
+
+/**
+ * {@link titleSession} as it leaves the worker (`side.call` purpose title, `SESSION_TITLE`): scrubbed as a row's title
+ * is, and null while the registry is unread.
+ * @param hash the session
+ * @param messages the asker's title prompt
+ * @returns the title as shown, or null
+ */
+async function shownTitle(hash: string, messages: NeutralMessage[]): Promise<string | null> {
+    const t = await titleSession(hash, messages);
+    return t == null ? t : forRowText(t) ?? null;
 }
 
 /**

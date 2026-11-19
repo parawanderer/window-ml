@@ -41,6 +41,12 @@ export function textForEgress(text: string, subs: readonly RegistrySub[] | null)
     return subs ? scrubRegistry(text, subs).text : undefined;
 }
 
+/** Whether a string is anywhere under `value`. */
+function holdsText(value: unknown): boolean {
+    if (typeof value === "string") return true;
+    return value != null && typeof value === "object" && Object.values(value).some(holdsText);
+}
+
 /**
  * Every string under `value` that is not an identifier, scrubbed or (with no `subs`) dropped.
  * @param value the value
@@ -53,7 +59,9 @@ function scrubLeaves(value: unknown, path: string, subs: readonly RegistrySub[] 
         if (ROW_IDENTIFIERS.has(path)) return value;
         return subs ? scrubRegistry(value, subs).text : undefined;
     }
-    if (value == null || typeof value !== "object" || depth < 0) return value;
+    if (value == null || typeof value !== "object") return value;
+    // Deeper than any row's text goes today, so unread: withheld rather than sent as it is when it holds any text.
+    if (depth < 0) return holdsText(value) ? undefined : value;
     if (Array.isArray(value)) return value.map((v) => scrubLeaves(v, path, subs, depth - 1)).filter((v) => v !== undefined);
     let changed = false;
     const out: Record<string, unknown> = {};
