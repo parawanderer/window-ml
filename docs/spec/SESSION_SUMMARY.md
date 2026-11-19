@@ -80,6 +80,15 @@ The session's slice of the resource panel, by mounting the existing components (
 the components gain a `hash` prop (a refactor in the resources PR, its call). On the chat page the panel exists only for
 a local runtime; elsewhere the tab says so in one line.
 
+Below the panel come the session's usage over time and its totals (ruled by Shane, 2026-11-19). The summary tab's "Tokens and
+cost so far" line is the short form of these totals.
+
+| Field | Status | Source today | Gap, and the lane that owns it |
+| --- | --- | --- | --- |
+| Tokens over time, and totals | have | `usageSamples` (`usage.tsx`, reducer): one `TokenUsage` per call, ordered by its step's or turn's `ts`; `promptTokens`, `completionTokens`, `cachedTokens`, `reasoningTokens` | — |
+| Cost over time, and total, for an external model | partial | `sessionCalls` priced through `services().priceCalls` against each call's own snapshot (`TokenUsage.prices`, `src/spend/price-book.ts`) | Extension pages only; no cost on the web or hub chat page (session-store). An unpriced call is counted, not costed. |
+| Energy for a local model, and its cost | partial | Measured on the box: the patched backend reports GPU board watts (`supported_gpus[].power`) and `compute.power_sources` counters (`docs/FORKED-BACKENDS.md`), and the bench attributes them per generation and per session, joined on `hint.session` (`tests/e2e/bench/electricity.mjs`, read from the box log). Each call also records the electricity price it ran under (`TokenUsage.electricity`, `spendForCall` in `src/sw/sw-prices.ts`) | The extension reads no power field (`spend.tsx`: "which the extension does not measure yet"). Needs the attribution as one shared module, never a second copy. A figure from a rated wattage is not a measurement and draws nothing. Owner proposed, pending Shane: the bench moves the attribution into `src/spend/`, and this page draws it. |
+
 ### Files tab
 
 Owned by files-host, after its scrub chain (#1948 and what it releases). On main, `/files/` is ruled, not built
@@ -104,7 +113,7 @@ PR B: the policies row as a self-contained component on the ruled seam (`Session
 | Hide and show entries | need | — | Ruling 34 (files-host). |
 | Secret handles, by name only | need | No secret store; `SECRET_HANDLES.md` is an idea | Files-host's (ruling 18), after H16. |
 | Whether the page's origin is approved | partial | `site.levels`, `run.env` (local); `blankStart.granted` (host, blank page only) | Local only. |
-| Python network open or closed | need | Chosen per cell (`runPython` in `sw-python.ts`); no per-session flag | Ruling 37: closed by default; the gate's owner is not assigned. |
+| Python network open or closed | need | Chosen per cell (`runPython` in `sw-python.ts`); no per-session flag | Ruling 37: closed by default. The gate is the packages lane's (Shane, 2026-11-19). |
 | Installed Python packages | have (local) | `python.run-installs` (`sw-pkg-installs.ts`, lost on browser restart) | Local only. |
 
 ## Owners and order
@@ -118,7 +127,7 @@ Ruled by the coordinator (2026-11-18):
    strip, phone overlay, the "..." entry) with summary and access mounted (small-fixes).
 4. The resources tab (small-fixes).
 5. The files tab (files-host).
-6. Fields marked "need", when the session-store lane resumes on Shane's word; until then they draw nothing.
+6. Fields marked "need", each by its owning lane (session-store resumed 2026-11-19); until built they draw nothing.
 
 ## Ruled questions
 
