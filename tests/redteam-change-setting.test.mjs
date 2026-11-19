@@ -93,11 +93,16 @@ test("RED TEAM: every config key is refused by its class or reaches its value ch
 test("RED TEAM: the secret and gate classes hold exactly the keys they are meant to, and each has a sentence of its own", T, async () => {
     const byClass = (c) => Object.keys(SC.SETTING_CLASSES).filter((k) => SC.SETTING_CLASSES[k].class === c).sort();
     assert.deepEqual(byClass("secret"), ["apiKey", "chatUrl", "modelFilter", "pageApprovalDomains", "priceSnapshotUrl"], "a key joined or left the secret class: the server URL, the key, the model whitelist and the two other hosts are the run's never to read");
-    assert.deepEqual(byClass("gate"), ["autoApprovePython", "autoApproveReadonly", "autoApproveSelfSource"], "the gate's keys changed: a run must never be able to decide what runs without asking");
+    assert.deepEqual(byClass("gate"), ["autoApprovePython", "autoApproveReadonly", "autoApproveSelfSource", "shellRevealsAllow"], "the gate's keys changed: a run must never be able to decide what runs without asking");
     for (const key of byClass("gate")) {
         assert.ok(has(SETTING_PLACES, key), `${key} has no Settings row, so this row would not prove the CLASS refuses it`);
-        const r = await S.checkSettingChange({ key, value: !DEFAULT_CONFIG[key] }, deps());
-        assert.ok("error" in r && /decides which calls run without asking/.test(r.error), `${key}: ${JSON.stringify(r)}`);
+        // The opposite of the default, and for an array-valued key a type-CORRECT list too: the class refuses the key,
+        // so the value's shape must not be what saves or damns it.
+        const values = [!DEFAULT_CONFIG[key], ...(Array.isArray(DEFAULT_CONFIG[key]) ? [["ps"]] : [])];
+        for (const value of values) {
+            const r = await S.checkSettingChange({ key, value }, deps());
+            assert.ok("error" in r && /decides which calls run without asking/.test(r.error), `${key} = ${JSON.stringify(value)}: ${JSON.stringify(r)}`);
+        }
     }
     const unplaced = Object.keys(DEFAULT_CONFIG).filter((k) => !has(SETTING_PLACES, k)).sort();
     assert.deepEqual(unplaced, ["ocrNumCtx", "pageApprovalDomains"], "a key lost its Settings row, or a new one was never given a control");

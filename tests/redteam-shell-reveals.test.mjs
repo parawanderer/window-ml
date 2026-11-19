@@ -98,7 +98,11 @@ test("RED TEAM: a version, read or not, never stands in for the list: allowed is
 
 // --- the key's own type ---
 
-test("RED TEAM: a gate key of the wrong type never lists a program", { todo: "open at 1514c3d5: `shFacts` decides `allowed` with `(revealsAllow ?? []).includes(program)`, and every reader hands it whatever `chrome.storage.sync` holds — `getConfig()` is the raw get with no type check (sw-llm.ts:381), read at sw-shell-call.ts:314 and sw-manifest-proposal.ts:101,168. `shellRevealsAllow: \"ps\"` makes `\"ps\".includes(\"ps\")` true, so an unlisted ps runs unasked with its card skipped; an object value throws there instead (fail-closed, inside the call). Reachable by writing sync storage by hand only: the \"Always allow\" writer filters to strings (services-ext.ts:65), the Settings panel writes `linesOf` (shell-section.tsx), and restore refuses a wrong type (`configTypeOk`). The fix is one check where the key is read — `Array.isArray(v) && v.every((x) => typeof x === \"string\")` — at the three readers or in `getConfig`." }, () => {
+// Failing-first at 1514c3d5: `shFacts` decided `allowed` with `(revealsAllow ?? []).includes(program)`, and every reader
+// hands it whatever `chrome.storage.sync` holds, so `shellRevealsAllow: "ps"` made `"ps".includes("ps")` true and an
+// unlisted ps ran unasked. The repair (9c81c8a8) puts every reader through `revealsAllowOf` (src/shell/sh-call.ts): an
+// array of strings, else an empty list. The row passes at 64bf1f5d; its controls below are what keep it non-vacuous.
+test("RED TEAM: a gate key of the wrong type never lists a program", T, () => {
     const base = { roots: ["/w"], manifests: [PS_FULL] };
     assert.equal(shFacts(facts(), null, { ...base, revealsAllow: ["ps"] }).reveals.allowed, true, "the control: an array of names lists ps");
     for (const [label, value] of [["a plain string", "ps"], ["an object", { ps: true }], ["a nested array", [["ps"]]], ["[null]", [null]], ["[123]", [123]]]) {
