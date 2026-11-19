@@ -1280,8 +1280,10 @@ nothing into the repository.
   The changed set is the host's own stat comparison against the scratch index, not a git status. AMENDED 2026-11-19 (the
   coordinator's call): an untracked file whose path looks like a secret (the host's `facts::looks_secret`: a dotenv name
   other than the three templates, `*.pem`, `id_*`, a credentials directory such as `.ssh` or `.aws` among its
-  components) is never entered, inside the uploads folder or out, so it is in neither tree and the diff draws nothing
-  for it. A tracked one is H13's.
+  components) is never entered, inside the uploads folder or out, so it is in neither tree and the diff draws no body
+  for it. It is not silently absent: the name rule also matches ordinary files (`id_*` matches `id_utils.py`), so its
+  path joins H12's not-captured list with the reason "withheld: the name looks like a secret". That list is H12's. A
+  tracked one is H13's.
 - H12. Bounds: no file over the diff cap (1 MB, "The diff's cap") goes into the tree; it is compared by size and
   sha256 instead. The walk stops at `WALK_CAP` (20 000) entries; past that the call's diff is null with the reason.
 - H13. The diff is `git diff-tree --no-ext-diff --no-textconv` of the two trees. Its body goes out as held output (a
@@ -1291,8 +1293,12 @@ nothing into the repository.
   is not a git repository gets a null diff (open, as in the section above). AMENDED 2026-11-19 (the coordinator's call):
   the body of a file whose path looks like a secret never reaches the model through the diff, tracked or untracked. A
   tracked one that changed is listed by path as "changed, contents withheld", with no line of its body in the held
-  output or the summary. The scrub by value (#1948) is the second layer under this rule, never the reason to show a
-  body. A name says nothing of a hardlink to a held file under another name, or of a secret in an ordinary file: those
+  output or the summary. "Changed" includes a deleted tracked file (no line of the old body) and a mode-only change. By
+  the coordinator's call, a blob shown under an ordinary name is withheld the same way when its id equals the blob of a
+  path that looks like a secret in either tree: `cp .env notes.txt` of a tracked `.env`, or `git mv .env notes.txt`,
+  shows `notes.txt` as "changed, contents withheld". The scrub by value (#1948) is the second layer under this rule,
+  never the reason to show a body. A name says nothing of a hardlink to a held file under another name, a copy of an
+  untracked secret file (its blob is in neither tree to compare), an edited copy, or a secret in an ordinary file: those
   reach the diff, and only the scrub by value stands between them and the model.
 - H14. The diff's file list is what the call's end flushes to the browser backup ("The sync").
 
@@ -1404,14 +1410,16 @@ delete of one git cannot undo asks, for a cell and for an `ml.sh` call whose man
 - What the snapshot takes (H11). An ignored `.env` never enters a tree; an ignored file inside the uploads folder does;
   an untracked file the call creates appears in the after-tree. AMENDED 2026-11-19: an untracked `.env.local` that is
   not ignored, and an untracked `id_ed25519` inside the uploads folder, enter neither tree; an untracked ordinary file
-  beside them still does.
+  beside them still does. An untracked `id_utils.py` is in neither tree and is in the not-captured list with the name
+  reason.
 - Bounds (H12). A workspace with a FIFO, a socket and an unreadable file snapshots within budget and lists them as not
   captured, never opening them. A changed file over the cap is reported by size and sha256, never its body; a file
   under the cap whose only change is its mtime is not reported.
 - The report (H13). The body goes out as a held pointer and `done` carries only the summary line; a change by another
   process reads "changed during this call", unattributed. AMENDED 2026-11-19: a tracked `.env` the call changed is
   listed as "changed, contents withheld", and no line of its old or new body is in the held output, the summary, the run
-  log or either export.
+  log or either export. A tracked `.env` the call deleted is listed the same way, with no line of its old body. `cp .env
+  notes.txt` of a tracked `.env` lists `notes.txt` as "changed, contents withheld", with no line of its body.
 - An old host (H15). With a `hello` carrying neither field the worker sends no `mount`, `fetch`, `store`, `list`,
   `remove`, `rename`, `stat` or snapshot call and no probe; `mounts: "yes"`, `1` or `{}` read as absent.
 - Pages, four ways. Each new message type is refused at the router from a page, the host seeing nothing; a
