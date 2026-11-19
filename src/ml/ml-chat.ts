@@ -18,6 +18,9 @@ import { validateExtend } from "../tools/validate";
 /** Histories `ml.chat` made for a single call. They have no conversation behind them, so their requests carry no
  *  hint session — a new session per call is the "per message" case, from which the server learns nothing. */
 const oneShotChats = new WeakSet<object>();
+/** A fork's parent session (`history.fork()`), sent on the fork's events as `session.forkOf`: kept off the history
+ *  object, whose fields are the model-facing API. */
+const forkParents = new WeakMap<object, string>(); // state: plumbing
 
 /**
  * Create a stateful multi-turn chat session.
@@ -116,7 +119,8 @@ export const createChat = function(this: MlApi, { system = null, model = null, e
             // Group turns of THIS conversation by the session hash; `turn` is
             // this turn's 0-based index (prior user messages). Fixes the
             // "each follow-up spawns a new block" bug in the sidebar.
-            const session: SessionRef = { hash: this.hash, turn: this.messages.filter(m => m.role === "user").length };
+            const parent = forkParents.get(this);
+            const session: SessionRef = { hash: this.hash, turn: this.messages.filter(m => m.role === "user").length, ...(parent ? { forkOf: parent } : {}) };
             // The session's creation config (createChat options) — what
             // the sidebar's "options" block shows, distinct from the
             // per-turn request/messages below. Sourced from the history
@@ -175,6 +179,7 @@ export const createChat = function(this: MlApi, { system = null, model = null, e
         fork: function(this: MlHistory): MlHistory {
             const copy = ml.createChat({ model: this.model, extend: this.extend, numCtx: this.numCtx, numGpu: this.numGpu, think: this.think, schema: this.schema, toolIds: this.toolIds, maxTokens: this.maxTokens, save: this.save });
             copy.messages = structuredClone(this.messages);
+            forkParents.set(copy, this.hash);
             return copy;
         }
     };

@@ -33,7 +33,7 @@ import { fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw/sw-f
 import { executeServerTool, serverToolResult } from "./sw/sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw/sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw/sw-events";
-import { configureSessionCommands, handleSessionTitle, ingestSessionEvent, keepSession, liveHeldSessions, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw/sw-sessions";   // the cross-tab session index the chat page reads
+import { configureSessionCommands, handleSessionTitle, ingestSessionEvent, sessionPageMoved, keepSession, liveHeldSessions, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw/sw-sessions";   // the cross-tab session index the chat page reads
 import { backupAction, backupFailure } from "./sw/sw-backup";   // backup and restore, for Settings
 import { folderAction } from "./sw/sw-archive";   // the session archive's folder, for Settings
 import { ensureHubRuntime, hubDevices, hubLog, hubState, revokeHubDevice, stopHubRuntime } from "./sw/sw-hub";   // this browser as a runtime on a hub
@@ -206,6 +206,8 @@ startValueSweeps(liveHeldSessions);   // its first pass releases held rows no se
 if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
     chrome.webNavigation.onCommitted.addListener((d) => {
         if (d.frameId === 0) tabPageUrl.set(d.tabId, d.url);
+        // A worker-hosted run on the tab is on this page now (SessionSummary.currentPage).
+        if (d.frameId === 0) sessionPageMoved(d.tabId, d.url);
         // Its side panel follows the new document's presence (sw-side-panel.ts), and so does where a run's UI goes.
         if (d.frameId === 0) void notePage(d.tabId, d.url);
         // The old document is gone and any page-hosted run in it with it: drop what that tab was entitled to read.
@@ -222,7 +224,7 @@ if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
         // After noteNavigating, which takes the document being left from the barrier: a re-adopt from it is refused.
         if (d.frameId === 0 && typeof d.documentId === "string") navBarrier.noteDocument(d.tabId, d.documentId);
     });
-    chrome.webNavigation.onHistoryStateUpdated?.addListener((d) => { if (d.frameId === 0) tabPageUrl.set(d.tabId, d.url); });
+    chrome.webNavigation.onHistoryStateUpdated?.addListener((d) => { if (d.frameId === 0) { tabPageUrl.set(d.tabId, d.url); sessionPageMoved(d.tabId, d.url); } });
 }
 // A site taken off the approved set while a run its own page built is going (owner's decision 2026-10-12): the run is the
 // worker's from here, as when it navigates onto a site that may not use window.ml (nav-handover.ts). Every path that

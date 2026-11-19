@@ -1024,6 +1024,16 @@ export function saveRunHistory(hash: string, history: Omit<Extract<SessionHistor
     sessionStore?.putHistory(hash, { kind: "agent", ...history });
 }
 
+/**
+ * A tab's top frame moved (`webNavigation`, the browser's report): the worker-hosted sessions on it are on that page
+ * now (`SessionSummary.currentPage`). A saved one's row is written, so a restarted worker lists it there too.
+ * @param tabId the tab
+ * @param url the page it is on now
+ */
+export function sessionPageMoved(tabId: number, url: string): void {
+    for (const row of sessionServer.pageMoved(tabId, url)) if (row.saved) sessionStore?.putSummary(row);
+}
+
 /** Fold one debug event into the index, and save it when the session is one we keep. Never throws: a malformed event
  *  must not break the relay it rides beside, and a full disk must not stop a run.
  *  @returns the session's hash when the index took the event, else undefined */
