@@ -9,8 +9,8 @@
 // whatever its type.
 //
 // A marker is a line that is exactly seven `<`, `=` or `>`, alone or followed by a space (git writes `<<<<<<< HEAD`,
-// `=======`, `>>>>>>> branch`). Markdown and reStructuredText are exempt, where a line of `=` underlines a heading,
-// and so are diff and patch files, which may quote a conflict on purpose.
+// `=======`, `>>>>>>> branch`). In Markdown and reStructuredText a line of `=` underlines a heading, so there only the
+// `<` and `>` markers count; diff and patch files, which may quote a conflict on purpose, are exempt whole.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -19,24 +19,29 @@ import { fileURLToPath } from "node:url";
 /** A merge-conflict marker line: seven `<`, `=` or `>`, then the end of the line or a space. */
 export const MARKER = /^(<{7}|={7}|>{7})( |$)/;
 
-/** Files where a marker-shaped line is content: a heading underline, or a diff quoting a conflict. */
-const EXEMPT = [/\.(md|markdown|rst)$/i, /\.(diff|patch)$/i];
+/** Files where any marker-shaped line may be content: a diff or patch quoting a conflict. */
+const EXEMPT = [/\.(diff|patch)$/i];
 
-/** Whether a path is exempt from the check. */
+/** Doc files where a line of seven `=` underlines a heading: only the `<` and `>` markers count there. */
+const HEADINGS = /\.(md|markdown|rst)$/i;
+
+/** Whether a path is exempt from the check as a whole. */
 export function exempt(path) {
     return EXEMPT.some((re) => re.test(path));
 }
 
 /**
- * The marker lines in one file's text, 1-based, or none for an exempt path.
+ * The marker lines in one file's text, 1-based, or none for an exempt path. In a doc file the `=======` line is
+ * skipped as a heading underline; its `<<<<<<<` and `>>>>>>>` lines still count.
  * @param {string} path the file's path, for the exemptions
  * @param {string} text its contents
  * @returns {{ line: number, text: string }[]}
  */
 export function markerLines(path, text) {
     if (exempt(path)) return [];
+    const docs = HEADINGS.test(path);
     const out = [];
-    text.split(/\r?\n/).forEach((l, i) => { if (MARKER.test(l)) out.push({ line: i + 1, text: l }); });
+    text.split(/\r?\n/).forEach((l, i) => { if (MARKER.test(l) && !(docs && l.startsWith("="))) out.push({ line: i + 1, text: l }); });
     return out;
 }
 

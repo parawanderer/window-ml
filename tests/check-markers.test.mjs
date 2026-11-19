@@ -29,11 +29,18 @@ test("CRLF line endings do not hide a marker", () => {
 
 // --- the exemptions ---
 
-test("Markdown and reStructuredText headings underlined with = are exempt, and so are diff and patch files", () => {
-    const text = "Title\n=======\n";
-    for (const path of ["docs/x.md", "README.MD", "x.markdown", "docs/x.rst", "tests/fixtures/x.diff", "x.patch"]) {
+test("in Markdown and reStructuredText only the = line is skipped, as a heading underline; < and > markers are still found", () => {
+    for (const path of ["docs/x.md", "README.MD", "x.markdown", "docs/x.rst"]) {
+        assert.equal(exempt(path), false, path);
+        assert.deepEqual(markerLines(path, "Title\n=======\n"), [], path);
+        assert.deepEqual(markerLines(path, "<<<<<<< HEAD\na\n=======\nb\n>>>>>>> origin/main\n").map((m) => m.line), [1, 5], path);
+    }
+});
+
+test("diff and patch files are exempt whole, since they may quote a conflict", () => {
+    for (const path of ["tests/fixtures/x.diff", "x.patch"]) {
         assert.equal(exempt(path), true, path);
-        assert.deepEqual(markerLines(path, text), [], path);
+        assert.deepEqual(markerLines(path, "<<<<<<< HEAD\n=======\n>>>>>>> b\n"), [], path);
     }
     assert.equal(exempt("src/sidebar/sidebar.css"), false);
 });

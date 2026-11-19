@@ -165,8 +165,8 @@ not an addition. Why it exists, and the scopes to choose from: `docs/dev/state.m
 ## No merge-conflict marker left behind
 
 **`node scripts/check-markers.mjs`** fails on a line that is exactly seven `<`, `=` or `>`, alone or followed by a space,
-in any tracked text file of any type. Markdown, reStructuredText (where a line of `=` underlines a heading) and `.diff` or
-`.patch` files are exempt. It exists because `check-format` reads only code and data files: a bare `=======` left by a hand
+in any tracked text file of any type. In Markdown and reStructuredText, where a line of `=` underlines a heading, only
+the `<` and `>` markers count; `.diff` and `.patch` files are exempt whole. It exists because `check-format` reads only code and data files: a bare `=======` left by a hand
 resolution sat in `sidebar.css`, where CSS read it as part of the next rule's selector and dropped that rule (#1994).
 `--staged` reads the index (the pre-commit hook); a plain run reads every tracked file (CI's `tools` job). It is complete,
 not a ratchet: the tree was clean when it was added.
