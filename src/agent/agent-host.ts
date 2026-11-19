@@ -64,6 +64,10 @@ export interface RunAgentHostDeps {
     delegateTool(name: string, args: Record<string, unknown>, onStream?: (text: string, ts?: number) => void, call?: { seq: number; step: number; person?: boolean }): Promise<ToolRunResult>;
     /** A step's result as the model may read it (agent-loop.ts `forModel`; sw-scrub.ts takes the config's secrets out). */
     forModel?: AgentLoopDeps["forModel"];
+    /** The same crossing for a live output's view and the loop's appended lines (agent-loop.ts `scrubText`). */
+    scrubText?: AgentLoopDeps["scrubText"];
+    /** The same crossing for the Out render and a pointer's fuller capture (agent-loop.ts `scrubStored`). */
+    scrubStored?: AgentLoopDeps["scrubStored"];
     // Self-introspection (chat_metadata): the run's model + its context window + capability list, from the
     // SW's caches. The loop supplies the token/message counts; this only adds the model facts. Optional.
     chatMeta?(): Promise<{ model: string | null; contextWindow: number | null; capabilities: string[] | null } | null>;
@@ -205,6 +209,8 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         runTool: (name, args, onStream, call) => deps.delegateTool(name, args, onStream, call),
         tryReadonly: deps.tryReadonly,
         forModel: deps.forModel,
+        scrubText: deps.scrubText,
+        scrubStored: deps.scrubStored,
         renderFor: deps.renderFor,
         precheck: deps.precheck,
         approve: deps.approve,

@@ -88,6 +88,9 @@ export const INVENTORY: readonly InventoryEntry[] = [
     ui("ml_runlog_colour", "the execution log's colouring"),
     ui("ml_runstate_folded", "which run-state sections are folded"),
 
+    // --- never: the person's registered secrets ---
+    local("ml_secret_registry", "config", "the values the person registered as secret (SECRET_HANDLES.md, \"The scrub as built\"): a secret is never written to a backup, an export or an archive-folder file", "never"),
+
     // --- never: sessions and what a run leaves behind ---
     local("ml_session_", "chat", "a chat's resumable record, per chat: the session's archive row carries the same history (backup.md, \"Resuming a restored chat\")", "never", { prefix: true }),
     local("ml_bgrun_", "run-state", "a live run's resumable snapshot; a restored machine has no run to resume", "never", { prefix: true }),

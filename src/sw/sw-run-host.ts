@@ -13,7 +13,7 @@ import { endPythonTurn, markPythonBridged, pythonRunBridged } from "./sw-python"
 import { workerReadonlyMl, derefWhole } from "./worker-readonly-ml";
 import { pipeStages } from "../pointers/token-pipe";
 import { recordRunLog, runLog } from "./sw-run-log";
-import { forModel, forModelHistory, forPage } from "./sw-scrub";
+import { forModel, forModelHistory, forPage, forLive, forPerson, forStored, redactedNote } from "./sw-scrub";
 import { eventsForRun, type RunLogEvent } from "../log/run-log";
 import { execCodeIn, expandPointers } from "../pointers/pointer-macro";
 import { namedReads, type PreRead } from "../pointers/named-reads";
@@ -1215,11 +1215,15 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 },
                 // Every result crosses into the model's context here, without the config's secrets; the text as the tool
                 // wrote it goes to the execution log's `key`, which the person reads and the model never does.
+                // The `key` keeps the backend's own secrets for the person, never a registered value (forPerson).
                 forModel: async (name, result) => {
                     const r = await forModel(result);
-                    if (r.changed) recordRunLog(runId, { level: "warn", subsystem: "tool", kind: "scrubbed", reason: "config-secret", key: result, detail: { tool: name } });
-                    return r.text;
+                    const registered = Object.keys(r.counts).length > 0;
+                    if (r.changed) recordRunLog(runId, { level: "warn", subsystem: "tool", kind: "scrubbed", reason: registered ? "registered-secret" : "config-secret", key: forPerson(result), detail: { tool: name, ...(registered ? { names: Object.keys(r.counts).sort().join(",") } : {}) } });
+                    return r.text + redactedNote(r.counts);
                 },
+                scrubText: (text, live) => live ? forLive(text) : forPerson(text),
+                scrubStored: forStored,
                 // A call routed for the page-built run it was, whose run is handed to the worker before it is sent (a revoke while
                 // it was being built, nav-handover.ts), is built again as the worker's run: never sent to the page as it was.
                 // A page the run is held on (nav-arrival.ts) runs nothing of it: the call is answered by the hold, or waits for
