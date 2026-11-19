@@ -693,7 +693,8 @@ model-made or page-derived file must not borrow. Its text is untrusted input lik
 attachment today. Nothing is evicted silently. When the session's files made by its runs are over the quota, a post is
 refused by name and the cell's result says so: `w.npy was not kept: the session holds 1.4 GB of files made by its runs;
 delete some in the files panel.` A flush over the quota raises ENOSPC for that file
-when it is made, and the cell's result names it (item 3).
+when it is made, and the cell's result names it (item 3). A restore can leave a session over its quota; it is then
+marked over it and refuses writes the same way until it is back under (ruling 48, "A restore over the quota", below).
 
 **The host's disk.** `/files/` is the browser sandbox's, never the `ml.sh` workspace's, and the two never alias: an argv
 item `/files/x` is a host path, as today. Bytes cross only as `@file:` handles: `ml.sh.put` writes one out (ruling 3),
@@ -1595,8 +1596,9 @@ ruling 32's hash-only matcher's; and whether a Parquet writer wheel exists.
 A backup (docs/spec/BACKUP_FORMAT.md, docs/dev/backup.md) is the archive's SQLite schema holding every session; it
 gains the session's files. Two tables, in the schema `migrate` builds:
 
-- `files (hash, path, kind, size, sha256, mtime, provenance, hidden)`: one row per file of a session (`hash`, the
-  session), its path under `/files`, and `hidden` set for a file the person marked secret.
+- `files (hash, path, kind, size, sha256, mtime, provenance, hidden, omitted)`: one row per file of a session (`hash`,
+  the session), its path under `/files`, `hidden` set for a file the person marked secret, and `omitted` saying why a
+  row has no chunks (`"size"` in a month file, ruling 47, below), null when its bytes are there.
 - `file_chunks (sha256, idx, data)`: a file's bytes in chunks of 1 MiB, keyed by the file's content hash, so a file
   attached to two sessions is held once, as `images` is today.
 
@@ -1642,6 +1644,51 @@ to warn, so the backup's `meta` records `files: <count>` for a later version to 
 a fixture of a pre-files backup restores with no files and no error; a backup with files restores them byte-identical;
 a hidden file restores as a hidden name with no bytes.
 
+### The archive folder's month files carry them too (ruling 47)
+
+Shane's ruling 47 (2026-11-18): a session's files go into the archive folder's month files, not only into the one-off
+backup, in the same two tables and the same volumes. A session moved into the archive keeps its files, so there is still
+one place each session lives, and the folder is a copy of it. A setting leaves out files over a size, since the folder
+is often on a drive a cloud service syncs.
+
+- **The setting** (the coordinator's proposal, to be read): `archiveFileMaxMB`, a number in MB like
+  `sessionStoreBudgetMB` and `valueStoreBudgetMB`, default 100. A file larger than it is left out of the month files; 0
+  removes the limit. It is in DevTools Settings beside the archive folder's form (the rule for a new setting) and in the
+  chat page's Extension tab where the folder is set. It changes only the folder: a one-off backup carries every file
+  that is not hidden, whatever its size.
+- **Why 100 MB.** A sync rewrites each dirty month whole (archive.md, "Dirty months"), 30 seconds after an archive write
+  and every 6 hours, so a file in a month is uploaded again each time any session of that month changes, by the cloud
+  client that syncs the folder. At an uplink of 20 Mbit/s, an assumption for a home connection and not a measurement,
+  100 MB is about 40 seconds of upload per file per rewrite: past it the folder costs more than a copy is worth to most
+  people, and a person who wants the large files kept raises the limit or makes a one-off backup. A data file a run made
+  (a Parquet or a CSV of a fetched table) is usually well under it; a model checkpoint or a video is not.
+- **What is left out is named.** A file over the limit keeps its `files` row, with no chunks and `omitted: "size"`, and
+  the month's `meta` lists it. A restore from the folder lists it under its path as "not in the archive folder: over
+  100 MB", and a read of it fails with that reason. Its bytes are still in the browser's archive while the session is:
+  only a wiped profile loses them.
+- **A hidden file** is left out of the month files as it is out of a backup, by the same rule (above), and a month file
+  is a set of volumes as a backup is. A month's first volume keeps the month's name (`2026-10.wmlbak`); the others are
+  `2026-10.v2.wmlbak` and on, in the month's form. An install from before this does not read those names as months
+  (`MONTH_FILE`, `src/archive/archive-folder.ts`), so it ignores them.
+- **Known limits.** An install from before this that rewrites a month (a change on a second machine running the older
+  version) writes it without the `files` rows, and the folder's copy of that month's files is lost until a newer install
+  rewrites the month again; the volumes it ignores are left orphaned until then. The sessions themselves are unaffected.
+  Rows: a month with a file over the limit restores it as omitted by size, a month with files restores them
+  byte-identical, and a pre-files month file restores with no files and no error.
+
+### A restore over the quota (ruling 48)
+
+Shane's ruling 48 (2026-11-18): a restore restores every file, since they are the person's, even when that takes a
+session over its quota. The session is then marked over its quota, and a write under `agent/` is refused by name as the
+quota refuses one ("Lifetime and quota", above) until the person deletes enough to be back under. Reads, copies out of
+`attached/`, deletes and renames are unaffected. The restore screen says which sessions came back over their quota and
+by how much.
+
+This is the session's quota, not the browser's storage. A restore the browser's free space cannot hold still fails
+before the shelf is touched ("The staging space", above). Rows: a fixture whose `agent/` total is over the quota
+restores every file byte-identical, a write after it is refused naming the total, and a delete that brings the session
+under lets the next write through.
+
 **Whether the hub changes.** No: `ml.fs` and the mounts are the runtime's, and backup and restore are local. The
 file browser's commands are the session-store amendment's (ruling 24).
 
@@ -1649,14 +1696,9 @@ file browser's commands are the session-store amendment's (ruling 24).
 
 Settled as the coordinator's calls and written in above: the dump is `ml.fs.cp`; if WORKERFS cannot run under the
 lockdown, `attached/` gets a custom read-only mount over the ranged reader, never a loosened lockdown; `readFile`'s
-bound is 8 MiB; and no sidecar for JSON or text. Two remain for Shane:
-
-1. **Archive month files.** Whether a session's files go into the archive folder's month files, not only the one-off
-   backup. Recommended yes, the same tables and the same volumes: a session moved to the archive must keep its files,
-   and there is one place each session lives. With a setting to leave out files over a size, since the folder may be
-   a cloud drive.
-2. **A restore over the quota.** Recommended: restore every file (they are the person's), mark the session over its
-   quota, and refuse new writes by name until the person deletes some, as the quota already does.
+bound is 8 MiB; and no sidecar for JSON or text. The two left for Shane are settled (2026-11-18) and written in
+above: the archive folder's month files carry a session's files, with a size limit (ruling 47), and a restore over
+the quota restores every file and then refuses writes until the session is back under (ruling 48).
 
 ## Trust
 
