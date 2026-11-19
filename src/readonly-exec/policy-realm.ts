@@ -18,7 +18,8 @@ export type PolicyEffect = "allow" | "deny" | "ask";
 
 /** One evaluation: the decision, or `undefined` for no opinion, why the policy is broken when it is, and, for an ALLOW
  *  that held over a fact that is `null` (unknown) and so did not fire, which fact. */
-export type PolicyResult = { decision: PolicyEffect | undefined; broken?: string; unknown?: string };
+/** `steps` is what the evaluation spent of its budget, the whole budget when it ran out. */
+export type PolicyResult = { decision: PolicyEffect | undefined; broken?: string; unknown?: string; steps?: number };
 
 /** The step budget of one policy evaluation. Policies run on every gated call, often several per call, so this is a
  *  fraction of a survey's: a predicate over an argv or an effect set uses a few hundred. */
@@ -131,18 +132,20 @@ function buildFacade(ev: Evaluator, facts: Record<string, unknown>): Record<stri
  */
 export function evalPolicy(source: string, facts: Record<string, unknown>, effect: PolicyEffect = "allow",
     opts: { stepBudget?: number } = {}): PolicyResult {
+    let ev: Evaluator | undefined;
     try {
         const ast = parse(source);
-        const ev = new Evaluator(null, opts.stepBudget ?? POLICY_STEPS, "policy");
+        ev = new Evaluator(null, opts.stepBudget ?? POLICY_STEPS, "policy");
         const c = buildFacade(ev, facts);
         const fn = runSync(ev.eval(ast, Object.create(policyRoot())));
         const out = runSync(ev.callOwn(fn, [c]));
-        if (typeof out !== "boolean") return { decision: undefined, broken: `returned ${out === null ? "null" : typeof out}, not true or false` };
+        const steps = ev.stepsSpent();
+        if (typeof out !== "boolean") return { decision: undefined, broken: `returned ${out === null ? "null" : typeof out}, not true or false`, steps };
         // A fact that is null is UNKNOWN, and an ALLOW over an unknown never fires; a DENY or an ASK over one does, the narrow
         // direction (POLICIES.md, the tree's ruling of 2026-10-21). The deciding layer's rule, not one a writer must remember.
-        if (out && effect === "allow" && ev.nullRead !== undefined) return { decision: undefined, unknown: ev.nullRead };
-        return { decision: out ? effect : undefined };
+        if (out && effect === "allow" && ev.nullRead !== undefined) return { decision: undefined, unknown: ev.nullRead, steps };
+        return { decision: out ? effect : undefined, steps };
     } catch (e) {
-        return { decision: undefined, broken: reason(e) };
+        return { decision: undefined, broken: reason(e), ...(ev ? { steps: ev.stepsSpent() } : {}) };
     }
 }
