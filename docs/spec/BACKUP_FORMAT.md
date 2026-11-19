@@ -5,6 +5,14 @@ enough to write a reader in another language. The design, and why it is shaped t
 [`docs/dev/backup.md`](../dev/backup.md); the reference implementation is `src/backup/backup-format.ts`, and
 `tools/wmlbak-decrypt.mjs` is a standalone reader.
 
+A backup or a month file that carries a session's files is a SET of version-1 files, each one this format on its own:
+the first holds the sessions and the `files` rows and keeps the usual name, and the file chunks are in numbered
+volumes (a month's are `2026-10.v2.wmlbak` and on, in the month's form), each named with its SHA-256 and size in the
+first one's `meta`.
+A month file leaves out any file over the `archiveFileMaxMB` setting (default 100), and neither kind holds a hidden
+file's bytes, only its name. The tables, the volumes and the restore are
+[FILE_ATTACHMENTS.md](FILE_ATTACHMENTS.md), "Backup and restore carry the files" (rulings 35, 47 and 48).
+
 ## The three forms of a file
 
 Told apart by the first bytes, never by the name.

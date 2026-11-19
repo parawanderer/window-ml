@@ -35,6 +35,7 @@ import { displaySource } from "../code-block";
 import { DiffLines } from "../code-diff";
 import { copyText } from "../copy-hash";
 import { PkgCardRender } from "../card/pkg-card-view";
+import { SettingCardRender } from "../card/setting-card-view";
 import { useRawView } from "../raw-view";
 
 /** A tool's returned DOM ELEMENTS, as a hoverable list. Each row carries the same stateless
@@ -1803,6 +1804,7 @@ export function RenderPanel({ d, marks, live, failLine, ranMs, ranSince, ctx, li
         }
         case "code": return <CodeRender d={d} failLine={failLine} ctx={ctx} failed={failed} />;
         case "packages": return <PkgCardRender request={d.request} verdict={d.verdict} />;
+        case "setting": return <SettingCardRender d={d} />;
         // The SAME grid a DataFrame gets (scroll-capped, sticky header, sort, copy-CSV, hide) — answer-render
         // already made this call for a cited df, and a fetched CSV is the same kind of object. The bare
         // alternative had no max-height, so a 200-row fetched table rendered as an unbroken wall in the step.

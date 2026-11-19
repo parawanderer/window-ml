@@ -63,6 +63,13 @@ test("the secrets and the gate keys are exactly the ruled ones", async () => {
     assert.equal(ofClass("guarded").length, 22);
 });
 
+test("no shell key and not agentStartPage is ever ordinary, so no setting allow frees one", () => {
+    // judgeSettingChange frees an ordinary change only; a shell key added later must be guarded, gate or secret.
+    const keys = [...KEYS.filter((k) => /^shell/.test(k)), "agentStartPage"];
+    assert.ok(keys.length >= 5, keys.join());
+    for (const k of keys) assert.notEqual(SETTING_CLASSES[k].class, "ordinary", k);
+});
+
 // --- which change of a guarded setting widens ---
 
 test("a guarded setting widens in its declared direction only, and one with no direction widens both ways", () => {

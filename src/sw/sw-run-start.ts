@@ -34,6 +34,7 @@ import { workerMl } from "./worker-ml";
 import { noteWorkerVision } from "./run-vision";
 import { capPageContext } from "./page-answer-caps";
 import { proposePolicyTool } from "../tools/propose-policy-tool";
+import { changeSettingTool } from "../tools/change-setting-tool";
 import { proposeManifestTool } from "../tools/propose-manifest-tool";
 import { pythonInstallTool } from "../tools/python-install-tool";
 import { offersTask, taskTool } from "../tools/task-tool";
@@ -96,12 +97,13 @@ async function startMinted(tabId: number, tab: chrome.tabs.Tab, url: string, ml:
     const typed = String(req.task || "").trim();
     const paste = await attachPaste(runId, typed, 1, { store: storeHeld, shelf });
     if (paste) Object.assign(recipe, withPasteLine(recipe, typed, paste.line));
-    // propose_policy only here: a run the worker builds for the person may ask them for a policy; no page's run can. And
+    // propose_policy and change_setting only here: a run the worker builds for the person may ask them for a policy or a
+    // setting change; no page's run can. And
     // propose_manifest when the settings turn ml.sh on, which the run's scripts then reach.
     const shellOn = await getConfig().then(shellTurnedOn, () => false);
     // `task` wherever a call can detach: an ml.sh call, or a python_exec cell past its lease (sw-python-task.ts).
     const base = [...(recipe.options.tools ?? (ml as { domTools?: { name: string }[] }).domTools ?? []), ...(recipe.options.extraTools ?? [])];
-    const extraTools = [...(recipe.options.extraTools ?? []), proposePolicyTool(defineTool), ...(shellOn ? [proposeManifestTool(defineTool)] : []), ...(offersTask(shellOn, base.map((t) => t?.name)) ? [taskTool(defineTool)] : []),
+    const extraTools = [...(recipe.options.extraTools ?? []), proposePolicyTool(defineTool), changeSettingTool(defineTool), ...(shellOn ? [proposeManifestTool(defineTool)] : []), ...(offersTask(shellOn, base.map((t) => t?.name)) ? [taskTool(defineTool)] : []),
         ...(OFFER_PYTHON_INSTALL ? [pythonInstallTool(defineTool)] : [])];
     const asm = await assembleRun(ml, recipe.task, { ...recipe.options, extraTools, ...(shellOn ? { shell: true } : {}), ...(opts.answer ? { answer: true } : {}) });
     const rebuild = rebuildFor(asm, true, "worker");
