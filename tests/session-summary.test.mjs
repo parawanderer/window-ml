@@ -53,6 +53,7 @@ test("each present field draws its line: model, open asks, the start page labell
     assert.match(val(lines, "page"), /X — https:\/\/x\.example\//);
     assert.match(val(lines, "started"), /, by Phone$/);
     assert.equal(val(summaryLines(row({ kind: "chat" }), rt(), NOW), "kind"), "Chat");
+    assert.equal(val(summaryLines(row({ kind: "embed" }), rt(), NOW), "kind"), "Embed", "an embed session is not reported as a chat");
     assert.equal(val(summaryLines(row(), rt({ online: false, name: "Desk" }), NOW), "runtime"), "Desk (offline)");
 });
 

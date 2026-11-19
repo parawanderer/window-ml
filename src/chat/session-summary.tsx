@@ -7,7 +7,7 @@
 
 import { signal } from "@preact/signals";
 import { useEffect, useState } from "preact/hooks";
-import type { RuntimeInfo, SessionKey, SessionStatus, SessionSummary } from "../session/session-host";
+import type { RuntimeInfo, SessionKey, SessionKind, SessionStatus, SessionSummary } from "../session/session-host";
 import type { ChatStore } from "./chat-store";
 import { Dialog } from "../sidebar/dialog";
 import { fmtAge } from "../sidebar/timestamps";
@@ -19,7 +19,10 @@ import { approvalsPending, STATUS_LABEL } from "./status-words";
 export const summaryFor = signal<SessionKey | null>(null);   // state: ui — which summary page is open
 
 /** The summary tab's words for a status: the list's words where it has them, and the two the list leaves unsaid. */
-const STATE_WORDS: Record<SessionStatus, string> = { running: "running", done: "finished", ...STATUS_LABEL } as Record<SessionStatus, string>;
+const STATE_WORDS = { running: "running", done: "finished", ...STATUS_LABEL } satisfies Partial<Record<SessionStatus, string>>;
+
+/** The summary tab's word for each kind of session. Total, so a new kind fails to compile here rather than read as a chat. */
+const KIND_WORDS = { chat: "Chat", agent: "Agent run", embed: "Embed" } satisfies Record<SessionKind, string>;
 
 /** One line of the summary tab: a label and its value. `key` names the field, for a test and a stable list key. */
 export interface SummaryLine { key: string; label: string; value: string }
@@ -42,7 +45,7 @@ export function summaryLines(s: SessionSummary, rt: RuntimeInfo, now: number): S
     if (state) out.push({ key: "state", label: "State", value: state });
     if (s.pendingApprovals > 0) out.push({ key: "asks", label: "Open asks", value: approvalsPending(s.pendingApprovals) });
     if (Number.isFinite(s.lastTs)) out.push({ key: "last", label: "Last activity", value: `${fmtAge(Math.max(0, now - local(s.lastTs)))} ago` });
-    out.push({ key: "kind", label: "Kind", value: s.kind === "agent" ? "Agent run" : "Chat" });
+    out.push({ key: "kind", label: "Kind", value: KIND_WORDS[s.kind] });
     if (typeof s.model === "string" && s.model) out.push({ key: "model", label: "Model", value: s.model });
     out.push({ key: "runtime", label: "Runtime", value: rt.online ? rt.name : `${rt.name} (offline)` });
     // The page it STARTED on: the index has no current page, so the label says which one this is.
