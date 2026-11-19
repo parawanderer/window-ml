@@ -6,6 +6,7 @@
 // names; the fixtures under tests/fixtures/program-calls/ are the vectors both readers are held to.
 
 import { union, fromProgramEffect, type EffectsData, type ProgramEffect, type Resource } from "../effects";
+import { AWK_ASSIGNMENT, awkProgramRefusal, sedScriptRefusal } from "./script-grammar";
 
 /** One flag of a command: whether it takes a value, and what it adds to the call. A flag absent from its command's
  *  table makes the call `unknown`. */
@@ -30,6 +31,13 @@ export type FlagSpec = {
     okCodes?: readonly number[];
     /** With this flag the command walks its directory arguments (`ls -R`). */
     recursive?: boolean;
+    /** The only values the flag is described with (BSD `sed -i ''`: `[""]`); any other value makes the call `unknown`. */
+    values?: readonly string[];
+    /** A short flag whose value is the rest of its argument, empty when bare, and never the next argument (GNU
+     *  `sed -i`, `-i.bak`). */
+    attachedValue?: boolean;
+    /** The value is a script in the command's `script` language (`sed -e`), checked by its grammar (script-grammar.ts). */
+    script?: boolean;
 };
 
 /** A `find`-style expression primary: how many arguments it consumes (or up to which terminator), and what it adds. */
@@ -96,6 +104,10 @@ export type CommandSpec = {
     /** Arguments the caller inserts right after this command's name, turning off what the repository's own config could
      *  make it run (`git` → `--no-pager`; `git diff` → `--no-ext-diff --no-textconv`). They never widen a call. */
     harden?: readonly string[];
+    /** The command's first operand is a program in this language unless a `script` flag gave one (`sed 's/a/b/' f`,
+     *  `awk '{print $1}' f`): the text is checked by its narrow grammar (script-grammar.ts), and one outside it makes the
+     *  call `unknown`. For `awk`, an operand that is an assignment (`n=1`) is not a path. */
+    script?: "sed" | "awk";
     /** What one detected flavour adds to this command (PROGRAM_MANIFEST.md, "Flavours"): only in a manifest that
      *  declares `flavours`, keyed by a flavour it declares. */
     flavour?: { gnu?: FlavourOverlay; bsd?: FlavourOverlay };
@@ -153,6 +165,10 @@ interface ManifestBase {
     credential?: ManifestCredential;
     /** What the credentialed profile may connect to. Only beside `credential`. */
     network?: ManifestNetwork;
+    /** The program shows other processes: their command lines, users, open files and sockets (`ps`, `lsof`, `top`). A
+     *  call that would otherwise be free asks unless the person listed the program in `shellRevealsAllow`
+     *  (PROGRAM_MANIFEST.md, "Programs that reveal other processes"). It only narrows, so any manifest may carry it. */
+    reveals?: "processes";
     /** The implementations the manifest tells apart (PROGRAM_MANIFEST.md, "Flavours"); absent, one description for
      *  every implementation, as before the field. Only with `version.range` `"*"`. */
     flavours?: ManifestFlavours;
@@ -354,7 +370,11 @@ export function describeCall(argv: readonly string[], m: ProgramManifest, opts: 
     // Descend through subcommands: options before a subcommand belong to the level above it.
     for (;;) {
         const r = cmd.syntax === "find" ? parseFind(argv, i, cmd, d, terms, unknown) : parseOptions(argv, i, cmd, d, terms, unknown);
-        if (!r.sub) { operandPaths = finishCommand(argv, cmd, r.operands, r.pathsFrom, d, terms, unknown); break; }
+        if (!r.sub) {
+            operandPaths = finishCommand(argv, cmd, r.operands, r.pathsFrom, d, terms, unknown);
+            if (cmd.script) checkScript(argv, cmd.script, r.operands, r.scripts, opts.flavour === "gnu", unknown);
+            break;
+        }
         const next = cmd.subcommands?.[argv[r.sub]];
         if (!next) { unknown(`${[m.program, ...d.subcommand].join(" ")} has no subcommand ${JSON.stringify(argv[r.sub])} in its manifest`); break; }
         d.subcommand.push(argv[r.sub]);
@@ -442,14 +462,26 @@ function stopShadow(a: string, flags: Readonly<Record<string, FlagSpec>>): strin
     return names.find((n) => Object.hasOwn(flags, n) && !readOnlyFlag(flags[n]));
 }
 
-/** Options-then-operands. Returns the operand indices, the path start a flag set, and the index of a subcommand name
- *  when the command has subcommands and one was reached before any operand. */
+/** A `script` command's program (`script` flags' values joined by newlines, else its first operand) checked by its
+ *  language's narrow grammar; one outside it makes the call `unknown`. */
+function checkScript(argv: readonly string[], lang: "sed" | "awk", operands: number[], scripts: string[], gnu: boolean, unknown: (w: string) => void): void {
+    const text = scripts.length ? scripts.join("\n") : operands.length ? argv[operands[0]] : undefined;
+    if (text === undefined) { unknown(`${lang} was given no program`); return; }
+    const why = lang === "sed" ? sedScriptRefusal(text, gnu) : awkProgramRefusal(text);
+    if (why) unknown(why);
+}
+
+/** Options-then-operands. Returns the operand indices, the path start a flag set, the values of `script` flags, and the
+ *  index of a subcommand name when the command has subcommands and one was reached before any operand. */
 function parseOptions(argv: readonly string[], start: number, cmd: CommandSpec & { stop?: boolean }, d: CallDescription, terms: Terms,
-    unknown: (w: string) => void): { operands: number[]; pathsFrom?: number; sub?: number } {
+    unknown: (w: string) => void): { operands: number[]; pathsFrom?: number; sub?: number; scripts: string[] } {
     const operands: number[] = [];
+    const scripts: string[] = [];
     let pathsFrom: number | undefined;
     let afterTerminator = false;
-    const apply = (name: string, f: FlagSpec, valueAt: { arg: number; split?: string; attached?: boolean } | null) => {
+    const apply = (name: string, f: FlagSpec, valueAt: { arg: number; split?: string; attached?: boolean } | null, text?: string) => {
+        if (f.values && (text === undefined || !f.values.includes(text))) unknown(`${name} ${JSON.stringify(text ?? "")} is not a value its manifest describes`);
+        if (f.script && text !== undefined) scripts.push(text);
         if (f.effects?.includes("unknown")) unknown(`${name} can make ${d.program} do what no manifest describes`);
         // A flag's read/write/write-names applies to its own path value when it has one (`--output=f`), else to the command's
         // targets (`git push -u` writes the repository's config).
@@ -495,7 +527,7 @@ function parseOptions(argv: readonly string[], start: number, cmd: CommandSpec &
             continue;
         }
         if (a === "-" || !a.startsWith("-")) {
-            if (cmd.subcommands && operands.length === 0) return { operands, pathsFrom, sub: i };
+            if (cmd.subcommands && operands.length === 0) return { operands, pathsFrom, sub: i, scripts };
             if (cmd.pathspecs && notLiteralPathspec(a)) unknown(`pathspec ${JSON.stringify(a)} is magic or a glob, not a path`);
             operands.push(i);
             continue;
@@ -507,11 +539,11 @@ function parseOptions(argv: readonly string[], start: number, cmd: CommandSpec &
             const f = cmd.flags[name];
             if (!f) { unknown(`flag ${name} is not in the manifest`); continue; }
             if (f.value) {
-                if (eq >= 0) apply(name, f, { arg: i, split: "=" });
-                else if (i + 1 < argv.length) { apply(name, f, { arg: i + 1 }); i++; }
+                if (eq >= 0) apply(name, f, { arg: i, split: "=" }, a.slice(eq + 1));
+                else if (i + 1 < argv.length) { apply(name, f, { arg: i + 1 }, argv[i + 1]); i++; }
                 else unknown(`${name} needs a value`);
             } else if (eq >= 0) {
-                if (f.optionalValue) apply(name, f, null);
+                if (f.optionalValue) apply(name, f, null, a.slice(eq + 1));
                 else unknown(`${name} takes no value`);
             } else apply(name, f, null);
             continue;
@@ -519,8 +551,9 @@ function parseOptions(argv: readonly string[], start: number, cmd: CommandSpec &
         // A single-dash flag: a whole name first (`-C`, `-name`), then a cluster of one-letter flags.
         const whole = cmd.flags[a];
         if (whole) {
-            if (whole.value) {
-                if (i + 1 < argv.length) { apply(a, whole, { arg: i + 1 }); i++; }
+            if (whole.attachedValue) apply(a, whole, null, "");
+            else if (whole.value) {
+                if (i + 1 < argv.length) { apply(a, whole, { arg: i + 1 }, argv[i + 1]); i++; }
                 else unknown(`${a} needs a value`);
             } else apply(a, whole, null);
             continue;
@@ -531,21 +564,22 @@ function parseOptions(argv: readonly string[], start: number, cmd: CommandSpec &
             const f = cmd.flags[name];
             if (!f) { unknown(`flag ${name}${letters.length > 1 ? ` (in ${a})` : ""} is not in the manifest`); break; }
             if (j > 0 && !cmd.clusters) { unknown(`${a}: this command's short flags do not combine`); break; }
+            if (f.attachedValue) { apply(name, f, null, letters.slice(j + 1)); break; }
             if (f.value) {
-                if (j + 1 < letters.length) apply(name, f, { arg: i, attached: true });
-                else if (i + 1 < argv.length) { apply(name, f, { arg: i + 1 }); i++; }
+                if (j + 1 < letters.length) apply(name, f, { arg: i, attached: true }, letters.slice(j + 1));
+                else if (i + 1 < argv.length) { apply(name, f, { arg: i + 1 }, argv[i + 1]); i++; }
                 else unknown(`${name} needs a value`);
                 break;
             }
             apply(name, f, null);
         }
     }
-    return { operands, pathsFrom };
+    return { operands, pathsFrom, scripts };
 }
 
 /** find's grammar: options, then path operands up to the first expression token, then primaries and operators. */
 function parseFind(argv: readonly string[], start: number, cmd: CommandSpec, d: CallDescription, terms: Terms,
-    unknown: (w: string) => void): { operands: number[]; pathsFrom?: number; sub?: number } {
+    unknown: (w: string) => void): { operands: number[]; pathsFrom?: number; sub?: number; scripts: string[] } {
     const operands: number[] = [];
     let i = start;
     while (i < argv.length && /^-[HLPEXdsx]+$/.test(argv[i]) && cmd.flags[argv[i]]) {
@@ -582,7 +616,7 @@ function parseFind(argv: readonly string[], start: number, cmd: CommandSpec, d: 
         }
         i += n;
     }
-    return { operands };
+    return { operands, scripts: [] };
 }
 
 /** After parsing a command: its path operands (returned; `-` is stdin, not a path unless `dashIsPath`), what it acts on without them, and its
@@ -596,6 +630,8 @@ function finishCommand(argv: readonly string[], cmd: CommandSpec, operands: numb
     if (cmd.paths === "operands") paths = operands;
     else if (typeof cmd.paths === "object") paths = operands.slice(pathsFrom ?? cmd.paths.operandsFrom);
     if (!cmd.dashIsPath) paths = paths.filter((i) => argv[i] !== "-");
+    // awk reads an operand `name=value` as an assignment, never a file.
+    if (cmd.script === "awk") paths = paths.filter((i) => !AWK_ASSIGNMENT.test(argv[i]));
     for (const i of paths) d.pathArgs.push({ arg: i, role: "read" });
     d.actsOnDir = cmd.paths === "repo" || (paths.length === 0 && cmd.noPaths === "cwd" && cmd.paths !== "none");
     if (d.dirArg !== null && cmd.paths !== "repo" && !cmd.repoWide) unknown("a directory flag on a command that does not act on a repository");
@@ -641,18 +677,36 @@ function compareVersions(a: number[], b: number[]): number {
 // --- the validator ---
 
 const PROGRAM_EFFECT_WORDS = new Set(["read", "write", "write-names", "runs-code", "unknown"]);
-const FLAG_KEYS = new Set(["value", "optionalValue", "effects", "valueIsPath", "valueIsDir", "pathsFrom", "runner", "echoes", "okCodes", "recursive"]);
+const FLAG_KEYS = new Set(["value", "optionalValue", "effects", "valueIsPath", "valueIsDir", "pathsFrom", "runner", "echoes", "okCodes", "recursive", "values", "attachedValue", "script"]);
 const PRIMARY_KEYS = new Set(["args", "until", "effects", "argIsPath", "runner"]);
 /** Whether git may read a pathspec as something other than the one path it spells: `:` magic, or a glob or escape git expands. */
 function notLiteralPathspec(a: string): boolean {
     return a.startsWith(":") || /[*?[\\]/.test(a);
 }
 
-const COMMAND_KEYS = new Set(["effects", "paths", "noPaths", "terminator", "numericFlag", "clusters", "maxOperands", "flags", "subcommands", "syntax", "primaries", "okCodes", "echoes", "recursive", "harden", "optionsFirst", "dashIsPath", "repoWide", "pathspecs", "writtenOperands", "flavour"]);
+const COMMAND_KEYS = new Set(["effects", "paths", "noPaths", "terminator", "numericFlag", "clusters", "maxOperands", "flags", "subcommands", "syntax", "primaries", "okCodes", "echoes", "recursive", "harden", "optionsFirst", "dashIsPath", "repoWide", "pathspecs", "writtenOperands", "flavour", "script"]);
 const VERSION_KEYS = new Set(["range", "args", "pattern"]);
-const MANIFEST_KEYS = new Set(["$schema", "program", "version", "okCodes", "echoes", "env", "entrypoint", "credential", "network", "flavours", "command"]);
+const MANIFEST_KEYS = new Set(["$schema", "program", "version", "okCodes", "echoes", "env", "entrypoint", "credential", "network", "reveals", "flavours", "command"]);
 const OVERLAY_KEYS = new Set(["flags", "argOrder", "harden"]);
 const FLAVOUR_NAMES: ReadonlySet<string> = new Set<FlavourName>(["gnu", "bsd"]);
+
+/** The programs known to show other processes (ruling 31): a stored or proposed manifest for one carries
+ *  `reveals: "processes"` whatever its author wrote, so a draft cannot drop the gate before the shipped manifest lands. */
+export const REVEALING_PROGRAMS: readonly string[] = Object.freeze(["ps", "lsof", "top"]);
+
+/** The name in {@link REVEALING_PROGRAMS} a manifest describes, by its `program` or by the basename of the file it is
+ *  pinned to (the host's realpath, so a symlink named otherwise is caught), or undefined. */
+export function revealingName(m: { program?: unknown }, resolved?: string): string | undefined {
+    const file = resolved?.split("/").pop();
+    return [m.program, file].find((n): n is string => typeof n === "string" && REVEALING_PROGRAMS.includes(n));
+}
+
+/** Why a manifest that is not shipped may not describe a program as it does, or undefined: one whose `program`, or
+ *  the file it is pinned to, is in {@link REVEALING_PROGRAMS}, without the marker. */
+export function revealsRefusal(m: { program?: unknown; reveals?: unknown }, resolved?: string): string | undefined {
+    const name = revealingName(m, resolved);
+    return name && m.reveals !== "processes" ? `${name} shows other processes, so its manifest carries reveals: "processes"` : undefined;
+}
 
 /** Why a manifest that is not shipped may not carry `m`'s credential fields, or undefined: the host honours a
  *  credential only for manifest bytes it pinned, which are the shipped ones, so a stored `credential` or `network`
@@ -682,7 +736,7 @@ export function validateManifest(m: unknown): string[] {
     const codes = (x: unknown, at: string) => {
         if (!Array.isArray(x) || !x.every((c) => Number.isInteger(c) && c >= 0 && c < 256)) errs.push(`${at}: exit codes are integers 0-255`);
     };
-    const flagTable = (flags: Record<string, unknown>, at: string) => {
+    const flagTable = (flags: Record<string, unknown>, at: string, script: unknown) => {
         for (const [name, f] of Object.entries(flags)) {
             const fa = `${at}.flags[${name}]`;
             if (!/^-{1,2}[A-Za-z0-9][A-Za-z0-9-]*$/.test(name)) errs.push(`${fa}: a flag name starts with - or --`);
@@ -694,6 +748,13 @@ export function validateManifest(m: unknown): string[] {
             if (f.valueIsPath !== undefined && f.valueIsPath !== "read" && f.valueIsPath !== "write") errs.push(`${fa}.valueIsPath: read or write`);
             if (f.okCodes !== undefined) codes(f.okCodes, `${fa}.okCodes`);
             if (f.runner && !(Array.isArray(f.effects) && f.effects.some((t) => t === "runs-code" || t === "unknown"))) errs.push(`${fa}: a runner's effects include runs-code or unknown`);
+            for (const b of ["attachedValue", "script"]) if (f[b] !== undefined && typeof f[b] !== "boolean") errs.push(`${fa}.${b}: boolean`);
+            if (f.attachedValue && (!/^-[A-Za-z0-9]$/.test(name) || f.value || f.optionalValue || f.valueIsPath || f.valueIsDir))
+                errs.push(`${fa}: attachedValue is a one-letter short flag's own, without value, optionalValue or a path`);
+            if (f.values !== undefined && !(Array.isArray(f.values) && f.values.every((v) => typeof v === "string") && (f.value || f.optionalValue || f.attachedValue)))
+                errs.push(`${fa}.values: strings, on a flag that takes a value`);
+            if (f.script && !(f.value && f.pathsFrom === 0 && !f.valueIsPath && (script === "sed" || script === "awk")))
+                errs.push(`${fa}: a script flag takes a value, sets pathsFrom 0 (its operands are then all files) and belongs to a command with script`);
         }
     };
     // A flavour's additions: only flavours the manifest declares, flags the core does not list, hardening it can parse.
@@ -707,7 +768,7 @@ export function validateManifest(m: unknown): string[] {
             if (o.flags !== undefined) {
                 if (!isObj(o.flags)) errs.push(`${oa}.flags: an object`);
                 else {
-                    flagTable(o.flags, oa);
+                    flagTable(o.flags, oa, c.script);
                     for (const f of Object.keys(o.flags)) if (isObj(c.flags) && Object.hasOwn(c.flags, f)) errs.push(`${oa}.flags[${f}]: the core lists it too; an overlay only adds`);
                 }
             }
@@ -732,12 +793,14 @@ export function validateManifest(m: unknown): string[] {
         if (c.maxOperands !== undefined && !(Number.isInteger(c.maxOperands) && (c.maxOperands as number) >= 0)) errs.push(`${at}.maxOperands`);
         if (c.okCodes !== undefined) codes(c.okCodes, `${at}.okCodes`);
         if (!isObj(c.flags)) errs.push(`${at}.flags: an object`);
-        else flagTable(c.flags, at);
+        else flagTable(c.flags, at, c.script);
         if (c.flavour !== undefined) overlays(c, at);
         if (c.subcommands !== undefined) {
             if (!isObj(c.subcommands)) errs.push(`${at}.subcommands: an object`);
             else for (const [n, s] of Object.entries(c.subcommands)) command(s, `${at}.subcommands.${n}`);
         }
+        if (c.script !== undefined && !((c.script === "sed" || c.script === "awk") && isObj(p) && p.operandsFrom === 1 && c.subcommands === undefined && c.syntax === undefined))
+            errs.push(`${at}.script: sed or awk, on a command whose paths are {operandsFrom: 1} (the first operand is the program), with no subcommands or syntax`);
         if (c.syntax !== undefined && c.syntax !== "find") errs.push(`${at}.syntax: find`);
         if (c.syntax === "find") {
             if (!isObj(c.primaries)) errs.push(`${at}.primaries: find syntax needs its primaries`);
@@ -779,6 +842,7 @@ export function validateManifest(m: unknown): string[] {
     if (m.okCodes !== undefined) codes(m.okCodes, "$.okCodes");
     if (m.echoes !== undefined && typeof m.echoes !== "boolean") errs.push("$.echoes: boolean");
     if (m.env !== undefined && !(Array.isArray(m.env) && m.env.every((e) => typeof e === "string"))) errs.push("$.env: names");
+    if (m.reveals !== undefined && m.reveals !== "processes") errs.push('$.reveals: "processes"');
     const cred = m.credential;
     const provider = isObj(cred) && typeof cred.provider === "string" && Object.hasOwn(CREDENTIAL_PROVIDERS, cred.provider) ? CREDENTIAL_PROVIDERS[cred.provider] : undefined;
     if (cred !== undefined) {

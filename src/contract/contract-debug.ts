@@ -189,10 +189,13 @@ export interface AskWhy {
     detail: string;
     /** Why it asks, as a slug: why the policy is gone (`archived`, `removed`, `narrowed`), `outside-dialect`, `ask-policy`
      *  (an `ask` policy matched, and the card offers no "remember"), `nav-only` (a read of an origin a policy lets the run go
-     *  to, not read), or `start-left` (a read of the start origin once the tab has left it). */
+     *  to, not read), `start-left` (a read of the start origin once the tab has left it), or `reveals` (a call whose program shows other
+     *  processes and is not in `shellRevealsAllow`, and would otherwise run unasked). */
     cause: string;
     /** The gone policy's label, or for `ask-policy` the policy that asks; absent when no policy is involved. */
     policy?: string;
+    /** `reveals` only: the program "Always allow" adds to `shellRevealsAllow`, the manifest's `program`. */
+    program?: string;
     /** `outside-dialect` only: an earlier cell of the run ran with the JavaScript bridges lifted, so this cell's namespace
      *  can hold what it took (the card shows `JS_BRIDGE_KEPT_LINE`). */
     bridged?: true;

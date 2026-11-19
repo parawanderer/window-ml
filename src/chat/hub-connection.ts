@@ -246,11 +246,11 @@ export class HubConnection {
         };
         if (!files.some((f) => ahead(f))) return command;
         const out: WireFile[] = [];
-        for (const f of files) {
+        for (const [index, f] of files.entries()) {
             const a = ahead(f);
             if (!a) { out.push(f); continue; }
             if (!a.data) return fail("invalid", `${f.name} is not valid base64`);
-            const r = await this.putFile(runtime, peer, f.name, a.type, a.data, opts);
+            const r = await this.putFile(runtime, peer, f.name, index, a.type, a.data, opts);
             if (r === "inline") return this.inlineOrRefuse(command, files);
             if ("ok" in r) return r as CommandResult<C["type"]>;
             out.push(r);
@@ -272,11 +272,11 @@ export class HubConnection {
     }
 
     /**
-     * Send one file (a PDF's bytes, or a text file's UTF-8) in chunks of what the hub takes, at most {@link FILE_PUT_WINDOW} unanswered, after asking which the
+     * Send one file (`index`: its position among the command's files, reported with its progress) (a PDF's bytes, or a text file's UTF-8) in chunks of what the hub takes, at most {@link FILE_PUT_WINDOW} unanswered, after asking which the
      * runtime already holds; done is the runtime's word (`complete`), never "all sent".
      * @returns the reference to send in the file's place, `inline` when the runtime does not take chunks, or the failure
      */
-    private async putFile(runtime: string, peer: HubPeer, name: string, type: string, data: Uint8Array, opts?: SendOptions & { timeoutMs?: number }): Promise<AttachedFileRef | "inline" | CommandResult<CommandType>> {
+    private async putFile(runtime: string, peer: HubPeer, name: string, index: number, type: string, data: Uint8Array, opts?: SendOptions & { timeoutMs?: number }): Promise<AttachedFileRef | "inline" | CommandResult<CommandType>> {
         const cap = fileCap(PDF_ATTACH_MAX, this.client.limits.accountBurstBytes);
         if (data.length > cap) return fail("invalid", `${name} is too large to send through this hub: ${mb(data.length)}; it takes files up to ${mb(cap)}`);
         const sha256 = await sha256Hex(data);
@@ -298,7 +298,7 @@ export class HubConnection {
         const todo = Array.from({ length: count }, (_, i) => i).filter((i) => !held.has(i));
         // What the runtime has accepted, the chunks it already held included: the bar moves only on its word.
         const accepted = new Set(held);
-        const report = () => { try { opts?.progress?.({ name, fraction: uploadFraction(accepted, count) }); } catch { /* a view failing must not fail the upload */ } };
+        const report = () => { try { opts?.progress?.({ name, index, fraction: uploadFraction(accepted, count) }); } catch { /* a view failing must not fail the upload */ } };
         report();
         let next = 0, complete = false;
         let failed: CommandResult<CommandType> | null = null;

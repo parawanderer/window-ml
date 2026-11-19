@@ -9,7 +9,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 
 const require = createRequire(import.meta.url);
 const { jsonResponse, loadBackground } = require("./helpers");
@@ -292,8 +292,23 @@ test("the stored set is in session storage, which no page and no content script 
     const { hashes, sessionStore, bg } = await answerRuns([{ task: "store it", calls: [{ name: "answer", args: { text: "kept" } }] }]);
     assert.deepEqual(plain(sessionStore[`ml_answer:${hashes[0]}`]), [{ kind: "text", text: "kept" }], "positive control: the set is stored under its run");
     assert.ok(!JSON.stringify(plain(bg.localStore ?? {})).includes("kept"), "not in storage.local");
-    // chrome.storage.session is TRUSTED_CONTEXTS unless setAccessLevel opens it to content scripts.
-    for (const f of ["dist/background.js", "dist/content.js"]) assert.ok(!/setAccessLevel/.test(readFileSync(new URL(`../${f}`, import.meta.url), "utf8")), `${f} opens session storage`);
+    // chrome.storage.session is TRUSTED_CONTEXTS unless it is opened to content scripts. Every bundle the build emits
+    // sits at dist's top level (build.mjs `ENTRIES`); the subdirectories are vendored runtimes (pyodide/, pdfjs/,
+    // fonts/). Scan ALL of the top level, not a hand list: the sidebar's first storage.session use (#2015) was one
+    // background.js and content.js did not cover. The pattern is a PROPERTY ACCESS, not the bare name: background.js
+    // embeds the working tree's git diff (src/build-diff.gen.ts), so a dirty tree whose diff mentions the name would
+    // match a bare-token grep (measured).
+    const OPENS = /(?:\.|\[\s*["'`]|[{,]\s*)setAccessLevel\b/;
+    // The shapes the guard must catch, built by concatenation so this file's own diff does not contain one.
+    for (const s of [
+        "chrome.storage.session" + "." + "setAccessLevel({ accessLevel: 'X' })",
+        "chrome.storage.session[" + JSON.stringify("setAccessLevel") + "](x)",
+        "const { " + "setAccessLevel" + " } = chrome.storage.session",
+    ]) assert.match(s, OPENS, "positive control: the guard catches this shape");
+    const dist = new URL("../dist/", import.meta.url);
+    const bundles = readdirSync(dist).filter((f) => f.endsWith(".js"));
+    for (const f of ["background.js", "content.js", "sidebar-app.js", "sidebar-shell.js"]) assert.ok(bundles.includes(f), `positive control: ${f} is a built bundle`);
+    for (const f of bundles) assert.ok(!OPENS.test(readFileSync(new URL(f, dist), "utf8")), `${f} opens session storage to content scripts`);
 });
 
 test("an eviction drops the worker's answer sets from memory, as a real one does, so a restore is read from the store", T, async () => {

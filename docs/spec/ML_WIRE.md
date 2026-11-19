@@ -54,7 +54,9 @@ reference. **Never a proxy**, in either direction: a live object
 would be a capability into the realm that made it, which is exactly what the Pyodide hardening exists to remove.
 
 **Who may call what** is decided by the CLIENT'S REALM, with the same table the worker survey uses today: a read-only
-dialect client (a JS survey, a Python dialect cell) sees `ML_READONLY_METHODS`; an approved client (a full `exec`, an
+dialect client (a JS survey, a Python dialect cell) sees `ML_READONLY_METHODS`, plus the members that are free only
+for some arguments, each judged per call and refused when it would need the person (the cache-only `fetch`, and
+`table` by [`ML_TABLE.md`](ML_TABLE.md)'s source rule); an approved client (a full `exec`, an
 approved Python cell) sees the full gated set, each member still gated per call (a fetch by URL, `ml.sh` by argv). A
 member a realm does not have is ABSENT, and reaching it is an error the client's dialect reports as a refusal, so adding a
 member later costs a hop, never a hole.

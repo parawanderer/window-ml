@@ -4,7 +4,7 @@ const REGIONS = ["north", "south", "east", "west"];
 const PRODUCTS = ["widget", "gadget", "sprocket", "gizmo", "doohickey"];
 
 /** The rows, the same on every call: a small LCG instead of Math.random, so the total is known in advance. */
-function rows(n = 3000) {
+export function rows(n = 3000) {
     let x = 20261009;
     const next = () => (x = (x * 1103515245 + 12345) % 2147483648);
     return Array.from({ length: n }, (_, i) => {

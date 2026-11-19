@@ -12,6 +12,10 @@
 // `process.kill(process.pid, "SIGKILL")` takes THIS FILE's process down loud — `node --test` runs each file in
 // its own child, so the rest of the suite is untouched. `process.exit()` on a worker thread ends only the
 // thread (measured 2026-11-09); SIGKILL is what a blocked main thread cannot outlive.
+//
+// The kill line is written with `fs.writeSync`, not `console.error`: stderr to a pipe is written on the event
+// loop, and the SIGKILL in the same turn ends the process before that write lands, so the one line that says
+// what died was lost (2026-11-19, run 44519875129: a file killed at its 900 s budget with nothing in the log).
 import { Worker } from "node:worker_threads";
 
 /** The watcher's source — a Worker thread, so a WASM spin on the main thread cannot starve its clock.
@@ -19,14 +23,15 @@ import { Worker } from "node:worker_threads";
  *  eval parent makes the eval ESM where `require` is a ReferenceError (measured 2026-11-14). `import()` works
  *  in both. */
 const WATCH_SRC = `
-    import('node:worker_threads').then(({ workerData }) => {
+    Promise.all([import('node:worker_threads'), import('node:fs')]).then(([{ workerData }, fs]) => {
         const done = new Int32Array(workerData.done);
         const deadline = Date.now() + workerData.budgetMs;
         while (Date.now() < deadline && Atomics.load(done, 0) === 0) {
             Atomics.wait(done, 0, 0, 50);
         }
         if (Atomics.load(done, 0) === 0) {
-            console.error(workerData.label + ': the file did not finish within ' + Math.round(workerData.budgetMs / 1000) + 's: SIGKILL');
+            const took = workerData.budgetMs >= 1000 ? Math.round(workerData.budgetMs / 1000) + 's' : workerData.budgetMs + 'ms';
+            fs.writeSync(2, workerData.label + ' did not finish within ' + took + ': SIGKILL\\n');
             process.kill(process.pid, 'SIGKILL');
         }
     });
@@ -45,7 +50,9 @@ export const FILE_GUARD_MS = 15 * 60_000;
  *
  * Arm it at MODULE LOAD, before `before()`: the point is to cover the boot. `after()` runs even when the file
  * self-skips, so a skipped file disarms as a healthy one does. A budget the file cannot reach while healthy is
- * the rule — this is a hang detector, not a slow-test runner.
+ * the rule — this is a hang detector, not a slow-test runner. A caller that knows a phase's own ceiling passes
+ * it as `budgetMs` and disarms at the phase's end, so the kill names that phase instead of the whole file
+ * (python-bench-stop's boot and each cell).
  *
  * @param {{ budgetMs?: number, label?: string }} [o] how long the file gets, and what the SIGKILL line names
  * @returns {() => void} disarm: call from `after()`, once, when the file is finished

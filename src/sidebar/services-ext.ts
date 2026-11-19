@@ -61,6 +61,12 @@ export const extensionServices: SidebarServices = {
     answerApproval: (hash, seq, decision, persist, feedback, ask, files) => toHost({ __mlSidebarApp: "approval", hash, seq, decision, persist, feedback, ...(ask !== undefined ? { ask } : {}), ...(files !== undefined ? { files } : {}) }),
     // The shell, or the DevTools panel, forwards it as SET_START_APPROVAL, having checked it came from this frame.
     answerStart: (requestId, decision) => toHost({ __mlSidebarApp: "startDecision", requestId, decision }),
+    // Written here, by the person's click in this extension frame: never through change_setting or a message a page can send.
+    revealsAllow: async (program) => {
+        const had = await new Promise<unknown>((r) => chrome.storage.sync.get({ shellRevealsAllow: [] }, (o) => r(o.shellRevealsAllow)));
+        const list = Array.isArray(had) ? had.filter((x): x is string => typeof x === "string") : [];
+        if (!list.includes(program)) await chrome.storage.sync.set({ shellRevealsAllow: [...list, program] });
+    },
     // A post to the page, which answers nothing: what goes wrong from there shows in the run itself.
     // An agent run takes files with any message: one the worker built holds each as an `@file:` pointer, and one a page
     // built takes text files whole, its refusal of a PDF said in the run's step list (sw-run-start.ts). A chat here is
