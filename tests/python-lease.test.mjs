@@ -1043,3 +1043,15 @@ test("PY_RESULT is the service worker's alone: absent from every table a page's 
     assert.ok(!mapped.some((m) => String(m).startsWith("PY_RESULT")), "PY_RESULT is in HANDLE_MAP");
     assert.ok(!PAGE_STARTED_TYPES.has("PY_RESULT"), "PY_RESULT is page-started");
 });
+
+// --- the bench Stop's grace: the shipped second, and the test seam that can only lengthen it ---
+
+test("benchStopGraceMs: the default when nothing overrides it, longer only, anything else ignored", async () => {
+    const { benchStopGraceMs } = await import("../src/python/py-lease.ts");
+    assert.equal(benchStopGraceMs(1000, undefined), 1000, "the shipped bound, unchanged, when the seam is unused");
+    assert.equal(benchStopGraceMs(1000, 250), 1000, "a shorter value cannot make the bench give up sooner");
+    assert.equal(benchStopGraceMs(1000, 20_000), 20_000, "a test may lengthen it");
+    assert.equal(benchStopGraceMs(1000, "20000"), 1000, "only a number is obeyed");
+    assert.equal(benchStopGraceMs(1000, Number.NaN), 1000);
+    assert.equal(benchStopGraceMs(1000, Number.POSITIVE_INFINITY), 1000, "an unbounded wait is not a value a test can set");
+});
