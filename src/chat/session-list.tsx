@@ -10,7 +10,6 @@
 import { signal } from "@preact/signals";
 import { useRef, useEffect } from "preact/hooks";
 import type { SessionStatus, SessionKey, RuntimeInfo, SessionSummary } from "../session/session-host";
-import { truncate } from "../sidebar/format";
 import { IconChevron, IconHistory, IconPin, IconPlus, IconSearch, IconCompose, IconInbox } from "../sidebar/icons";
 import { AgentBadge } from "../sidebar/transcript/reply";
 import type { Status } from "../sidebar/store";
@@ -27,6 +26,7 @@ import { endingSeen, isUnread } from "./read-marks";
 import { pinnedInOrder } from "./pin-order";
 import { useReorder } from "./pin-reorder";
 import { approvalsPending, STATUS_LABEL } from "./status-words";
+import { SessionHoverCard } from "./session-summary";
 
 /** The index's status as the panel's status dot draws it. A run stopped at its cap is `err` underneath (the reducer marks
  *  an answer `err` on `hitCap`), and is DRAWN amber, in the list and the transcript alike: it did not fail. */
@@ -80,7 +80,7 @@ function IndexRow({ store, s, rt, active, unread, read, showRuntime, showPin, re
             <button class={`row chat-row${active ? " active" : ""}`} data-session={key} onClick={() => openSession(key)}>
                 <Dot status={DOT[s.status] ?? "pending"} warn={s.status === "capped" ? "Stopped at its step cap. Open it to give it more steps." : undefined} />
                 <span class="chat-row-body">
-                    <b class="row-title">{truncate(title, 90)}</b>
+                    <b class="row-title"><SessionHoverCard s={s} rt={rt} title={title} /></b>
                     {/* WHERE IT STANDS COMES FIRST, then what kind of session it is, then where it lives — the phone's
                         order (mobile ListScreen), and the phone's for the phone's reason: a status that trails a page
                         host of any length is one the eye has to hunt for again on every row. It was last here, after
