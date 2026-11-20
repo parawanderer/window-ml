@@ -100,6 +100,9 @@ async function threeUpdates({ reducedMotion = "no-preference", settle = 900 } = 
             await expect(pct).toHaveText(REPLIES[i].want, { timeout: 30_000 });
             await chat.waitForTimeout(settle);
             const frames = await chat.evaluate((from) => globalThis.__frames.slice(from), from);
+            // A baseline from BEFORE the change, or a row would compare post-change frames with a post-change baseline and pass unmeasured.
+            expect(frames.length, `${REPLIES[i].want}: frames were sampled`).toBeGreaterThan(20);
+            expect(frames[0].pct, `${REPLIES[i].want}: the first frame is from before the update`).toBe(REPLIES[i - 1].want);
             const marked = await chat.evaluate(() => [...document.querySelectorAll(".composer-foot .usage-pct .tick-d")].map((e) => e.dataset.mark === "kept"));
             updates.push({ want: REPLIES[i].want, frames, marked });
         }
@@ -168,7 +171,6 @@ test("3. under reduced motion nothing rolls and the fill does not ease", async (
     test.setTimeout(120_000);
     const { updates, errors } = await threeUpdates({ reducedMotion: "reduce" });
     for (const u of updates) {
-        expect(u.frames.length, "frames were sampled").toBeGreaterThan(20);
         expect(rolls(u.frames), `${u.want}: a roll ran under reduced motion`).toEqual([]);
         expect([...new Set(u.frames.map((f) => f.fill))], `${u.want}: the fill eases`).toEqual(["0s"]);
         // The figure still changed and the changed digits are still marked: only the motion went.
