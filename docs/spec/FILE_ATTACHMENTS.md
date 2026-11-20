@@ -2069,7 +2069,8 @@ backup and any commit-on-cell-success live in one place.
   and the GitHub token pattern with 0x2A (`src/secret-mask.ts`), and copies out the range alone: a match that crosses
   either edge is masked in the part inside the range, and a form longer than the range, covering it and straddling
   both edges, masks the whole range. Forms that cannot be read fail the read with `EIO`; nothing unmasked is served. The
-  values never reach the Pyodide worker. Matching is on BYTES: a form is matched as its UTF-8 bytes, and the registry's
+  forms are never written to a log (the run log, the housekeeping log, the console) and never appear in an error's
+  text, the `EIO` path included: its message is fixed. The values never reach the Pyodide worker. Matching is on BYTES: a form is matched as its UTF-8 bytes, and the registry's
   forms already list its JSON-escaped, percent-encoded, base64 and shell-escaped spellings; ASCII letters fold for a
   form marked case-insensitive. The residual is named: a value written in another encoding (a UTF-16 file) or inside
   a compressed or encoded container (a deflated zip member, a gzip stream) is not seen, as a script that decodes
