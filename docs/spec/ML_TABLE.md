@@ -86,8 +86,9 @@ never copied: `.copy()` always returns an editable table the caller owns.
 - Read-only means frozen at every level (`rows`, each row, `columns`, `shape`, `dtypes`), and every `select` or `head`
   of it is read-only too, sharing rows where it can. A write throws in strict code, and in non-strict page code it does
   nothing. In the dialect a write is refused with "This table is read-only; call .copy() for one you can edit".
-- `.copy()` of a stored table copies the rows in hand, not the whole stored file, and keeps its whole-table reads. A
-  copy's own `select` and `head` are editable.
+- `.copy()` of a stored table copies the rows in hand, not the whole stored file. Built (#2043), it keeps its
+  whole-table reads, so after an edit `await c.records()` reads the source and returns the unedited cell. Slice A
+  drops them ("Views of a stored table in JS"). A copy's own `select` and `head` are editable.
 - In the dialect a read-only table is never script-owned. An editable one from a source nobody else holds, and a
   copy, are owned down to their rows.
 - A second `ml.table` of the same source never returns an edit: a read-only table cannot be edited, and an editable
@@ -272,8 +273,9 @@ Today a stored table's `col`, `select`, `records` and a long `head` each re-pars
 - **Bounds.**
   - The source: at most `FETCH_TABLE_MAX` (64 MB) of bytes, inside `valueStoreBudgetMB` on disk.
   - The decode cache: at most 256 MiB of Arrow buffers (`TABLE_DECODE_CACHE_BYTES`), least recently read first out. A
-    decode larger than the cache serves its one read and is not kept. **Provisional:** chosen, not measured; it moves
-    when a decode's heap is measured in the worker on the 64 MB CSV.
+    decode larger than the cache serves its one read and is not kept. **Provisional:** chosen, not measured. Slice A's PR
+    measures the decode of the 64 MB CSV in the worker (Arrow buffer bytes and peak heap), commits the figure, and
+    sets the constant from it.
   - `MAX_TABLE_ROWS` (200,000) caps the preview a fetch keeps, not the stored table, which has no row cap of its own.
   - A view's rows in hand are never more than its source's rows in hand. A whole read (`col`, `records`) answers at
     most `MAX_STORED_READ_CELLS`, and past it is refused with the count, as today. In the dialect, a script's stored
@@ -285,10 +287,12 @@ Today a stored table's `col`, `select`, `records` and a long `head` each re-pars
 - **Python** reads the stored bytes from the value store and parses them with pandas in its own worker (ruling 71); it
   never reads the service worker's decode. The Python member is specced against the store, not the decode, so slice A
   need not precede it.
-- **`.copy()` of a view** copies its rows in hand, keeps its plan for whole reads, and keeps `shape` and `truncated`
-  (ruling 89's rule for a stored table, unchanged). It never reads. A view larger than the cell cap gives a copy marked
-  `truncated`, with `shape` saying how many rows the view has. Every row is a whole read (`await v.records()`), and
-  past the cap that read is refused with the count.
+- **`.copy()` of a view, or of a stored table, drops the plan.** It copies the rows in hand, and keeps `shape` and
+  `truncated`. It never reads. The copy is editable (ruling 89), and a plan kept on it would answer a whole read from
+  the source, unedited, so a whole read on a copy past its rows in hand is refused, with text naming the source's
+  `records()`. A view larger than the cell cap gives a copy marked `truncated`, with `shape` saying how many rows the
+  view has. Every row is a whole read on the view (`await v.records()`), and past the cap that read is refused with the
+  count. This changes #2043's copy of a stored table, which kept its reads; slice A carries the upgrade row below.
 
 ### Slice A: decode once; `select` and `head` become views
 
@@ -303,9 +307,19 @@ Today a stored table's `col`, `select`, `records` and a long `head` each re-pars
   - Within the rows in hand, it stays what it is today: a synchronous, whole table.
   - Past them, it is a view with `limit: n`, its rows those in hand, `shape[0]` the smaller of `n` and the source's
     row count. Its `col` and `records` are requests that return n rows at most.
-- **What changes for a caller:** `t.select(names)` on a stored table used to return a promise of every row of those
-  columns; it returns the view now. `await t.select(names)` still works, because a view is not thenable. Rows past
-  those in hand now need `await v.records()` or `await v.col(name)`. The JSDoc and the model-facing text say so.
+- **What changes for a caller.** `t.select(names)`, and `t.head(n)` past the rows in hand, used to return a promise of
+  every asked row. They return the view now, and `(await t.select(names)).rows` is the rows in hand, with no error.
+  A sum over `rows` is then a sum over a sample.
+  - `await` still works, because a view is not thenable.
+  - What tells the caller: `truncated` is set, and `shape[0]` exceeds `rows.length`. The JSDoc and the model-facing
+    text of `ml.table` and the facade say that `rows` is the rows in hand and that every row is
+    `await v.records()` or `await v.col(name)`.
+  - A copy's whole reads go too (above): `await t.copy().records()` past the rows in hand is refused.
+- **Upgrade rows** (the rule for changing a rule). Each runs a script written for the old result on the new code, over
+  a stored table larger than its rows in hand, and asserts what the model sees:
+  - `(await t.select(["a"])).rows`: the rows in hand, `truncated` true, `shape[0]` the whole count;
+  - `(await t.head(n)).rows` for n past the rows in hand: the same;
+  - `await t.copy().records()` past the rows in hand: refused, with the text naming `t.records()`.
 - **The dialect:** no new method. `select`, `head`, `col`, `records` and `copy` are the existing list
   (`policy.ts`). A view is stored for `isStoredTable` and the cost charge, so its reads count `shape[0]` × width.
 - **e4's set for slice A:** a forged view; a view whose plan was edited after it was made; a view naming another run's
@@ -332,11 +346,20 @@ Today a stored table's `col`, `select`, `records` and a long `head` each re-pars
 
   | op | column dtypes | value | a null cell | a NaN cell |
   | --- | --- | --- | --- | --- |
-  | `==`, `!=` | any | the column's kind: number for `int64`/`float64`, string for `str`, boolean for `bool`; for `object`, any one of those, and a cell of another kind never matches | no match, `!=` included | is null |
+  | `==`, `!=` | any | the column's kind: number for `int64`/`float64`, string for `str`, boolean for `bool`; for `object`, any one of those, and a cell of another kind never matches | `==`: no match. `!=`: **open for Shane** (below) | is null |
   | `<`, `<=`, `>`, `>=` | `int64`, `float64`, `str`; `object` compares only cells of the value's kind | number or string as above; never boolean | no match | is null |
   | `in` | any | a list of 0 to 1,000 values, each obeying the `==` rule; an empty list matches nothing | no match | is null |
   | `isnull`, `notnull` | any | none | matches `isnull` | matches `isnull` |
 
+  - **Open for Shane: `!=` on a null cell.** The table above gives SQL's rule for every other op. For `!=`, SQL drops the
+    null row and pandas keeps it (`NaN != x` is true), and the Python member reads the same table as pandas. The
+    coordinator brings it to Shane; slice B does not start before it is answered.
+  - **Integers past ±2^53.** The page holds doubles, and the decode holds an `int64` column's 64-bit integers.
+    - A number value must be a safe integer (`Number.isSafeInteger`) against an `int64` column, or it is refused;
+      a BigInt is accepted, for any 64-bit value.
+    - The worker compares exactly, in 64 bits.
+    - On the page, a table whose rows are all in hand holds doubles already, as today's casts make them, and compares
+      those.
   - A number never matches a numeric string, in either direction. `where("price", ">", "100")` on a `float64` column is
     refused, and the error names `where("price", ">", 100)`.
   - Strings compare by Unicode code point (UTF-8 byte order), on the page and in the worker alike. JS `<` on strings
@@ -355,8 +378,9 @@ Today a stored table's `col`, `select`, `records` and a long `head` each re-pars
 - The verb counts behind the proposal are a regex over 4,771 bench `run.json` files. Those runs predate `ml.table`,
   and the regex also matches DOM-row code and Python's `head()`, so the counts bound nothing. They showed `rows`,
   `rows.length`, `rows[...]` and `col` in use, and `select`, `sort`, `groupBy` and `where` at zero.
-- So `where` is slice B, not slice A. Slice A changes no model-facing verb and adds no dialect method. It is built
-  for memory: the decode once, and no whole column shipped for a `select`.
+- So `where` is slice B, not slice A. Slice A adds no verb and no dialect method, and it changes what `select`, a
+  long `head` and a stored table's copy return (Slice A, "What changes for a caller"). It is built for memory: the
+  decode once, and no whole column shipped for a `select`.
 - `sort`, `groupBy(...).agg(...)`, and slice B itself, wait on the sweep: ruling 64's, frozen until `ml.table`
   lands, as the coordinator scoped it. They are built if that sweep shows models filtering or ordering a stored
   table in JS, rather than handing it to `python_exec`.
