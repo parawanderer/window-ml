@@ -191,7 +191,7 @@ class beside their own keys in `store.ts` and the same domain union; that is ope
 | Class | Read-write | A change | Keys (the initial classification; the code's table is the truth) |
 | --- | --- | --- | --- |
 | **secret** | never; not readable | impossible | `chatUrl`, `apiKey`, `modelFilter`, `priceSnapshotUrl` (exactly `SECRET_KEYS`), and the legacy `pageApprovalDomains` (it is a site list) |
-| **gate** | never; readable through `ml.config()`, or only through `ml.settings()` for `shellRevealsAllow` | impossible; refused with a link to the row (`window-ml:setting/<key>`, LINKS.md), so the model can say where the person changes it | `autoApproveReadonly`, `autoApprovePython`, `autoApproveSelfSource`, `shellRevealsAllow` (the programs that reveal other processes the person lets run free, [`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md)): the approval gate itself, where one approved change would remove every later approval of its kind |
+| **gate** | never; readable through `ml.config()`, or only through `ml.settings()` for `shellRevealsAllow` and `scrubPersonInput` | impossible; refused with a link to the row (`window-ml:setting/<key>`, LINKS.md), so the model can say where the person changes it | `autoApproveReadonly`, `autoApprovePython`, `autoApproveSelfSource`, `shellRevealsAllow` (the programs that reveal other processes the person lets run free, [`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md)): the approval gate itself, where one approved change would remove every later approval of its kind |
 | **guarded** | yes | always asks, in either direction; a policy may deny, never allow | what widens what the model reaches; what sends the person's data somewhere it did not go before; what shrinks the person's record of what happened. Exactly the next table |
 | **ordinary** | yes | asks unless a policy allows it | everything else: models and their context sizes, appearance, the HUD, titling, electricity prices, `protoStream`, the Python idle and detached-task limits. `autoTitles` and `groundingEnabled` send more to the model server when turned on, and are ordinary on purpose: they reach only the server the person configured, with data already going there |
 
@@ -575,7 +575,8 @@ still says so, it has no `value` field, and `held` tells the model the value is 
 `ml.settings`, which asks. A hidden key is `{ mode: "hidden", class }`. Today the held keys are the guarded
 `shellEnabled`, `shellRoots`, `shellPath`, `shellSandbox`, `execDefaultWorld`, `agentStartPage`, `agentSeesFocus`,
 `siteRequests`, `listPageSessions`, `persistUiRuns`, `sessionArchive`, `sessionRetentionDays`, `sessionStoreBudgetMB`,
-`valueStoreBudgetMB`, `exportToolDefs`, `taskNotifyOnly`, `taskTurnChainMax` and the gate `shellRevealsAllow`. The
+`valueStoreBudgetMB`, `exportToolDefs`, `taskNotifyOnly`, `taskTurnChainMax` and the gates `shellRevealsAllow` and
+`scrubPersonInput`, nineteen in all. The
 guarded and gate keys read free are `apiFormat`, `serverToolsOff`, `commanderServerTools`, `selfIntrospection`,
 `pierceClosedShadow`, `cdp`, `debugMode` and the three `autoApprove*` keys.
 
@@ -616,7 +617,8 @@ no card. A value is free here only if that adds nothing:
   is fingerprinting bits (the theme, the currency, a price, an hours window), the same kind a page reads from the
   browser itself;
 - **every other guarded or gate key**: not accepted, so held. Their values are the person's paths (the shell keys),
-  a URL (`agentStartPage`), which programs run free (`shellRevealsAllow`), and what a run reaches or keeps (the
+  a URL (`agentStartPage`), which programs run free (`shellRevealsAllow`), whether the person's messages are
+  scrubbed of registered secrets before the model reads them (`scrubPersonInput`), and what a run reaches or keeps (the
   session and task keys). The exec card is what stands between an injected model and them, and it stays.
 
 A channel added later that carries model-chosen text with no card is a change to this table, and it reopens the

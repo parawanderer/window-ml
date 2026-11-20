@@ -416,7 +416,8 @@ test("RED TEAM: every guarded and gate key ml.config() does not return is HELD, 
     // key added later is covered without this row being edited. A held entry must carry no value at all — not null, not
     // "", not a length — or it says something about the value it is holding.
     const entries = survey();
-    let held = 0, valued = 0, hidden = 0, absent = 0;
+    const heldKeys = [];
+    let valued = 0, hidden = 0, absent = 0;
     for (const [key, d] of Object.entries(SC.SETTING_CLASSES)) {
         const e = entries[key];
         const placed = Object.hasOwn(SETTING_PLACES, key);
@@ -433,16 +434,23 @@ test("RED TEAM: every guarded and gate key ml.config() does not return is HELD, 
             assert.equal(e.held, "exec", `${key}: a ${d.class} key outside ml.config() is answered freely`);
             assert.ok(!("value" in e), `${key}: a held entry carries a value`);
             assert.ok(!JSON.stringify(entries).includes(`MARK:${key}`), `${key}: a held value is somewhere in the result`);
-            held++;
+            heldKeys.push(key);
         } else {
             assert.equal(e.value, `MARK:${key}`, `${key}: ${d.class}${PUBLIC_KEYS.has(key) ? " in ml.config()" : ""} did not answer its value`);
             assert.ok(!("held" in e), `${key}: an answered entry is marked held`);
             valued++;
         }
     }
+    // The SET, by name, mirroring MODEL_SETTINGS.md's held list: the next key that is held (or stops being) fails here
+    // with its own name rather than a count, and whoever changes it changes the spec's list and this one together.
+    assert.deepEqual(heldKeys.sort(), [
+        "agentSeesFocus", "agentStartPage", "execDefaultWorld", "exportToolDefs", "listPageSessions", "persistUiRuns",
+        "scrubPersonInput", "sessionArchive", "sessionRetentionDays", "sessionStoreBudgetMB", "shellEnabled", "shellPath",
+        "shellRevealsAllow", "shellRoots", "shellSandbox", "siteRequests", "taskNotifyOnly", "taskTurnChainMax",
+        "valueStoreBudgetMB",
+    ].sort(), `the held set changed: ${JSON.stringify(heldKeys.sort())}`);
     // Positive controls: each branch was reached, so a table that silently emptied cannot pass this row.
-    assert.equal(held, 18, `held keys: ${held}; the spec names 18`);
-    assert.ok(valued > 0 && hidden > 0 && absent > 0, `branches: held=${held} valued=${valued} hidden=${hidden} absent=${absent}`);
+    assert.ok(valued > 0 && hidden > 0 && absent > 0, `branches: held=${heldKeys.length} valued=${valued} hidden=${hidden} absent=${absent}`);
 });
 
 test("RED TEAM: a secret's entry is the same whether it is set or not, so it says nothing about the value", T, () => {
