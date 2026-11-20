@@ -81,10 +81,10 @@ for (const [label, code] of TO_STRING) {
     });
 }
 
-test("a buffer of the cell's own is not a way round it: io.StringIO is not callable inside, and the rule is buf bound at all", { timeout: 60000 }, async (t) => {
+test("a buffer of the cell's own is not a way round it: to_string refuses buf bound to an io.StringIO the cell made, as it refuses buf bound at all", { timeout: 60000 }, async (t) => {
     if (skip) return t.skip(skip);
     const r = await inside(`import io, pandas as pd\nb = io.StringIO()\npd.DataFrame({"c": [1]}).to_string(buf=b)\nb.getvalue()`);
-    assert.ok(r.refused, JSON.stringify(r));
+    assert.match(r.refused ?? "", /to_string\(buf=…\) writes to the file or buffer it is given/, JSON.stringify(r));
 });
 
 test("to_string with no buf, or buf=None, still runs inside and gives the string", { timeout: 60000 }, async (t) => {
