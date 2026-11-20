@@ -58,7 +58,15 @@ export interface SidebarServices {
     /** A message to a session: steers a running agent, or starts its next turn. Resolves when the host knows whether it
      *  was taken, so the composer can put the text back on a failure (drafts.ts); never rejects. `progress` hears how
      *  far each file's upload has got, on a surface that sends files ahead in chunks (the hub); others never call it. */
-    sendToSession(session: string, text: string, images?: string[], files?: SentFile[], progress?: (p: FileProgress) => void): Promise<SendOutcome>;
+    sendToSession(session: string, text: string, images?: string[], files?: SentFile[], progress?: (p: FileProgress) => void, asIs?: string[]): Promise<SendOutcome>;
+    /**
+     * Scan a draft for the registered values a send would take out (`SCAN_TURN`, SECRET_HANDLES.md "What the person sees"):
+     * `texts` is the typed words, then each text file's contents. Resolves with the worker's answer as it came (read it with
+     * `readScan`), or null when this host cannot ask. ABSENT where the scan cannot be asked: the hub host, the web build and
+     * the phone get no chip, since the worker that scrubs is this browser's. `scope` is the session's key, or a runtime's id
+     * on the start page, so a host that holds several runtimes asks only for the one that is this browser's. Never rejects.
+     */
+    scanTurn?(texts: string[], scope: string): Promise<unknown>;
     /**
      * Does the runtime behind this session take text files with a message (`capabilities.attachFiles`)? A runtime
      * without it would IGNORE a `files` field and send the message without them, so the composer refuses a file

@@ -24,6 +24,9 @@ export interface HostReadings {
     /** Price model calls against the snapshots THIS browser's worker holds (the extension's own chat page). A call
      *  from another runtime is priced only when this browser fetched the same snapshot; otherwise it says why. */
     priceCalls?: SidebarServices["priceCalls"];
+    /** Scan a draft for registered values, for a runtime that is THIS browser's worker (the extension's own chat page); a
+     *  runtime that is not answers null. Absent where nothing here holds the registry (the web build, the phone): no chip. */
+    scanTurn?(runtime: RuntimeId, texts: string[]): Promise<unknown>;
     /** Open this page's Settings filtered to a field. */
     findSetting?: SidebarServices["findSetting"];
     /** Open the extension's settings view a `window-ml:` link names (sidebar/links.ts). */
@@ -73,13 +76,15 @@ export function hostServices(store: ChatStore, platform: ClientPlatform, reading
             const id = idOf(key as SessionKey);
             return !!id && !!store.runtimes.value.find((r) => r.id === id.runtime)?.capabilities.attachPdf;
         },
-        sendToSession: async (key, text, images, files, progress) => {
+        sendToSession: async (key, text, images, files, progress, asIs) => {
             const id = idOf(key);
             if (!id) return { ok: false, error: "no such session here" };
             const vision = !!images?.length && claimsVision(id.runtime, store.index.value.get(key as SessionKey)?.model);
-            const r = await store.send({ type: "session.send", session: id, text, ...(images?.length ? { images } : {}), ...(files?.length ? { files } : {}), ...(vision ? { vision: true as const } : {}) }, progress ? { progress } : undefined);
+            const r = await store.send({ type: "session.send", session: id, text, ...(images?.length ? { images } : {}), ...(files?.length ? { files } : {}), ...(asIs?.length ? { asIs } : {}), ...(vision ? { vision: true as const } : {}) }, progress ? { progress } : undefined);
             return r.ok ? { ok: true } : { ok: false, error: r.error.message || r.error.code };
         },
+        // A scope is a session's key, or a runtime's id on the start page. Only the entry that holds the registry has it.
+        ...(readings.scanTurn ? { scanTurn: (texts: string[], scope: string) => readings.scanTurn!(parseSessionKey(scope)?.runtime ?? scope, texts) } : {}),
         cancelSession: (key) => {
             const id = idOf(key);
             if (id) void store.send({ type: "session.cancel", session: id });

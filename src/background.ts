@@ -435,7 +435,9 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         const sentFiles = cleanFiles(message.files);
         // A run the worker built is driven from here: the page never carries the person's message (sw-run-start.ts).
         if ((message.action === "send" || message.action === "continue") && typeof message.hash === "string") {
-            void userRunAction(message.hash, message.action, { text: message.text, images: message.images, ...(message.files != null ? { files: message.files } : {}), surface: message.surface, maxSteps: message.maxSteps }, message.tabId)
+            // The person's exemption tokens ("send as is", ruling 39) only from an extension page's sender; never to a page.
+            const asIs = isExtensionSender(sender) ? asIsTokens(message.asIs) : undefined;
+            void userRunAction(message.hash, message.action, { text: message.text, images: message.images, ...(message.files != null ? { files: message.files } : {}), surface: message.surface, maxSteps: message.maxSteps, ...(asIs ? { asIs } : {}) }, message.tabId)
                 .then((mine) => { if (!mine) toPage(); }, (e) => {
                     // As on USER_RUN_ACTION: a refused turn is said in the run's step list, never handed to the page.
                     // A store that cannot be read holds the message (ruling 44): said, never handed to the page unscrubbed.

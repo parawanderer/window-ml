@@ -2,7 +2,7 @@
 // agent run's final answer), the user/assistant turn pair, and the session-list row. Extracted from
 // app.tsx; a leaf view layer over ui-kit + answer-render (no agent-detail / HUD deps, so agent-detail
 // can import ReplyBubble without a cycle).
-import { ArrivingMsg, PROMPT_RAW_TIPS, RawToggle, SentContext, SentImages, UserActions, UserText } from "./user-text";
+import { ArrivingMsg, PROMPT_RAW_TIPS, RawToggle, SentAsIs, SentContext, SentImages, UserActions, UserText } from "./user-text";
 import { cssDurationMs } from "../use-close";
 import { services, bareHash } from "../services";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
@@ -301,10 +301,11 @@ export function MessageTurn({ t, hash }: { t: Turn; hash?: string }) {
             <ArrivingMsg ts={t.ts}>
                 <div class={`msg user${shown ? "" : " no-text"}`} data-prompt={`t${t.id}`}>
                     <div class="mrow"><span class="who">user</span>{t.display ? <RawToggle raw={raw} onRaw={setRaw} tips={PROMPT_RAW_TIPS} /> : null}<span class="sp" />{shown ? <UserActions text={shown} /> : null}<Stamp ts={t.ts} /></div>
-                    {shown ? <UserText text={shown} /> : null}
+                    {shown ? <UserText text={shown} marks={!raw} /> : null}
                 </div>
                 <SentImages images={t.images} />
                 {t.display && !raw ? <SentContext context={t.display.context} /> : null}
+                <SentAsIs names={t.display?.asIs} />
             </ArrivingMsg>
             {/* `anchorHash` is what the event lane scrolls to. A chat session gets a container bar and
                 generation spans like any other, and clicking one used to navigate here and then find nothing

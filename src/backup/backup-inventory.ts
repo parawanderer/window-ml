@@ -90,6 +90,7 @@ export const INVENTORY: readonly InventoryEntry[] = [
 
     // --- never: the person's registered secrets ---
     local("ml_secret_registry", "config", "the values the person registered as secret (SECRET_HANDLES.md, \"The scrub as built\"): a secret is never written to a backup, an export or an archive-folder file", "never"),
+    session("ml_turn_exempt_key", "config", "the key \"send as is\" tokens are made with (SECRET_HANDLES.md, \"Per value\"): a backup carrying it would let a token outlive the browser session it was made for"),
 
     // --- never: sessions and what a run leaves behind ---
     local("ml_session_", "chat", "a chat's resumable record, per chat: the session's archive row carries the same history (backup.md, \"Resuming a restored chat\")", "never", { prefix: true }),

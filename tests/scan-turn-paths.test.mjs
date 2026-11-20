@@ -134,6 +134,21 @@ test("a steer into a running run with a token (USER_RUN_ACTION) sends that value
     assert.ok(usersOf(w.chats()[1]).at(-1).startsWith(`now ${VALUE}`), usersOf(w.chats()[1]).at(-1));
 });
 
+test("the DevTools panel's follow-up (ML_SESSION_REMOTE) with a token sends that value as is; a non-extension sender's is scrubbed", T, async () => {
+    for (const [sender, kept] of [[EXT, true], [TAB, false]]) {
+        const w = world();
+        const { hash } = await w.bg.context.__mlStartUserRunForTest(7, { task: "first", surface: "hud" });
+        await flush(30);
+        const tok = await w.token();
+        void w.bg.send({ type: "ML_SESSION_REMOTE", tabId: 7, action: "send", hash, text: `see ${VALUE}`, surface: "devtools", asIs: [tok] }, sender);
+        await w.waitChats(2);
+        await flush(20);
+        const said = usersOf(w.chats()[1]).at(-1);
+        assert.equal(said.startsWith(`see ${VALUE}`), kept, `${sender.url}: ${said}`);
+        if (!kept) assert.ok(said.startsWith(`see ${MARK}`), said);
+    }
+});
+
 // --- a page: the field is accepted as a shape and ignored ---
 
 const pageStart = (extra = {}) => ({ type: "START_RUN", payload: {

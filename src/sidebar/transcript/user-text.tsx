@@ -15,6 +15,8 @@ import type { PromptContext } from "../../contract/contract-run";
 import { fileSentTip, fileSummary } from "../../attached-files";
 import { truncate } from "../format";
 import { useJustArrived } from "./history-paint";
+import { FileScanButton, type FileScanView } from "./turn-scan-ui";
+import { sentAsIsNames, splitMarks } from "./turn-scan";
 import type { ComponentChildren } from "preact";
 
 /** How tall a message may be before it folds, in lines of its own text. Past this it shows `FOLD_LINES` and fades. */
@@ -37,7 +39,8 @@ export function ArrivingMsg({ ts, children }: { ts: number | undefined; children
     return <div class={`msg-arrive${growing ? " growing" : ""}`} onAnimationEnd={done}>{children}</div>;
 }
 
-export function UserText({ text }: { text: string }) {
+/** A person's message text in the transcript: long text collapsed with a toggle, and with `marks` each redacted secret drawn as a marker chip. */
+export function UserText({ text, marks }: { text: string; /** draw each `[REDACTED:<NAME>]` marker as a chip: the rendered view, never the raw one (what the model saw stays as it is) */ marks?: boolean }) {
     const el = useRef<HTMLDivElement>(null);
     const [long, setLong] = useState(false);
     const [open, setOpen] = useState(false);
@@ -71,7 +74,7 @@ export function UserText({ text }: { text: string }) {
     };
     return (
         <div class={`utext-wrap${long ? " long" : ""}`} ref={wrap}>
-            <div ref={el} class={`utext${folded ? " folded" : long && open ? " opened" : ""}`} style={folded ? `--fold-lines:${FOLD_LINES}` : undefined}>{text}</div>
+            <div ref={el} class={`utext${folded ? " folded" : long && open ? " opened" : ""}`} style={folded ? `--fold-lines:${FOLD_LINES}` : undefined}>{marks ? splitMarks(text).map((p, i) => ("mark" in p ? <RedactedMark key={i} name={p.mark} /> : p.text)) : text}</div>
             {long ? (
                 // Gemini's control: a round chevron at the text's bottom right, over the fade it explains. Named for a
                 // screen reader and a keyboard, since the glyph alone says nothing to either.
@@ -82,6 +85,30 @@ export function UserText({ text }: { text: string }) {
             ) : null}
         </div>
     );
+}
+
+/**
+ * WHERE A REGISTERED VALUE WAS, in a message you sent: a small inline marker naming it, in place of the `[REDACTED:<NAME>]`
+ * the worker put there before the model read it. Names only; the value was never in the message the model got.
+ * @param name the registry entry's name
+ * @group sidebar/transcript
+ * @gallery {"name": "PLUG_PASSWORD"}
+ */
+export function RedactedMark({ name }: { name: string }) {
+    return <span class="utext-mark" role="img" aria-label={`${name}, taken out`} tabIndex={0} {...cursorTipOn(`The value registered as ${name} was taken out before the model read this message.`)}>{name}</span>;
+}
+
+/**
+ * THE QUIET LINE UNDER A MESSAGE whose registered values the person sent as they were: their names, nothing else. The
+ * model read those values; the line says it was on purpose.
+ * @param names the names, from the turn's `display.asIs`
+ * @group sidebar/transcript
+ * @gallery {"names": ["PLUG_PASSWORD", "window-ml-api-key"]}
+ */
+export function SentAsIs({ names }: { names?: readonly string[] | null }) {
+    const list = sentAsIsNames(names);
+    if (!list.length) return null;
+    return <div class="sent-asis" {...cursorTipOn("You chose to send these registered values as they were. The model read them.")}>Sent as is: {list.join(", ")}</div>;
 }
 
 /**
@@ -168,15 +195,19 @@ export function ElementPill({ ctx, onRemove }: { ctx: ElementContext; onRemove?:
  * @param tip what the info icon says; absent in the composer
  * @param refusal why this file is refused, when it is
  * @param onRemove the × (the composer's chip only)
+ * @param scan the registered values the scan found in the file, with the control to send them as is (the composer's chip only)
  * @gallery {"summary": "server.log · text, 412 lines", "tip": "Sent to the model in full."}
+ * @gallery scanned {"summary": "notes.txt · text, 12 lines", "scan": {"count": 2, "names": ["PLUG_PASSWORD"], "on": false, "onToggle": null}}
+ * @gallery scanned-as-is {"summary": "notes.txt · text, 12 lines", "scan": {"count": 1, "names": ["PLUG_PASSWORD"], "on": true, "onToggle": null}, "onRemove": null}
  * @group sidebar/transcript
  */
-export function FilePill({ summary, tip, refusal, onRemove }: { summary: string; tip?: string; refusal?: string | null; onRemove?: () => void }) {
+export function FilePill({ summary, tip, refusal, onRemove, scan }: { summary: string; tip?: string; refusal?: string | null; onRemove?: () => void; /** registered values found in it: a count, with "send as is" (the composer's chip only) */ scan?: FileScanView | null }) {
     return (
         <span class={`el-pill file-pill${refusal ? " refused" : ""}`}>
             <span class="el-pill-ic" aria-hidden="true"><IconFile /></span>
             {/* A refused file shows its reason INSTEAD of its summary: the reason names the file already. */}
             <span class="el-pill-txt">{refusal || summary}</span>
+            {scan && !refusal ? <FileScanButton scan={scan} /> : null}
             {tip ? <span class="file-pill-info" role="img" aria-label={tip} tabIndex={0} {...cursorTipOn(tip)}><IconInfo /></span> : null}
             {onRemove ? <button type="button" class="el-pill-x" onClick={onRemove} aria-label={`Remove ${summary.split(" · ")[0]}`} {...cursorTipOn("Remove")}>×</button> : null}
         </span>
