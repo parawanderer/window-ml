@@ -2,7 +2,9 @@
 //
 // One source rule for every caller: `tableSource` names what a source IS, `tableSourceAsks` says whether reading it
 // needs the person, and the read-only dialect's facade asks the second before it calls the first. The answer is always
-// a fresh `Table` whose rows are a copy, so an edit to it never reaches the page, the fetch cache or the stored value.
+// one an edit cannot carry back to its source, and none is copied. The rule (ruling 89): a table is READ-ONLY exactly
+// when something else still holds the same arrays (the fetch cache, a pointer's value), frozen in place, with `.copy()`
+// for an editable one; a table read for this call alone (a page table, a Sheet, a parse with options) is the caller's.
 
 import { makeBackgroundTaskPromise } from "../bridge";
 import type { MlApi, FetchResult, TableValue } from "../contract";
@@ -10,9 +12,12 @@ import type { Table, TableLike } from "../contract/contract-fetch";
 import { googleSheetCsvUrl, isElement, elPath } from "../dom/dom";
 import { mlFetchCache } from "./ml-fetch-cache";
 import { pageTable } from "./ml-python";
-import { isTable } from "../table/table-brand";
-import { asTable, copyTable, tableFromDelimited, tableOf } from "../table/table-data";
+import { isTable, storedReader, isFrozenTablePart } from "../table/table-brand";
+import { asTable, tableFromDelimited, tableOf, type StoredColumnReader } from "../table/table-data";
 import { currentHasTool } from "../tools/tool-exec";
+
+/** The store reader behind a stored table, so a read-only facade over it keeps reading every row. */
+const readerOf = (t: unknown): StoredColumnReader | undefined => storedReader(t) as StoredColumnReader | undefined;
 
 /** What a `ml.table` source is, by its shape. `url` is resolved (a site path made absolute, a fetch result's URL). */
 export type TableSourceKind =
@@ -92,14 +97,21 @@ export function tableSourceAsks(k: TableSourceKind): string | null {
     }
 }
 
-/** Copy a table so the caller owns it: new row arrays, new column list. The source is never handed out. */
-function fresh(t: TableLike): Table {
-    return asTable({ ...t, columns: [...t.columns], rows: t.rows.map(r => [...r]), ...(t.dtypes ? { dtypes: { ...t.dtypes } } : {}) }, { python: currentHasTool("python_exec") });
+/** A READ-ONLY table over `t`, frozen in place with no copy (ruling 57, as amended): for a source something else still
+ *  holds (the fetch cache, the value store). `.copy()` is the way to an editable one. */
+function frozen(t: TableLike): Table {
+    return asTable(t, { python: currentHasTool("python_exec"), frozen: true });
+}
+
+/** An EDITABLE table over `t` with no copy: for a table read for this call alone, whose arrays nobody else holds (a page
+ *  table read from the DOM, a parse of a Sheet's or a fetched CSV's text). The caller owns it outright. */
+function unshared(t: TableLike): Table {
+    return asTable(t, { python: currentHasTool("python_exec"), editable: true });
 }
 
 /** Delimited text → a fresh Table, with the caller's overrides. */
 function fromText(text: string, opts: TableOpts, delimiter?: string): Table {
-    return fresh(tableFromDelimited(text, { raw: !!opts.raw, ...(opts.delimiter ?? delimiter ? { delimiter: opts.delimiter ?? delimiter } : {}), ...(typeof opts.header === "boolean" ? { header: opts.header } : {}) }));
+    return unshared(tableFromDelimited(text, { raw: !!opts.raw, ...(opts.delimiter ?? delimiter ? { delimiter: opts.delimiter ?? delimiter } : {}), ...(typeof opts.header === "boolean" ? { header: opts.header } : {}) }));
 }
 
 /**
@@ -148,7 +160,7 @@ async function readSource(ml: MlApi, k: TableSourceKind, opts: TableOpts): Promi
             if (cached.truncated) throw new Error(`ml.table — "${k.url}" was fetched clipped at the size cap, so the page holds only its first rows. Read the fetch's "@tool:<id>" pointer, whose whole table is stored.`);
             const parsed = (cached as FetchResult).table;
             // The cache's own parse when nothing is overridden; a fresh parse of the kept text when something is.
-            if (!o.raw && o.delimiter === undefined && o.header === undefined && parsed) return fresh(parsed);
+            if (!o.raw && o.delimiter === undefined && o.header === undefined && parsed) return frozen(parsed);
             return fromText(cached.text, o);
         }
         case "sheet": {
@@ -163,9 +175,9 @@ async function readSource(ml: MlApi, k: TableSourceKind, opts: TableOpts): Promi
             if (!t) throw new Error(`ml.table(${JSON.stringify(k.ref)}): that output is not a table.`);
             notDelimited("a pointer's table");
             if (o.raw) throw new Error(`ml.table(${JSON.stringify(k.ref)}, { raw }): a stored table keeps the types it was read with. Read its source URL with raw instead.`);
-            // Always a copy: a stored facade's `rows` is the value store's own preview, so the facade itself would let an
-            // edit reach the run's stored value. The copy keeps a stored table's reader, so its whole-table reads still work.
-            return copyTable(t, { python: currentHasTool("python_exec") });
+            // Read-only over the stored preview itself, with no copy: a stored facade's `rows` is the value store's own array,
+            // which is why it is frozen rather than handed out writable. The reader comes along, so whole-table reads work.
+            return asTable(t, { python: currentHasTool("python_exec"), frozen: true, ...(readerOf(t) ? { readColumns: readerOf(t) } : {}) });
         }
         case "table": {
             notDelimited("a table value");
@@ -173,13 +185,16 @@ async function readSource(ml: MlApi, k: TableSourceKind, opts: TableOpts): Promi
             const total = t.shape?.[0];
             if (t.truncated || (typeof total === "number" && total > t.rows.length))
                 throw new Error(`ml.table: this table holds ${t.rows.length.toLocaleString("en-US")} of ${typeof total === "number" ? total.toLocaleString("en-US") : "more"} rows, a preview. Pass the URL it was fetched from, or its "@tool:<id>", to read every row.`);
-            return fresh(tableOf([...t.columns], t.rows, total));
+            // The caller's own arrays, handed back without a copy: editable if they were the caller's to edit, and still
+            // read-only if they came from a read-only table, since whatever holds those holds them still.
+            const like = tableOf(t.columns, t.rows, total);
+            return isFrozenTablePart(t.rows) ? frozen(like) : asTable(like, { python: currentHasTool("python_exec") });
         }
         case "page": case "element": {
             notDelimited("a page table");
             const read = k.kind === "page" ? pageTable(ml, k.selector, !!o.raw) : { source: { label: elPath(k.el) }, data: ml._resolveTable(k.el, !!o.raw) };
             if (read.data.kind !== "rows") throw new Error(`ml.table: "${read.source.label}" has merged or nested cells, so it does not read as rows. Read it in python_exec with pd.read_html, or point at a simpler table.`);
-            return fresh(tableOf(read.data.columns, read.data.rows));
+            return unshared(tableOf(read.data.columns, read.data.rows));
         }
     }
 }

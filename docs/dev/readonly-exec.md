@@ -496,9 +496,13 @@ source rule judges every caller and a source the page shapes (an accessor that a
 the same kind to the ask and the read: a page table, a pointer or a cached URL is free; a Sheet or an unfetched URL is refused and goes to the person (the run's
 approved-Sheets store is not readable from the facade yet, so a Sheet always asks here); a `/files/` path, a clipped
 fetch body and a preview are errors. The host gets a fresh copy of the three options, never the script's object. In
-the worker the member raises `NeedsPage`. The answer's rows are a copy, so an approved script's edit reaches neither the
-cache nor the next read; inside the dialect the answer is still the host's under the ownership rule, so a survey copies
-it to build on it, as above. Tests: `tests/readonly-ml-table.test.mjs`.
+the worker the member raises `NeedsPage`. Nothing is copied (ruling 89, ML_TABLE.md "Ownership"): a table something
+else still holds (a pointer's, the fetch cache's) is FROZEN at every level and marked in `table-brand.ts`, so `own()`
+never makes it script-owned and `refuseWrite` refuses a write to any part of it with "This table is read-only; call
+.copy() for one you can edit"; a table read for this call alone (a page table, a Sheet, a parse with options) and a
+`t.copy()` are branded editable and owned down to their rows. Any other facade is owned only at its top, because its
+rows may be shared (`head` shares its parent's). `copy` is a table method, sized by the rows in hand, never the stored
+file. Tests: `tests/readonly-ml-table.test.mjs`.
 
 ### The table facade: a receiver kind of its own
 

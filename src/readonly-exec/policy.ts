@@ -149,7 +149,7 @@ const BY_KIND: Record<MethodKind | "*", readonly string[]> = {
     // scoped at all: `select` picks columns here and CHANGES THE PAGE'S TEXT SELECTION on an `<input>`, so it
     // could never have joined a flat list. Each returns plain data or another facade, reads nothing outside
     // the table, and mutates nothing — the facade itself refuses writes.
-    table: ["col", "select", "records", "head"],
+    table: ["col", "select", "records", "head", "copy"],
     // An `ml.embed` result (embedding.ts): a unit vector and the two comparisons on it. Each is O(dimensions x
     // candidates), charged before it runs (evaluator.ts `preflight`), and neither reads anything but other embeddings.
     embedding: ["dot", "rank"],

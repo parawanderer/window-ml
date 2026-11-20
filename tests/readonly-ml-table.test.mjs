@@ -8,16 +8,21 @@ import { JSDOM } from "jsdom";
 import { evalReadonly, NotInDialect, Denied, NeedsPage } from "../src/readonly-exec.ts";
 import { table, tableSurvey } from "../src/ml/ml-table.ts";
 import { mlFetchCache } from "../src/ml/ml-fetch-cache.ts";
-import { derivedFetchFields } from "../src/ml/fetch-result.ts";
+import { derivedFetchFields, cacheCopy } from "../src/ml/fetch-result.ts";
 import { asTable } from "../src/table/table-data.ts";
+import { READ_ONLY_TABLE, isStoredTable } from "../src/table/table-brand.ts";
 
 const doc = () => new JSDOM("<!doctype html><body><p id='p'>hello</p></body>").window.document;
 const SALES = { columns: ["region", "amount"], rows: [["north", 10], ["south", 20]] };
 const CSV_URL = "https://data.example/sales.csv";
 const CSV = "region,amount\nnorth,10\nsouth,20\n";
 
-/** A fetch result as `ml.fetch` caches it: the body, and the table parsed from it. */
+/** A fetch result as `ml.fetch` caches it: the body, and the table parsed from it, through the cache's own copy. */
 function fetched(url, text, extra = {}) {
+    return cacheCopy(fetchedRaw(url, text, extra));
+}
+/** A fetch result as `ml.fetch` builds it, before it is cached. */
+function fetchedRaw(url, text, extra = {}) {
     const r = { url, status: 200, ok: true, type: "csv", text, contentType: "text/csv", typeByHeader: "csv", typeByContent: "csv", typeByExtension: null, ...extra };
     derivedFetchFields(r, { markdown: () => undefined, python: false });
     return r;
@@ -65,14 +70,140 @@ test("raw keeps every cell a string; delimiter and header override discovery for
 
 // --- the answer is the caller's own (ruling 57) ---
 
-test("an edit to the answer reaches neither the fetch cache nor a second read", async () => {
+// --- read-only where something else holds the table (ruling 57, as amended 2026-11-20) ---
+
+/** The four parts of a table, each frozen, and a write to each refused: in strict code a write throws. */
+function assertReadOnly(t, what) {
+    for (const [name, part] of [["rows", t.rows], ["a row", t.rows[0]], ["columns", t.columns], ["shape", t.shape], ["dtypes", t.dtypes]])
+        assert.ok(Object.isFrozen(part), `${what}: ${name} is frozen`);
+    assert.throws(() => { t.rows[0][1] = 999; }, TypeError, `${what}: a cell write throws`);
+    assert.throws(() => { t.rows.push(["x", 0]); }, TypeError, `${what}: a row push throws`);
+    assert.throws(() => { t.columns.push("x"); }, TypeError, `${what}: a column push throws`);
+    assert.throws(() => { t.shape[0] = 1; }, TypeError, `${what}: a shape write throws`);
+    assert.throws(() => { t.dtypes.amount = "object"; }, TypeError, `${what}: a dtypes write throws`);
+    assert.throws(() => { t.rows = []; }, (e) => e.message === READ_ONLY_TABLE, `${what}: the facade names the way out`);
+}
+
+/** An `ml` whose `dereference` answers `ref` with `table`, as a run's pointer would. */
+function pointerHost(table) {
+    const { ml } = host();
+    ml.dereference = async () => ({ value: "", table });
+    return ml;
+}
+const stored = () => {
+    const reads = [];
+    const t = asTable({ columns: ["region", "amount"], rows: [["north", 10], ["south", 20]], shape: [4, 2], dtypes: { region: "object", amount: "int64" }, truncated: true },
+        { readColumns: async (names) => { reads.push(names); return { rowCount: 4, columns: Object.fromEntries(names.map((n) => [n, n === "region" ? ["north", "south", "east", "west"] : [10, 20, 30, 40]])) }; } });
+    return { t, reads };
+};
+
+test("every source something else holds answers read-only at every level: a fetched URL, a fetch result, a pointer's whole table, a stored table", async () => {
     mlFetchCache.set(CSV_URL, fetched(CSV_URL, CSV));
     const { ml } = host();
-    const t = await ml.table(CSV_URL);
-    t.rows[0][1] = 999;
-    t.columns.push("x");
-    assert.equal(mlFetchCache.get(CSV_URL).table.rows[0][1], 10, "the cached table is untouched");
-    assert.deepEqual((await ml.table(CSV_URL)).rows[0], ["north", 10], "a re-read returns the source");
+    assertReadOnly(await ml.table(CSV_URL), "a fetched URL");
+    assertReadOnly(await ml.table(mlFetchCache.get(CSV_URL)), "a fetch result");
+    const whole = { columns: ["region", "amount"], rows: [["north", 10], ["south", 20]], shape: [2, 2], dtypes: { region: "object", amount: "int64" } };
+    assertReadOnly(await table.call(pointerHost(whole), "@tool:abc"), "a pointer's whole table");
+    assertReadOnly(await table.call(pointerHost(stored().t), "@tool:abc"), "a stored table");
+});
+
+test("ml.fetch's own table is read-only from the first read, and an edit attempt leaves the cache's next answer unchanged", () => {
+    const r = fetchedRaw(CSV_URL, CSV);
+    const cached = cacheCopy(r);
+    assert.equal(r.table, cached.table, "the caller and the cache hold the one table");
+    assertReadOnly(r.table, "the caller's ml.fetch result");
+    assert.throws(() => { r.table.rows[0][1] = 999; }, TypeError);
+    assert.deepEqual(cached.table.rows[0], ["north", 10], "the cache's next answer is unchanged");
+});
+
+test("a read-only answer is not copied: two reads of one source share its rows", async () => {
+    mlFetchCache.set(CSV_URL, fetched(CSV_URL, CSV));
+    const { ml } = host();
+    assert.equal((await ml.table(CSV_URL)).rows, (await ml.table(CSV_URL)).rows);
+    const s = stored().t;
+    const p = pointerHost(s);
+    assert.equal((await table.call(p, "@tool:abc")).rows, s.rows, "a stored table's answer is over the store's own preview, frozen");
+});
+
+test("select and head of a read-only table are read-only too", async () => {
+    mlFetchCache.set(CSV_URL, fetched(CSV_URL, CSV));
+    const t = await host().ml.table(CSV_URL);
+    for (const [what, d] of [["select", t.select(["region", "amount"])], ["head", t.head(1)]]) {
+        assert.ok(Object.isFrozen(d.rows) && Object.isFrozen(d.rows[0]) && Object.isFrozen(d.columns), `${what} is frozen`);
+        assert.throws(() => { d.rows[0][0] = "x"; }, TypeError, `${what}: a cell write throws`);
+    }
+});
+
+test("copy() is editable and independent: an edit reaches neither the source, the cache, nor a second copy", async () => {
+    mlFetchCache.set(CSV_URL, fetched(CSV_URL, CSV));
+    const t = await host().ml.table(CSV_URL);
+    const a = t.copy(), b = t.copy();
+    a.rows[0][1] = 999; a.rows.push(["east", 30]); a.columns.push("x");
+    assert.deepEqual(t.rows[0], ["north", 10], "the source");
+    assert.deepEqual(mlFetchCache.get(CSV_URL).table.rows, [["north", 10], ["south", 20]], "the cache");
+    assert.deepEqual(b.rows, [["north", 10], ["south", 20]], "a second copy");
+    assert.deepEqual(b.columns, ["region", "amount"]);
+    const h = a.head(1), sel = a.select(["amount"]);
+    h.rows[0][0] = "y"; sel.rows[0][0] = -1;
+    assert.equal(h.rows[0][0], "y", "a copy's head is editable");
+    assert.equal(sel.rows[0][0], -1, "a copy's select is editable");
+});
+
+test("copy() of a stored table copies only the rows in hand and still reads every row from the store", async () => {
+    const { t, reads } = stored();
+    const c = (await table.call(pointerHost(t), "@tool:abc")).copy();
+    assert.ok(isStoredTable(c), "the copy keeps the store reader");
+    assert.equal(c.rows.length, 2, "only the preview is copied");
+    assert.notEqual(c.rows, t.rows);
+    c.rows[0][1] = 999;
+    assert.equal(t.rows[0][1], 10, "the store's preview is untouched");
+    assert.deepEqual(await c.col("amount"), [10, 20, 30, 40], "col() reads every row");
+    assert.deepEqual(reads, [["amount"]]);
+});
+
+test("in the dialect: a write to a read-only table is refused with the way out, and a copy is the script's to edit", async () => {
+    mlFetchCache.set(CSV_URL, fetched(CSV_URL, CSV));
+    const u = JSON.stringify(CSV_URL);
+    for (const js of [`const t = await ml.table(${u}); t.rows[0][1] = 999; return 1;`, `const t = await ml.table(${u}); t.rows.push(["x", 1]); return 1;`,
+        `const t = await ml.table(${u}); t.columns.push("x"); return 1;`, `const t = await ml.table(${u}); t.head(1).rows[0][0] = "x"; return 1;`]) {
+        const err = await run(js).then(() => null, (e) => e);
+        assert.ok(err, js);
+        assert.equal(err.message, READ_ONLY_TABLE, js);
+    }
+    const r = await run(`const c = (await ml.table(${u})).copy(); c.rows[0][1] = 999; c.rows.push(["east", 30]); return [c.rows[0][1], c.rows.length];`);
+    assert.deepEqual(r.value, [999, 3]);
+    assert.deepEqual(mlFetchCache.get(CSV_URL).table.rows[0], ["north", 10], "the cache is untouched by the copy's edit");
+});
+
+// --- the caller's own where nothing else holds it: editable, with no copy (ruling 89) ---
+
+test("a table read for this call alone is editable and not frozen: a page table, and a fetched CSV parsed with options", async () => {
+    mlFetchCache.set(CSV_URL, fetched(CSV_URL, CSV));
+    const { ml } = host();
+    for (const [what, t] of [["a page table", await ml.table("#sales")], ["a parse with raw", await ml.table(CSV_URL, { raw: true })]]) {
+        assert.ok(!Object.isFrozen(t.rows) && !Object.isFrozen(t.rows[0]) && !Object.isFrozen(t.columns), `${what} is not frozen`);
+        t.rows[0][1] = 999; t.rows.push(["east", 30]);
+        assert.equal(t.rows[0][1], 999, what);
+    }
+    assert.deepEqual(mlFetchCache.get(CSV_URL).table.rows[0], ["north", 10], "a parse with options never reaches the cache's table");
+});
+
+test("in the dialect a page table is the script's to edit, down to its rows", async () => {
+    const r = await run(`const t = await ml.table("#sales"); t.rows[0][1] = 999; t.rows.push(["east", 30]); return [t.rows[0][1], t.rows.length];`);
+    assert.deepEqual(r.value, [999, 3]);
+});
+
+test("a table value the caller passes is handed back over the caller's own rows, with no copy; a read-only one stays read-only", async () => {
+    const mine = { columns: ["region", "amount"], rows: [["north", 10], ["south", 20]], shape: [2, 2], dtypes: { region: "object", amount: "int64" } };
+    const t = await host().ml.table(mine);
+    assert.equal(t.rows, mine.rows, "not copied");
+    t.rows[0][1] = 5;
+    assert.equal(mine.rows[0][1], 5, "the caller's own rows");
+    mlFetchCache.set(CSV_URL, fetched(CSV_URL, CSV));
+    const ro = await host().ml.table(CSV_URL);
+    const back = await host().ml.table(ro);
+    assert.equal(back.rows, ro.rows);
+    assert.throws(() => { back.rows[0][1] = 1; }, TypeError, "what the cache holds stays read-only");
 });
 
 test("an edit to a page table's answer does not reach the next read", async () => {

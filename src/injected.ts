@@ -380,7 +380,7 @@ import { pageWorld } from "./page-world";
                     // re-derives them. Computed here in the page main world, which has a DOM; the cached copy carries it.
                     derivedFetchFields(r, { markdown: htmlToMarkdown, python: currentHasTool("python_exec") });
                     // Keyed by url ALONE: which reads may share that key is `fetchIsCacheable`'s rule (never as-you bytes).
-                    if (fetchIsCacheable(r, { credentials, rendered, format })) mlFetchCache.set(key, cacheCopy(r));
+                    if (fetchIsCacheable(r, { credentials, rendered, format })) mlFetchCache.set(key, cacheCopy(r, { python: currentHasTool("python_exec") }));
                     return r;
                 });
         },

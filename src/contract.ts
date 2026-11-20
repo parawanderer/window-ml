@@ -243,8 +243,9 @@ export interface MlApi {
     /** Read a whole table you own: a CSS selector or `"current"` (a page table, or the Google Sheet you are on), an
      *  http(s) URL this page already fetched (read from the fetch cache, never fetched), a fetch result (by its URL),
      *  a Google Sheets URL, `"@tool:<id>"`, or a table value. `raw` keeps every cell a string; `delimiter` and
-     *  `header` override discovery for a CSV or a Sheet. Editing the answer changes nothing else, and a second read
-     *  returns the source again. In a read-only survey a Sheet, or a URL not yet fetched, needs approval. */
+     *  `header` override discovery for a CSV or a Sheet. Nothing is copied: a pointer's or a fetched URL's table is
+     *  read-only, and `.copy()` gives one you can edit; a page table, a Sheet or a parse with options is yours to edit. A
+     *  second read never returns an edit. In a read-only survey a Sheet, or a URL not yet fetched, needs approval. */
     table(src: string | Element | FetchResult | Table | TableValue, opts?: { raw?: boolean; delimiter?: string; header?: boolean }): Promise<Table>;
     /** Resolve `src` once for the read-only dialect: `asks` (null, or why reading it needs the person) and `read`,
      *  which reads exactly the source `asks` judged, so a source the page shapes cannot change between the two. */

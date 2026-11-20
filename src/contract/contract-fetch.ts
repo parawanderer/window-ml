@@ -124,7 +124,8 @@ export interface TableLike {
  *
  *  It is NOT a DataFrame: `t.price`, `t[["a", "b"]]`, `t.groupby(…)` throw an error naming the nearest real
  *  spelling rather than returning `undefined`. For grouping, joins and the rest of pandas, hand the source URL to
- *  `python_exec`'s `tables`. Read-only: writing to it throws; copy what you need first. Available in the
+ *  `python_exec`'s `tables`. Read-only: a fetched or a pointer's table is frozen at every level, so a write throws in
+ *  strict code and does nothing in non-strict code; `t.copy()` gives one you can edit. Available in the
  *  read-only `exec` dialect, where a call that would build more than a million cells at once asks first.
  *
  *  From `ml.fetch`, every method is synchronous and reads `rows`. One case returns promises: a STORED table, which
@@ -142,6 +143,13 @@ export interface Table extends TableLike {
     records(): Record<string, TableCell>[];
     /** The first `n` rows as a new table (default 5), like `df.head()`: its `shape` counts only those rows. */
     head(n?: number): Table;
+    /** An EDITABLE copy, like `df.copy()`. A fetched table (`ml.fetch`, or `ml.table` of a URL) and a pointer's are
+     *  read-only at every level (`rows`, each row, `columns`, `shape`, `dtypes`), and so is every `select`/`head` of
+     *  them; call `copy()` before you edit. A copy and
+     *  its own `select`/`head` results are yours to change. Of a stored table it copies only the rows in `rows`, never
+     *  the whole stored file, and its `col`/`select`/`records` still read every row. A write to a read-only table from
+     *  non-strict page code does nothing and throws nothing. */
+    copy(): Table;
 }
 
 /** What a fetched body turned out to BE, resolved once and then trusted. Decided from the response header,
