@@ -10,6 +10,7 @@ import { useEffect, useState } from "preact/hooks";
 import type { RuntimeInfo, SessionKey, SessionKind, SessionStatus, SessionSummary } from "../session/session-host";
 import type { ChatStore } from "./chat-store";
 import { Dialog } from "../sidebar/dialog";
+import { HoverCard } from "../sidebar/hover-card";
 import { fmtAge } from "../sidebar/timestamps";
 import { truncate } from "../sidebar/format";
 import { approvalsPending, STATUS_LABEL } from "./status-words";
@@ -56,6 +57,34 @@ export function summaryLines(s: SessionSummary, rt: RuntimeInfo, now: number): S
         out.push({ key: "started", label: "Started", value: by ? `${when}, by ${by}` : when });
     }
     return out;
+}
+
+/** The fields of the SHORT FORM: the few lines a list row shows in its hover card. A subset of `summaryLines`' keys, so the
+ *  wording and the "no source, no line" rule stay that function's; the order is its order too. */
+export const SHORT_FORM_KEYS: readonly string[] = ["state", "model", "last", "asks"];
+
+/** The short form of a session's summary: `summaryLines` filtered to `SHORT_FORM_KEYS`, so a field with no source is absent. */
+export function shortFormLines(s: SessionSummary, rt: RuntimeInfo, now: number): SummaryLine[] {
+    return summaryLines(s, rt, now).filter((l) => SHORT_FORM_KEYS.includes(l.key));
+}
+
+/**
+ * The HOVER CARD of a session row in the chat page's list: the session's title over its short form (state, model, last
+ * activity, open asks), each only where its source answers. It wraps the row's TITLE text, not the row, so the row's click,
+ * its `⋮` and its dot, stamp and chip tips are untouched; a touch pointer opens no card (`HoverCard`).
+ * @gallery {"s":{"id":{"runtime":"local","hash":"a1b2c3d4"},"kind":"agent","status":"waiting","title":"Plot the fare prices","model":"qwen3:32b","createdTs":1795100000000,"lastTs":1795103000000,"pendingApprovals":2,"saved":true},"rt":{"id":"local","name":"This browser","kind":"browser","online":true,"contractVersion":1,"capabilities":{},"grants":[]},"title":"Plot the fare prices","now":1795103120000}
+ * @gallery-flow card tests/gallery-flows/SessionHoverCard.mjs {"s":{"id":{"runtime":"local","hash":"a1b2c3d4"},"kind":"agent","status":"waiting","title":"Plot the fare prices","model":"qwen3:32b","createdTs":1795100000000,"lastTs":1795103000000,"pendingApprovals":2,"saved":true},"rt":{"id":"local","name":"This browser","kind":"browser","online":true,"contractVersion":1,"capabilities":{},"grants":[]},"title":"Plot the fare prices","now":1795103120000}
+ * @group chat
+ */
+export function SessionHoverCard({ s, rt, title, now = Date.now() }: { s: SessionSummary; rt: RuntimeInfo; title: string; now?: number }) {
+    const lines = shortFormLines(s, rt, now);
+    const card = (
+        <div class="sum-hc">
+            <div class="sum-hc-title">{truncate(title, 120)}</div>
+            <dl class="sum-lines">{lines.map((l) => <div class="sum-line" key={l.key} data-field={l.key}><dt>{l.label}</dt><dd>{l.value}</dd></div>)}</dl>
+        </div>
+    );
+    return <HoverCard card={card}>{truncate(title, 90)}</HoverCard>;
 }
 
 /** The page's tabs, in the spec's order. The summary is home. */
