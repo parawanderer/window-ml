@@ -6,7 +6,7 @@
 // refuses, an `allow` frees only an ordinary change, and anything else is a card. What is written is the value the
 // card showed, over the value it showed as current, or nothing.
 
-import { DEFAULT_CONFIG, SETTING_PLACES, modelFilterAllows, type MlConfig, type SettingPlace } from "../contract/contract-config";
+import { DEFAULT_CONFIG, SETTING_PLACES, modelFilterAllows, publicConfig, type MlConfig, type SettingPlace } from "../contract/contract-config";
 import type { EffectsData } from "../effects";
 import { configTypeOk, domainAllows, modelWritable, settingDecl, settingWidens, type SettingClass } from "../setting-class";
 import { SETTING_TEXT } from "../setting-text";
@@ -162,28 +162,67 @@ export async function noteSettingDeclined(runId: string, key: string): Promise<v
 
 // --- reading: ml.settings() ---
 
-/** One entry of `ml.settings()`: a secret's has no `value` field at all, so it does not say whether it is set. */
+/**
+ * One entry of `ml.settings()`. A hidden one (a secret, or a class no caller may read) has no `value` field at all, so
+ * it does not say whether it is set; a held one is readable, but not by this caller: a survey's read is free, and the
+ * value is read with an exec that names `ml.settings`, which asks (docs/spec/MODEL_SETTINGS.md, "`ml.settings()` in a
+ * read-only survey").
+ */
 export type SettingEntry =
-    | { value: unknown; mode: "read" | "read-write"; class: "gate" | "guarded" | "ordinary" }
-    | { mode: "hidden"; class: "secret" };
+    | { value: unknown; mode: "read" | "read-write"; class: SettingClass }
+    | { mode: "read" | "read-write"; class: SettingClass; held: "exec" }
+    | { mode: "hidden"; class: SettingClass };
+
+/** Who reads `ml.settings()`: an isolated exec, behind its card, or a free read (a survey in the worker, the `ml` wire). */
+export type SettingReader = "exec" | "survey";
+
+/** The classes whose values may be read at all. Any class not here is hidden from every reader, a class added later included. */
+export const READABLE_CLASSES: ReadonlySet<SettingClass> = new Set<SettingClass>(["ordinary", "guarded", "gate"]);
+
+/** The keys `ml.config()` returns, read from the function that builds it. A free read has these already, through the same survey. */
+const PUBLIC_KEYS: ReadonlySet<string> = new Set(Object.keys(publicConfig(DEFAULT_CONFIG, false)));
+
+/**
+ * Whether a reader gets a key's value. An isolated exec reads every readable class. A free read gets an ordinary key
+ * (its domain is closed, so it carries a preference, never a path, a host or a list) and a key `ml.config()` returns;
+ * any other guarded or gate value could ride a free call to the page or a consented host, so it is held.
+ * @param key the setting
+ * @param cls its class
+ * @param reader who reads
+ * @param publicKeys the keys `ml.config()` returns; a parameter so a test can pass another set
+ */
+export function settingReadable(key: string, cls: SettingClass, reader: SettingReader, publicKeys: ReadonlySet<string> = PUBLIC_KEYS): boolean | "held" {
+    if (!READABLE_CLASSES.has(cls)) return false;
+    if (reader === "exec" || cls === "ordinary" || publicKeys.has(key)) return true;
+    return "held";
+}
 
 /**
  * What `ml.settings()` returns: one entry per classified key with a row in DevTools Settings, in the panel's order, read
- * from `config` each time it is called (docs/spec/MODEL_SETTINGS.md, "Reading").
+ * from `config` each time it is called (docs/spec/MODEL_SETTINGS.md, "Reading"). Every value is a fresh copy, so nothing
+ * the caller holds is the config's.
  * @param config the stored config
+ * @param reader who reads: an isolated exec, or a free read
  * @param places where each setting lives; a parameter so a test can pass another table
+ * @param publicKeys the keys `ml.config()` returns; a parameter so a test can pass another set
  */
-export function settingEntries(config: MlConfig, places: Readonly<Partial<Record<keyof MlConfig, SettingPlace>>> = SETTING_PLACES): Record<string, SettingEntry> {
+export function settingEntries(config: MlConfig, reader: SettingReader = "exec", places: Readonly<Partial<Record<keyof MlConfig, SettingPlace>>> = SETTING_PLACES, publicKeys: ReadonlySet<string> = PUBLIC_KEYS): Record<string, SettingEntry> {
     const out: Record<string, SettingEntry> = {};
     for (const key of Object.keys(places)) {
         const d = settingDecl(key);
         if (!d) continue;
-        if (d.class === "secret") { out[key] = { mode: "hidden", class: "secret" }; continue; }
+        const readable = settingReadable(key, d.class, reader, publicKeys);
+        if (readable === false) { out[key] = { mode: "hidden", class: d.class }; continue; }
+        const mode = modelWritable(key, places) ? "read-write" as const : "read" as const;
+        if (readable === "held") { out[key] = { mode, class: d.class, held: "exec" }; continue; }
         const value = (config as unknown as Record<string, unknown>)[key] ?? DEFAULT_CONFIG[key as keyof MlConfig];
-        out[key] = { value, mode: modelWritable(key, places) ? "read-write" : "read", class: d.class };
+        out[key] = { value: structuredClone(value), mode, class: d.class };
     }
     return out;
 }
+
+/** `ml.settings()` as a free read gives it: the survey's in the worker and the `ml` wire's, only in a run the worker built. */
+export const surveySettings = async (): Promise<Record<string, SettingEntry>> => settingEntries(await getConfig(), "survey");
 
 // --- judging, before a card ---
 

@@ -17,7 +17,8 @@ import { pipeStages } from "../pointers/token-pipe";
 import { FILE_PREFIX } from "../pointers/token-prefixes";
 import type { PipeLimits } from "../pointers/text-pipe";
 import { MAX_STRING, PIPE_CHARS_PER_STEP, STEP_BUDGET } from "../readonly-exec/limits";
-import { derefByRun, runControllers, sessionTokens, turnByRun } from "./sw-runs";
+import { derefByRun, isWorkerRun, runControllers, sessionTokens, turnByRun } from "./sw-runs";
+import { surveySettings } from "./sw-change-setting";
 import { shPut, shRead, shRun, type ShAnswer, type ShCallContext } from "./sw-shell-call";
 import { forPage } from "./sw-scrub";
 import { serveWireCall, wirePointer, WireError, wireClient, deliverIfOpen, type WireMember, type WireClient, type WireFrom, type WireArgsMeter } from "./ml-wire-serve";
@@ -44,7 +45,9 @@ function senderIs(from: WireFrom, sender: chrome.runtime.MessageSender): boolean
  */
 function membersFor(client: WireClient): Record<string, WireMember> {
     const deref = client.run ? derefByRun.get(client.run) : undefined;
-    const facade = mlFacade(workerReadonlyMl(client.tabUrl(), deref, client.run ?? ""), undefined, undefined, undefined, "worker") ?? {};
+    // `ml.settings`: only for a client bound to a run the worker built. The run is the handle's, which the worker opened.
+    const host = { ...workerReadonlyMl(client.tabUrl(), deref, client.run ?? ""), ...(client.run && isWorkerRun(client.run) ? { settings: surveySettings } : {}) };
+    const facade = mlFacade(host, undefined, undefined, undefined, "worker") ?? {};
     const out: Record<string, WireMember> = Object.create(null);
     for (const name of ML_READONLY_METHODS) {
         const fn = facade[name];

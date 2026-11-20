@@ -36,7 +36,7 @@ import { extractGrants, fetchUrlLiterals, tabGrantsForCall } from "./grant-extra
 import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
 import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, grantOnceFetch, consentFetch, fetchConsent, resolveApproval } from "./sw-consent";
-import { settingBeforeCard, settingCard, settingFacts, settingMeasureDeps, holdSettingChange, releaseSettingChange, noteSettingDeclined, watchSetting, settingEntries, settingChangedElsewhere, type SettingChange } from "./sw-change-setting";
+import { settingBeforeCard, settingCard, settingFacts, settingMeasureDeps, holdSettingChange, releaseSettingChange, noteSettingDeclined, watchSetting, settingEntries, surveySettings, settingChangedElsewhere, type SettingChange } from "./sw-change-setting";
 import { ASK_POLICY_CAUSE, navOnlyWhy, startLeftWhy, judgeCall, fetchFacts, navigateFacts, actFacts, noteAct, dropActs, actsOf, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
 import { checkProposals, recordedFetches, measureBreadth, breadthNote, measureActBreadth, actBreadthNote, measureSettingBreadth, measureSettingRows, settingBreadthNote, recordedSettingKeys, type PolicyProposal, type SettingBreadth } from "./policy-proposal";
 import { approveManifest, checkManifestProposal, draftCardNote, type CheckedManifest } from "./sw-manifest-proposal";
@@ -1710,7 +1710,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         : undefined;
                     const w = await guardSurvey(sh, () => evalReadonlyInWorker(args, {
                         ...(snap ? { current: () => current ?? snap({ model: modelNow(), log }) } : {}),
-                        ml: { ...workerReadonlyMl(tabPageUrl.get(tabId) ?? "", derefByRun.get(runId), runId), ...(sh ? { sh: sh.host } : {}) },
+                        // ml.settings: a free read, only in a run the worker built (decided from its record, never the script).
+                        ml: { ...workerReadonlyMl(tabPageUrl.get(tabId) ?? "", derefByRun.get(runId), runId), ...(byWorker() ? { settings: surveySettings } : {}), ...(sh ? { sh: sh.host } : {}) },
                         live,
                         signal: abortCtl.signal,
                     }));
