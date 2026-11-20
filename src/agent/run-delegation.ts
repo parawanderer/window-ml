@@ -321,7 +321,7 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
             const read = await answer(ref, pipe);
             const key = read.meta?.table ? read.meta.value : undefined;
             const table = read.meta?.table;
-            return key && table ? { ...read, readColumns: (names: string[]) => columnsViaBackground(runId, key, names, { ...(table.delimiter ? { delimiter: table.delimiter } : {}), ...(table.headerless ? { headerless: true } : {}) }) } : read;
+            return key && table ? { ...read, readColumns: (names: string[], plan?: StoredReadPlan) => columnsViaBackground(runId, key, names, { ...(table.delimiter ? { delimiter: table.delimiter } : {}), ...(table.headerless ? { headerless: true } : {}) }, plan) } : read;
         };
         const log = opts.answerShape ? new AnswerLog(opts.answerShape) : undefined;
         if (log) ctx.answer = log;

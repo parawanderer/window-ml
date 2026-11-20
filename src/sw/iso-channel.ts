@@ -31,8 +31,8 @@ export interface IsoDeps {
     deref: () => ((ref: string, pipe?: string | string[]) => DerefRead | Promise<DerefRead>) | undefined;
     /** Which sessions hold a stored value (null: unknown to the store). */
     holders: (key: string) => Promise<string[] | null>;
-    /** Read named columns of a stored value. */
-    columns: (key: string, names: string[], opts: { delimiter?: string; headerless?: boolean }) => Promise<{ rowCount: number; columns: Record<string, unknown[]> }>;
+    /** Read named columns of a stored value, up to the plan's limit. */
+    columns: (key: string, names: string[], opts: { delimiter?: string; headerless?: boolean }, plan: StoredReadPlan) => Promise<{ rowCount: number; columns: Record<string, unknown[]> }>;
     /** `ml.sh`'s calls, bound by the worker to the run and the step the exec runs in (sw-shell-call.ts); absent for a
      *  script that does not name `ml.sh`, which then has no `ml.sh` to call. */
     sh?: (call: "run" | "read" | "put", args: unknown[]) => Promise<IsoAnswer>;
@@ -91,12 +91,14 @@ export function isoServer(runId: string, reads: readonly PreRead[], deps: IsoDep
         }
         if (q.op === "cols") {
             if (typeof q.key !== "string" || !strings(q.names, MAX_NAMES, ISO_MAX_STAGE_CHARS)) return { error: ISO_REFUSED.malformed };
+            const plan = checkReadPlan(q as Record<string, unknown>);
+            if ("refused" in plan) return { error: ISO_REFUSED.malformed };
             const table = tables.get(q.key);
             if (!table) return { error: ISO_REFUSED.table };
             try {
                 const holders = await deps.holders(q.key);
                 if (holders && !holders.includes(runId)) return { error: ISO_REFUSED.held };
-                return { ok: await deps.columns(q.key, q.names, { ...(table.delimiter ? { delimiter: table.delimiter } : {}), ...(table.headerless ? { headerless: true } : {}) }) };
+                return { ok: await deps.columns(q.key, q.names, { ...(table.delimiter ? { delimiter: table.delimiter } : {}), ...(table.headerless ? { headerless: true } : {}) }, plan) };
             } catch (e) { return { error: (e as Error)?.message || String(e) }; }
         }
         if (q.op === "sh") {

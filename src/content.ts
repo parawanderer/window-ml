@@ -314,8 +314,11 @@ function onPageMessage(data: PageMessage): void {
     // A stored table's columns, read for a background-hosted run (`t.col(…)` on a stored table's facade). Id-matched; the
     // worker checks the run is hosted on this tab and that the key was sent with its in-flight call.
     if (data.type === "PAGE_VALUE_COLUMNS") {
-        const d = data as { id?: string; runId?: string; key?: string; names?: string[]; delimiter?: string; headerless?: boolean };
-        chrome.runtime.sendMessage({ type: "VALUE_COLUMNS", runId: d.runId, key: d.key, names: d.names, delimiter: d.delimiter, headerless: d.headerless }, (resp: { rowCount?: number; columns?: unknown; error?: string } = {}) => {
+        const d = data as { id?: string; runId?: string; key?: string; names?: string[]; delimiter?: string; headerless?: boolean; limit?: number };
+        // The plan's shape is closed: a field outside it is refused here, and the worker checks it again.
+        const plan = checkReadPlan(data as Record<string, unknown>);
+        if ("refused" in plan) { toPage({ type: "PAGE_VALUE_COLUMNS_RESULT", id: d.id, error: `Refused: ${plan.refused}.` }); return; }
+        chrome.runtime.sendMessage({ type: "VALUE_COLUMNS", runId: d.runId, key: d.key, names: d.names, delimiter: d.delimiter, headerless: d.headerless, ...(plan.limit !== undefined ? { limit: plan.limit } : {}) }, (resp: { rowCount?: number; columns?: unknown; error?: string } = {}) => {
             const err = chrome.runtime.lastError?.message || resp?.error;
             toPage({ type: "PAGE_VALUE_COLUMNS_RESULT", id: d.id, ...(err ? { error: err } : { rowCount: resp?.rowCount, columns: resp?.columns }) });
         });
