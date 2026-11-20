@@ -799,6 +799,34 @@ test("answer render (sidebar): an embed with NO caption is captioned with its to
     assert.ok(step.classList.contains("astep-pulse"), "the fallback caption goes to the source step");
 });
 
+test("answer render (sidebar): an http(s) address in an embedded output is a link, in a block and inline, and clicking it does not navigate", async () => {
+    const w = await loadSidebarWorld();
+    w.window.HTMLElement.prototype.scrollIntoView = function () {};
+    const block = "waiting for sign-in\nopen https://login.example.com/device?code=AB12 to continue\n(expires in 10 minutes)";
+    await w.dispatch(agentStart("elink", "sign in"));
+    await w.dispatch(agentStep("elink", 1, { seq: 1, tool: "python_exec", token: OUT, result: block, renderOut: { type: "python-out", stdout: block } }));
+    await w.dispatch({ ...agentResult("elink", "Sign in here:\n\n![](@tool:" + OUT + ":out)\n\nDone.", 1), answer: "" });
+    await openRun(w);
+    const embed = w.shadow.querySelector(".msg.asst .answer-rendered .tok-block");
+    const a = embed?.querySelector("a.out-link");
+    assert.ok(a, "the block embed draws the address as a link");
+    assert.equal(a.getAttribute("href"), "https://login.example.com/device?code=AB12");
+    const ev = new w.window.MouseEvent("click", { bubbles: true, cancelable: true });
+    a.dispatchEvent(ev); await w.tick();
+    assert.ok(ev.defaultPrevented, "the click does not navigate the panel");
+    assert.ok(!w.shadow.querySelector('[data-astep-seq="1"]')?.classList.contains("astep-pulse"), "nor does it jump to the source step");
+
+    const w2 = await loadSidebarWorld();
+    w2.window.HTMLElement.prototype.scrollIntoView = function () {};
+    const short = "https://login.example.com/x";
+    await w2.dispatch(agentStart("elink2", "sign in"));
+    await w2.dispatch(agentStep("elink2", 1, { seq: 1, tool: "python_exec", token: OUT, result: short, renderOut: { type: "python-out", stdout: short } }));
+    await w2.dispatch({ ...agentResult("elink2", "Open ![](@tool:" + OUT + ":out) to sign in.", 1), answer: "" });
+    await openRun(w2);
+    const inline = w2.shadow.querySelector(".msg.asst .answer-rendered .tok-inline code.tok-val a.out-link");
+    assert.equal(inline?.getAttribute("href"), short, "an inline embedded value's address is a link too");
+});
+
 test("answer render (sidebar): an embedded JSON value has the step's copy button and tree/text toggle, with quoted keys", async () => {
     const w = await loadSidebarWorld();
     const { embed } = await jsonEmbedRun(w, "ectl");

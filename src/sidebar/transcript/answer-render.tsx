@@ -16,7 +16,7 @@ import { linkTipFor, onAddressClick } from "../links";
 import { reveal } from "./transcript-window";
 import { IconChevron, IconEye, IconCheck } from "../icons";
 import { ClickableImg, SheetChip, cursorTipOn } from "../ui-kit";
-import { RenderPanel, PyDfTable, CodeRender, ValueOut } from "./render-panel";
+import { RenderPanel, PyDfTable, CodeRender, ValueOut, LinkedLine } from "./render-panel";
 import type { CodeCtx } from "./render-panel";
 import { scrollToStepSeq } from "./step-scroll";
 import { FoldRail } from "./fold-rail";
@@ -114,7 +114,7 @@ function tokenRender(d: RenderDescriptor | undefined, rawText: string, ctx?: Cod
     const j = tryPrettyJson(rawText);
     if (j) return { node: <ValueOut text={j} />, block: true };
     const block = !!rawText && (rawText.length > 80 || /\n/.test(rawText));
-    return { node: block ? <ValueOut text={rawText} /> : <code class="tok-val">{rawText}</code>, block };
+    return { node: block ? <ValueOut text={rawText} /> : <code class="tok-val"><LinkedLine line={rawText} /></code>, block };
 }
 
 // One embedded @tool citation, resolved to the step it cites — rendered as the ACTUAL (focused) output, with a
@@ -196,7 +196,7 @@ function TokenRef({ seg, run, scope, standalone }: { seg: Extract<AnswerSegment,
     const { node, block } = imgSrc
         ? { node: <ClickableImg src={imgSrc} alt={label || "image"} />, block: true }
         : isRaw
-            ? { node: rawBlock ? <ValueOut text={rawText} /> : <code class="tok-val">{rawText}</code>, block: rawBlock }
+            ? { node: rawBlock ? <ValueOut text={rawText} /> : <code class="tok-val"><LinkedLine line={rawText} /></code>, block: rawBlock }
             : isLatex
                 // Use EXPLICIT delimiters, not `$…$` — single-`$` inline math only typesets when the content
                 // carries a math signal, so a bare value like `5` would render as the literal text "$5$". The

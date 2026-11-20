@@ -1787,7 +1787,9 @@ export function ValueOut({ text, fill, seen, after, treeFirst }: { text: string;
         // The seen marker goes in AFTER the cut marker: both are placed by position, and the cut is always at the end.
         return { value, unsent: partial ? markSeen(value, text.slice(0, seen)) : undefined };
     }, [asTree, text, seen]);
-    const asText = <SeenSplit text={text} seen={partial ? seen : undefined} lang="json" />;
+    // A value that is not JSON but holds an http(s) address draws as plain output, so the address is a link (an embedded
+    // sign-in link is the case). JSON keeps its highlighting.
+    const asText = <SeenSplit text={text} seen={partial ? seen : undefined} lang={loose || !hasOutputLink(text) ? "json" : undefined} />;
     // A value that is not JSON has no tree, but it is still a value you may want out: copy stays, the toggle goes.
     if (!loose) return <OutputCell fill={fill} corner={<CopyBtn text={text} tip="copy the value" />}>{asText}{after}</OutputCell>;
     const dropped = loose.droppedChars;
