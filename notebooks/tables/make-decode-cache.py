@@ -103,7 +103,8 @@ md("""
 - What the cache keeps is what it counts: the process holds 3 to 4 MB more than the charge once the decode is kept,
   which is Arrow's vector objects. A first version held 80 MB more, because the getters shared their builder's closure
   and kept the parser's cells alive; the getters are now made in functions of their own.
-- The cost that matters to the worker is the parse's peak, 0.6 to 1.2 GB over the RSS before it. That is the parser's,
+- The cost that matters to the worker is the parse's peak, at least 0.6 to 1.2 GB over the RSS before it: a lower
+  bound, because that RSS (285 to 903 MB) still holds the generator's garbage. That is the parser's,
   not the cache's, and it is not new: every stored read paid it before slice A. A larger cache would not lower it, and
   a smaller one would make reads pay it more often.
 - A decode larger than the cap is used for its one read and not kept, so the cap bounds what stays resident, never
