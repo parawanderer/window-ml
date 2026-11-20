@@ -262,7 +262,7 @@ test("the file guard SIGKILLs its own process when the file does not disarm it i
     assert.ok(Date.now() - t0 < 5000, "killed at the guard's budget, not by the spawn's own timeout");
     // The line must survive the kill: stderr through the event loop is lost when the SIGKILL lands first
     // (2026-11-19, run 44519875129), which leaves the failure with no stage named.
-    assert.match(r.stderr, /^child did not finish within 200ms: SIGKILL\n/, `the kill names what died: ${JSON.stringify(r.stderr)}`);
+    assert.match(r.stderr, /^child armed, 200ms budget\nchild did not finish within 200ms: SIGKILL\n/, `the start names when it began and the kill names what died: ${JSON.stringify(r.stderr)}`);
 
     // And the disarm is real: a file that finishes in time is never killed, even with a budget this tight.
     const ok = spawnSync(process.execPath, ["--input-type=module", "-e", `
