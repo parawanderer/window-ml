@@ -170,7 +170,9 @@ export function UsageChartView({ points }: { points: ChartPoint[] }) {
     );
 }
 
-/** The totals block: the lines of `totalsLines`, as the summary tab draws its own. */
+/** The totals block: the lines of `totalsLines`, as the summary tab draws its own.
+ *  @gallery {"lines":[{"key":"calls","label":"Model calls","value":"5"},{"key":"prompt","label":"Prompt tokens","value":"22,900"},{"key":"completion","label":"Completion tokens","value":"1,760"},{"key":"cached","label":"Cached prompt tokens","value":"9,000"},{"key":"cost","label":"Cost","value":"$0.04 over 4 priced calls"},{"key":"unpriced","label":"Not priced","value":"1 call counted above, not costed"}]}
+ *  @group chat */
 export function UsageTotalsView({ lines }: { lines: TotalsLine[] }) {
     return <dl class="sum-lines sum-totals">{lines.map((l) => <div class="sum-line" key={l.key} data-field={l.key}><dt>{l.label}</dt><dd>{l.value}</dd></div>)}</dl>;
 }
