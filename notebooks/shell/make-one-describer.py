@@ -98,8 +98,12 @@ the hardened argv, …). Anything else is the `why` text or an error from the wa
 code("""
 def level(cause):
     if cause.startswith("WASM-ERROR"): return "wasm error"
-    fields = set(cause.split(" / ")[0].split(","))
+    fields = set(cause.split(" / ")[0].split("+"))  # fuzz.mjs joins the differing fields with "+"
     return "verdict" if fields & VECTOR_FIELDS else "text"
+
+# A split on the wrong separator would class every cause as text and make the verdict count 0 by construction.
+assert level("described+effects") == "verdict" and level("why+effects / x") == "verdict"
+assert level("why / why:non-ascii-quoting") == "text" and level("WASM-ERROR / lone-surrogate-in-argv") == "wasm error"
 
 runs = []
 for f in of("fuzz"):
