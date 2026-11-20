@@ -21,6 +21,8 @@ const CANDIDATE = /(?<![A-Za-z0-9])https?:\/\/[^\s"'`<>]+/gi;
 // most, and anything outside printable ASCII in the host part.
 const FORMAT = /[\p{Cf}​-‏‪-‮⁦-⁩]/u;
 const NON_ASCII = /[^\x21-\x7e]/;
+// A C0 control or DEL anywhere: it draws nothing, so the shown address and the opened one would differ by it.
+const CONTROL = /[\x00-\x1f\x7f]/;
 const TRAILING = new Set([".", ",", ";", ":", "!", "?", ")", "]", "}", "'", '"']);
 const PAIR: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
 
@@ -42,7 +44,7 @@ function trimTrailing(s: string): string {
 /** One printed candidate as a link, or null when it must stay text: another scheme's remainder, userinfo, a host
  *  with non-ASCII, bidi-control or zero-width characters, a parse failure, an over-long address. */
 function asLink(raw: string): OutputLink | null {
-    if (raw.length > MAX_LINK_CHARS || FORMAT.test(raw) || raw.includes("\\")) return null;
+    if (raw.length > MAX_LINK_CHARS || FORMAT.test(raw) || CONTROL.test(raw) || raw.includes("\\")) return null;
     const authority = raw.slice(raw.indexOf("//") + 2).split(/[/?#]/, 1)[0];
     if (!authority || authority.includes("@") || NON_ASCII.test(authority)) return null;
     let u: URL;
