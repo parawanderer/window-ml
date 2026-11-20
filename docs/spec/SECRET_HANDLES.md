@@ -216,26 +216,28 @@ on real captured output in its PR.
   `1 secret redacted (PLUG_PASSWORD)`, names and a count, never a value. What the run stores and exports is what the
   model saw, so the sidebar (its live output included), the run log and both exports never hold a registered value
   that arrived after it was registered.
-- **Known limits**: images; the person's own turn and the page context the run is started with; a value that was
-  transformed or only partly echoed (threat 2); a value registered after a session stored it (re-scrubbing stored
-  sessions is a later slice); anything a pattern does not know until PR 2; a script or model that already holds a guess
-  can confirm it, by echoing the guess and seeing the marker; the model's own tool arguments, which are not scrubbed; an
-  approved page that drives a model can confirm a full guess it already holds if the model repeats the marker, and
-  learns no name; the page-world tool results of a page-hosted run stay the page's own and are not scrubbed for the
-  page; a page whose own text comes back in an error (a refusal that quotes what it refused) can confirm that a guess
-  equals a registered value, by seeing `[REDACTED]` where its text was, though never which one; a registered value at
-  rest in the value store behind a pointer (a `fetch_url` page's whole text, a stored table) until PR 2 scrubs it where
-  it is written: every model-bound read of it (a `@tool:` read, a pipe's head, range or grep, the output of a script
-  that called `ml.dereference`) crosses the scrub, so what remains is the value at rest and an approved script that
-  reads it and transforms it before printing; a registered value inside an answer's `data` to a page (anything not under
-  an error key) is not scrubbed, since the data is the handler's answer and only the error text is the worker's own;
-  `GET_CONFIG`'s answer to a page is not run through the registry, by design, since what keeps a secret out of it is
-  `publicConfig`'s fixed key list (`redteam-lifetimes-config.test.mjs`, #1942, enumerates it, no secret key among them),
-  and a public value equal to a registered one reaches the model only through a crossing that scrubs it (a page-started
-  request, or a tool result that read the page); when the registered secrets cannot be read, the stored scrub
-  (`forStored`, which takes an object's keys as it takes its values) keeps a key only when it has a schema's shape
-  (letters only, lowercase first, at most 32: `type`, `byColumn`), so the record keeps its shape, and a registered value
-  of that shape used as a key survives that path.
+- **Known limits**: images; what the person or a page sends is scrubbed by registered value only (ruling 39, PR 1: the
+  turn's words, a right-clicked element, its files' text and the page context a run starts with, behind
+  `scrubPersonInput`), so a token in it that is neither registered nor the extension's own key reaches the model until
+  the shape detector (ruling 39, PR 3); a value that was transformed or only partly echoed (threat 2); a value
+  registered after a session stored it (re-scrubbing stored sessions is a later slice); anything a pattern does not know
+  until PR 2; a script or model that already holds a guess can confirm it, by echoing the guess and seeing the marker;
+  the model's own tool arguments, which are not scrubbed; an approved page that drives a model can confirm a full guess
+  it already holds if the model repeats the marker, and learns no name; the page-world tool results of a page-hosted run
+  stay the page's own and are not scrubbed for the page; a page whose own text comes back in an error (a refusal that
+  quotes what it refused) can confirm that a guess equals a registered value, by seeing `[REDACTED]` where its text was,
+  though never which one; a registered value at rest in the value store behind a pointer (a `fetch_url` page's whole
+  text, a stored table) until PR 2 scrubs it where it is written: every model-bound read of it (a `@tool:` read, a
+  pipe's head, range or grep, the output of a script that called `ml.dereference`) crosses the scrub, so what remains is
+  the value at rest and an approved script that reads it and transforms it before printing; a registered value inside an
+  answer's `data` to a page (anything not under an error key) is not scrubbed, since the data is the handler's answer
+  and only the error text is the worker's own; `GET_CONFIG`'s answer to a page is not run through the registry, by
+  design, since what keeps a secret out of it is `publicConfig`'s fixed key list (`redteam-lifetimes-config.test.mjs`,
+  #1942, enumerates it, no secret key among them), and a public value equal to a registered one reaches the model only
+  through a crossing that scrubs it (a page-started request, or a tool result that read the page); when the registered
+  secrets cannot be read, the stored scrub (`forStored`, which takes an object's keys as it takes its values) keeps a
+  key only when it has a schema's shape (letters only, lowercase first, at most 32: `type`, `byColumn`), so the record
+  keeps its shape, and a registered value of that shape used as a key survives that path.
 - **Deferred to the handles slice**: reading values from a listed `.env` (a new host message), the keychain, a handle's
   value, and the `echoes` refusal.
 
@@ -593,7 +595,9 @@ there waits until the scan answer can ride the hub.
   `forModelHistory`) leaves those spans and no other. Every other crossing still scrubs the value: a tool result that
   echoes it is redacted as before.
 - **Per call**: an option, `scrubInput: false`, on the calls that start or extend a run (`ml.agent`, `ml.step`,
-  `createAgent`, `say`).
+  `createAgent`, `say`). Built so far in the worker only: `START_RUN`, `RESUME_RUN` and `INJECT_MESSAGE` take it,
+  honoured for an extension page's call. `ml.agent`, `ml.step`, `createAgent` and `say` get it in ruling 39's PR 3,
+  where it has an effect from a page.
 - **One setting**, `scrubPersonInput`, on by default, in the DevTools Settings panel. It is the person's: never
   written by `change_setting`, `ml.settings` or a page. The upgrade row: a stored config from before the key reads
   as on.
@@ -700,9 +704,11 @@ reading, honouring the turn's exemption in the row, was declined. The row scrub 
 honouring it later is an addition. Its cost: on a phone, a session's transcript shows a sent-as-is value while its
 list row shows the marker.
 
-**Known limits.** Until ruling 39's turn scrub is built, the stored turn holds a registered value the person typed,
-so the transcript shows it while the row shows the marker. An archived session's search runs over its stored text
-in the archive, so a query holding a value can match it; the row and snippet that come back are scrubbed. A link
-built from a scrubbed URL opens the URL with the marker in it. A row's keys are scrubbed as its text is (two that
-scrub to one text are numbered); before the registry's first read, a key is kept only when it has a schema's shape
-(letters only, lowercase first, at most 32), so a registered value of that shape used as a key survives that path.
+**Known limits.** A turn sent with `scrubPersonInput` off or `scrubInput: false`, or stored before ruling 39's by-value
+scrub, holds a registered value the person typed, so the transcript shows it while the row shows the marker; a session
+stored before the scrub is not rewritten, and only its user turns on the way to the model on a resume are scrubbed. An
+archived session's search runs over its stored text in the archive, so a query holding a value can match it; the row and
+snippet that come back are scrubbed. A link built from a scrubbed URL opens the URL with the marker in it. A row's keys
+are scrubbed as its text is (two that scrub to one text are numbered); before the registry's first read, a key is kept
+only when it has a schema's shape (letters only, lowercase first, at most 32), so a registered value of that shape used
+as a key survives that path.
