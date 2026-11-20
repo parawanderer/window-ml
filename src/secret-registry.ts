@@ -266,3 +266,19 @@ export function scrubRange(window: string, from: number, to: number, subs: reado
     if (pos < hi) out += window.slice(pos, hi);
     return { text: out, counts };
 }
+
+/**
+ * A person's or a page's turn held because the registered secrets it is checked against could not be read (ruling 44,
+ * SECRET_HANDLES.md): a store that cannot be read is not an empty one, so the turn is not sent. The message is the
+ * one the sender reads. A person is told how to send it as it is; a page is not, since its `scrubInput: false` never
+ * turns off the scrub by value.
+ */
+export class TurnUnreadable extends Error {
+    /** @param person whether the turn is the person's (an extension sender), rather than a page's */
+    constructor(person: boolean) {
+        super(person
+            ? "The message was not sent: the secret store could not be read to check it. Try again, or send it with scrubInput: false to send it as it is."
+            : "The message was not sent: the secret store could not be read to check it. Try again once it can be read.");
+        this.name = "TurnUnreadable";
+    }
+}

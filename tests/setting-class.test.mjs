@@ -59,7 +59,7 @@ test("the secrets and the gate keys are exactly the ruled ones", async () => {
     const { SECRET_KEYS } = await import("../src/sw/sw-scrub.ts");
     assert.deepEqual([...SECRET_KEYS, "pageApprovalDomains"].sort(), RULED);
     assert.deepEqual(ofClass("secret"), RULED);
-    assert.deepEqual(ofClass("gate"), ["autoApprovePython", "autoApproveReadonly", "autoApproveSelfSource", "shellRevealsAllow"]);
+    assert.deepEqual(ofClass("gate"), ["autoApprovePython", "autoApproveReadonly", "autoApproveSelfSource", "scrubPersonInput", "shellRevealsAllow"]);
     assert.equal(ofClass("guarded").length, 24);
 });
 
@@ -118,9 +118,9 @@ test("a backup an older version wrote, changing every setting, lists the 30 guar
     const plan = planRestore(payload, { sync: { ...DEFAULT_CONFIG, apiKey: "sk-mine" }, local: { ml_site_schema: SITE_SCHEMA } });
     const sync = plan.changes.filter((c) => c.area === "sync");
     const risky = sync.filter((c) => c.group === "risky").map((c) => c.key).sort();
-    // Written before shellRevealsAllow, taskNotifyOnly and taskTurnChainMax existed, so it changes every key but those,
-    // which the restore leaves as they are.
-    const LATER = ["shellRevealsAllow", "taskNotifyOnly", "taskTurnChainMax"];
+    // Written before shellRevealsAllow, taskNotifyOnly, taskTurnChainMax and scrubPersonInput existed, so it changes every
+    // key but those, which the restore leaves as they are.
+    const LATER = ["shellRevealsAllow", "taskNotifyOnly", "taskTurnChainMax", "scrubPersonInput"];
     assert.deepEqual(risky, KEYS.filter((k) => SETTING_CLASSES[k].class !== "ordinary" && !LATER.includes(k)).sort());
     assert.equal(risky.length, 30);
     for (const k of LATER) assert.equal(sync.some((c) => c.key === k), false, `a backup without ${k} changes nothing of it`);

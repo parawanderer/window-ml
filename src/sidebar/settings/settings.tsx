@@ -1930,6 +1930,12 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
 
                 <Section id="secrets" title="Secrets">
                 <SecretsSectionBody />
+                <div class="set-note">Take a <b>registered secret's value</b>, and the extension's own saved API key, out of what you send (a typed message, a paste, an attached file's text): the model and the stored session see <code>[REDACTED:NAME]</code> instead. Off, what you send reaches the model as typed. <b>On by default.</b></div>
+                <label data-setting="scrubPersonInput" class="set-check">
+                    <input type="checkbox" checked={c.scrubPersonInput !== false}
+                        onChange={(e: any) => setField("scrubPersonInput", e.target.checked)} />
+                    <SettingLbl k="scrubPersonInput" />
+                </label>
                 </Section>
 
                 <Section id="libraries" title="Python libraries (read-only dialect)">

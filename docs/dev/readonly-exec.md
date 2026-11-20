@@ -304,8 +304,9 @@ an auto-approved survey could assign into `document.body` (`innerHTML`) or into 
 `Array`, which outlive the survey and which every later guard calls. Found by the red-team pass on the policy realm.
 
 **The `ml` facade.** A null-prototype object holding only `ML_READONLY_METHODS` (`getModel`, `config`, `models`,
-`capabilities`, `ps`, `serverTools`, `queryAll`, `range`, `a11y`, `dereference`, `info`, `schema`) bound to the real
-API, plus four special members. `ml.fetch` answers only from the cache of URLs a human already approved and throws on
+`capabilities`, `ps`, `serverTools`, `queryAll`, `range`, `a11y`, `dereference`, `info`, `schema`, `settings`) bound
+to the real API, plus four special members. A name is bound only where the host's `ml` has it: `settings` only in the
+worker realm of a run the worker built (`docs/spec/MODEL_SETTINGS.md`, "`ml.settings()` in a read-only survey"). `ml.fetch` answers only from the cache of URLs a human already approved and throws on
 a miss, so a new URL goes to approval. `ml.jsonPath` runs an RFC 9535 JSONPath over JSON data with its own parser,
 never eval. `ml.answer` curates the run's answer set. `ml.embed` is the one live call, to the configured embedding
 model, capped per survey (below, "ml.embed: the one live call").

@@ -32,6 +32,8 @@ function world({ answer, stream, clock, plan, read, pdf, ctx, hold } = {}) {
         // Where images go: to the model unless a test says otherwise; `asked` records each question.
         images: async (model, forced) => { asked.push({ model, forced }); return plan ? plan(model, forced) : { route: "model" }; },
         read: read ?? (async (image, reader) => `${reader} read ${image.length} chars`),
+        // What the person sends, as the worker scrubs it: nothing registered here (tests/turn-scrub-paths.test.mjs has the scrub).
+        scrub: async () => ({ text: (s) => s, again: (s) => s, deep: (v) => v, note: () => "" }),
         ...(pdf ? { pdf } : {}),
         // The context the model is loaded with: a number, a function of the model, or absent (not known).
         ...(ctx !== undefined ? { contextTokens: async (model) => { ctxAsked.push(model); return typeof ctx === "function" ? ctx(model) : ctx; } } : {}),

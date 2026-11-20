@@ -272,7 +272,7 @@ test("a gate entry is read-only with its value, and an ordinary placed key is re
 });
 
 test("settingEntries over a custom places table holds only the keys in it", () => {
-    const e = S.settingEntries(cfg({ theme: "dark" }), { theme: { tab: "x" } });
+    const e = S.settingEntries(cfg({ theme: "dark" }), "exec", { theme: { tab: "x" } });
     assert.deepEqual(Object.keys(e), ["theme"]);
 });
 
@@ -281,7 +281,7 @@ test("a key nobody classed is neither listed nor writable, even with a row in Se
     // classed"). The class table's type and the class test also refuse it; this is the run-time half.
     const { modelWritable } = await import("../src/setting-class.ts");
     const places = { futureList: { tab: "advanced" }, theme: { tab: "appearance" } };
-    const e = S.settingEntries(cfg({ futureList: ["ps"], theme: "dark" }), places);
+    const e = S.settingEntries(cfg({ futureList: ["ps"], theme: "dark" }), "exec", places);
     assert.deepEqual(Object.keys(e), ["theme"]);
     assert.equal(modelWritable("futureList", places), false);
     assert.match(await refused({ key: "futureList", value: ["ps", "lsof"] }, { futureList: ["ps"] }), /no setting "futureList"/);

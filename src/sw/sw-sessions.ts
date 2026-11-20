@@ -28,7 +28,7 @@ import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { isExtensionSender } from "./sw-site-access";
 import { fileChunks } from "./sw-file-chunks";
 import { fetchLLM, streamLLM, getConfig, listAvailableModels, modelCapabilitiesBatch, residentContextLength } from "./sw-llm";
-import { forModelMessages } from "./sw-scrub";
+import { forModelMessages, forTurn } from "./sw-scrub";
 import { workerMl } from "./worker-ml";
 import { ocrRequest } from "../ml/ml-vision";
 import { planImages } from "../image-gate";
@@ -339,6 +339,7 @@ export function configureSessionCommands(run: RunDeps): void {
             const r = await fetchLLM(ocrRequest(image, { model: reader }), signal);
             return String((r as { content?: string | null }).content || "").trim();
         },
+        scrub: () => forTurn(),
     });
     handler = createCommandHandler({
         runtime: localRuntimeId(),

@@ -11,6 +11,7 @@ import { ValueTooLarge, sha256Hex, type ValueFormat, type ValueRow } from "../po
 import { b64ToBytes, bytesToB64, type PdfMessage, type PdfReadReply, type PdfRenderReply } from "../pdf/pdf-wire";
 import { PAGE_IMAGE_SCALE } from "./sw-chat";
 import { ensureOffscreen } from "./sw-offscreen";
+import type { TurnScrub } from "./sw-scrub";
 
 /** Read a PDF in the offscreen document's reader (docs/dev/pdf.md): only the service worker may ask it. */
 export async function readPdfOffscreen(b64: string): Promise<PdfReadReply> {
@@ -48,6 +49,9 @@ export interface AttachDeps {
     read(b64: string): Promise<PdfReadReply | null | undefined>;
     store(blob: Blob, format: ValueFormat, source: string, session: string): Promise<ValueRow>;
     shelf: FileShelf;
+    /** the turn's input scrub (`forTurn`, ruling 39): a text file's text and a PDF's page text are scrubbed before they
+     *  are stored or framed, so the value store holds what the model reads; a PDF's bytes are kept as attached */
+    scrub?: Pick<TurnScrub, "text" | "deep">;
 }
 
 /** A count a reader reported, floored to the non-negative integer every reader of the pointer may take it for (0 when it
@@ -114,17 +118,20 @@ export async function attachFiles(runId: string, files: readonly SentFile[] | un
 /** {@link attachFiles}' loop: each file held and framed into `out`, each pointer it notes pushed to `added`. */
 async function attachEach(runId: string, files: readonly SentFile[], turn: number, d: AttachDeps, out: FramedFile[], added: FilePointer[]): Promise<void> {
     const whole = sentWhole(files);
-    for (const [i, f] of files.entries()) {
-        if (!isPdfFile(f)) {
+    for (const [i, sent] of files.entries()) {
+        if (!isPdfFile(sent)) {
+            const f = d.scrub ? { ...sent, text: d.scrub.text(sent.text) } : sent;
             const p = await holdText(runId, f, turn, d, added);
             if (whole[i]) { out.push({ name: p.name, type: p.type, text: f.text, pointer: fileRef(p) }); continue; }
             const outline = textOutline(p, f.text, d.shelf.firstNamed(p.name, p.id));
             out.push({ name: p.name, type: p.type, bytes: p.bytes, lines: p.lines ?? 0, body: outline.text, escaped: outline.escaped, pointer: fileRef(p) });
             continue;
         }
-        const r = await d.read(f.data).catch(() => null);
-        if (!r) throw new FilesRefused(`${f.name} could not be read: the PDF reader did not answer`);
-        if (!r.ok) throw new FilesRefused(`${f.name}: ${r.refusal}`);
+        const f = sent;
+        const read = await d.read(f.data).catch(() => null);
+        if (!read) throw new FilesRefused(`${f.name} could not be read: the PDF reader did not answer`);
+        if (!read.ok) throw new FilesRefused(`${f.name}: ${read.refusal}`);
+        const r = d.scrub ? { ...read, doc: d.scrub.deep(read.doc) } : read;
         const bytes = b64ToBytes(f.data);
         if (!bytes) throw new FilesRefused(`${f.name} could not be read: its bytes are not base64`);
         const blob = new Blob([bytes as Uint8Array<ArrayBuffer>]);

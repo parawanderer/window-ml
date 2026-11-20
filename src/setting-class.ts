@@ -45,7 +45,7 @@ export const DOMAIN_KINDS: readonly SettingDomain["kind"][] = ["boolean", "enum"
 /** One setting's declaration. A guarded key with no `widens` is guarded in both directions, so a missing one fails closed. */
 export type SettingDecl =
     | { class: "secret"; reason: string }
-    | { class: "gate"; reason: string }
+    | { class: "gate"; reason: string; refusal?: string } // refusal: the sentence a run is refused with, when the generic one ("decides which calls run without asking") is not true of the key
     | { class: "guarded"; reason: string; widens?: (from: unknown, to: unknown) => boolean }
     | { class: "ordinary"; domain: SettingDomain };
 
@@ -79,6 +79,7 @@ export const SETTING_CLASSES: Readonly<{ [K in keyof MlConfig]: SettingDecl }> =
     autoApprovePython: { class: "gate", reason: "runs Python without asking" },
     autoApproveSelfSource: { class: "gate", reason: "reads the agent's own source without asking" },
     shellRevealsAllow: { class: "gate", reason: "runs the listed programs that show other processes without asking" },
+    scrubPersonInput: { class: "gate", reason: "takes registered secrets out of what you send before the model reads it", refusal: "decides what of the person's own messages the model reads" },
 
     shellEnabled: { class: "guarded", reason: "lets ml.sh run programs on this machine", widens: on },
     shellRoots: { class: "guarded", reason: "the folders ml.sh may reach", widens: added },

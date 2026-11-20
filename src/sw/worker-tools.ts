@@ -44,6 +44,7 @@ import { invocationInfo } from "./sw-invocation";
 import { senderTrust } from "./sw-consent";
 import { htmlToMarkdownOffscreen } from "./sw-offscreen";
 import { fetchLLM, getConfig } from "./sw-llm";
+import { isWorkerRun } from "./sw-runs";
 import { forModelMessages } from "./sw-scrub";
 import { typeFromExtension } from "../dom/dom";
 import type { PageTableData } from "./worker-page-read";
@@ -480,7 +481,7 @@ export function buildWorkerTools(runId: string, tabId: number, tabUrl: () => str
     runs.set(runId, ctx);
     const ml = runMl(ctx);
     // agent_api_docs reads the shortcut and the config here, where the page would have asked for them by message.
-    const docs = { invocation: invocationInfo, config: async () => publicConfig(await getConfig(), await senderSelfApproves({ url: ctx.tabUrl() })) };
+    const docs = { invocation: invocationInfo, config: async () => publicConfig(await getConfig(), await senderSelfApproves({ url: ctx.tabUrl() })), freeSettings: () => isWorkerRun(runId) };
     // answer keeps the run's set here, with the page's descriptor (what the model is shown); worker-answer.ts.
     const pageAnswer = () => makeDomTools(defineTool).find((t) => t.name === "answer")!;
     // `look` and `locate` are none of these: the run host builds them for each call (worker-look.ts, worker-locate.ts).

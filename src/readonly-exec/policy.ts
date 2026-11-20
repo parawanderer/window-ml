@@ -504,7 +504,10 @@ export const ANSWER_METHODS = new Set(["add", "remove", "clear", "dump"]);
 // `schema` is here rather than in ALLOWED_METHODS deliberately: the facade is dispatched by IDENTITY, so
 // this grants `ml.schema(…)` and nothing else, where allowing the NAME would grant `.schema()` on every
 // object the dialect can reach. Pure — it reads data and returns a type string, spending nothing.
-export const ML_READONLY_METHODS = ["getModel", "config", "models", "capabilities", "ps", "serverTools", "queryAll", "range", "a11y", "dereference", "info", "schema"] as const;
+// `settings` is the person's settings as a free read gives them (docs/spec/MODEL_SETTINGS.md, "`ml.settings()` in a
+// read-only survey"): only the worker's host `ml` of a run the worker built has it, so the facade binds it there and
+// nowhere else, and its secrets are hidden and the values that could ride a free call out are held.
+export const ML_READONLY_METHODS = ["getModel", "config", "models", "capabilities", "ps", "serverTools", "queryAll", "range", "a11y", "dereference", "info", "schema", "settings"] as const;
 
 /** The two `ml.sh` members a survey may call: run a program and read a held output. Everything else on `ml.sh` (`put`, which
  *  writes) is not here, so a script naming it is not in the dialect and is put to the person whole. The worker's survey has
