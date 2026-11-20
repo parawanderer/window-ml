@@ -5,6 +5,8 @@
 // A figure no call reported draws no line, never a zero. Energy is the bench lane's later work and draws nothing here.
 
 import { useEffect, useState } from "preact/hooks";
+import { CursorRule } from "../sidebar/ui-kit";
+import { useTimeReadout } from "../sidebar/settings/time-chart";
 import type { SessionSummary, RuntimeInfo } from "../session/session-host";
 import { sessionKey } from "../session/session-host";
 import type { ChatExtras } from "./extras";
@@ -77,8 +79,11 @@ export function totalsLines(t: UsageTotals): TotalsLine[] {
     return out;
 }
 
+/** The chart's viewBox: the SVG scales uniformly from it, and the reading box is laid over the plot in percent of it. */
+const VB_W = 320, VB_H = 130;
+
 /** One model call on the chart. */
-export interface ChartPoint { ts: number; prompt: number; completion: number }
+export interface ChartPoint { ts: number; prompt: number; completion: number; /** reported cache hits; absent when the call did not say */ cached?: number }
 /** One drawn call: its x, and the y of its prompt mark and its completion mark. */
 export interface ChartMark extends ChartPoint { i: number; x: number; yPrompt: number; yCompletion: number }
 /** The chart's geometry in its own pixel box. */
@@ -135,33 +140,61 @@ export function fmtAxisTokens(n: number): string {
 
 /**
  * The usage chart: one mark per model call, prompt (circle) and completion (diamond), on a shared token axis against time.
- * Shape as well as colour tells the two apart; a legend names them, and the totals block under it is the table view.
- * @gallery {"points":[{"ts":1795100000000,"prompt":1200,"completion":180},{"ts":1795100060000,"prompt":2600,"completion":420},{"ts":1795100200000,"prompt":4100,"completion":90},{"ts":1795100500000,"prompt":5200,"completion":760},{"ts":1795101400000,"prompt":9800,"completion":310}]}
+ * Shape as well as colour tells the two apart; a legend names them, and the totals block under it is the table view. Pointing at
+ * the plot, or the arrow keys, reads one call (`useTimeReadout`, the reading `TimeChart` uses), with the panel's cursor tip.
+ * @gallery {"points":[{"ts":1795100000000,"prompt":1200,"completion":180,"cached":0},{"ts":1795100060000,"prompt":2600,"completion":420,"cached":1100},{"ts":1795100200000,"prompt":4100,"completion":90},{"ts":1795100500000,"prompt":5200,"completion":760},{"ts":1795101400000,"prompt":9800,"completion":310}]}
+ * @gallery-flow readout tests/gallery-flows/UsageChartView.mjs {"points":[{"ts":1795100000000,"prompt":1200,"completion":180,"cached":0},{"ts":1795100060000,"prompt":2600,"completion":420,"cached":1100},{"ts":1795100200000,"prompt":4100,"completion":90},{"ts":1795100500000,"prompt":5200,"completion":760},{"ts":1795101400000,"prompt":9800,"completion":310}]}
  * @group chat
  */
 export function UsageChartView({ points }: { points: ChartPoint[] }) {
-    const c = usageChart(points);
+    const c = usageChart(points, VB_W, VB_H);
+    const span = c.plot.r - c.plot.l;
     const clock = (ts: number) => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const when = (m: ChartMark) => (c.axis === "time" ? new Date(m.ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }) : `Call ${m.i + 1}`);
+    /** The readout for call `i`: when, prompt, completion, total, and the cache hits where the call reported them. */
+    const tip = (i: number) => {
+        const m = c.marks[i];
+        const row = (name: string, sw: string, n: number, cls = "") => <div class={`rc-tip-line${cls}`}><span class="rc-tip-name">{sw ? <i class={`tc-sw ${sw}`} /> : null}{name}</span><span>{n.toLocaleString()}</span></div>;
+        return (
+            <div class="tc-tip">
+                <div class="tc-tip-time">{when(m)}</div>
+                {row("Prompt", "sum-sw-prompt", m.prompt)}
+                {row("Completion", "sum-sw-completion", m.completion)}
+                {row("Total", "", m.prompt + m.completion, " tc-tip-total")}
+                {m.cached != null ? row("Cached", "", m.cached) : null}
+            </div>
+        );
+    };
+    const { at, box, handlers } = useTimeReadout({ count: c.marks.length, fracOf: (i) => (c.marks[i].x - c.plot.l) / span, tip });
+    const label = `Tokens per model call over time: ${points.length} call${points.length === 1 ? "" : "s"}, prompt and completion. Point at a call, or use the arrow keys, to read it.`;
+    const pct = (v: number, of: number) => `${(v / of) * 100}%`;
     return (
         <figure class="sum-chart">
-            <svg viewBox="0 0 320 130" role="img" aria-label={`Tokens per model call over time: ${points.length} call${points.length === 1 ? "" : "s"}, prompt and completion`}>
-                {c.yTicks.map((t) => (
-                    <g key={t.v}>
-                        <line class="sum-grid" x1={c.plot.l} x2={c.plot.r} y1={t.y} y2={t.y} />
-                        <text class="sum-axis" x={c.plot.l - 4} y={t.y + 3} text-anchor="end">{fmtAxisTokens(t.v)}</text>
-                    </g>
-                ))}
-                {c.xTicks.map((t, i) => (
-                    <text class="sum-axis" key={i} x={t.x} y={c.plot.b + 14} text-anchor={c.xTicks.length < 2 ? "middle" : i ? "end" : "start"}>{t.ts == null ? "" : clock(t.ts)}</text>
-                ))}
-                {c.axis === "order" ? <text class="sum-axis" x={c.plot.r} y={c.plot.b + 14} text-anchor="end">in call order</text> : null}
-                {c.marks.map((m) => (
-                    <g key={m.i}>
-                        <circle class="sum-m-prompt" cx={m.x} cy={m.yPrompt} r="3.5" />
-                        <path class="sum-m-completion" d={`M${m.x} ${m.yCompletion - 4.5} l4.5 4.5 l-4.5 4.5 l-4.5 -4.5 z`} />
-                    </g>
-                ))}
-            </svg>
+            <div class="sum-chart-box">
+                <svg viewBox={`0 0 ${VB_W} ${VB_H}`} aria-hidden="true">
+                    {c.yTicks.map((t) => (
+                        <g key={t.v}>
+                            <line class="sum-grid" x1={c.plot.l} x2={c.plot.r} y1={t.y} y2={t.y} />
+                            <text class="sum-axis" x={c.plot.l - 4} y={t.y + 3} text-anchor="end">{fmtAxisTokens(t.v)}</text>
+                        </g>
+                    ))}
+                    {c.xTicks.map((t, i) => (
+                        <text class="sum-axis" key={i} x={t.x} y={c.plot.b + 14} text-anchor={c.xTicks.length < 2 ? "middle" : i ? "end" : "start"}>{t.ts == null ? "" : clock(t.ts)}</text>
+                    ))}
+                    {c.axis === "order" ? <text class="sum-axis" x={c.plot.r} y={c.plot.b + 14} text-anchor="end">in call order</text> : null}
+                    {c.marks.map((m) => (
+                        <g key={m.i}>
+                            <circle class="sum-m-prompt" cx={m.x} cy={m.yPrompt} r="3.5" />
+                            <path class="sum-m-completion" d={`M${m.x} ${m.yCompletion - 4.5} l4.5 4.5 l-4.5 4.5 l-4.5 -4.5 z`} />
+                        </g>
+                    ))}
+                </svg>
+                {/* The reading: a box exactly over the plot (percent of the viewBox), so the rule spans the plot and not the axis labels. */}
+                <div class="sum-plot" ref={box} tabIndex={0} role="img" aria-label={label} {...handlers}
+                    style={{ left: pct(c.plot.l, VB_W), width: pct(span, VB_W), top: pct(c.plot.t, VB_H), height: pct(c.plot.b - c.plot.t, VB_H) }}>
+                    {at != null ? <CursorRule frac={(c.marks[at].x - c.plot.l) / span} snapped label={c.axis === "time" ? clock(c.marks[at].ts) : `Call ${at + 1}`} /> : null}
+                </div>
+            </div>
             <figcaption class="sum-legend">
                 <span><i class="sum-key prompt" aria-hidden="true" />Prompt</span>
                 <span><i class="sum-key completion" aria-hidden="true" />Completion</span>
@@ -206,7 +239,7 @@ export function SessionUsage({ mapKey }: { mapKey: string }) {
     const totals = usageTotals(timed.map((x) => x.usage), sessionSubcall(sess), spend);
     return (
         <div class="sum-usage">
-            <UsageChartView points={timed.map((x) => ({ ts: x.ts, prompt: x.usage.promptTokens || 0, completion: x.usage.completionTokens || 0 }))} />
+            <UsageChartView points={timed.map((x) => ({ ts: x.ts, prompt: x.usage.promptTokens || 0, completion: x.usage.completionTokens || 0, ...(typeof x.usage.cachedTokens === "number" ? { cached: x.usage.cachedTokens } : {}) }))} />
             <UsageTotalsView lines={totalsLines(totals)} />
         </div>
     );

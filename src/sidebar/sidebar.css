@@ -4820,6 +4820,15 @@ pre.code.morphing:not(.numbered) > code, pre.code.morphing .lcode { visibility: 
 .sum-usage { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 /* `.sum-chart`: the usage chart's figure: the SVG and its legend. */
 .sum-chart { margin: 0; }
+/* `.sum-chart-box`: the usage chart's SVG and the reading box laid over its plot. */
+.sum-chart-box { position: relative; }
+/* `.sum-plot`: the box over the usage chart's plot (placed in percent of the viewBox) that takes the pointer and the arrow keys. */
+.sum-plot { position: absolute; cursor: crosshair; touch-action: pan-y; outline: none; }
+.sum-plot:focus-visible { box-shadow: 0 0 0 1px var(--accent); border-radius: 2px; }
+/* `.sum-sw-prompt`: the usage chart tooltip's swatch for prompt tokens: the mark's own circle and colour (with `.tc-sw`). */
+.sum-sw-prompt { background: var(--accent); border-radius: 50%; }
+/* `.sum-sw-completion`: the usage chart tooltip's swatch for completion tokens: the mark's own diamond and colour (with `.tc-sw`). */
+.sum-sw-completion { background: var(--warn); transform: rotate(45deg) scale(.85); }
 .sum-chart svg { width: 100%; height: auto; display: block; }
 /* `.sum-grid`: a gridline of the usage chart, recessive. */
 .sum-grid { stroke: var(--border); stroke-width: 1; }
