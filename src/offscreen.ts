@@ -21,11 +21,28 @@ const PY_START_TIMEOUT_MS = 120000;
 // bench rule as SH_LEASE_MS: a Python loop answers the interrupt in about 3 ms, a C call not until it returns, which
 // may be minutes, so no number between helps; 1 s is the fallback's honest latency (docs/dev/python-sandbox.md).
 export const BENCH_STOP_KILL_MS = 1000;
+
+/**
+ * The `chrome.storage.session` key a TEST sets to LENGTHEN the bench Stop's grace (`BENCH_STOP_KILL_MS`): a CI shard can
+ * starve the worker past a second, and the row that proves "the interrupt answers, nothing is restarted" would fail for
+ * the machine rather than the bench. Not a setting: it is in no config schema, no Settings surface and no page-reachable
+ * message, and `chrome.storage.session` is TRUSTED_CONTEXTS — the redteam row that pins that stays the guard. It can
+ * only lengthen (`py-lease.ts` `benchStopGraceMs`), so no value makes the bench give up sooner than the product does.
+ */
+export const BENCH_GRACE_KEY = "ml_bench_stop_grace_ms";
+let benchStopGrace = BENCH_STOP_KILL_MS;   // state: test — a test-only override, cached from session storage
+const noteBenchGrace = (v: unknown): void => { benchStopGrace = benchStopGraceMs(BENCH_STOP_KILL_MS, v); };
+try {
+    void chrome.storage.session.get(BENCH_GRACE_KEY).then((g) => noteBenchGrace(g?.[BENCH_GRACE_KEY]), () => { /* absent: the shipped bound */ });
+    chrome.storage.onChanged.addListener((c: Record<string, { newValue?: unknown }>, area: string) => {
+        if (area === "session" && c?.[BENCH_GRACE_KEY]) noteBenchGrace(c[BENCH_GRACE_KEY].newValue);
+    });
+} catch { /* no storage in this context: the shipped bound */ }
 /** A bench script's result when its Stop had to restart the sandbox: the cost is the point. */
 export const BENCH_STOP_KILLED = "Stopped by restarting the sandbox: it did not answer the interrupt, so its variables are gone.";
 
 import { ValueStore } from "./pointers/value-store";
-import { PY_DETACHED_MAX_MS, PY_INTERRUPT_KILL_MS, clampDetachedMs, ringAppend, type CellCancel } from "./python/py-lease";
+import { PY_DETACHED_MAX_MS, PY_INTERRUPT_KILL_MS, benchStopGraceMs, clampDetachedMs, ringAppend, type CellCancel } from "./python/py-lease";
 import { htmlToMarkdown } from "./dom/html-to-md";
 import { PNG_DATA_URL } from "./session/image-compact";
 import { defineState } from "./state-registry";
@@ -808,7 +825,7 @@ export function interruptBench(): { interrupted: true } | { running: false } {
     const flag = workers.get("own")?.flag;
     if (!found || !flag) return { running: false };
     const [id, entry] = found;
-    interruptEntry(id, entry, flag, BENCH_STOP_KILL_MS, BENCH_STOP_KILLED);
+    interruptEntry(id, entry, flag, benchStopGrace, BENCH_STOP_KILLED);   // the grace, lengthened by the test seam only
     return { interrupted: true };
 }
 

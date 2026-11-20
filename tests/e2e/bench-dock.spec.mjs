@@ -629,6 +629,10 @@ test("the bench streams stdout as the script runs, and the value supersedes it a
 test("Stop interrupts a running bench script, and its kept variables survive", async () => {
     const { fake, ext, frame } = await setup();
     try {
+        // THE GRACE IS LENGTHENED FOR THIS ROW (offscreen.ts `BENCH_GRACE_KEY`): a CI shard can starve the Python worker
+        // past the shipped 1000 ms, and the interrupt would then never be read — the row would fail for the machine,
+        // not the bench. Set before the bench's first run, so the offscreen document reads it (or hears it) on start.
+        await ext.sw.evaluate(() => chrome.storage.session.set({ ml_bench_stop_grace_ms: 20000 }));
         await frame.locator('[aria-label="Python bench"]').click();
         await runInBench(frame, "kept_before = 41\nprint('SET')");
         await frame.locator(".bench-code .cm-content").fill("print('LOOPING')\nwhile True:\n    pass");
@@ -642,6 +646,29 @@ test("Stop interrupts a running bench script, and its kept variables survive", a
         await expect(frame.locator(".bench-lost", { hasText: "restarted" }), "it answered the interrupt, so nothing was restarted").toHaveCount(0);
         await runInBench(frame, "print(kept_before + 1)");
         await expect(frame.locator(".bench-outbody")).toContainText("42");
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// THE FALLBACK, AT THE SHIPPED SECOND. A script that blocks the interrupt deterministically — `time.sleep` runs in C
+// with no bytecode to check the flag at — must be restarted, and the restart must SAY the variables are gone rather
+// than surfacing later as a NameError. This is the other half of the row above: no seam, no lengthened grace.
+test("a bench script that cannot answer the interrupt is restarted at the shipped 1 s, and says so", async () => {
+    const { fake, ext, frame } = await setup();
+    try {
+        await frame.locator('[aria-label="Python bench"]').click();
+        await runInBench(frame, "kept_before = 41\nprint('SET')");
+        await frame.locator(".bench-code .cm-content").fill("import time\nprint('SLEEPING')\ntime.sleep(30)");
+        await frame.locator(".bench-play").click();
+        const stop = frame.locator('.bench-play[aria-label="Stop"]');
+        await expect(stop, "the running script's button is Stop").toBeVisible({ timeout: 20000 });
+        await expect(frame.locator(".bench-outbody")).toContainText("SLEEPING", { timeout: 20000 });
+        await stop.click();
+        // No bytecode runs inside `time.sleep`, so the interrupt can never land and the 1 s grace ends the worker.
+        await expect(frame.locator(".bench-lost", { hasText: "The sandbox restarted" }), "the restart is said where the person is looking").toBeVisible({ timeout: 15000 });
+        await expect(frame.locator(".bench-lost", { hasText: "Stopped" }), "not the interrupt's own word: nothing answered it").toHaveCount(0);
+        // And the variables really are gone: the next run fails on the name the restart took with it.
+        await runInBench(frame, "print(kept_before + 1)");
+        await expect(frame.locator(".bench-outbody")).toContainText("NameError");
     } finally { await ext.context.close(); await fake.stop(); }
 });
 
