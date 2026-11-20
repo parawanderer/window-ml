@@ -2125,6 +2125,11 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 .r-ts.hoverable { cursor: help; }
 .r-ts.hoverable:hover { opacity: 1; color: var(--fg-dim); }
 .r-ts-line { flex: 1 1 auto; white-space: pre-wrap; word-break: break-word; }
+/* An http(s) address in tool output (output-links.ts): the output's own colour with the underline that says it is a link,
+   so a log full of them does not turn into a wall of blue. */
+a.out-link { color: inherit; text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 2px; cursor: pointer; }
+a.out-link:hover { text-decoration-thickness: 2px; }
+a.out-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
 /* Midnight: the gutter shows time only, so a day change gets its own divider — without it 00:00:01 sits
    directly under 23:59:58 and reads as one second later. */
 .r-ts-day { display: flex; align-items: center; gap: 8px; margin: 5px 0 3px; user-select: none; -webkit-user-select: none; }
