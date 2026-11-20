@@ -230,6 +230,7 @@ export const NO_CONVERSION: Readonly<Record<string, Readonly<Record<string, stri
     tokenlist: { forEach: "callback", keys: NONE, values: NONE, entries: NONE },
     console: { log: "recorded through printable(), never converted", info: "as log", warn: "as log", error: "as log", debug: "as log" },
     embedding: { dot: "arguments are validated as embeddings by preflight", rank: "as dot" },
+    table: { copy: NONE },
     ObjectCtor: { keys: "property reads, not conversion", values: "as keys", entries: "as keys", fromEntries: "as keys", assign: "as keys" },
     ArrayCtor: { from: "its first argument is an iterable judged by `iterates` (an array-like included), its mapper by onlyOurFunctions", isArray: DATA, of: DATA },
     PromiseCtor: { all: DATA, allSettled: DATA },
