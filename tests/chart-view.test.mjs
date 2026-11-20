@@ -117,6 +117,23 @@ test("a drag across a local view's plot selects on its own axis and brush, not t
     } finally { STORE.snapDot.value = snap; plot.remove(); }
 });
 
+test("the panel scoping or opening a session changes the panel's hold key and leaves a local view's alone", () => {
+    const v = CI.createChartView();
+    const was = { scoped: STORE.laneScoped.value, view: STORE.view.value };
+    try {
+        STORE.laneScoped.value = true;
+        STORE.view.value = { name: "list" };
+        const local = CI.holdKey(v), panel = CI.holdKey();
+        STORE.view.value = { name: "detail", hash: "h1" };
+        assert.notEqual(CI.holdKey(), panel, "opening a session while scoped moves the panel's key");
+        assert.equal(CI.holdKey(v), local, "a local view's key does not see the open session");
+        const opened = CI.holdKey();
+        STORE.laneScoped.value = false;
+        assert.notEqual(CI.holdKey(), opened, "unscoping moves the panel's key");
+        assert.equal(CI.holdKey(v), local, "a local view's key does not see the panel's scoping");
+    } finally { STORE.laneScoped.value = was.scoped; STORE.view.value = was.view; }
+});
+
 test("a hold taken on one view is not read as held by the other", () => {
     const v = CI.createChartView();
     v.live.axis = { from: 0, to: 10 };

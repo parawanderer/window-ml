@@ -190,13 +190,16 @@ export function createChartView(opts: { windowS?: number; remember?: (secs: numb
 
 /** WHAT the held axis was a view OF. Holding is for passive reading only: a zoom, a scrub, a new width or a change of
  *  scope is you navigating, and a hold taken before it would pin the chart to the stretch you just asked to leave.
- *  `laneScoped` and the open session are the panel's own (a second chart is not scoped to a session). */
+ *  `laneScoped` and the open session key only the panel's own view (a second chart is not scoped to a session). */
 export const holdKey = (view: ChartView = panelView): string =>
-    `${view.zoom.value?.from ?? ""}:${view.zoom.value?.to ?? ""}:${view.windowS.value}:${laneScoped.value}`
-    // The open session changes the window only when the chart is SCOPED to it. Keying it in regardless released the hold
-    // on the first click of a double-click (a click opens the step), so the chart jumped between the two clicks and the
-    // second one missed the bar it was meant for.
-    + (laneScoped.value ? `:${scopedHash() ?? ""}` : "");
+    `${view.zoom.value?.from ?? ""}:${view.zoom.value?.to ?? ""}:${view.windowS.value}`
+    // Only the panel is scoped: another view's hold must not let go when the panel scopes or opens a session.
+    + (view === panelView ? panelScopeKey() : "");
+
+/** The panel's scope, as `holdKey` keys it. The open session changes the window only when the chart is SCOPED to it.
+ *  Keying it in regardless released the hold on the first click of a double-click (a click opens the step), so the
+ *  chart jumped between the two clicks and the second one missed the bar it was meant for. */
+const panelScopeKey = (): string => `:${laneScoped.value}` + (laneScoped.value ? `:${scopedHash() ?? ""}` : "");
 
 /** When the pointer last did anything over a chart surface. */
 export let lastPointerAt = 0;
