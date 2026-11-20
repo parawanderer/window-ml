@@ -215,3 +215,21 @@ test("the JSON export carries the names in the turn's display", () => {
     const json = JSON.stringify(sessionToJson(withAsIs));
     assert.match(json, /"asIs":\["PLUG_PASSWORD"\]/);
 });
+
+// --- UPGRADE: a turn stored by the code before "send as is" (#2049) ---
+
+test("UPGRADE: a turn #2049 stored, its display with markers and no asIs, exports and draws with no 'Sent as is' and its markers kept", () => {
+    const old = {
+        ...withAsIs,
+        turns: [{ id: "t1", ts: 1, user: "pw is [REDACTED:PLUG_PASSWORD]\n[1 secret redacted (PLUG_PASSWORD)]", assistant: "ok", status: "ok", display: { typed: "pw is [REDACTED:PLUG_PASSWORD]", context: [] } }],
+    };
+    const { md } = serializeSession(old);
+    assert.doesNotMatch(md, /Sent as is/);
+    assert.match(md, /\[REDACTED:PLUG_PASSWORD\]/, "the export keeps what the model read");
+    assert.doesNotMatch(JSON.stringify(sessionToJson(old)), /"asIs"/);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    render(h("div", null, h(UserText, { text: old.turns[0].display.typed, marks: true }), h(SentAsIs, { names: old.turns[0].display.asIs })), root);
+    assert.equal(root.querySelector(".utext-mark").textContent, "PLUG_PASSWORD");
+    assert.equal(root.querySelector(".sent-asis"), null);
+});
