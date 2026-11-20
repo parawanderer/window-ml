@@ -188,13 +188,16 @@ test("RED TEAM (ml.table): a frozen table carried in a script-made container sta
     }
 });
 
-test("RED TEAM (ml.table): a copy of a stored table is editable, reads every row, and hands out no reader", async () => {
+test("RED TEAM (ml.table): a copy of a stored table is editable, drops its plan, and never reads past the rows in hand", async () => {
     const ml = dialectHost();
     const t = await table.call(ml, "@tool:abc");
     const c = t.copy();
     c.rows[0][1] = 99;
     assert.equal(c.rows[0][1], 99, "a copy is not editable");
-    assert.deepEqual(await c.col("n"), ["a", "b", "c", "d"], "the copy lost the store reader");
     assert.equal(t.rows[0][1], 1, "the copy's edit reached the stored preview");
+    // The source still reads every row; the copy never does, and says where the whole one is.
+    assert.deepEqual(await t.col("n"), ["a", "b", "c", "d"], "the source lost the store reader");
+    assert.throws(() => c.col("n"), /copy never reads the rest/, "a copy read past its rows in hand");
+    assert.throws(() => c.records(), /copy never reads the rest/, "a copy's records read past its rows in hand");
     assert.throws(() => c.readColumns, /not something it answers to/, "the reader is reachable off the copy");
 });
