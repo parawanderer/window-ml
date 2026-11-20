@@ -349,8 +349,12 @@ export function Composer({ s, multiline, tools, keys }: { s: Session; multiline?
         const ms = cssDurationMs(box.current, "--ph-fade-ms");
         if (!ms) { setPlaceholder(wanted); return; }
         setFadingOut(true);
-        const t = setTimeout(() => { setPlaceholder(wanted); setFadingOut(false); }, ms);
-        return () => clearTimeout(t);
+        // The fade starts at the style pass after `.ph-out` lands, not when it is set: the clock starts two frames on, with a
+        // margin, or a busy machine swapped the words with the old ones still a fifth visible.
+        let t: ReturnType<typeof setTimeout> | undefined, f = requestAnimationFrame(() => {
+            f = requestAnimationFrame(() => { t = setTimeout(() => { setPlaceholder(wanted); setFadingOut(false); }, ms + 40); });
+        });
+        return () => { cancelAnimationFrame(f); clearTimeout(t); };
     }, [wanted, placeholder]);
     return (
         <div class={`composer${fadingOut ? " ph-out" : ""}`} ref={box} data-rev={r} onDragOver={att.onDragOver} onDrop={att.onDrop}>
