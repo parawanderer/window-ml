@@ -69,7 +69,7 @@ import { FilesRefused, cleanFiles, isPdfFile, pdfToPageRun, textFiles } from "./
 import { adoptOnTab } from "./sw/adopt-run";
 import { pageRebuild } from "./agent/run-assembly";
 import { runControlPayloadError } from "./sw/run-payload-check";
-import { forBackendFromPage, forPage, forTurn } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets; a page's model request, without a registered secret
+import { asIsTokens, forBackendFromPage, forPage, forTurn, scanTurn } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets; a page's model request, without a registered secret
 import { TurnUnreadable } from "./secret-registry";
 import { secretRegistryOp } from "./sw/sw-secret-registry";
 import { pythonPrewarm, pythonExec, pythonInterrupt, relayPyStdout, deletePythonRun, dropPythonLibraries, pythonReaped, pythonStarted, pythonDone } from "./sw/sw-python";
@@ -738,7 +738,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // its `scrubInput: false` sends it as it is. The inbox is read after the scrub, which a turn can end during.
         const live = (): boolean => { const inbox = runInboxes.get(p.runId); return !!(inbox && inbox.tabId === sender.tab?.id && typeof p.text === "string"); };
         if (!live()) { sendResponse({ data: false }); return true; }
-        void forTurn({ off: p.scrubInput === false }).then((scrub) => {
+        void forTurn({ off: p.scrubInput === false, asIs: asIsTokens(p.asIs) }).then((scrub) => {
             if (!live()) { sendResponse({ data: false }); return; }
             const text = `${scrub.text(p.text)}${scrub.note()}`;
             runInboxes.get(p.runId)!.queue.push({ id: p.sayId, text, ...(p.origin ? { origin: p.origin } : {}) });
@@ -827,6 +827,16 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     if (message.type === "SECRET_REGISTRY") {
         if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
         secretRegistryOp((message.payload || {}) as { op?: unknown; name?: unknown; value?: unknown }).then(sendResponse, (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
+        return true;
+    }
+    // A composer's draft, scanned for the registered values its send would take out (ruling 39, SECRET_HANDLES.md, "What
+    // the person sees"): spans, names and the tokens "send as is" sends back, never a value. EXTENSION PAGES ONLY, judged
+    // by the sender the browser reports, and refused before the payload is read, so the refusal never differs by the text.
+    if (message.type === "SCAN_TURN") {
+        if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
+        const texts = (message.payload as { texts?: unknown } | undefined)?.texts;
+        if (!Array.isArray(texts) || texts.length > 64 || texts.some((t) => typeof t !== "string")) { sendResponse({ error: "texts must be a list of strings" }); return; }
+        scanTurn(texts as string[]).then((data) => sendResponse({ data }), (e) => sendResponse(e instanceof TurnUnreadable ? { error: e.message, unreadable: true } : { error: "the draft could not be scanned" }));
         return true;
     }
     if (message.type === "LIBRARIES") {
@@ -1565,10 +1575,10 @@ configureSessionCommands({
     // A steer from the chat page goes into the running loop's inbox, the same one a handle's say() reaches through
     // INJECT_MESSAGE, and is shown the way say() shows it: an `agent-say` bubble the loop marks seen when it drains.
     // Scrubbed where it becomes a turn (ruling 39); the bubble shows the words without the model's note.
-    steer: async (hash, text, origin) => {
-        const scrub = await forTurn();
-        const said = scrub.text(text), note = scrub.note();
-        return steerRun(hash, `${said}${note}`, origin, note ? { typed: said, context: [] } : undefined);
+    steer: async (hash, text, origin, asIs) => {
+        const scrub = await forTurn({ asIs: asIsTokens(asIs) });
+        const said = scrub.text(text), note = scrub.note(), kept = scrub.sentAsIs();
+        return steerRun(hash, `${said}${note}`, origin, note || kept.length ? { typed: said, context: [], ...(kept.length ? { asIs: kept } : {}) } : undefined);
     },
     startUserRun: (tabId, req, opts) => startUserRun(tabId, req, opts),
     userRunAction: (hash, action, body, fromTabId, origin) => userRunAction(hash, action, body, fromTabId, origin),

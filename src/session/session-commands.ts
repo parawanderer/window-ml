@@ -46,6 +46,19 @@ export function commandOrigin(from: CommandFrom, ui?: unknown): PromptOrigin {
     };
 }
 
+/**
+ * The exemption tokens a command carries ("send as is" on the chat page's chip, ruling 39): taken only from this
+ * browser's own pages. A hub device's are ignored, so its turn is scrubbed as if it sent none.
+ * @param v the command's `asIs` field
+ * @param from the command's sender
+ * @returns the tokens, or undefined
+ */
+export function commandAsIs(v: unknown, from: CommandFrom): string[] | undefined {
+    if (from.via !== "this browser" || !Array.isArray(v)) return undefined;
+    const out = v.filter((t): t is string => typeof t === "string" && t.length <= 64).slice(0, 64);
+    return out.length ? out : undefined;
+}
+
 /** Everything the commands reach outside themselves. */
 export interface CommandDeps {
     /** what this runtime CALLS itself: the id every session id and answer is built with */
@@ -75,14 +88,14 @@ export interface CommandDeps {
     /** one tab, or null when it is gone */
     getTab(tabId: number): Promise<TabInfo | null>;
     /** relay a session action to the page in a tab and wait for what it did; rejects when nothing listens there */
-    toPage(tabId: number, action: "send" | "cancel" | "continue", body: { hash: string; text?: string; images?: string[]; files?: SentFile[]; elementContext?: unknown; maxSteps?: number }, origin?: PromptOrigin): Promise<PageOutcome>;
+    toPage(tabId: number, action: "send" | "cancel" | "continue", body: { hash: string; text?: string; images?: string[]; files?: SentFile[]; elementContext?: unknown; maxSteps?: number; asIs?: string[] }, origin?: PromptOrigin): Promise<PageOutcome>;
     /** bring a tab and its window to the front; false when the tab is gone */
     focusTab(tabId: number, windowId?: number): Promise<boolean>;
     /** outline an element or point on a tab's page (fire and forget) */
     highlight(tabId: number, ref: { selector: string } | { token: string } | null): void;
     /** push a message into a RUNNING background loop's inbox and show it in the transcript; false when no loop runs.
      *  Throws {@link TurnUnreadable} when the secrets it is scrubbed against cannot be read (ruling 44) */
-    steer(hash: string, text: string, origin?: PromptOrigin): boolean | Promise<boolean>;
+    steer(hash: string, text: string, origin?: PromptOrigin, asIs?: string[]): boolean | Promise<boolean>;
     /** abort a background-hosted run and close its open gates; false when none was live */
     cancelRun(hash: string): boolean;
     /** resolve one open approval gate; false when it was already closed */
@@ -90,12 +103,12 @@ export interface CommandDeps {
     /** forget what the worker keeps for a finished session: its stored chat history, its resumable snapshot */
     forgetStored(hash: string): Promise<void>;
     /** start a chat this worker hosts (no tab), resolving with its hash once the first turn is under way */
-    startChat(opts: { text: string; images?: string[]; files?: SentFile[]; model?: string; system?: string; think?: boolean | null; ephemeral?: boolean; vision?: true }): Promise<string>;
+    startChat(opts: { text: string; images?: string[]; files?: SentFile[]; model?: string; system?: string; think?: boolean | null; ephemeral?: boolean; vision?: true; asIs?: string[] }): Promise<string>;
     /** the next turn of a worker-hosted chat; `not-found` when this worker does not host it and storage has nothing.
      *  Both throw `ImagesRefused` (image-gate.ts) before a turn whose images may not be sent; `vision: true` is the
      *  client's claim that the model sees (the worker cannot tell a claim from the person's word). Both throw `FilesRefused` (attached-files.ts) before a turn whose PDF cannot
      *  be read, or whose text files hold more text than a message takes. */
-    sendChat(hash: string, text: string, images?: string[], files?: SentFile[], vision?: true): Promise<"turn" | "busy" | "not-found">;
+    sendChat(hash: string, text: string, images?: string[], files?: SentFile[], vision?: true, asIs?: string[]): Promise<"turn" | "busy" | "not-found">;
     /** switch a worker-hosted chat's model from its next turn; false when this worker does not host it */
     setChatModel(hash: string, model: string): Promise<boolean>;
     /** switch a run whose loop this worker hosts: `running` takes it at the next model call, `stored` at its next turn;
@@ -136,7 +149,7 @@ export interface CommandDeps {
     noteResumed(hash: string, tabId: number, note: { id: string; url: string; fromUrl?: string; afterMs: number; dropped: string[]; kept?: string[] }): void;
     /** start a run on a tab, assembled in the worker (`startUserRun`), never by the page it acts on; resolves with how it started */
     /** `error`: why nothing started, in words the person can act on */
-    startAgent(tabId: number, opts: { task: string; images?: string[]; files?: SentFile[]; model?: string; maxSteps?: number; vision?: true; stream?: true }, origin?: PromptOrigin): Promise<{ outcome: PageOutcome | "started"; hash?: string; error?: string }>;
+    startAgent(tabId: number, opts: { task: string; images?: string[]; files?: SentFile[]; model?: string; maxSteps?: number; vision?: true; stream?: true; asIs?: string[] }, origin?: PromptOrigin): Promise<{ outcome: PageOutcome | "started"; hash?: string; error?: string }>;
     /** open a new tab at a URL and wait until the extension can talk to it; rejects when it never answers */
     openTab(url: string): Promise<number>;
     /** the page a blank agent target opens when the command names no URL ("" when unset) */
@@ -306,7 +319,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
     };
 
     /** Relay to the session's page; a page with nothing listening, or no answer, is unavailable. */
-    const viaPage = async (hash: string, action: "send" | "cancel" | "continue", body: { text?: string; images?: string[]; files?: SentFile[]; elementContext?: unknown; maxSteps?: number } = {}, origin?: PromptOrigin): Promise<PageOutcome | CommandResult<any>> => {
+    const viaPage = async (hash: string, action: "send" | "cancel" | "continue", body: { text?: string; images?: string[]; files?: SentFile[]; elementContext?: unknown; maxSteps?: number; asIs?: string[] } = {}, origin?: PromptOrigin): Promise<PageOutcome | CommandResult<any>> => {
         const t = tabOf(hash);
         if (t.error) return t.error;
         try {
@@ -450,6 +463,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
                 ...(c.maxSteps != null ? { maxSteps: c.maxSteps } : {}),
                 ...(c.vision === true ? { vision: true as const } : {}),
                 ...(c.stream === true ? { stream: true as const } : {}),
+                ...(commandAsIs(c.asIs, from) ? { asIs: commandAsIs(c.asIs, from) } : {}),
             }, commandOrigin(from, c.ui));
             if (r.outcome === "started" && r.hash) {
                 if (!c.ephemeral) deps.keepSession(r.hash);
@@ -539,7 +553,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             return ok({ session: s.id, ...(c.maxSteps != null ? { maxSteps: c.maxSteps } : {}) });
         },
 
-        "chat.start": async (c) => {
+        "chat.start": async (c, from) => {
             const bad = ownRuntime(c);
             if (bad) return bad;
             const text = typeof c.text === "string" ? c.text : "";
@@ -562,6 +576,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
                     ...(c.think != null ? { think: c.think } : {}),
                     ...(c.ephemeral ? { ephemeral: true } : {}),
                     ...(c.vision === true ? { vision: true as const } : {}),
+                    ...(commandAsIs(c.asIs, from) ? { asIs: commandAsIs(c.asIs, from) } : {}),
                 });
                 // "Sessions started by a command are saved unless `ephemeral`" (SESSION_CONTRACT.md §Commands).
                 if (!c.ephemeral) deps.keepSession(hash);
@@ -589,7 +604,8 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             if (pagelessChat(s.id.hash)) {
                 if (text.length > CHAT_TEXT_MAX) return fail("invalid", "that message is too long");
                 let outcome: "turn" | "busy" | "not-found";
-                try { outcome = await (c.vision === true ? deps.sendChat(s.id.hash, text, images, att.files, true) : deps.sendChat(s.id.hash, text, images, att.files)); } catch (err) {
+                const asIs = commandAsIs(c.asIs, from);
+                try { outcome = await (asIs ? deps.sendChat(s.id.hash, text, images, att.files, c.vision === true ? true : undefined, asIs) : c.vision === true ? deps.sendChat(s.id.hash, text, images, att.files, true) : deps.sendChat(s.id.hash, text, images, att.files)); } catch (err) {
                     if (err instanceof ImagesRefused) return fail("unsupported", err.message);
                     if (err instanceof FilesRefused) return fail("invalid", err.message);
                     if (err instanceof TurnUnreadable) return fail("unavailable", err.message);
@@ -605,12 +621,14 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             // navigated), and the inbox is the same one the handle's `say` reaches.
             if (running && !images.length && !att.files && !c.elementContext) {
                 if (text.length > STEER_TEXT_MAX) return fail("invalid", "that message is too long to steer with");
-                try { if (await deps.steer(s.id.hash, text, commandOrigin(from, c.ui))) return ok({ mode: "steer" }); } catch (err) {
+                const asIs = commandAsIs(c.asIs, from);
+                try { if (await (asIs ? deps.steer(s.id.hash, text, commandOrigin(from, c.ui), asIs) : deps.steer(s.id.hash, text, commandOrigin(from, c.ui)))) return ok({ mode: "steer" }); } catch (err) {
                     if (err instanceof TurnUnreadable) return fail("unavailable", err.message);
                     throw err;
                 }
             }
-            const r = await viaPage(s.id.hash, "send", { text, ...(images.length ? { images } : {}), ...(att.files ? { files: att.files } : {}), ...(c.elementContext ? { elementContext: c.elementContext } : {}) }, commandOrigin(from, c.ui));
+            const sendAsIs = commandAsIs(c.asIs, from);
+            const r = await viaPage(s.id.hash, "send", { text, ...(images.length ? { images } : {}), ...(att.files ? { files: att.files } : {}), ...(c.elementContext ? { elementContext: c.elementContext } : {}), ...(sendAsIs ? { asIs: sendAsIs } : {}) }, commandOrigin(from, c.ui));
             if (typeof r !== "string") return r;
             if (r === "steer" || r === "turn") return ok({ mode: r });
             return fail("not-found", "the page no longer holds this session (it was reloaded, or the session was never resumable)");

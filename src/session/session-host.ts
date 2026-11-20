@@ -443,6 +443,9 @@ export type Command =
      *  an idle agent or chat. Text, images, or both. */
     | {
         type: "session.send"; session: SessionId; text: string; images?: ImageDataUrl[]; files?: WireFile[]; elementContext?: ElementContext; idempotencyKey?: IdempotencyKey;
+        /** the exemption tokens of the values the person chose to send as is (ruling 39, the composer's chip): honoured
+         *  only from this browser's own chat page, ignored from a hub device, whose turn is scrubbed. */
+        asIs?: string[];
         /** `true`: the person says the chat's model sees images, so they go to it unprobed. Without it, images for a
          *  model whose vision is not known are refused (`unsupported`) when no reader model is set. A chat's only:
          *  an agent run's vision is decided at `agent.start`. */
@@ -503,6 +506,9 @@ export type Command =
         ask?: string }
     | {
         type: "chat.start"; runtime: RuntimeId; text: string; images?: ImageDataUrl[]; files?: WireFile[];
+        /** the exemption tokens of the values the person chose to send as is (ruling 39, the composer's chip): honoured
+         *  only from this browser's own chat page, ignored from a hub device, whose turn is scrubbed. */
+        asIs?: string[];
         model?: string; system?: string; think?: boolean | null;
         /** `true`: the person says the model sees images, so they go to it unprobed. Without it, images for a model
          *  whose vision is not known are refused (`unsupported`) when no reader model is set. */
@@ -513,6 +519,9 @@ export type Command =
     }
     | {
         type: "agent.start"; runtime: RuntimeId; task: string; images?: ImageDataUrl[]; files?: WireFile[]; target: AgentTarget;
+        /** the exemption tokens of the values the person chose to send as is (ruling 39, the composer's chip): honoured
+         *  only from this browser's own chat page, ignored from a hub device, whose turn is scrubbed. */
+        asIs?: string[];
         model?: string; maxSteps?: number;
         /** {@link ClientUi}: what the sending client says it can show. A claim; absent from an older client. */
         ui?: ClientUi;

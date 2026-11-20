@@ -461,6 +461,8 @@ export interface UserRunRequest {
     task: string;
     /** composer attachments, already data URLs */
     images?: string[];
+    /** the exemption tokens of the values the person chose to send as is (the composer's chip, `SCAN_TURN`) */
+    asIs?: string[];
     /** files attached to the task as sent: text, or a PDF's bytes, which the worker reads and holds (sw-attach.ts) */
     files?: SentFile[];
     /** a right-clicked element, resolved by the shell; the task is framed around it */
