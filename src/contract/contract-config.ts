@@ -229,6 +229,10 @@ export interface MlConfig {
      *  its execution log, the watches you shared) inside a read-only `exec` of a run the extension hosts, and its system
      *  prompt says so, with `ml.current`'s shape. Off: no `ml.current` at all, and no word of it in the prompt. */
     selfIntrospection: boolean;
+    /** Default ON. The worker replaces every registered secret value, and the extension's own saved API key, in what the
+     *  PERSON sends (a typed message, a paste, an attached file's text) with `[REDACTED:<NAME>]` before the model reads it
+     *  or the session stores it. Off: what you send reaches the model as typed. A run cannot change it, a page cannot read it. */
+    scrubPersonInput: boolean;
     /** Default OFF. Let a run's approved script start programs on this machine through `ml.sh`, by way of the process
      *  host (window-ml-host, installed separately). Every call still asks, showing what will run. */
     shellEnabled: boolean;
@@ -358,6 +362,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     autoApproveSelfSource: true,        // default on: an uncredentialed read of the agent's OWN repo source is free
     agentSeesFocus: true,               // default on: chat_metadata says where the user is, when it is not the agent's tab
     selfIntrospection: true,            // default on: the agent reads its own run as `ml.current`, and is told so
+    scrubPersonInput: true,             // default on: registered secrets in what the person sends become [REDACTED:<NAME>]
     valueStoreBudgetMB: 1024,           // capped at half the browser's quota for the extension
     shellEnabled: false,                // default off: no program runs until the person turns ml.sh on and names a folder
     shellRoots: [],
@@ -442,6 +447,7 @@ export const SETTING_PLACES: Readonly<Partial<Record<keyof MlConfig, SettingPlac
     shellPath: { tab: "advanced", section: "shell" },
     shellRevealsAllow: { tab: "advanced", section: "shell" },
     selfIntrospection: { tab: "advanced", section: "introspection" },
+    scrubPersonInput: { tab: "advanced", section: "secrets" },
     protoStream: { tab: "advanced", section: "protostream" },
     pierceClosedShadow: { tab: "advanced", section: "shadow" },
     cdp: { tab: "advanced", section: "cdp" },

@@ -35,7 +35,10 @@ const DUTY = {
 };
 const PLAIN = "return document.title.length";
 /** How the worker's own survey accounted for each: the reason its record gives, on the worker, never the page. */
-const RECORD = { sh: "no-page-reads", pointer: "no-page-reads", current: "no-page-reads", settings: "script-isolated" };
+// `settings`: #2050 made the member free in the worker realm of a run the worker built, so the worker's own survey now
+// ANSWERS a script naming it and never needs the page — the record moves from `script-isolated` to `no-page-reads`. The
+// property this file holds is unchanged and still measured: the page is asked nothing (0 tries, asserted above).
+const RECORD = { sh: "no-page-reads", pointer: "no-page-reads", current: "no-page-reads", settings: "no-page-reads" };
 /** What the model read for each, where the survey answered it. Only the sh gate can answer an `ml.sh` call, so the
  *  settings-off sentence (`src/sw/sw-shell.ts`) is how this row sees the call was JUDGED, not skipped. */
 const ANSWERED = { sh: /Running programs \(ml\.sh\) is turned off in Settings/ };

@@ -1,10 +1,10 @@
-// sw-scrub.ts — the worker's crossings for text that leaves it: a page's answer (its error strings: the config's secrets, and each registered value as a bare `[REDACTED]`), a page-started model request (every message, bare `[REDACTED]`), a run's model input, a script's input, the run's stored renders and pointers (the config's secrets and each registered value as `[REDACTED:<NAME>]`), the live output and the run log's key (registered values only). `GET_CONFIG`'s data is not among them (SECRET_HANDLES.md, Known limits).
+// sw-scrub.ts — the worker's crossings for text that leaves it: a page's answer (its error strings: the config's secrets, and each registered value as a bare `[REDACTED]`), a page-started model request (every message, bare `[REDACTED]`), a run's model input, a script's input, the run's stored renders and pointers (the config's secrets and each registered value as `[REDACTED:<NAME>]`), the live output and the run log's key (registered values only), and what a person or a page sends where it becomes a turn (`forTurn`: registered values and the extension's own key). `GET_CONFIG`'s data is not among them (SECRET_HANDLES.md, Known limits).
 
 import { getConfig } from "./sw-llm";
 import { mapErrorStrings, mergeSecrets, scrubSecrets, secretsOf, type SecretSub } from "../secret-scrub";
 import type { MlConfig } from "../contract/contract-config";
 import type { NeutralMessage, ToolCall } from "../contract/contract-chat";
-import { heldTail, redactedLine, scrubRegistry, type RegistrySub } from "../secret-registry";
+import { heldTail, redactedLine, scrubRegistry, TurnUnreadable, type RegistrySub } from "../secret-registry";
 import { registryIsReady, registryReady, registrySubsNow } from "./sw-secret-registry";
 import { rowForEgress, textForEgress } from "../session/session-row-scrub";
 import type { SessionSummary } from "../session/session-host";
@@ -195,6 +195,59 @@ export function redactedNote(counts: Record<string, number>): string {
     return line ? `\n[${line}]` : "";
 }
 
+/** The name the extension's own saved API key is redacted under in a person's turn: a lowercase slug, so it never meets a
+ *  registry name, which is upper case by its bound (SECRET_HANDLES.md, "The extension's own key, with no registration"). */
+export const OWN_KEY_NAME = "window-ml-api-key";
+
+/** The scrub of one turn's input, its substitutions read once: every text of the turn goes through the same one, and
+ *  the note counts them all. */
+export interface TurnScrub {
+    /** a text of the turn, scrubbed, and what it took out counted for the note */
+    text(s: string): string;
+    /** a second copy of a text already counted (the typed words beside the framed task), scrubbed without counting it */
+    again(s: string): string;
+    /** every string in a value (a turn's `display`, its page context), scrubbed as {@link TurnScrub.text} does */
+    deep<T>(v: T): T;
+    /** the line the model reads after the turn (`redactedNote`), for what this scrub took out so far; empty for a page's */
+    note(): string;
+}
+
+/** A scrub that changes nothing: the setting is off, or the person's call asked for its turn as it is. */
+const AS_IS: TurnScrub = { text: (s) => s, again: (s) => s, deep: (v) => v, note: () => "" };
+
+/**
+ * The scrub for what a person or a page SENDS, where it becomes a turn (ruling 39, SECRET_HANDLES.md, "What the person
+ * sends is scrubbed too"): every registered value, and the extension's own saved API key (and those replaced since the
+ * worker started) from 12 characters, by value. A person's turn shows names (`[REDACTED:<NAME>]`,
+ * `[REDACTED:window-ml-api-key]`) and its note names them; a page's gets the bare `[REDACTED]` and no note, since the page
+ * reads the reply. A person's turn is left as it is when `scrubPersonInput` is off or the call asked (`off`); a page's
+ * never is, as a page's `scrubInput: false` turns off only the shape detector, which is not built yet.
+ * @param opts `site`: the turn is a page's. `off`: the person's call passed `scrubInput: false`
+ * @returns the turn's scrub
+ * @throws {TurnUnreadable} the config or the registry could not be read: the turn is held, never sent unchecked (ruling 44)
+ */
+export async function forTurn(opts: { site?: boolean; off?: boolean } = {}): Promise<TurnScrub> {
+    const site = !!opts.site;
+    let cfg: MlConfig;
+    try { cfg = await getConfig(); } catch { throw new TurnUnreadable(!site); }
+    if (!site && (opts.off || cfg.scrubPersonInput === false)) return AS_IS;
+    try { await registryReady(); } catch { throw new TurnUnreadable(!site); }
+    const own = mergeSecrets([cfg, ...retired].map((c) => secretsOf({ apiKey: c.apiKey }).filter((s) => s.put === "[API key]")));
+    const put = (name: string): string => (site ? "[REDACTED]" : `[REDACTED:${name}]`);
+    const subs: RegistrySub[] = [
+        ...registrySubsNow().map((s) => ({ ...s, put: put(s.name) })),
+        ...own.map((s) => ({ find: s.find, put: put(OWN_KEY_NAME), name: OWN_KEY_NAME })),
+    ];
+    if (!subs.length) return AS_IS;
+    const counts: Record<string, number> = {};
+    const text = (s: string): string => {
+        const r = scrubRegistry(s, subs);
+        for (const [n, c] of Object.entries(r.counts)) counts[n] = (counts[n] ?? 0) + c;
+        return r.text;
+    };
+    return { text, again: (s) => scrubRegistry(s, subs).text, deep: (v) => mapStrings(v, text, (k) => k, 8), note: () => (site ? "" : redactedNote(counts)) };
+}
+
 /**
  * A text the person reads (the run log's `key`, which keeps an error's raw text for extension pages): the registered
  * values taken out, the backend's own secrets left as they are.
@@ -286,13 +339,21 @@ function scrubArgs(args: unknown, scrub: (t: string) => string): unknown {
 /**
  * A history a run resumes from, scrubbed in place: the tool results and the model's own replies of a session saved
  * before the scrub existed (or under another config) carry the raw text, and the model reads them again on resume.
+ * A session stored before what the person sends was scrubbed (ruling 39) holds their turns raw too: given `users`, the
+ * user turns go through it, so the model's history holds the placeholder while the stored session is not rewritten.
  * @param messages the history, as the loop will send it
+ * @param users the scrub for the user turns of a history stored before the input scrub ({@link forTurn}); absent, they are left
  * @returns how many messages changed
  */
-export async function forModelHistory(messages: NeutralMessage[]): Promise<number> {
+export async function forModelHistory(messages: NeutralMessage[], users?: TurnScrub): Promise<number> {
     let changed = 0;
     for (let i = 0; i < messages.length; i++) {
         const m = messages[i];
+        if (users && m.role === "user" && typeof m.content === "string" && m.content) {
+            const t = users.text(m.content);
+            if (t !== m.content) { messages[i] = { ...m, content: t }; changed++; }
+            continue;
+        }
         if ((m.role !== "tool" && m.role !== "assistant") || typeof m.content !== "string" || !m.content) continue;
         const r = await forModel(m.content);
         if (r.changed) { messages[i] = { ...m, content: r.text }; changed++; }

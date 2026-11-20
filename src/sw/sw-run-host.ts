@@ -13,7 +13,7 @@ import { endPythonTurn, markPythonBridged, pythonRunBridged } from "./sw-python"
 import { workerReadonlyMl, derefWhole } from "./worker-readonly-ml";
 import { pipeStages } from "../pointers/token-pipe";
 import { recordRunLog, runLog } from "./sw-run-log";
-import { forModel, forModelHistory, forPage, forLive, forPerson, forStored, redactedNote } from "./sw-scrub";
+import { forModel, forModelHistory, forPage, forLive, forPerson, forStored, forTurn, redactedNote } from "./sw-scrub";
 import { eventsForRun, type RunLogEvent } from "../log/run-log";
 import { execCodeIn, expandPointers } from "../pointers/pointer-macro";
 import { namedReads, type PreRead } from "../pointers/named-reads";
@@ -36,7 +36,7 @@ import { extractGrants, fetchUrlLiterals, tabGrantsForCall } from "./grant-extra
 import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
 import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, grantOnceFetch, consentFetch, fetchConsent, resolveApproval } from "./sw-consent";
-import { settingBeforeCard, settingCard, settingFacts, settingMeasureDeps, holdSettingChange, releaseSettingChange, noteSettingDeclined, watchSetting, settingEntries, settingChangedElsewhere, type SettingChange } from "./sw-change-setting";
+import { settingBeforeCard, settingCard, settingFacts, settingMeasureDeps, holdSettingChange, releaseSettingChange, noteSettingDeclined, watchSetting, settingEntries, surveySettings, settingChangedElsewhere, type SettingChange } from "./sw-change-setting";
 import { ASK_POLICY_CAUSE, navOnlyWhy, startLeftWhy, judgeCall, fetchFacts, navigateFacts, actFacts, noteAct, dropActs, actsOf, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
 import { checkProposals, recordedFetches, measureBreadth, breadthNote, measureActBreadth, actBreadthNote, measureSettingBreadth, measureSettingRows, settingBreadthNote, recordedSettingKeys, type PolicyProposal, type SettingBreadth } from "./policy-proposal";
 import { approveManifest, checkManifestProposal, draftCardNote, type CheckedManifest } from "./sw-manifest-proposal";
@@ -233,6 +233,17 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
     const answer = (r: unknown): void => { endStarting(); sendResponse(r as Parameters<typeof sendResponse>[0]); };
     /** How a start the person stopped before its loop existed answers: cancelled, like a run that was aborted mid-flight. */
     const cancelledStart = (): { data: { cancelled: true; summary: string } } => ({ data: { cancelled: true, summary: "cancelled before the run started" } });
+    /** Host the turn once its input is scrubbed (`scrubTurnInput`, ruling 39). The checks the paths above made are made
+     *  again after that wait, and a turn refused then gives back what it spent. A store that cannot be read refuses it. */
+    const hostScrubbed = async (msg: any, site?: SiteTurn, refund?: () => Promise<void>): Promise<void> => {
+        let s: Awaited<ReturnType<typeof scrubTurnInput>>;
+        try { s = await scrubTurnInput(msg, site); } catch (e) { await refund?.(); answer({ error: (e as Error)?.message || String(e) }); return; }
+        if (startCancelled()) { await refund?.(); answer(cancelledStart()); return; }
+        if (workerHeld()) { await refund?.(); answer({ error: WORKER_RUN_REFUSED }); return; }
+        if (running()) { await refund?.(); answer({ error: RUNNING }); return; }
+        endStarting();
+        hostRun(s.message, tabId, sendResponse, undefined, s.site, undefined, s.note);
+    };
     // Bounded, and closed when the bound is hit: judged against maps not yet restored, a run the worker holds would
     // read as nobody's. A restore that never settles answers the page with an error rather than never.
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -259,7 +270,7 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
         const docId = typeof sender.documentId === "string" ? sender.documentId : undefined;
         if (message.type !== "START_RUN") {
             if (running()) { answer({ error: RUNNING }); return; }
-            if (!origin) { endStarting(); hostRun(message, tabId, sendResponse); return; }
+            if (!origin) return hostScrubbed(message);
             const rp = (message.payload || {}) as ResumeRunPayload;
             const stored = typeof rp.runId === "string" ? bgRuns.get(rp.runId) : undefined;
             if (!stored) { endStarting(); hostRun(message, tabId, sendResponse); return; }   // hostRun answers "no resumable run"
@@ -278,8 +289,7 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
                 if (running()) { await verdict.refund(); answer({ error: RUNNING }); return; }
                 // The person's turn runs at the budget they chose, never at one the page named.
                 const resumed = verdict.person ? { ...message, payload: { ...rp, maxSteps: verdict.budget } } : message;
-                endStarting();
-                hostRun(resumed, tabId, sendResponse, undefined, { origin, person: verdict.person, first: false, docId, ...(verdict.pagePrefix ? { pagePrefix: verdict.pagePrefix } : {}) });
+                await hostScrubbed(resumed, { origin, person: verdict.person, first: false, docId, ...(verdict.pagePrefix ? { pagePrefix: verdict.pagePrefix } : {}) }, verdict.refund);
             }, (e) => answer({ error: (e as Error)?.message || String(e) }));
         }
         return getConfig().then(async (cfg) => {
@@ -293,7 +303,7 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
             if (owner != null && owner !== tabId) { answer({ error: `Run "${String(runId)}" belongs to another tab.` }); return; }
             if (running()) { answer({ error: RUNNING }); return; }
             const p = pageStartPayload(message.payload, sender, cfg) as StartRunPayload;
-            if (!origin || !p || typeof p !== "object" || typeof p.runId !== "string" || !Array.isArray(p.tools)) { endStarting(); hostRun({ ...message, payload: p }, tabId, sendResponse); return; }
+            if (!origin || !p || typeof p !== "object" || typeof p.runId !== "string" || !Array.isArray(p.tools)) return hostScrubbed({ ...message, payload: p });
             const stored = bgRuns.get(p.runId);
             // A tool named like one of ours reads to the model as ours; a site's own tool's text is shown on the card (S2).
             const texts = ourToolTexts(p, p.pageUrl ?? sender.url ?? "");
@@ -329,8 +339,7 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
             const history = verdict.first ? undefined : (bgRuns.get(p.runId)?.messages ?? []);
             // Who built it, from the browser's stamp, once: the person's later messages reach a page only there.
             await notePageBuilt(p.runId, tabId, origin, "run");
-            endStarting();
-            hostRun({ ...message, payload: { ...p, resumeMessages: history } }, tabId, sendResponse, undefined, { origin, person: verdict.person, first: verdict.first, docId, ...(verdict.pagePrefix ? { pagePrefix: verdict.pagePrefix } : {}) });
+            await hostScrubbed({ ...message, payload: { ...p, resumeMessages: history } }, { origin, person: verdict.person, first: verdict.first, docId, ...(verdict.pagePrefix ? { pagePrefix: verdict.pagePrefix } : {}) }, verdict.refund);
         }, (e) => answer({ error: (e as Error)?.message || String(e) }));
     }).catch((e) => answer({ error: (e as Error)?.message || String(e) }));
 }
@@ -342,7 +351,8 @@ export const GATED_TOOL_NAMES: ReadonlySet<string> = GATED_BUILTINS;
 
 /**
  * A page's START_RUN payload as the worker may trust it. A page's payload may ask for MORE gating, never less.
- * - Removed, the worker's to set: `builtBy`, `rebuild.builtBy`, `display`, `files` (pointers naming value-store rows), `sends`
+ * - Removed, the worker's to set: `builtBy`, `rebuild.builtBy`, `display`, `files` (pointers naming value-store rows), `sends`,
+ *   `inputScrubbed` (a page's claim would spare a stored session's raw user turns the scrub on resume)
  *   and `origin` (the PromptOrigin: a page could stamp its prompt as typed on an extension surface). Only the worker's own `hostRun` call
  *   (sw-run-start.ts) marks a run worker-built, and `makeWorkerRun` hands one over; a page's claim would give its run the
  *   worker's tool routing, grants, vision and answer, and lock the run as the person's.
@@ -362,7 +372,7 @@ export const GATED_TOOL_NAMES: ReadonlySet<string> = GATED_BUILTINS;
  */
 export function pageStartPayload(payload: unknown, sender: chrome.runtime.MessageSender, cfg: Pick<MlConfig, "autoApprovePython" | "autoApproveReadonly" | "autoApproveSelfSource" | "selfIntrospection">): unknown {
     if (!payload || typeof payload !== "object") return payload;
-    const { builtBy: _b, display: _d, files: _f, sends: _n, origin: _p, pageOrigin: _o, pageUrl: _u, ...rest } = payload as StartRunPayload;
+    const { builtBy: _b, display: _d, files: _f, sends: _n, origin: _p, pageOrigin: _o, pageUrl: _u, inputScrubbed: _i, ...rest } = payload as StartRunPayload;
     // The budget RESUME_RUN honours, so a page cannot ask for an unbounded run; an invalid one is no budget, and the loop's default applies.
     const budget = stepBudget(rest.maxSteps);
     if (budget) rest.maxSteps = budget; else delete (rest as { maxSteps?: number }).maxSteps;
@@ -386,6 +396,32 @@ export function pageStartPayload(payload: unknown, sender: chrome.runtime.Messag
     return { ...rest, pageOrigin: g.origin, ...(url && originOf(url) === g.origin ? { pageUrl: url } : {}) };
 }
 
+/**
+ * A START_RUN or RESUME_RUN's input, scrubbed where it becomes a turn (ruling 39, SECRET_HANDLES.md): the task, and a
+ * start's page context and display. A site's turn gets the bare `[REDACTED]`; a page's text folded ahead of the
+ * person's (`pagePrefix`) is scrubbed apart from the person's words, so `hostTurn` still finds where the person's begin.
+ * An extension page's `scrubInput: false` sends it as it is; a page's does not.
+ * @param message the message as the start path would host it
+ * @param site the site's turn, when a page sent it
+ * @returns the message and the site's turn to host, and the note the model reads after the task
+ * @throws {TurnUnreadable} the registered secrets could not be read (ruling 44)
+ */
+async function scrubTurnInput(message: any, site?: SiteTurn): Promise<{ message: any; site?: SiteTurn; note: string }> {
+    const payload = message?.payload;
+    if (!payload || typeof payload !== "object" || typeof payload.task !== "string") return { message, site, note: "" };
+    const sc = await forTurn({ site: !!site, off: !site && payload.scrubInput === false });
+    const prefix = site?.pagePrefix;
+    let task: string, pagePrefix = prefix;
+    if (prefix && payload.task.startsWith(`${prefix}\n\n`)) {
+        pagePrefix = sc.text(prefix);
+        task = `${pagePrefix}\n\n${sc.text(payload.task.slice(prefix.length + 2))}`;
+    } else task = sc.text(payload.task);
+    const next = { ...payload, task,
+        ...(typeof payload.pageContext === "string" ? { pageContext: sc.text(payload.pageContext) } : {}),
+        ...(payload.display && typeof payload.display === "object" ? { display: sc.deep(payload.display) } : {}) };
+    return { message: { ...message, payload: next }, site: site && pagePrefix !== prefix ? { ...site, pagePrefix } : site, note: sc.note() };
+}
+
 /** What a turn a SITE sent carries into `hostRun`: the site's origin, whether this turn is the person's own (a message
  *  they sent through the extension that the page relayed, `notePersonTurn`), whether it is the run's first, and the
  *  document that sent it. */
@@ -394,17 +430,19 @@ export interface SiteTurn { origin: string; person: boolean; first: boolean; doc
 /** Host a START_RUN / RESUME_RUN on `tabId`: the body of `startBackgroundRun`, callable by the worker itself for a run
  *  it built (sw-run-start.ts), where there is no sender. `sendResponse` fires once the whole run finishes. `turnOrigin`
  *  is where a resumed turn's message was typed, and `turnImages` the images it carries: arguments rather than payload
- *  fields, because a page's RESUME_RUN reaches here unfiltered and must not stamp its message as typed somewhere else. */
-export function hostRun(message: any, tabId: number, sendResponse: (r: any) => void, turnOrigin?: import("../contract/contract-run").PromptOrigin, site?: SiteTurn, turnImages?: string[]): void {
+ *  fields, because a page's RESUME_RUN reaches here unfiltered and must not stamp its message as typed somewhere else.
+ *  `inputNote` is the line the model reads after the turn's task when registered secrets were taken out of it (`forTurn`,
+ *  ruling 39): the caller scrubbed the task, and the transcript shows it without the line. */
+export function hostRun(message: any, tabId: number, sendResponse: (r: any) => void, turnOrigin?: import("../contract/contract-run").PromptOrigin, site?: SiteTurn, turnImages?: string[], inputNote?: string): void {
     // Whatever the turn's setup throws is answered, never left unhandled with the page waiting on it. What the setup had
     // registered by then is undone inside `hostTurn`, which alone knows how far it got.
     let answered = false;
     const once = (r: any): void => { if (answered) return; answered = true; sendResponse(r); };
-    try { hostTurn(message, tabId, once, turnOrigin, site, turnImages); } catch (e) { once({ error: (e as Error)?.message || String(e) }); }
+    try { hostTurn(message, tabId, once, turnOrigin, site, turnImages, inputNote); } catch (e) { once({ error: (e as Error)?.message || String(e) }); }
 }
 
 /** The body of `hostRun`: one turn of one run, from its registrations to its answer. */
-function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, turnOrigin?: import("../contract/contract-run").PromptOrigin, site?: SiteTurn, turnImages?: string[]): void {
+function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, turnOrigin?: import("../contract/contract-run").PromptOrigin, site?: SiteTurn, turnImages?: string[], inputNote?: string): void {
     // Design A: run an ml.agent loop HERE (extension origin), delegating each tool back to the page
     // (RUN_TOOL_IN_PAGE) and gating approval through the sidebar. Whoever built the run (the page for a console
     // ml.agent, the worker for a run the user started) registered the live builtin tools in the page under runId;
@@ -466,8 +504,15 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     // site's words with its name instead. A turn the person sent through the extension, which the page only relayed, is
     // theirs (`site.person`).
     // A turn of images alone is the page's too: its marker is what tells the model whose pictures they are.
-    const modelTask = site && site.person && site.pagePrefix ? `${pageTurnText(site.origin, site.pagePrefix)}\n\n${p.task.slice(site.pagePrefix.length + 2)}`
+    const framedTask = site && site.person && site.pagePrefix ? `${pageTurnText(site.origin, site.pagePrefix)}\n\n${p.task.slice(site.pagePrefix.length + 2)}`
         : site && !site.person && (p.task || p.images?.length) ? pageTurnText(site.origin, p.task || "") : p.task;
+    // The line saying registered secrets were taken out of the task, which the model reads and the bubble does not show.
+    const modelTask = inputNote ? `${framedTask}${inputNote}` : framedTask;
+    // A history stored before the input scrub (ruling 39) holds the person's turns raw: they are scrubbed on the way to the
+    // model, once, and the run is marked so a later resume leaves them (a turn sent with `scrubInput: false` stays as sent).
+    // A handle's next turn re-enters via START_RUN with its history: the stored run says whether that history was scrubbed.
+    const rescrubUsers = !!resumeMessages?.length && !(p.inputScrubbed ?? bgRuns.get(runId)?.p.inputScrubbed);
+    p = { ...p, inputScrubbed: true };
     // A run switched to another model (`session.model`) keeps it, whoever starts its next turn: a handle sends the
     // model it was built with, and a stored snapshot may predate the switch.
     const switched = runModelFor(runId);
@@ -1170,7 +1215,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // tool results reach the model again here, so they cross `forModel` too, once, in place (and are stored so).
                     if (!historyScrubbed) {
                         historyScrubbed = true;
-                        if (resumeMessages?.length) await forModelHistory(messages);
+                        if (resumeMessages?.length) await forModelHistory(messages, rescrubUsers ? await forTurn({ site: !!site }) : undefined);
                         // A session that comes back after an archive is told once, before its first step, that its run policies went. A SYSTEM
                         // message, never a user one: the note is the worker's, and must not read as the person's words.
                         // Only a resume the person started (`builtBy` is the worker's to set): a page naming a hash must not be told, or consume, another origin's note.
@@ -1710,7 +1755,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         : undefined;
                     const w = await guardSurvey(sh, () => evalReadonlyInWorker(args, {
                         ...(snap ? { current: () => current ?? snap({ model: modelNow(), log }) } : {}),
-                        ml: { ...workerReadonlyMl(tabPageUrl.get(tabId) ?? "", derefByRun.get(runId), runId), ...(sh ? { sh: sh.host } : {}) },
+                        // ml.settings: a free read, only in a run the worker built (decided from its record, never the script).
+                        ml: { ...workerReadonlyMl(tabPageUrl.get(tabId) ?? "", derefByRun.get(runId), runId), ...(byWorker() ? { settings: surveySettings } : {}), ...(sh ? { sh: sh.host } : {}) },
                         live,
                         signal: abortCtl.signal,
                     }));

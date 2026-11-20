@@ -69,7 +69,8 @@ import { FilesRefused, cleanFiles, isPdfFile, pdfToPageRun, textFiles } from "./
 import { adoptOnTab } from "./sw/adopt-run";
 import { pageRebuild } from "./agent/run-assembly";
 import { runControlPayloadError } from "./sw/run-payload-check";
-import { forBackendFromPage, forPage } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets; a page's model request, without a registered secret
+import { forBackendFromPage, forPage, forTurn } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets; a page's model request, without a registered secret
+import { TurnUnreadable } from "./secret-registry";
 import { secretRegistryOp } from "./sw/sw-secret-registry";
 import { pythonPrewarm, pythonExec, pythonInterrupt, relayPyStdout, deletePythonRun, dropPythonLibraries, pythonReaped, pythonStarted, pythonDone } from "./sw/sw-python";
 import { focusLineFor } from "./sw/sw-focus";
@@ -437,7 +438,8 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             void userRunAction(message.hash, message.action, { text: message.text, images: message.images, ...(message.files != null ? { files: message.files } : {}), surface: message.surface, maxSteps: message.maxSteps }, message.tabId)
                 .then((mine) => { if (!mine) toPage(); }, (e) => {
                     // As on USER_RUN_ACTION: a refused turn is said in the run's step list, never handed to the page.
-                    if (e instanceof ImagesRefused || e instanceof FilesRefused || e instanceof PageGone) { noteRefusedTurn(message.hash as string, e.message, typeof message.tabId === "number" ? message.tabId : undefined); return; }
+                    // A store that cannot be read holds the message (ruling 44): said, never handed to the page unscrubbed.
+                    if (e instanceof ImagesRefused || e instanceof FilesRefused || e instanceof PageGone || e instanceof TurnUnreadable) { noteRefusedTurn(message.hash as string, e.message, typeof message.tabId === "number" ? message.tabId : undefined); return; }
                     toPage();
                 });
             return;
@@ -732,10 +734,17 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // A page's steer, or its wait for the person, is a turn of the site's own (sw-page-turn.ts `pageInject`): gated by
         // the start card's rules, shown with the site's name, and never stamped as typed on an extension surface.
         if (sender.tab?.id != null && !isExtensionSender(sender)) { pageInject(p, sender, personClaimed(message)).then(sendResponse, () => sendResponse({ data: false })); return true; }
-        const inbox = runInboxes.get(p.runId);
-        const injected = !!(inbox && inbox.tabId === sender.tab?.id && typeof p.text === "string");
-        if (injected) { inbox!.queue.push({ id: p.sayId, text: p.text, ...(p.origin ? { origin: p.origin } : {}) }); resetTaskChain(p.runId); }   // the person's own word (an extension frame's): the chain of task-started turns is broken
-        sendResponse({ data: injected });
+        // The person's own word (an extension frame's), scrubbed by registered value before it is queued (ruling 39);
+        // its `scrubInput: false` sends it as it is. The inbox is read after the scrub, which a turn can end during.
+        const live = (): boolean => { const inbox = runInboxes.get(p.runId); return !!(inbox && inbox.tabId === sender.tab?.id && typeof p.text === "string"); };
+        if (!live()) { sendResponse({ data: false }); return true; }
+        void forTurn({ off: p.scrubInput === false }).then((scrub) => {
+            if (!live()) { sendResponse({ data: false }); return; }
+            const text = `${scrub.text(p.text)}${scrub.note()}`;
+            runInboxes.get(p.runId)!.queue.push({ id: p.sayId, text, ...(p.origin ? { origin: p.origin } : {}) });
+            resetTaskChain(p.runId);   // the chain of task-started turns is broken
+            sendResponse({ data: true });
+        }, (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
         return true;
     }
     // A run the USER started from the HUD Commander or right-click menu, sent by the content-script shell on behalf of
@@ -939,7 +948,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         userRunAction(p.hash, p.action, message.payload, sender.tab.id).then((outcome) => sendResponse({ data: outcome }), (e) => {
             // Images the run may not be sent (vision not known, no reader): said in the run's step list, since this
             // surface has no other place to say it, and answered as handled so the shell does not hand it to the page.
-            if (e instanceof ImagesRefused || e instanceof FilesRefused || e instanceof PageGone) { noteRefusedTurn(p.hash as string, e.message, sender.tab?.id); sendResponse({ data: null, refused: e.message }); return; }
+            if (e instanceof ImagesRefused || e instanceof FilesRefused || e instanceof PageGone || e instanceof TurnUnreadable) { noteRefusedTurn(p.hash as string, e.message, sender.tab?.id); sendResponse({ data: null, refused: e.message }); return; }
             sendResponse({ data: null });
         });
         return true;
@@ -1555,7 +1564,12 @@ configureStartApproval({ cancelRun: (runId) => { cancelBackgroundRun(runId); } }
 configureSessionCommands({
     // A steer from the chat page goes into the running loop's inbox, the same one a handle's say() reaches through
     // INJECT_MESSAGE, and is shown the way say() shows it: an `agent-say` bubble the loop marks seen when it drains.
-    steer: (hash, text, origin) => steerRun(hash, text, origin),
+    // Scrubbed where it becomes a turn (ruling 39); the bubble shows the words without the model's note.
+    steer: async (hash, text, origin) => {
+        const scrub = await forTurn();
+        const said = scrub.text(text), note = scrub.note();
+        return steerRun(hash, `${said}${note}`, origin, note ? { typed: said, context: [] } : undefined);
+    },
     startUserRun: (tabId, req, opts) => startUserRun(tabId, req, opts),
     userRunAction: (hash, action, body, fromTabId, origin) => userRunAction(hash, action, body, fromTabId, origin),
     adoptOnTab,
