@@ -51,7 +51,7 @@ const require = createRequire(import.meta.url);
 const { jsonResponse, loadBackground } = require("./helpers");
 const S = await import("../src/sw/sw-change-setting.ts");
 const SC = await import("../src/setting-class.ts");
-const { DEFAULT_CONFIG, SETTING_PLACES } = await import("../src/contract/contract-config.ts");
+const { DEFAULT_CONFIG, SETTING_PLACES, publicConfig } = await import("../src/contract/contract-config.ts");
 const { SETTING_TEXT } = await import("../src/setting-text.ts");
 const P = await import("../src/sw/sw-policies.ts");
 const R = await import("../src/sw/exec-routing.ts");
@@ -284,13 +284,30 @@ test("RED TEAM: no page-relayed type reaches SET_APPROVAL, and change_setting is
 
 // --- D: ml.settings() is the isolated world's alone ---
 
-test("RED TEAM: the read-only dialect exposes no ml.settings, even over an ml that has one", T, () => {
-    assert.ok(!ML_READONLY_METHODS.includes("settings"), "settings joined the survey's allow list without its adversarial pass");
-    const real = Object.fromEntries(ML_READONLY_METHODS.map((m) => [m, () => "x"]));
-    const facade = mlFacade({ ...real, settings: () => ({ apiKey: "sk-secret" }) });
-    assert.ok(facade, "the facade could not be built");
-    assert.ok(!("settings" in facade), "the facade handed a survey ml.settings");
-    assert.equal(typeof facade.config, "function", "positive control: the facade is not empty");
+test("RED TEAM: ml.settings is bound only where the run's own ml has it: never a page's, a page-built run's or a run-less wire's", T, async () => {
+    // #2045/#2050 put `settings` in ML_READONLY_METHODS, so the facade binds it BY IDENTITY: present where the host's
+    // `ml` has it (a run the worker built), absent everywhere else. The property that still holds is the absence in
+    // every realm a page or a page-built run reaches — the row this one replaces asserted the absence everywhere.
+    assert.ok(ML_READONLY_METHODS.includes("settings"), "the spec (#2045) puts settings in the survey's allow list");
+    const withoutSettings = Object.fromEntries(ML_READONLY_METHODS.filter((m) => m !== "settings").map((m) => [m, () => "x"]));
+    // The page realm: the page's own `ml` never has the member (injected.ts), so nothing can be bound.
+    const page = mlFacade({ ...withoutSettings }, undefined, undefined, undefined, "page");
+    assert.ok(page && !("settings" in page), "the page realm's facade handed ml.settings");
+    // A page-built run's worker realm: the run host adds `settings` only when byWorker() holds, so the host's ml it
+    // hands the facade has none.
+    const pageBuilt = mlFacade({ ...withoutSettings }, undefined, undefined, undefined, "worker");
+    assert.ok(pageBuilt && !("settings" in pageBuilt), "a worker realm over an ml with no settings handed one");
+    // Positive control: the same facade over an ml that HAS it binds it, or "absent" would prove nothing.
+    const workerBuilt = mlFacade({ ...withoutSettings, settings: () => ({}) }, undefined, undefined, undefined, "worker");
+    assert.equal(typeof workerBuilt?.settings, "function", "a worker-built run's ml is bound");
+    assert.equal(typeof page?.config, "function", "the facade is not empty");
+    // A run-less or page-built wire client: membersFor composes its host the same way, from the run's own record.
+    const { bgRuns, isWorkerRun } = await import("../src/sw/sw-runs.ts");
+    bgRuns.set("rt-page-built", { p: { builtBy: "page", tools: [] }, tabId: 1, messages: [] });
+    try {
+        assert.equal(isWorkerRun("rt-page-built"), false, "a page-built record read as a run the worker built");
+        assert.equal(isWorkerRun("no-such-run"), false, "an unknown run id read as a worker run");
+    } finally { bgRuns.delete("rt-page-built"); }
 });
 
 test("RED TEAM: an isolated world gets a fresh copy of ml.settings, and an unbound one throws rather than answering", async () => {
@@ -385,4 +402,73 @@ test("RED TEAM: a card is watched until it closes, and stops watching after", T,
     assert.equal(closed, 1);
     stop();
     assert.equal(syncListeners.length, base, "the watcher was not removed");
+});
+
+// --- D2: what a FREE read gives, enumerated from the declarations rather than listed by hand (#2045/#2050) ---
+
+const PUBLIC_KEYS = new Set(Object.keys(publicConfig(DEFAULT_CONFIG, false)));
+/** A config whose every key reads a unique marker, so a value that should not be given is recognisable anywhere. */
+const markedConfig = () => new Proxy({}, { get: (_, k) => (typeof k === "string" ? `MARK:${k}` : undefined) });
+const survey = () => S.settingEntries(markedConfig(), "survey", SETTING_PLACES, PUBLIC_KEYS);
+
+test("RED TEAM: every guarded and gate key ml.config() does not return is HELD, with no value on any read", T, () => {
+    // The rule is read from the two declarations (SETTING_CLASSES and the publicConfig keys), never a hand list, so a
+    // key added later is covered without this row being edited. A held entry must carry no value at all — not null, not
+    // "", not a length — or it says something about the value it is holding.
+    const entries = survey();
+    let held = 0, valued = 0, hidden = 0, absent = 0;
+    for (const [key, d] of Object.entries(SC.SETTING_CLASSES)) {
+        const e = entries[key];
+        const placed = Object.hasOwn(SETTING_PLACES, key);
+        if (!placed) { assert.equal(e, undefined, `${key} has no DevTools row, so it is absent from the result`); absent++; continue; }
+        assert.ok(e, `${key} has a row but no entry`);
+        if (d.class === "secret") {
+            assert.equal(e.mode, "hidden", `${key}: a secret's entry is not hidden`);
+            assert.ok(!("value" in e) && !("held" in e), `${key}: a hidden entry carries value or held`);
+            hidden++;
+            continue;
+        }
+        const free = d.class === "ordinary" || PUBLIC_KEYS.has(key);
+        if (!free) {
+            assert.equal(e.held, "exec", `${key}: a ${d.class} key outside ml.config() is answered freely`);
+            assert.ok(!("value" in e), `${key}: a held entry carries a value`);
+            assert.ok(!JSON.stringify(entries).includes(`MARK:${key}`), `${key}: a held value is somewhere in the result`);
+            held++;
+        } else {
+            assert.equal(e.value, `MARK:${key}`, `${key}: ${d.class}${PUBLIC_KEYS.has(key) ? " in ml.config()" : ""} did not answer its value`);
+            assert.ok(!("held" in e), `${key}: an answered entry is marked held`);
+            valued++;
+        }
+    }
+    // Positive controls: each branch was reached, so a table that silently emptied cannot pass this row.
+    assert.equal(held, 18, `held keys: ${held}; the spec names 18`);
+    assert.ok(valued > 0 && hidden > 0 && absent > 0, `branches: held=${held} valued=${valued} hidden=${hidden} absent=${absent}`);
+});
+
+test("RED TEAM: a secret's entry is the same whether it is set or not, so it says nothing about the value", T, () => {
+    const unset = S.settingEntries(DEFAULT_CONFIG, "survey", SETTING_PLACES, PUBLIC_KEYS);
+    const set = S.settingEntries({ ...DEFAULT_CONFIG, apiKey: "SECRET-VALUE", chatUrl: "http://secret.example/", modelFilter: "^m$" }, "survey", SETTING_PLACES, PUBLIC_KEYS);
+    for (const [key, d] of Object.entries(SC.SETTING_CLASSES)) {
+        if (d.class !== "secret" || !Object.hasOwn(SETTING_PLACES, key)) continue;
+        assert.deepEqual(set[key], unset[key], `${key}: the free read tells a set secret from an unset one`);
+        assert.equal(JSON.stringify(set).includes("SECRET-VALUE") || JSON.stringify(set).includes("secret.example"), false, `${key}: a secret's text is in the result`);
+    }
+});
+
+test("RED TEAM: a free read is a fresh deep copy per call, and a write into it reaches neither the next call nor storage", T, async () => {
+    // The evaluator marks an ml.* member's plain result as the script's own, so a survey may write into it: the write
+    // must land on that copy only. `theme` is answered to a free read (ordinary class).
+    const a = await S.surveySettings();
+    const b = await S.surveySettings();
+    assert.notEqual(a, b, "two calls share the result object");
+    assert.notEqual(a.theme, b.theme, "two calls share an entry object");
+    a.theme.value = "dark";
+    a.theme.injected = true;
+    a.added = { value: "x" };
+    assert.notEqual(b.theme.value, "dark", "a write into one result reached the next");
+    assert.equal("injected" in b.theme, false, "a write into an entry reached the next");
+    assert.equal("added" in (await S.surveySettings()), false, "a write added an entry to a later call");
+    const writes = syncWrites.length;
+    await S.surveySettings();
+    assert.equal(syncWrites.length, writes, "a read wrote to storage");
 });

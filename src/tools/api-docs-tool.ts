@@ -50,6 +50,8 @@ export interface DocsSource {
     invocation(): Promise<InvocationInfo | null>;
     /** The non-secret config, for `autoApproveReadonly` (GET_CONFIG). */
     config(): Promise<MlPublicConfig | null>;
+    /** Whether the run has the free `ml.settings()`: true only for a run the worker built (absent: it does not). */
+    freeSettings?(): boolean;
 }
 
 /** A page-hosted run's source: the background, through the content-script relay. */
@@ -133,7 +135,7 @@ const selfIntrospectionSection = async (src: DocsSource): Promise<string> => {
     const cfg = await bounded(src.config());
     if (!cfg?.autoApproveReadonly) return "";
     return ["## Reading your own setup (no approval needed)", "",
-        `\`${ML_READONLY_METHODS.map(m => `ml.${m}()`).join("`, `")}\` are read-only, so calling them ` +
+        `\`${ML_READONLY_METHODS.filter(m => m !== "settings" || src.freeSettings?.()).map(m => `ml.${m}()`).join("`, `")}\` are read-only, so calling them ` +
         "from `exec` runs with NO approval prompt — that's how to answer \"which model am I?\" and the like. " +
         "`ml.pipe(text, stages)` and `ml.jsonPath(data, \"$..id\")` are free too, unless a pattern (`grep`/`sed`, `match()`/`search()`) could backtrack. " +
         `\`ml.embed([...texts])\` runs the configured embedding model free, up to ${EMBED_SURVEY_CHARS.toLocaleString("en-US")} characters and ${EMBED_SURVEY_CALLS} calls a survey: batch many strings into one call, then \`q.rank(vectors.map((embedding, key) => ({ key, embedding })))\`. ` +
