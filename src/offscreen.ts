@@ -51,6 +51,7 @@ import { reapDelay, longTimeout, DEFAULT_REAP_BETWEEN_MS } from "./python/py-rea
 import { createPdfHost } from "./pdf/pdf-host";
 import { b64ToBytes, bytesToB64, type PdfMessage, type PdfReadReply, type PdfRenderReply } from "./pdf/pdf-wire";
 import { importTestCode } from "./python/pkg-install-test";
+import { attachFiles, detachFiles, filesMessage } from "./python/files-host";
 import { scanCode } from "./python/pkg-scan";
 import { readScan, type ScanResult } from "./python/pkg-scan-note";
 import { holdResult, takeResult } from "./python/py-held-results";
@@ -231,6 +232,7 @@ function killWorker(principal: string, reason: string): void {
     if (entry) {
         try { entry.w.terminate(); } catch { /* already gone */ }
         workers.delete(principal);
+        detachFiles(principal);
         libraryPrincipals.delete(principal);
         clearReap(principal);
         keptPrincipals.delete(principal);
@@ -335,12 +337,16 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
     // The interrupt buffer goes first, before any run is posted, so the worker holds it when the runtime boots.
     const flag = typeof SharedArrayBuffer === "function" ? new Int32Array(new SharedArrayBuffer(4)) : undefined;
     if (flag) w.postMessage({ interruptBuffer: flag });
+    // A worker-hosted run's worker also gets `/files` (files-host.ts), its channel's memory posted before any run.
+    attachFiles(principal, w);
     // A respawn after a kill: the old worker's kept bench namespace died with it, and this one starts empty.
     // The record is the log's account of the loss the bench's "sandbox restarted" banner shows the person.
     if (respawned.delete(principal)) {
         reportHousekeeping({ subsystem: "pyodide", kind: "respawn", key: principal, detail: { mode: readonly ? "readonly" : "full" } });
     }
     w.onmessage = (e: MessageEvent) => {
+        // A `/files` request from the mount: served by the run's channel, never a reply to a run.
+        if (filesMessage(principal, e.data)) return;
         // The runtime finished starting (not a reply to anything): what started it and how long it took.
         if (e.data?.booted) {
             reportHousekeeping({ subsystem: "pyodide", kind: "cold-start", reason: e.data.by === "prewarm" ? "prewarm" : "run", ms: e.data.ms, key: principal });

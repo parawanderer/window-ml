@@ -762,6 +762,44 @@ readonly cells can import it, and nothing else can.
   its lockdown, before the cell (`installWheels`). The namespace is kept. A respawned or reaped worker gets them the
   same way. A wheel that fails to unpack fails that cell before it runs, and the next cell tries again.
 
+## `/files` in Python (FILE_ATTACHMENTS.md, "`/files`: the layout, `ml.fs`, Python's mounts and the backup")
+
+A worker-hosted run's worker (`run:<hash>`, and no other principal: not a page's, the bench's, `library` or an install's
+candidate) mounts the session's files at `/files` with an Emscripten file system type of our own (`files-mount.ts`).
+Every operation is a request to the ONE ranged reader in the offscreen document (`files-reader.ts`, the shape agreed
+with the session-store lane), over route A's synchronous channel (`files-wire.ts`): a posted request, the reply in
+shared memory, and a sliced `Atomics.wait` (20 ms slices) that a Stop ends with EINTR, which Python raises as
+`KeyboardInterrupt`. `files-host.ts` gives each such worker its channel at spawn, its session fixed to the run's, and
+disposes it when the worker dies, which aborts every write still open.
+
+- **Built at boot, before the lockdown.** Every cell of a worker-built run runs in a locked-down worker, outside the
+  dialect too, so the requester keeps `post` and the shared buffers in its closure, as the relay does. The mount is
+  rebuilt at the start of every cell (`remount`), so a cell never trusts a stat or a cached chunk the last one read.
+- **Nothing whole.** Reads go through 32 fixed slots of one 512 KiB chunk (16 MiB), never a buffer per chunk; Python
+  3.14 buffers 128 KiB, so a read can span two chunks. Small writes are coalesced into one chunk per request.
+- **Commits on close** (ruling 75): `close()` is `closeWrite` plus `commitTx` of a txn of one; a failed cell keeps what
+  it closed. A refused write (ENOSPC) fails its writer: later writes raise the same errno and the close aborts, so no
+  file lands with part of what was written. A per-cell commit stays possible (the txn shape covers it) and is not built.
+- **Refusals are the reader's.** Where a run may write is the reader's to say, and the mount passes its errno through
+  unchanged: EROFS at the root and in `attached/`, free under `agent/` (ruling 86). The modes carry write bits on
+  purpose: Emscripten checks them before calling the mount and would say EACCES where the answer is EROFS. A symlink and
+  a hard link are EPERM (this core's `os` has no `link`; the node op refuses anyway). A refused first `open` drops the
+  directory's listing, so the next lookup asks the reader, which has no such file: no phantom is left in the mount.
+- **The working directory is `/files/agent`**, the reader's `home`, posted with the channel's memory and entered at
+  every mount, so a relative `open()` lands where the run writes; `../attached/` reads, and never writes.
+- **A hidden file is refused in the reader's words**, since the model acts on the text and an errno carries none. The
+  mount keeps this cell's EACCES messages by path; `open`, `io.open` and `os.open`, wrapped at boot
+  (`FILES_OPEN_WORDS`), set the `PermissionError`'s `strerror` from them, and a failed cell's error is rewritten from
+  them too (`inWords`) for a refusal no `open` saw. The wrappers are switched in only for a cell outside the dialect,
+  the originals back for one inside. Not `sys.monitoring`: the cancel's spend owns it and refuses a cell that leaves a
+  tool registered (lockdown.ts).
+- **A Stop never waits on the reader.** Requests are served one at a time, but when the worker abandons the one in
+  flight, the queue moves past it at once with a fresh scratch buffer, so a read that never returns holds nothing after
+  the first Stop; its late answer is dropped and what it opened is released.
+- **Not on until the reader exists.** `setFilesReader` (files-host.ts) is called by the reader's owner; until then no
+  worker gets a channel and Python sees no `/files`. Tests run the real worker against an in-memory reader on a second
+  thread (`tests/files-mount-py.test.mjs`, `tests/fixtures/files-channel-fake.mjs`).
+
 ## Traps
 
 - **A worker-hosted run keeps one namespace across its cells; every other call is stateless** (a page's `ml.pythonExec`, a page-hosted agent).

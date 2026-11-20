@@ -19,6 +19,8 @@ import { DIALECT_FILES, DIALECT_MODULES, DIALECT_NODES } from "./dialect-data";
 import { wrapUserSetup, wrapUserScript, COMPLETE_HELPER, completeIn, RESET, injectInputs, stdoutWriter, injectStoredTable, takeIpc, releaseNamespace, hostRunScript, cancelPath, type PyCompletion } from "./python-runtime";
 import { dialectSetup, libraryLoad, libraryShape, type DialectLibrary } from "./python-dialect-run";
 import { lockdownReadonly } from "./lockdown";
+import { makeFilesMount, FILES_OPEN_WORDS } from "./files-mount";
+import { makeRequester, type FilesShared } from "./files-wire";
 import { cellBoundary, cellDropped, onSpending } from "./cell-gate";
 import { shownText } from "./pkg-card";
 
@@ -46,6 +48,11 @@ let sitePackages = "";   // state: plumbing — read once at boot, before the lo
 // while C code ran stays pending and fires on the NEXT bytecode, which would be the next script's: `clearInterrupt`
 // runs before a run touches the interpreter and again when it ends (docs/dev/python-sandbox.md, "Stopping a bench script").
 let interruptFlag: Int32Array | null = null;   // state: plumbing — set once, from the first message
+// `/files` (files-host.ts): the channel's memory, posted once before the runtime boots, to a worker-hosted run's worker only.
+let filesShared: FilesShared | null = null;   // state: plumbing — set once, from the offscreen document
+let filesHome: string | undefined;   // state: plumbing — where the run writes (the reader's `home`), posted with `filesShared`
+let filesMount: ReturnType<typeof makeFilesMount> | null = null;   // state: plumbing — built at boot, before the lockdown
+let filesWords: ((on: boolean) => void) | null = null;   // state: plumbing — the open wrappers' switch (FILES_OPEN_WORDS)
 
 /** Drop a stop that did not land: no run may be interrupted by a Stop meant for the one before it. */
 function clearInterrupt(): void {
@@ -128,6 +135,20 @@ function getPyodide(by: "prewarm" | "run" = "run"): Promise<any> {
         // hook. Set before the lockdown, like every hook here.
         if (py._api) py._api.on_fatal = (e: unknown) => { fatalCause ??= String((e as Error)?.message ?? e); };
         if (interruptFlag) py.setInterruptBuffer(interruptFlag);
+        // `/files` is built here, BEFORE the lockdown: the requester keeps `post` and the shared memory in its closure.
+        if (filesShared) {
+            const { call, data, Interrupted } = makeRequester(filesShared, post as never, interruptFlag);
+            const mount = makeFilesMount({ FS: py.FS, ERRNO_CODES: py.ERRNO_CODES, call, data, Interrupted, home: filesHome });
+            filesMount = mount;
+            mount.remount();
+            // A hidden file's refusal in the reader's words, not "Permission denied": the model acts on the text.
+            py.runPython(FILES_OPEN_WORDS);
+            const install = py.globals.get("_ml_files_install");
+            const sw = install((p: string | null | undefined) => mount.refusal(p ?? null));
+            install.destroy?.();
+            py.globals.delete("_ml_files_install");
+            filesWords = (on: boolean) => { try { sw(on); } catch { /* the opens stay as they were */ } };
+        }
         await py.loadPackage(PY_PACKAGE_LOADS);
         // Lazy tooling (jedi) loads BEFORE the lockdown too: `complete()` calls `py.loadPackage(PY_LAZY_LOADS)`
         // after the strip has removed `fetch`, and Pyodide's loader needs it to fetch the wheel. Only readonly
@@ -264,6 +285,9 @@ async function run(code: string, image: string | null, hardened: boolean, tables
     const w0 = Date.now();
     const py = await getPyodide();
     clearInterrupt();
+    // Each cell sees `/files` as it is now: what the last cell's mount knew of it (stats, cached chunks) is dropped.
+    filesMount?.remount();
+    filesWords?.(!inside);
     const boot = wasLive ? null : Date.now() - w0;
     // INSIDE THE DIALECT (docs/spec/PYTHON_DIALECT.md, "Membership replaces `mode`"): an interpreter that cannot judge
     // membership runs nothing unasked; the cell is reported outside and goes to the person.
@@ -517,6 +541,13 @@ function onMessage(e: MessageEvent): void {
     // The interrupt buffer, posted once before anything else (offscreen.ts `ensureWorker`).
     const buf = (e.data as { interruptBuffer?: unknown })?.interruptBuffer;
     if (buf instanceof Int32Array && !interruptFlag && !pyodideReady) { interruptFlag = buf; return; }
+    const fsh = (e.data as { filesShared?: FilesShared })?.filesShared;
+    if (fsh && fsh.ctl instanceof SharedArrayBuffer && fsh.data instanceof SharedArrayBuffer && !filesShared && !pyodideReady) {
+        filesShared = fsh;
+        const home = (e.data as { filesHome?: unknown }).filesHome;
+        if (typeof home === "string" && (home === "/files/agent" || home.startsWith("/files/agent/"))) filesHome = home;
+        return;
+    }
     if (!msg || typeof msg.id !== "number") return;
     // A dead kernel answers everything with its death: its chain may never settle again (the cell that killed it did not).
     if (fatal !== null) { post({ id: msg.id, ok: false, stdout: "", error: fatal, fatal: true }); return; }
@@ -612,6 +643,7 @@ function onMessage(e: MessageEvent): void {
                 if (fatal !== null) return;   // already answered as the kernel's death
                 // A fatal error the cell's own answer carried (a wasm trap): the interpreter is gone though the cell answered.
                 if (!result.ok && interpreterDead()) { fatal = fatalCause ?? String(result.error ?? "Pyodide fatal error"); post({ id: msg.id, ...result, error: fatal, fatal: true }); return; }
+                if (!result.ok && typeof result.error === "string" && filesMount) result.error = filesMount.inWords(result.error);
                 post({ id: msg.id, ...result }, { transfer: result.ipc ? [result.ipc] : [] });
             },
             (err: unknown) => {

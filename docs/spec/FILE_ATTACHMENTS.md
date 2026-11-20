@@ -2025,6 +2025,9 @@ value; dump then reload equals the stored table, its values and its declared dty
 
 ### Python's view: two mounts (ruling 36)
 
+BUILT, the mount only (2026-11-19, docs/dev/python-sandbox.md, "`/files` in Python"): route A's type over the ranged
+reader for both folders, as below; it is switched on when the reader lands (`setFilesReader`).
+
 Python sees `/files` through Emscripten mounts, never a mount that loads whole files. ONE store, the shelf, holds
 both folders (the coordinator's call, 2026-11-19): no OPFS copy of `agent/`, so the quota, the atomic commit, the
 backup and any commit-on-cell-success live in one place.
