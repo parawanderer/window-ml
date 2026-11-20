@@ -445,6 +445,11 @@ html, body, #root { height: 100%; }
 /* A placeholder too long for the row ends in an ellipsis on ONE line: wrapped, it made the empty box a line and a half
    tall with its second line cut off (an empty box never stacks, so it has nowhere else to go). */
 .chat .composer-row .cinput::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* THE PLACEHOLDER FADES between its sentences (composer.tsx): out, the words change while it is clear, back in. */
+.chat.calm .composer { --ph-fade-ms: 140; }
+.chat.calm .composer .cinput::placeholder { transition: opacity calc(var(--ph-fade-ms) * 1ms) ease; }
+.chat.calm .composer.ph-out .cinput::placeholder { opacity: 0; }
+@media (prefers-reduced-motion: reduce) { .chat.calm .composer { --ph-fade-ms: 0; } .chat.calm .composer .cinput::placeholder { transition: none; } }
 /* The model, beside send: the name in the code face, quiet, no box of its own until the pointer finds it. */
 .chat .composer-foot .chint { margin-right: 14px; }
 .chat .composer-foot .chint.gone { margin-right: 0; }
@@ -806,6 +811,10 @@ html[data-calm]:not([data-theme="light"]), html[data-calm]:not([data-theme="ligh
    replaced, not folded. A running tool's `.dup` still folds: nothing is drawn in its place in the same frame. */
 .chat.calm .pending-note.dup-live { transition: none; }
 @media (prefers-reduced-motion: reduce) { .chat.calm .pending-note { --pending-out-ms: 0; transition: none; } }
+/* THE "…thinking" LINE OF A REPLY FADES OUT where it stood while the reply fades in over it (reply.tsx `ghost`): drawn on top
+   of the arriving body, out of the flow, so the body's own grow from the line's height is unchanged. */
+.chat.calm .pending-note.ghost { position: absolute; max-width: 100%; pointer-events: none; opacity: 0; height: auto; transition: opacity .22s cubic-bezier(.4, 0, .2, 1); }
+@starting-style { .chat.calm .pending-note.ghost { opacity: 1; height: auto; } }
 .chat.calm .pending-note .pbar { display: none; }
 .chat.calm .pending-note .fbusy { display: block; }
 /* The rail down the left of a tool step groups its BODY against the prose either side. A collapsed step has no
