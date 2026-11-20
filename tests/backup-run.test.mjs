@@ -23,12 +23,12 @@ function fakeWorker(keyring) {
     migrate(db);
     const slots = new Map();
     let build = null;
-    const log = [];
+    const log = [], puts = [];
     const call = async (op, args) => {
         log.push(op);
         switch (op) {
             case "backupBegin": build = beginBackup(sqlite3, sqlite3.capi.sqlite3_js_db_export(raw.pointer)); return { fromArchive: build.fromArchive };
-            case "backupPut": await addSession(build, args.input); return true;
+            case "backupPut": puts.push(args.input); await addSession(build, args.input); return true;
             case "backupAbort": if (build) abandonBackup(build); build = null; return true;
             case "backupFinish": {
                 if (args.form === "encrypted" && !keyring) throw new BackupError("needs-key", "set a passphrase");
@@ -44,7 +44,7 @@ function fakeWorker(keyring) {
         }
     };
     const put = async (hash, ts) => writeSession(db, await prepareSession({ summary: summary(hash, ts), events: events(hash), history: null, bytes: 10 }), 1);
-    return { call, slots, raw, db, put, log };
+    return { call, slots, raw, db, put, log, puts };
 }
 
 /** Storage as plain objects, with a writer. */
@@ -54,7 +54,7 @@ function fakeStorage(sync = {}, local = {}) {
 }
 
 const row = (hash, ts) => ({ hash, summary: summary(hash, ts), lastTs: ts, createdTs: ts - 10, bytes: 10, count: 1 });
-const deps = (w, st, rows = []) => ({ call: w.call, liveRows: async () => rows, readEvents: async (h) => events(h), storage: st.storage, writer: st.writer });
+const deps = (w, st, rows = []) => ({ call: w.call, liveRows: async () => rows, readEvents: async (h) => events(h), readHistory: async () => null, storage: st.storage, writer: st.writer });
 
 // --- making a backup ---
 
@@ -66,6 +66,17 @@ test("a backup is built from the settings, the archive and every live session, a
     assert.deepEqual([r.sessions, r.form, r.apiKeyOmitted, r.unclassified], [2, "encrypted", false, []]);
     assert.equal(r.size, w.slots.get("out").byteLength);
     assert.deepEqual(w.log, ["backupBegin", "backupPut", "backupFinish"]);
+});
+
+test("a live session's history reaches the archive from readHistory, not from the row", async () => {
+    const w = fakeWorker(null);
+    const st = fakeStorage();
+    const history = { kind: "agent", messages: [{ role: "user", content: "continue me" }] };
+    const asked = [];
+    const d = { ...deps(w, st, [row("live0001", 1000)]), readHistory: async (h) => { asked.push(h); return history; } };
+    await createBackup(d, { form: "plain" });
+    assert.deepEqual(asked, ["live0001"]);
+    assert.deepEqual(w.puts.map((i) => i.history), [history]);
 });
 
 test("a plain backup leaves the API key out unless asked, and reports that it did", async () => {

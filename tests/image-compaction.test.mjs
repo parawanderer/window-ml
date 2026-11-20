@@ -75,13 +75,23 @@ const summary = (hash, over = {}) => ({ id: { runtime: "local", hash }, kind: "a
 const ev = (hash, n, over = {}) => ({ kind: "agent-step", id: hash, ts: 1000 + n, save: true, session: { hash, turn: 0 }, step: n, seq: n, tool: "look", ...over });
 
 function backend(seed = []) {
-    const rows = new Map(seed.map((r) => [r.hash, r])), events = new Map();
+    const rows = new Map(seed.map((r) => [r.hash, r])), events = new Map(), history = new Map(), meta = new Map();
     return {
         rows: async () => [...rows.values()],
-        append: async (row, from, list) => { rows.set(row.hash, row); const have = events.get(row.hash) ?? []; list.forEach((e, i) => { have[from + i] = e; }); events.set(row.hash, have); },
+        append: async (row, from, list, hw) => {
+            if (hw) {
+                const hist = history.get(row.hash) ?? [];
+                if (hw.cut != null) hist.length = Math.min(hist.length, hw.cut);
+                for (const [pos, m] of hw.puts) hist[pos] = m;
+                history.set(row.hash, hist);
+                if (hw.meta) meta.set(row.hash, hw.meta);
+            }
+            rows.set(row.hash, row); const have = events.get(row.hash) ?? []; list.forEach((e, i) => { have[from + i] = e; }); events.set(row.hash, have); },
         events: async (hash) => [...(events.get(hash) ?? [])],
-        remove: async (hashes) => { for (const h of hashes) { rows.delete(h); events.delete(h); } },
-        _rows: rows, _events: events,
+        historyRange: async (hash, from, to) => (history.get(hash) ?? []).slice(from, to),
+        runMeta: async (hash) => meta.get(hash) ?? null,
+        remove: async (hashes) => { for (const h of hashes) { rows.delete(h); events.delete(h); history.delete(h); meta.delete(h); } },
+        _rows: rows, _events: events, _history: history,
     };
 }
 const fakeEncode = async (url) => webpOf(url);
@@ -214,7 +224,8 @@ test("the row's history, what a resume sends the model, is never touched", T, as
     await store.flush();
     await store.compactImages("aaaa0011", fakeEncode);
     assert.equal(messages[0].images[0], png(1));
-    assert.equal(be._rows.get("aaaa0011").history.messages[0].images[0], png(1));
+    assert.equal(be._history.get("aaaa0011")[0].images[0], png(1), "on the disk too");
+    assert.equal((await store.history("aaaa0011")).messages[0].images[0], png(1));
 });
 
 // --- the background pass ---
