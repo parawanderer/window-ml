@@ -35,7 +35,7 @@ import { PythonBench } from "./sidebar/vram-bench";
 import type { RuntimeId } from "./session/session-host";
 import { BACKUP_BLOCK_ID, BACKUP_TAB, Settings, searchSettings, showSettingsSection } from "./sidebar/settings/settings";
 import { addressHash } from "./sidebar/links";
-import { config, psError } from "./sidebar/store";
+import { config, psError, holdScope } from "./sidebar/store";
 import { residentNow } from "./sidebar/resource/panel-facts";
 import { residentReader } from "./sidebar/resident-reader";
 import { DEFAULT_CONFIG, SETTING_PLACES, type MlConfig } from "./contract";
@@ -57,7 +57,9 @@ const extensionPlatform: ClientPlatform = { ...webPlatform, kind: "extension", p
  * is not. The sidebar app keeps these going for the whole of its life because it is mounted in every tab and has a
  * status dot to feed; this page has neither, so the box is only asked about while someone is looking at it.
  */
-function BoxPanel() {
+function BoxPanel({ hash }: { hash?: string }) {
+    // Scoped to `hash` while mounted, whatever session the page has open (`holdScope`, store.ts).
+    useEffect(() => (hash ? holdScope(hash) : undefined), [hash]);
     useEffect(() => {
         fetchModels();
         pollBackendHealth();
@@ -142,7 +144,7 @@ const FIXES: Record<string, () => Promise<boolean>> = {
 
 /** What this device can draw beyond the chat core. Every answer is per runtime, and null for one that is not ours. */
 const extras: ChatExtras = {
-    resourcePanel: (id) => (localRuntimes.has(id) ? <BoxPanel /> : null),
+    resourcePanel: (id, hash) => (localRuntimes.has(id) ? <BoxPanel hash={hash} /> : null),
     // The bench itself, not its drawer: the page's dock is the drawer here (edge, size, zoom, close).
     bench: (id) => (localRuntimes.has(id) ? <PythonBench /> : null),
     settings: (id) => (localRuntimes.has(id) ? <SettingsPane /> : null),

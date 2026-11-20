@@ -244,9 +244,22 @@ export const SNAPDOT_KEY = "ml_res_snapdot";   // storage.local: snap the crossh
  *  and a dot that follows every movement is noise when you are scanning the shape of the trace instead. */
 export const snapDot = signal(false);
 
-/** The session the lane scopes to when scoping is on: whichever one is open. Null in the list view, where
+/** A session the resource panel scopes to INSTEAD of the open detail view's: set while a panel is mounted for one session
+ *  that is not the view (the summary page's resources tab). Null is "follow the view". Take it with `holdScope`. */
+export const scopeOverride = signal<string | null>(null);   // state: ui — the session a mounted resource panel is about, over the open view's
+
+/** Make `scopedHash()` answer `hash` until the returned function is called, which puts back what was there before (so two
+ *  holders nest, and a stale release never clobbers a newer holder). */
+export function holdScope(hash: string): () => void {
+    const prev = scopeOverride.value;
+    scopeOverride.value = hash;
+    return () => { if (scopeOverride.value === hash) scopeOverride.value = prev; };
+}
+
+/** The session the lane scopes to when scoping is on: `scopeOverride` if a panel holds one, else whichever one is open. Null in the list view, where
  *  "this session" names nothing. */
 export function scopedHash(): string | null {
+    if (scopeOverride.value) return scopeOverride.value;
     const v = view.value;
     return v.name === "detail" ? v.hash : null;
 }

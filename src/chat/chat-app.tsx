@@ -792,7 +792,7 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
             <Lightbox platform={platform} />
             <DeleteConfirm store={store} />
             <RenameDialog store={store} />
-            <SessionSummaryDialog store={store} />
+            <SessionSummaryDialog store={store} extras={extras} />
             <ExportChat />
         </div>
     );
