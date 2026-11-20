@@ -1,7 +1,7 @@
 # Spec (proposed): settings the model can see and change
 
-**Status: proposed 2026-11-13; discovery, the surface, part (c) and the survey read built (#1815, #1952, #2001, the
-survey read's PR).** From
+**Status: proposed 2026-11-13; discovery, the surface, part (c) and the survey read built (#1815, #1952, #2001,
+#2050).** From
 Shane's words in the calm-chat-motion session (2026-11-13) and the points agreed there, handed to the settings-specs
 lane by the policies/python/desktop/manifests coordinator. Questions 1 and 2 of the first review (`ml.config()` stays as
 it is; the guarded class is not a second mechanism) were ruled by Shane on 2026-11-13 as proposed. Shane also ruled on
@@ -100,7 +100,7 @@ exec's `ml.config()` is open question 1, a later slice.
   the fatigue refusal cannot wait for a later key. Built (#1952).
 - **`propose_policy` rows of consumer `setting`** (part (c)): "Proposing a `setting` policy", below. Built (#2001).
 - **`ml.settings()` in a read-only survey** (open question 9): "`ml.settings()` in a read-only survey", below.
-  Built (the survey read's PR).
+  Built (#2050).
 
 ## Four classes of setting
 
