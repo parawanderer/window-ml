@@ -7,7 +7,7 @@
 // sweep runs when the worker starts and on an alarm, because nothing else is awake to run it.
 
 import { ValueStore, ValueTooLarge, ValueMissing, type ValueFormat, type ValueRow } from "../pointers/value-store";
-import type { StoredReadPlan } from "../table/table-data";
+import type { StoredReadPlan } from "../table/table-plan";
 import { cachedStoredColumns } from "../table/table-decode-cache";
 import type { FetchedBody } from "./sw-fetch";
 import { recordHousekeeping } from "./sw-housekeeping";

@@ -1,0 +1,65 @@
+{
+  "commit": "4f5819fb969a6985a3f9bedeefa52303d1ce1bff",
+  "extracted_at": "2026-11-20T09:58:45+00:00",
+  "rows": {
+    "meta": {
+      "arch": "arm64",
+      "at": "2026-11-20T09:58:45.132Z",
+      "node": "v26.12.1",
+      "platform": "darwin",
+      "size": 64000000,
+      "v8": "14.6.202.34-node.40"
+    },
+    "rows": [
+      {
+        "cache_bytes": 89851531,
+        "cached_read_ms": 40,
+        "csv_bytes": 64000047,
+        "decode_ms": 3725,
+        "decodes": 1,
+        "kept": true,
+        "peak_rss_bytes": 2113830912,
+        "peak_rss_over_before_bytes": 1210375920,
+        "retained_array_buffer_bytes": 89851563,
+        "retained_heap_bytes": 2767992,
+        "rows": 1160967,
+        "rss_before_bytes": 903454992,
+        "shape": "mixed"
+      },
+      {
+        "cache_bytes": 57600384,
+        "cached_read_ms": 36,
+        "csv_bytes": 64000010,
+        "decode_ms": 2325,
+        "decodes": 1,
+        "kept": true,
+        "peak_rss_bytes": 1019248640,
+        "peak_rss_over_before_bytes": 733990688,
+        "retained_array_buffer_bytes": 57600416,
+        "retained_heap_bytes": 3891688,
+        "rows": 900006,
+        "rss_before_bytes": 285257952,
+        "shape": "numeric"
+      },
+      {
+        "cache_bytes": 73365888,
+        "cached_read_ms": 95,
+        "csv_bytes": 64000040,
+        "decode_ms": 2387,
+        "decodes": 1,
+        "kept": true,
+        "peak_rss_bytes": 1266466816,
+        "peak_rss_over_before_bytes": 580463400,
+        "retained_array_buffer_bytes": 73365920,
+        "retained_heap_bytes": 2716208,
+        "rows": 780488,
+        "rss_before_bytes": 686003416,
+        "shape": "text"
+      }
+    ]
+  },
+  "source": {
+    "cmd": "node --import tsx notebooks/tables/decode-bench.mjs",
+    "driver": "notebooks/tables/decode-bench.mjs"
+  }
+}

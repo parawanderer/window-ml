@@ -6,7 +6,8 @@ import type { Table } from "../contract/contract-fetch";
 import type { DerefValue, DerefMeta, DerefRead } from "../contract/contract-pointers";
 import type { TokenKind } from "../contract/contract-render";
 import { jsonShape, jsonValue } from "../dom/dom";
-import { type StoredColumnReader, type StoredReadPlan, asTable, tableShape } from "../table/table-data";
+import { type StoredColumnReader, asTable, tableShape } from "../table/table-data";
+import { type StoredReadPlan } from "../table/table-plan";
 import { currentHasTool } from "./tool-exec";
 import { type ChannelMessage, offIsolated, onIsolated, toIsolated } from "../page-channel";
 

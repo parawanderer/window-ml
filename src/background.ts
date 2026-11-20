@@ -83,6 +83,7 @@ import { approvalKey } from "./approval-key";
 import { raiseAsk } from "./sw/sw-asks";
 import { probeShell, refreshShell, shellStatusRead } from "./sw/sw-shell";
 import { toPageUi, notePage, forgetTab, syncAllPanels, servePanelPort, startGesture, tabHidden, cuePanel, panelOpen, HL_POSITIONS } from "./sw/sw-side-panel";
+import { checkReadPlan } from "./table/table-plan";
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message

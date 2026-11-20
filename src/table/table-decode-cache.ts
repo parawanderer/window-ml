@@ -11,10 +11,12 @@
 // vector's `get` compile nothing. A column whose cells are not all of one kind (numbers, booleans or strings, with
 // nulls) is kept as the cells themselves, so every cell reads back exactly as the decode made it.
 
-import { decodeStored, columnIndexes, storedReadRows, type StoredReadPlan, type TableCell } from "./table-data";
+import { decodeStored, columnIndexes, storedReadRows, type TableCell } from "./table-data";
+import { type StoredReadPlan } from "./table-plan";
 
 /** The most bytes of decoded columns the cache keeps at once, least recently read first out. A decode larger than this
- *  serves its one read and is not kept. Set from the measurement in `scripts/measure-table-decode.mjs`. */
+ *  serves its one read and is not kept. Measured (notebooks/tables/decode-cache.ipynb): a 64 MB CSV, the largest a fetch
+ *  stores, decodes to 58 to 90 MB, so this holds two to four of those. */
 export const TABLE_DECODE_CACHE_BYTES = 256 * 1024 * 1024;
 
 /** One decoded column: its cell at a row, and what it costs the cache. */
@@ -40,6 +42,20 @@ function cellsBytes(cells: TableCell[]): number {
     return b;
 }
 
+/** A UTF-16 half with no other half, which TextEncoder would replace. */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+/** A column kept as its cells. Its own function, so the closure holds only `cells`. */
+function cellsColumn(cells: TableCell[]): DecodedColumn {
+    return { get: (r) => cells[r], bytes: cellsBytes(cells) };
+}
+
+/** A column read from an Arrow vector. Its own function, so the closure holds only the vector: a getter made inside
+ *  `column` would share that function's context, and keep the parser's cells alive beside the vector. */
+function vectorColumn(v: { get(row: number): unknown }, bytes: number): DecodedColumn {
+    return { get: (r) => v.get(r) as TableCell, bytes };
+}
+
 /** A column's cells as an Arrow vector when they are all one kind, or the cells themselves. */
 async function column(cells: TableCell[]): Promise<DecodedColumn> {
     let kind: "number" | "boolean" | "string" | null = null, nulls = 0;
@@ -47,37 +63,39 @@ async function column(cells: TableCell[]): Promise<DecodedColumn> {
         if (c == null) { nulls++; continue; }
         const k = typeof c as "number" | "boolean" | "string";
         if (kind === null) kind = k;
-        else if (kind !== k) return { get: (r) => cells[r], bytes: cellsBytes(cells) };
+        else if (kind !== k) return cellsColumn(cells);
         // A lone surrogate does not survive UTF-8, so a column holding one keeps its cells.
-        if (k === "string" && !(c as string).isWellFormed()) return { get: (r) => cells[r], bytes: cellsBytes(cells) };
+        if (k === "string" && LONE_SURROGATE.test(c as string)) return cellsColumn(cells);
     }
     const n = cells.length;
     const { makeData, makeVector, Float64, Bool, Utf8 } = await import("apache-arrow");
     const bitmap = nulls ? new Uint8Array((n + 7) >> 3) : undefined;
     if (bitmap) cells.forEach((c, r) => { if (c != null) bitmap[r >> 3] |= 1 << (r & 7); });
-    let data;
+    let v: { get(row: number): unknown }, bytes: number;
     if (kind === "boolean") {
         const bits = new Uint8Array((n + 7) >> 3);
         cells.forEach((c, r) => { if (c === true) bits[r >> 3] |= 1 << (r & 7); });
-        data = makeData({ type: new Bool(), length: n, nullCount: nulls, data: bits, nullBitmap: bitmap });
+        const data = makeData({ type: new Bool(), length: n, nullCount: nulls, data: bits, nullBitmap: bitmap });
+        v = makeVector(data); bytes = data.byteLength;
     } else if (kind === "string") {
         const enc = new TextEncoder();
         const parts = cells.map((c) => (c == null ? null : enc.encode(c as string)));
         const total = parts.reduce((s, p) => s + (p ? p.length : 0), 0);
         // Utf8's offsets are 32-bit; a column past them keeps its cells.
-        if (total > 0x7fffffff) return { get: (r) => cells[r], bytes: cellsBytes(cells) };
-        const offsets = new Int32Array(n + 1), bytes = new Uint8Array(total);
+        if (total > 0x7fffffff) return cellsColumn(cells);
+        const offsets = new Int32Array(n + 1), utf8 = new Uint8Array(total);
         let at = 0;
-        parts.forEach((p, r) => { if (p) { bytes.set(p, at); at += p.length; } offsets[r + 1] = at; });
-        data = makeData({ type: new Utf8(), length: n, nullCount: nulls, valueOffsets: offsets, data: bytes, nullBitmap: bitmap });
+        parts.forEach((p, r) => { if (p) { utf8.set(p, at); at += p.length; } offsets[r + 1] = at; });
+        const data = makeData({ type: new Utf8(), length: n, nullCount: nulls, valueOffsets: offsets, data: utf8, nullBitmap: bitmap });
+        v = makeVector(data); bytes = data.byteLength;
     } else {
         // Numbers, or a column of nulls only. A double keeps NaN and -0 as they are; null is the bitmap's.
         const values = new Float64Array(n);
         cells.forEach((c, r) => { if (c != null) values[r] = c as number; });
-        data = makeData({ type: new Float64(), length: n, nullCount: nulls, data: values, nullBitmap: bitmap });
+        const data = makeData({ type: new Float64(), length: n, nullCount: nulls, data: values, nullBitmap: bitmap });
+        v = makeVector(data); bytes = data.byteLength;
     }
-    const v = makeVector(data);
-    return { get: (r) => v.get(r) as TableCell, bytes: data.byteLength };
+    return vectorColumn(v, bytes);
 }
 
 /** Decode a stored table's bytes once into columns; the rows the parser made are dropped when this returns. */

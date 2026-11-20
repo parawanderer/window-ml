@@ -2,7 +2,7 @@
 // approved source named, or a stored table's columns sent with the call. Pure apart from the deps it is handed.
 
 // An isolated exec (sw-isolated-exec.ts) is sent its named reads with the call (named-reads.ts). A value's `.pipe()` and
-// a stored table's `col`/`select`/`records`/long `head` need the worker mid-script, so the world asks over a channel
+// a stored table's `col`/`records` (a view's included) need the worker mid-script, so the world asks over a channel
 // only it holds (a user-script world's `runtime.sendMessage`, a CDP binding named for that world), checked by the caller
 // against the call's tab, document, world and nonce. This module decides what such a request may reach, with the same
 // entitlement `VALUE_COLUMNS` applies in the page's world: only what the approved source named, only while that call
@@ -12,6 +12,7 @@ import type { PreRead } from "../pointers/named-reads";
 import type { DerefRead, DerefMeta } from "../contract/contract-pointers";
 import type { TableLike } from "../contract/contract-fetch";
 import { pipeStages } from "../pointers/token-pipe";
+import { checkReadPlan, type StoredReadPlan } from "../table/table-plan";
 
 /** How many requests one isolated exec may send. Past it every request is refused without any work. */
 export const ISO_ASK_MAX = 256;

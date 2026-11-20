@@ -8,6 +8,7 @@ import { HANDLE_MAP } from "./page-relay";
 import { gateOpen, gateState, setGate, setAsk, gateAsks, whenOpen, whenDecided, markAlive, pageAlive, setVisible } from "./page-gate";
 import { listenForPage, toPage, onPage, offPage, rearmForPage, type ChannelMessage } from "./page-channel";
 import { watchGestures, hasPageGesture } from "./page-gesture";
+import { checkReadPlan } from "./table/table-plan";
 
 // Before injected.js runs (a registered page script runs right after this, at document_start): take the port it hands
 // over (page-channel.ts). Nothing between us and the page script crosses the page's window.

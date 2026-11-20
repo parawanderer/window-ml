@@ -26,7 +26,7 @@ export function isTable(x: unknown): boolean {
     return typeof x === "object" && x !== null && facades.has(x as object);
 }
 
-// A STORED table: a facade over a preview whose whole table is in the value store, so its `col`/`select`/`records` read
+// A STORED table: a facade over a preview whose whole table is in the value store, so its `col`/`records` read
 // every row (a request) rather than the rows in hand. The dialect sizes that work by the table's `shape`, not by
 // `rows.length`, which is how it tells the two apart; granted only by `asTable`, like the brand above. The map holds
 // the facade's store reader, which its views (`select`, a long `head`) are made with: the reader is never a property a
