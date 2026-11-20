@@ -315,6 +315,12 @@ context menu. The in-cell find walks text nodes and a link is one, so a match ma
 - **An output embedded in a reply** (`![…](@tool:…:out)`) is linked too: a non-JSON value holding a link draws as plain
   output (`ValueOut`), a short inline value goes through `LinkedLine`, and the embed's jump-to-step ignores a click on an
   anchor. A JSON value keeps its highlighting and its addresses stay text, in the text view and the tree.
+- **`ml.sh` output is linked where a person reads it.** `ShCalls` (sh-calls.tsx) draws a call's command and facts, never
+  its output; the output is the calling step's console or stdout (`TimedOutput`), or, for a detached call, a `task`
+  tail step (no render descriptor: its raw Out is `PlainOutput`). Embedded by pointer, as the sign-in flow does
+  (docs/spec/ASYNC_CALLS.md, "Sign-in prompts"), a `task` tail and a `dereference` view of it (`{ type: "exec-out" }`,
+  `derefRender`) both reach `ValueOut` or the inline value, so the link is an anchor; `tests/sidebar-answer.test.js`
+  checks both with a `gh auth login` tail.
 - **Not covered:** output drawn by another path (`ExecError`, a retry's diff, a live call's code being written, the
   locate step's prompt and output) is still inert text.
 

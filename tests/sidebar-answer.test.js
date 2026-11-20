@@ -827,6 +827,22 @@ test("answer render (sidebar): an http(s) address in an embedded output is a lin
     assert.equal(inline?.getAttribute("href"), short, "an inline embedded value's address is a link too");
 });
 
+test("answer render (sidebar): a detached ml.sh tail embedded by pointer has its sign-in link clickable, as a task step and as a dereference view", async () => {
+    // The two steps docs/spec/ASYNC_CALLS.md's sign-in flow embeds: a `task` tail (no render descriptor) and a
+    // `dereference` view of it (`{ type: "exec-out", value }`, derefRender in agent-loop.ts).
+    const tail = "! First copy your one-time code: AB12-CD34\nOpen this URL to continue in your web browser: https://github.com/login/device\nWaiting for authentication...";
+    for (const [name, step] of [["task", { tool: "task", result: tail }], ["dereference", { tool: "dereference", result: tail, renderOut: { type: "exec-out", value: tail } }]]) {
+        const w = await loadSidebarWorld();
+        w.window.HTMLElement.prototype.scrollIntoView = function () {};
+        await w.dispatch(agentStart("sh" + name, "gh auth login"));
+        await w.dispatch(agentStep("sh" + name, 1, { seq: 1, token: OUT, ...step }));
+        await w.dispatch({ ...agentResult("sh" + name, "To sign in, open this link and enter the code:\n\n![sign-in prompt](@tool:" + OUT + ":out)\n", 1), answer: "" });
+        await openRun(w);
+        const a = w.shadow.querySelector(".msg.asst .answer-rendered .tok-block a.out-link");
+        assert.equal(a?.getAttribute("href"), "https://github.com/login/device", `${name}: the embedded tail's link is an anchor`);
+    }
+});
+
 test("answer render (sidebar): an embedded JSON value has the step's copy button and tree/text toggle, with quoted keys", async () => {
     const w = await loadSidebarWorld();
     const { embed } = await jsonEmbedRun(w, "ectl");

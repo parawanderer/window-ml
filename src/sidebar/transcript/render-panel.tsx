@@ -825,7 +825,10 @@ export { timeForOffset, alignedMarks, elideHour, fmtDelta } from "../timestamps"
  *  tab through `services().openLink` and never navigates the panel, as an approval's URL does; `href`, `target` and
  *  `rel` stay for the platform's own context menu. The tip names the HOST first, from the URL parser, and is JSX
  *  (a string would be rendered as Markdown, and the address is the program's to choose). A line with no link is the
- *  bare string, so nothing about the text nodes (the find, a selection) differs from before. */
+ *  bare string, so nothing about the text nodes (the find, a selection) differs from before.
+ *  @group transcript
+ *  @gallery a linked line {"line":"Open this URL to continue in your web browser: https://github.com/login/device"}
+ *  @gallery userinfo stays text {"line":"looks like good.com but goes to evil.com: https://good.com@evil.com/login"} */
 export function LinkedLine({ line }: { line: string }) {
     const segs = outputLinks(line);
     if (segs.length === 1 && typeof segs[0] === "string") return <>{line}</>;
