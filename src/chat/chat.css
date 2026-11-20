@@ -2367,7 +2367,7 @@ html[data-calm] .tt-layer { --notice: var(--accent); --notice-fg: var(--accent-f
    one. The running seconds on the live line, its step count, a group's total time. */
 .chat.calm .tick-d { display: inline-block; }
 .chat.calm .tick-d.rolled { animation: chat-tick-in .22s cubic-bezier(.2, .8, .2, 1) backwards; }
-@keyframes chat-tick-in { from { transform: translateY(.45em); opacity: 0; } to { transform: none; opacity: 1; } }
+/* `chat-tick-in` lives in sidebar.css, which the chat page also loads: the composer footer rolls its figures on the panel too. */
 @media (prefers-reduced-motion: reduce) {
     .chat.calm .astreak-name.arrived, .chat.calm .tick-d.rolled { animation: none; }
     .chat.calm .astreak.grouped > .astreak-head,
