@@ -308,7 +308,7 @@ context menu. The in-cell find walks text nodes and a link is one, so a match ma
   print any text. It is JSX, because a string tip is rendered as Markdown and the address is the program's to choose.
 - **Left as text, because the shown text and the destination could disagree:** userinfo (`https://good.com@evil.com/`),
   a backslash, a non-ASCII character in the host (so the host field is only ever ASCII or `xn--`), any bidi control,
-  zero-width or other format character (`\p{Cf}`) anywhere in the address, a URL that does not parse, and one past
+  zero-width or other format character (`\p{Cf}`) or C0 control or DEL anywhere in the address, a URL that does not parse, and one past
   `MAX_LINK_CHARS` (2048). A U+FEFF is whitespace to the scanner, so a URL ends before it.
 - **Boundaries:** a URL stops at whitespace, quotes, a backtick and angle brackets; trailing `.,;:!?)]}'"` is not part of
   it, except a closer that a bracket inside the URL opened (`…/Foo_(bar)`).

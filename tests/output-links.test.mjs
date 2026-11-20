@@ -74,6 +74,11 @@ test("a backslash stays text: the parser reads it as a slash, so what is shown a
     assert.deepEqual(urls("https://evil.com\\@good.com/"), []);
 });
 
+test("a C0 control or DEL anywhere in a URL keeps it text: it draws nothing, so the shown address and the opened one would differ", () => {
+    for (const c of ["\u0000", "\u0001", "\u001b", "\u007f"]) assert.deepEqual(urls(`https://a.example/x${c}y`), [], JSON.stringify(c));
+    assert.deepEqual(urls("https://a.example/xy"), ["https://a.example/xy"]);
+});
+
 test("a non-ASCII host stays text, so the host field is only ever ASCII", () => {
     for (const u of ["https://exаmple.com/", "https://münchen.example/", "https://例え.jp/", "https://a.example\u00e9/"])
         assert.deepEqual(urls(u), [], u);
