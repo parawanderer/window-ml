@@ -17,7 +17,7 @@ import { tabReadyFailure } from "./tab-ready";
 import { browserInfo } from "../util";
 import { SessionIndex, type IngestSource } from "../session/session-index";
 import { SESSIONS_PORT, SessionServer } from "../session/session-server";
-import { STORE_MAX_SESSIONS, SessionStore, indexedDbBackend, type SessionHistory } from "../session/session-store";
+import { STORE_MAX_SESSIONS, SessionStore, indexedDbBackend, type SessionHistory, type WriteFailure } from "../session/session-store";
 import { AGENT_START_PAGE, DEFAULT_CONFIG, modelFilterAllows } from "../contract/contract-config";
 import type { NeutralMessage } from "../contract/contract-chat";
 import { cleanTitle, titleMessages } from "../session/session-title";
@@ -28,6 +28,7 @@ import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { isExtensionSender } from "./sw-site-access";
 import { fileChunks } from "./sw-file-chunks";
 import { fetchLLM, streamLLM, getConfig, listAvailableModels, modelCapabilitiesBatch, residentContextLength } from "./sw-llm";
+import { forModelMessages } from "./sw-scrub";
 import { workerMl } from "./worker-ml";
 import { ocrRequest } from "../ml/ml-vision";
 import { planImages } from "../image-gate";
@@ -44,6 +45,9 @@ import { attentionCodes, recomputeAttention, refreshBackendAttention, watchAtten
 import { appendSnapshot, measureEvents, summarizeStore, type StorageReport, type StorageSnapshot, type StoreBytes } from "../session/session-storage-stats";
 import { captureOwnTab, NOT_SHOWING } from "./sw-capture";
 import { shellCapabilities, refreshShell, onShellStatus, hostMissing, hostIsOutdated, SHELL_KEYS } from "./sw-shell";
+import { keptEvent } from "./sw-asks";
+import { forRow, forRowText } from "./sw-scrub";
+import { onRegistryChanged } from "./sw-secret-registry";
 
 /**
  * Ask a tab's page something, PUTTING THE CONTENT SCRIPT BACK if it is not there.
@@ -345,6 +349,7 @@ export function configureSessionCommands(run: RunDeps): void {
         // does not already say.
         describe: () => { const { kind, contractVersion, capabilities } = localRuntime(); return { kind, contractVersion, capabilities }; },
         index: sessionServer.index,
+        shownRow: forRow,
         removeFromIndex: (id) => { sessionServer.remove(id); },
         listTabs: listTabsForPicker,
         listTabGroups,
@@ -424,7 +429,7 @@ export function configureSessionCommands(run: RunDeps): void {
             } catch (e) { return { outcome: "none", error: (e as Error)?.message || String(e) }; }
         },
         history: async (hash) => (sessionStore ? await sessionStore.history(hash) : null),
-        ...(sessionStore ? { storedEvents: (hash: string) => sessionStore.read(hash) } : {}),
+        ...(sessionStore ? { storedEvents: readKept } : {}),
         adoptSession: async (tabId, hash, history) => {
             if (history.kind !== "agent" || !history.payload) return "none";
             // A run this worker holds on ANOTHER tab is MOVED there (MOVE_RUN.md), with the same checks and record as the HUD's
@@ -526,7 +531,7 @@ export function configureSessionCommands(run: RunDeps): void {
         hostsChat: (hash) => isBackgroundChat(hash),
         utilityConfigured: () => utilityModelSet,
         sideCall: utilityCall,
-        title: titleSession,
+        title: shownTitle,
         captureTab: async (tabId, opts) => {
             for (let attempt = 0; ; attempt++) {
                 try { return await captureOwnTab(tabId, opts); }
@@ -584,8 +589,8 @@ export const sessionStore = (() => {
             },
             archive: {
                 enabled: () => archiveOn,
-                move: async (row, events) => {
-                    await archiveCall<boolean>("put", { input: { summary: row.summary, events, history: row.history ?? null, split: row.split, bytes: row.bytes }, archivedTs: Date.now() });
+                move: async (row, events, history) => {
+                    await archiveCall<boolean>("put", { input: { summary: row.summary, events, history, split: row.split, bytes: row.bytes }, archivedTs: Date.now() });
                     scheduleFolderSync();
                 },
             },
@@ -593,10 +598,32 @@ export const sessionStore = (() => {
             limits: storeLimits,
             // Screenshots are written as PNG and shrunk once the writes stop (sw-image-compact.ts).
             onWrite: () => imageCompaction?.kick(),
+            // A failed write is recorded and said on the session; the run goes on (SESSION_HISTORY_STORE.md, §3).
+            onWriteFailed: (f) => {
+                recordHousekeeping({ subsystem: "sessions", kind: "write-failed", key: f.hash, detail: { events: f.events, positions: f.positions, error: f.error } });
+                noteUnsaved(f);
+            },
+            onMigrated: (m) => recordHousekeeping({ subsystem: "sessions", kind: m.error ? "migrate-failed" : "migrate", key: m.hash, bytes: m.bytes, detail: { positions: m.positions, ...(m.error ? { error: m.error } : {}) } }),
         });
     }
     catch { return null; }
 })();
+
+/**
+ * Say on a session, in one line of its step list, what a failed write did not save. Ingested like any worker event, so
+ * the sidebar and the chat page both show it; it is written with the session's next write that succeeds.
+ * @param f what the store could not write
+ */
+function noteUnsaved(f: WriteFailure): void {
+    const what = [f.events ? `${f.events} event${f.events === 1 ? "" : "s"}` : "", f.positions ? `${f.positions} history message${f.positions === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ") || "a change to it";
+    ingestSessionEvent({ kind: "agent-note", id: f.hash, ts: Date.now(), save: false, session: { hash: f.hash, turn: 0 }, text: `Not saved: ${what} of this session could not be written to disk (${f.error}).` }, { trusted: true, hosts: false });
+}
+
+defineState({
+    id: "session.history", scope: "session", realm: "worker", audience: "human", lostOn: [],
+    describe: "What a saved session would be continued from, as stored: one record per message in `history` and the payload in `runmeta` (form 2), or still on the session's row (form 1, until the upgrade moves it).",
+    read: ({ runId }) => (runId ? sessionStore?.historyForm(runId) : undefined),
+});
 
 /** The background pass that re-encodes saved screenshots as lossless WebP once the store goes quiet. */
 const imageCompaction = sessionStore ? imageCompactor(sessionStore, { record: recordHousekeeping, paused: compactionPaused() }) : null;
@@ -611,16 +638,38 @@ if (sessionStore) defineJob({
     // `archive-failed`: the archive refused a session meant to move there, so it was kept where it was.
     log: { subsystem: "sessions", done: ["evict"], failed: ["archive-failed"] },
 });
+if (sessionStore) defineJob({
+    id: "sessions.migrate",
+    title: "Saved-session upgrade",
+    trigger: "when the browser starts, until every session saved before version 2 is moved",
+    // One record per session moved; `migrate-failed` leaves that session as it was, resumed from its row, and the
+    // next start tries again. `write-failed` is an ordinary write that did not land (a full disk).
+    log: { subsystem: "sessions", done: ["migrate"], failed: ["migrate-failed", "write-failed"] },
+});
+
+/**
+ * A kept session's events as they are served again (backfill, history paging): each step's nested asks through the
+ * stored scrub, so an ask stored before it was scrubbed leaves the store as one stored now does (sw-asks.ts `keptEvent`).
+ * @param hash the session
+ */
+async function readKept(hash: string): Promise<MlDebugEvent[]> {
+    return Promise.all((await sessionStore!.read(hash)).map((ev) => keptEvent(ev)));
+}
 
 /** The index and its server, for this worker's life. */
 export const sessionServer = new SessionServer(new SessionIndex({ runtime: localRuntimeId(), spawn }), {
     runtime: localRuntime,
     command: runCommand,
+    // Every row leaves through the by-value scrub (SECRET_HANDLES.md, "A session row leaves the worker scrubbed").
+    row: forRow,
     ...(sessionStore ? {
-        stored: (hash: string) => sessionStore.read(hash),
+        stored: readKept,
         // Only a kept session's events are stored, so only they have a position `session.backfill` can page from.
     } : {}),
 });
+
+// A row withheld before the registry's first read, or sent before a value was registered, is sent again scrubbed.
+onRegistryChanged(() => sessionServer.reshow());
 
 // What a previous worker saved, so an evicted service worker comes back with its list rather than with nothing. The
 // events stay on disk until something subscribes to that session.
@@ -654,6 +703,8 @@ if (sessionStore) {
         .then(() => store.sweep())
         // A sweep that fails must not cost the list: the sessions it meant to drop are listed one more time instead.
         .catch(() => [])
+        // The upgrade's pass, in the background: a row not yet moved is resumed from the row meanwhile.
+        .then((r) => { void store.migrate().catch(() => 0); return r; })
         .then(() => store.open())
         .then((rows) => {
             sessionServer.restored(sessionServer.index.restore(rows.map((r) => ({ summary: r.summary, count: r.count }))));
@@ -783,7 +834,9 @@ export async function storageReport(): Promise<StorageReport> {
     const [history, now, largest] = await Promise.all([storageHistory(), store.snapshot(), store.largest()]);
     // Only when it is on: asking would start SQLite for a page that has never used the archive.
     const archive = archiveOn ? await archiveCall<NonNullable<StorageReport["archive"]>>("stats").catch(() => undefined) : undefined;
-    return { history, now, largest, ...(archive ? { archive } : {}) };
+    // A largest session's title leaves as a row's title does (a hub's `storage.stats` asks for this report too).
+    const shown = largest.map(({ title, ...r }) => { const t = title ? forRowText(title) : undefined; return { ...r, ...(t ? { title: t } : {}) }; });
+    return { history, now, largest: shown, ...(archive ? { archive } : {}) };
 }
 
 /**
@@ -796,15 +849,17 @@ export async function sessionStorageStats(): Promise<StoreBytes | null> {
     const rows = [];
     for (const row of await sessionStore.open()) {
         const events = await sessionStore.read(row.hash);
-        rows.push({ hash: row.hash, ...(row.summary.title ? { title: row.summary.title } : {}), events: events.length, ...measureEvents(events, seen) });
+        const title = row.summary.title ? forRowText(row.summary.title) : undefined;
+        rows.push({ hash: row.hash, ...(title ? { title } : {}), events: events.length, ...measureEvents(events, seen) });
     }
     return summarizeStore(rows, seen);
 }
 
-/** A small model call on the utility profile: `side.call`, and the runtime's own titles. */
+/** A small model call on the utility profile: `side.call`, and the runtime's own titles. The messages cross the by-value
+ *  scrub first (a task can hold a registered secret); a failed scrub rejects, so nothing raw is sent. */
 async function utilityCall({ messages, schema, maxTokens, session }: { messages: NeutralMessage[]; schema?: object; maxTokens: number; session?: string }): Promise<{ content: string; usage?: unknown }> {
     const r = await fetchLLM({
-        messages, extend: "utility", maxTokens, think: false,
+        messages: await forModelMessages(messages), extend: "utility", maxTokens, think: false,
         ...(schema ? { schema: schema as never } : {}),
         hint: { use: "utility", ...(session ? { session: hintSession(session) } : {}) },
     }) as { content: string | null; usage?: unknown };
@@ -879,7 +934,19 @@ export async function handleSessionTitle(payload: unknown, sender: chrome.runtim
     const p = (payload || {}) as { hash?: unknown; messages?: unknown };
     if (typeof p.hash !== "string" || !p.hash || !Array.isArray(p.messages) || !p.messages.length) return { error: "SESSION_TITLE needs a hash and messages" };
     if (!utilityModelSet) return { error: "no utility model is set" };
-    return { data: await titleSession(p.hash, p.messages as NeutralMessage[]) };
+    return { data: await shownTitle(p.hash, p.messages as NeutralMessage[]) };
+}
+
+/**
+ * {@link titleSession} as it leaves the worker (`side.call` purpose title, `SESSION_TITLE`): scrubbed as a row's title
+ * is, and null while the registry is unread.
+ * @param hash the session
+ * @param messages the asker's title prompt
+ * @returns the title as shown, or null
+ */
+async function shownTitle(hash: string, messages: NeutralMessage[]): Promise<string | null> {
+    const t = await titleSession(hash, messages);
+    return t == null ? t : forRowText(t) ?? null;
 }
 
 /**
@@ -967,6 +1034,16 @@ export async function saveChatSession(hash: string, session: StoredSession): Pro
  */
 export function saveRunHistory(hash: string, history: Omit<Extract<SessionHistory, { kind: "agent" }>, "kind">): void {
     sessionStore?.putHistory(hash, { kind: "agent", ...history });
+}
+
+/**
+ * A tab's top frame moved (`webNavigation`, the browser's report): the worker-hosted sessions on it are on that page
+ * now (`SessionSummary.currentPage`). A saved one's row is written, so a restarted worker lists it there too.
+ * @param tabId the tab
+ * @param url the page it is on now
+ */
+export function sessionPageMoved(tabId: number, url: string): void {
+    for (const row of sessionServer.pageMoved(tabId, url)) if (row.saved) sessionStore?.putSummary(row);
 }
 
 /** Fold one debug event into the index, and save it when the session is one we keep. Never throws: a malformed event

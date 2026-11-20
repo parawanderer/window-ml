@@ -297,6 +297,19 @@ export interface SessionSummary {
     pendingApprovals: number;
     /** the page the session started on; absent for a chat with no page */
     page?: { url: string; title?: string; tabId?: number };
+    /**
+     * The page a worker-hosted run's tab moved to after it started, when that is not the page it started on: from the
+     * browser's own navigation report, never a page's claim. Kept once the run ends, as the page it was last on.
+     * Absent: still on the page it started on, or not known (a page-hosted session, a runtime that does not report it).
+     * No title: the report carries none.
+     */
+    currentPage?: { url: string };
+    /**
+     * The session this one was forked from (`handle.fork()`, `history.fork()`), when the runtime could check it: the
+     * parent was on the same tab. Absent: not a fork, or not known. Not `lineage`, which is a session another
+     * session STARTED (a subagent).
+     */
+    forkedFrom?: SessionId;
     /** survives a restart of the runtime; false for an ephemeral console or page-script session */
     saved: boolean;
     /**
@@ -931,8 +944,9 @@ export type HostStatus =
     | { state: "offline"; reason?: string; retryAt?: number };
 
 /** How far one attached file's upload has got, for a host that sends files ahead in chunks (the hub's `file.put`):
- *  `fraction` is the share of its chunks the runtime has accepted, 0 to 1 (`uploadFraction`, file-frame.ts). */
-export interface FileProgress { name: string; fraction: number }
+ *  `fraction` is the share of its chunks the runtime has accepted, 0 to 1 (`uploadFraction`, file-frame.ts). `index` is
+ *  the file's position among the files of the command being sent (0-based): names can repeat, positions cannot. */
+export interface FileProgress { name: string; index: number; fraction: number }
 
 /** What a send may carry beside its command: a cancel, and where a file's upload reports how far it has got. A host
  *  that sends files inline reports nothing. */

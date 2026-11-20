@@ -135,8 +135,21 @@ export function startTime(pid) {
     catch { return null; }
 }
 
-/** Whether the process a record names is the one still running: alive, and started when it was recorded. */
-export const procLive = (pid, started, probe = { alive, startTime }) => !!pid && probe.alive(pid) && (!started || probe.startTime(pid) === started);
+/**
+ * Whether the process a record names is the one still running: alive, and started when it was recorded.
+ *
+ * A start time the machine cannot READ is UNKNOWN, not dead. `ps -o lstart=` fails when the machine is loaded — the
+ * exact moment the queue matters — and reading that failure as death freed live slots on 2026-11-19 at about 20:02:
+ * every running job went `lost` and live tickets `abandoned`, so more runs were admitted, load rose, and more reads
+ * failed. `probe.alive` (a `kill(pid, 0)`) answers first and needs no `ps`: only a process that is PROVABLY gone, or
+ * one whose start time differs (a reused pid), loses its ticket; an unreadable one keeps it.
+ */
+export const procLive = (pid, started, probe = { alive, startTime }) => {
+    if (!pid || !probe.alive(pid)) return false;
+    if (!started) return true;
+    const seen = probe.startTime(pid);
+    return seen == null || seen === started;
+};
 
 /** The price of a run of `w` workers: its base plus the slope for each. */
 export const priceAt = ({ base, slope }, w) => base + slope * w;

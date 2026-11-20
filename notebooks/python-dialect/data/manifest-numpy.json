@@ -8,6 +8,7 @@
     "argwhere",
     "array",
     "mean",
+    "rint",
     "sum",
     "where"
   ],
@@ -18,7 +19,6 @@
       "copy",
       "max",
       "mean",
-      "round",
       "sum",
       "tolist"
     ]
@@ -89,12 +89,6 @@
       "cost": "size",
       "why": "a new scalar"
     },
-    "ndarray.round": {
-      "effects": "pure; mutates(the out argument) when out= is given",
-      "returns": "fresh; alias(the out argument) when out= is given",
-      "cost": "size",
-      "why": "a new rounded array, or the out array written in place"
-    },
     "ndarray.sum": {
       "effects": "pure",
       "returns": "fresh",
@@ -108,16 +102,16 @@
       "why": "a new list; object-dtype items alias the receiver's contents, and writes to those items are refused unless they are owned"
     },
     "numpy.abs": {
-      "effects": "pure",
-      "returns": "fresh",
+      "effects": "pure; mutates(the out argument) when out= is given",
+      "returns": "fresh; alias(the out argument) when out= is given",
       "cost": "size",
-      "why": "a new array of absolute values"
+      "why": "a new array of absolute values, or the out array written in place"
     },
     "numpy.any": {
-      "effects": "pure",
-      "returns": "fresh",
+      "effects": "pure; mutates(the out argument) when out= is given",
+      "returns": "fresh; alias(the out argument) when out= is given",
       "cost": "size",
-      "why": "a new bool, from a pass over the input"
+      "why": "a new bool, from a pass over the input, or the out array written in place"
     },
     "numpy.argwhere": {
       "effects": "pure",
@@ -132,16 +126,22 @@
       "why": "copies by default; copy=False returns the input itself"
     },
     "numpy.mean": {
-      "effects": "pure",
-      "returns": "fresh",
+      "effects": "pure; mutates(the out argument) when out= is given",
+      "returns": "fresh; alias(the out argument) when out= is given",
       "cost": "size",
-      "why": "a new float, from a pass over the input"
+      "why": "a new float, from a pass over the input, or the out array written in place"
+    },
+    "numpy.rint": {
+      "effects": "pure; mutates(the out argument) when out= is given",
+      "returns": "fresh; alias(the out argument) when out= is given",
+      "cost": "size",
+      "why": "a ufunc: a new array of rounded values, or the out array written in place (ruled in, V1 2026-11-19)"
     },
     "numpy.sum": {
-      "effects": "pure",
-      "returns": "fresh",
+      "effects": "pure; mutates(the out argument) when out= is given",
+      "returns": "fresh; alias(the out argument) when out= is given",
       "cost": "size",
-      "why": "a new scalar, from a pass over the input"
+      "why": "a new scalar, from a pass over the input, or the out array written in place"
     },
     "numpy.where": {
       "effects": "pure",

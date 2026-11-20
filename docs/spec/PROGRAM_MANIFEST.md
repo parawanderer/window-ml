@@ -52,6 +52,113 @@ A nested `rm` inside a root stays free under `host-sandbox` (ruled 2026-10-22): 
 - **Under the host's ordinary sandbox `gh` cannot run at all**: the profile denies the network and reads under `.config/gh` and the Keychains (gh fails reading its config); `GH_TOKEN` is not on the host's environment whitelist, and `XDG_CONFIG_HOME` is denied.
 - **The credentialed profile (2026-11-08).** The manifest names `credential: { provider: "github" }` and `network: { ports: [443], hosts: [...] }`. A host whose `hello.credentials` lists `github` is sent `spawn.credential: { provider, manifest: <sha256 of this file> }` by a sandboxed session (`credentialFor`); it injects the person's token as `GH_TOKEN`, with a throwaway `GH_CONFIG_DIR`, under a profile that runs program-only (gh, git, git's https helpers) and reaches one address, a CONNECT proxy the host runs for that call, which admits only the manifest's `hosts` on its `ports` (window-ml-host 0.8.0; `HTTPS_PROXY` routes gh and git to it). The card's Sandbox line names those hosts (`ShFacts.credential.hosts`, the host's grant); a host built before the proxy names none, and the card then says any host on port 443. Such a call ALWAYS asks: `judgeCall` lets no allow policy and no free tier answer a call whose facts say `credential.held` (`ShFacts.credential`), and the card says "Sends: your GitHub token". An older host, Linux, or a gh.json newer than the host's pinned copy (`CredentialRefused`) gets none, and the card says nothing is sent. Every edit of this file therefore needs a host release that copies it before credentialed gh works again. A token gh prints (`auth token`, an approved `unknown` call) is scrubbed by its shape before the model reads it (`secret-scrub.ts`).
 
+### `sed` and `awk`: a program inside an argument (2026-11-18)
+
+`src/shell/manifests/sed.json` and `awk.json`. A sed script and an awk program are a second language in one argument,
+and what writes a file or starts a program lives there (`w`, `r`, `e`, `s///w`, `s///e`; `system()`, `print > f`,
+`cmd | getline`), never in the argv. So a command may name `script: "sed" | "awk"`: its first operand is the program
+(`paths: {operandsFrom: 1}`), unless a flag marked `script` gave it (`sed -e`, with `pathsFrom: 0`, so every operand is
+then a file; several `-e` are joined by newlines), and the text is checked by a narrow grammar
+(`src/shell/script-grammar.ts`). Text outside the grammar makes the call `unknown`, so it asks; nothing is interpreted.
+
+- **sed** (`sedScriptRefusal`). Only the commands `s y p P d D n N q = h H g G x { } !`, separated by `;` or newlines;
+  an address is a line number (not 0), `$` or `/re/`, or a range of two; `s` flags are `g`, `p`, `i`, `I` and a number;
+  `q` with an exit code under a detected GNU only. Everything else is refused, whichever sed would accept it: `w`, `W`,
+  `r`, `R`, `e`, `F` and the `s` flags `w`, `e`, `m`, `M`; labels and branches; `a`, `i`, `c`; comments (`#n`
+  included); GNU's address forms (`0,/re/`, `first~step`, `addr,+N`) and `\cREc`. A newline inside an `s` or `y` part
+  is refused, since macOS sed reads the script line by line and GNU does not.
+- **Where a regular expression ends.** Both seds skip a bracket expression whole when they look for the delimiter
+  (`s/[/]/x/` is one regex to both), but by different rules: GNU's `snarf_char_class` (sed/compile.c) lets a `[` after
+  a class's closing `:` keep it closing, and macOS's `compile_ccl` (Apple text_cmds) needs `:]` exactly, so
+  `s/[[:a:[]/]/Q/w F` is a `w F` to GNU and unbalanced to macOS. `script-grammar.ts` ports both scanners, and **a
+  regular expression is described only when both scanners end it at the same character**. The lane's measurement
+  (2026-11-18, gsed 4.10 and macOS 26.7): over 2,926 unique bracket-heavy regexes (a seeded draw, and one aimed at
+  classes, collating symbols and equivalence classes, which holds the 14 where GNU and macOS end differently),
+  `s/<r>/Q/w F` run in an empty directory created the file `F` exactly when each port said the replacement and flags
+  fall where they do, with no disagreement for either. The regexes and both ends are shared vectors,
+  `tests/fixtures/sed-scanners/regex-ends.json` (written by `scripts/gen-sed-regex-ends.mjs`, which refuses to write
+  on any disagreement), under the vector pin, so window-ml-host's port is held to them too. `tests/script-grammar.test.mjs`
+  holds both ports to every row on any machine (a mutation of the GNU port's bracket rule fails it);
+  `tests/sed-scanners.test.mjs` re-runs the real seds the machine has over a sample and every differing row, and
+  `WML_SED_SCANNERS_N=3000` over all of them.
+- **Why a `w` is never free, not even refused by the sed.** GNU sed opens and truncates a `w` file while it parses the
+  script, before the script is compiled (measured: `s/[[:a:[]/]/Q/w F` created `F`, then failed on the regex), so a
+  script the sed rejects can still have emptied a file. A `w`, `W` or `s///w` is refused by the grammar, never left to
+  the sed's own error.
+- **awk** (`awkProgramRefusal`). Checked WITHOUT a lexer, by substrings, so no string, regular expression or comment
+  hides anything: the program holds none of `system`, `getline`, `ENVIRON`, `ARGV`, `ARGC`, `PROCINFO` and `@` (gawk's
+  `@include`, `@load` and indirect calls), no `|` outside `||`, and no `>` after its first `print` (every output
+  redirection needs a `print` or `printf` before its `>`). A program that compares with `>` after a print, or prints
+  the word `system`, is refused too: that only asks. Each test runs on the raw text and again with every
+  backslash-newline removed (backslash-CR-LF too), so a word split across lines (`sys\<newline>tem`) is read as an
+  awk that splices it reads it. Only `-F`, `-v` and `--` are listed; an operand of the form `name=value`
+  (`AWK_ASSIGNMENT`) is an assignment awk never opens, so it is no path.
+- **Flavours.** sed declares both: `-i` is GNU's attached suffix (`attachedValue`, `values: [""]`: `-i` and `-ni`
+  described, `-i.bak` and `-in` not) and BSD's separate one (`value`, `values: [""]`: `-i ''` described, `-i -e …`,
+  where `-e` is the suffix, not); `-l` takes a value in GNU only; GNU permutes and is hardened with `--sandbox` (4.3+:
+  the program itself refuses `e`, `r` and `w`), BSD stops at the first operand. An undetected sed reads the core alone,
+  so `-i` is `unknown` there. awk declares `bsd` alone, hardened with `-safe` (measured: macOS awk refuses `system` and
+  `print >` at parse time and empties `ENVIRON`). No flavour is declared whose hardening flag was not measured against
+  that binary, and there is no flavourless core: the substring check alone does not make an awk program free (ruled
+  2026-11-18).
+- **A lone `-`** is a file to macOS sed and stdin to GNU (measured), so sed claims it as a path (`dashIsPath`); every
+  awk reads stdin.
+
+### Programs that reveal other processes (`reveals`; ruling 31, 2026-11-18)
+
+`ps`, `lsof` and `top` read nothing in a workspace, yet they show every process's command line, user, open files and
+sockets: another program's arguments (a token passed on a command line), which files the person has open, what they are
+connected to. The effects algebra has no resource for "other processes" ([`EFFECTS.md`](EFFECTS.md): `process` is a
+program STARTED), so a manifest says it with a top-level marker:
+
+- **`reveals: "processes"`**, the one value in v1. A call to such a program that would otherwise be free is free only
+  when the manifest's `program` is in **`shellRevealsAllow`** (a `string[]`, default `[]`, a gate key:
+  [`MODEL_SETTINGS.md`](MODEL_SETTINGS.md)). Otherwise it asks, and the card says why ("ps shows other processes: their
+  arguments, users and open files"). One program in the list frees no other: `ps` in it leaves `lsof` asking.
+- **It frees nothing else.** A call that would ask without the marker still asks; a flag the manifest does not list
+  stays `unknown` (`ps -E` and procps `e`, which print each process's environment, are left out on purpose); the
+  output is scrubbed as every call's is. An allow policy does not stand in for the list: `judgeCall` lets neither the
+  free tier nor an allow policy answer a revealing call whose program is not in it, as for a credentialed call (`gh`
+  above), because a policy can be the model's proposal and a gate key cannot.
+- **It only narrows**, so a stored or proposed manifest may declare it too. A manifest without it reads exactly as
+  before (the upgrade: every vector under `tests/fixtures/program-calls/` describes and judges identically), and a
+  config saved before the key existed reads `[]`.
+- **A stored or proposed manifest cannot drop it.** A shipped program cannot be shadowed at all (B2 below, at store,
+  load and call time), so once `ps`, `lsof` and `top` ship marked, no stored manifest describes them. Until then, and
+  for a copy inside a workspace root, `REVEALING_PROGRAMS` (`ps`, `lsof`, `top`) holds, matched against the
+  manifest's `program` and against the basename of the file it is pinned to (the host's realpath, so `pss`, a symlink
+  to `/bin/ps`, is caught; `revealingName`): a draft for one of them gets
+  the marker whatever it said (`draftRequest`), and its card says so ("added whatever the draft said"); the store
+  refuses one without it (`revealsRefusal`), so an entry stored before this rule is dropped on load, and one that
+  arrives another way is skipped at call time and its calls are undescribed and ask. A program not in the list that
+  shows other processes (`pgrep`, `htop`) is marked only by its manifest's author; a model's draft for one reaches
+  the person on the card, as every draft does.
+- **Who writes the list**: only the person. DevTools Settings edits it, and the card of a call that asks only because
+  of the marker has a third answer, "Always allow `<program>`", which adds the program to the list and runs the call;
+  the sidebar writes the setting as the person's own action, never through `change_setting`. That answer is the one
+  exception to the card's two answers ([`SHELL.md`](SHELL.md), "Approval"): it widens a gate key, which no policy may
+  do, so the widening cannot be a policy. The chat page and the phone show the two answers only.
+- **Rows**: off, the call asks with the reason; on, it is free; one program listed frees no other; an allow policy
+  naming the program does not free it (`tests/sw-policies.test.mjs`, `tests/sh-reveals.test.mjs`); end to end through
+  the worker, with a config that lacks the key (`tests/ml-sh.test.mjs`); the card's third answer lists the program, then
+  approves (`tests/sidebar-asks.test.js`); `change_setting` refuses the key and `ml.config()` does not return it, a
+  stored manifest for a listed program without the marker is refused, dropped on load and skipped at call time, a draft
+  for one gets the marker and its card says so, a stored manifest's spawn names no manifest, and the third answer is
+  drawn only where the surface's services can write the list (`tests/sh-reveals.test.mjs`); `ml.settings()` shows it with `mode: "read"` once that surface lands. The marker rows
+  use a stored manifest, not a vector under `tests/fixtures/program-calls/`: those are copied to the host, whose reader
+  does not take the marker yet.
+- **A version probe** of a revealing program, whether shipped, stored or proposed, is judged with the marker too
+  (`versionOf`): by its manifest's `reveals` or by `revealingName`, and listed only by `shellRevealsAllow`. On a
+  manifest with a version range the probe is resolved but not started until the program is listed; until then the
+  version is unread, so its calls are undescribed and ask (`tests/ml-sh.test.mjs`, "a revealing program's version
+  probe is judged with the marker").
+- **The process host** does not take the marker today: its reader (`manifest.rs`) refuses unknown fields. It parses a
+  manifest only for a credential, and then only its own pinned copy of a shipped file, named by the sha256 the spawn
+  sends; a spawn never carries a manifest's bytes. So a stored manifest declaring `reveals` never reaches the host
+  (it cannot carry a credential, `shippedOnlyRefusal`), and its calls are described and judged by the extension
+  alone. The follow-up, before any shipped manifest or vector declares the marker: the host's reader takes
+  `reveals` (a window-ml-host PR), then the vectors carrying it are copied there.
+
 ## Pinning
 
 A library manifest is pinned to a content hash of one build. A program cannot be, in general: `git` is whatever the
@@ -79,8 +186,11 @@ A flag can mean one thing to GNU and another to BSD, or exist in only one of the
 suffix, BSD `sed -i` a separate one; `ln -T` is GNU's alone), and the order of options and operands is the PROGRAM's
 choice, not the platform's (macOS `grep` and `sort` permute, macOS `sed` and `ls` stop at the first operand). A manifest
 that declares `flavours` describes each implementation it can tell apart; one without them is read exactly as before,
-whatever the facts say (the upgrade: every vector under `tests/fixtures/program-calls/` describes identically under
-every flavour, `tests/program-manifest.test.mjs`).
+whatever the facts say (the upgrade: every vector under `tests/fixtures/program-calls/` of a manifest without
+`flavours` describes identically under every flavour, `tests/program-manifest.test.mjs`). The calls of a flavoured
+manifest as one detected flavour reads them (sed's two `-i`, `-in` as a backup suffix, awk's `-safe` hardening) are
+shared vectors too, `tests/fixtures/program-calls-flavoured/`, each row naming its flavour; they are under the vector
+pin, so the host's reader is held to them.
 
 **Which flavour runs** (`flavourOf`, `src/shell/program-manifest.ts`; pure, read from the host's facts), in this order:
 
@@ -326,6 +436,14 @@ rejects unknown fields, so a manifest with one is for this extension only.
   `gnu` probe is shipped-only. The sentence under "When the version is learned" that only a shipped manifest's probe
   entry is used holds for flavours, not yet for `version`. The follow-up gives `version` the same rule: a stored
   manifest's version comes from its pin (B4) and its probe is never run.
+
+- **A Linux awk always asks** (2026-11-18). gawk, mawk and busybox are installed under their own names (`/usr/bin/awk`
+  links to `gawk` or `mawk`), so `awk.json`, which declares only `bsd`, reads them as `other`. Follow-up: gawk and mawk
+  flavours, each with its hardening measured against that binary.
+- **A copy of a revealing program under another name is not recognised** (2026-11-18). `REVEALING_PROGRAMS` matches the
+  manifest's `program` and the realpath's basename, so a symlink is caught, but a copy or a hard link (`cp /bin/ps
+  pss`) resolves to its own name, and a stored manifest for it without `reveals` is not refused. The draft card shows
+  the path it is pinned to; a fingerprint list of the system's own `ps`, `lsof` and `top` would close it.
 
 ## Related
 

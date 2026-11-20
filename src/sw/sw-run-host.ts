@@ -13,7 +13,7 @@ import { endPythonTurn, markPythonBridged, pythonRunBridged } from "./sw-python"
 import { workerReadonlyMl, derefWhole } from "./worker-readonly-ml";
 import { pipeStages } from "../pointers/token-pipe";
 import { recordRunLog, runLog } from "./sw-run-log";
-import { forModel, forModelHistory, forPage } from "./sw-scrub";
+import { forModel, forModelHistory, forPage, forLive, forPerson, forStored, redactedNote } from "./sw-scrub";
 import { eventsForRun, type RunLogEvent } from "../log/run-log";
 import { execCodeIn, expandPointers } from "../pointers/pointer-macro";
 import { namedReads, type PreRead } from "../pointers/named-reads";
@@ -35,9 +35,10 @@ import { sealedDescribe } from "../tools/tools";
 import { extractGrants, fetchUrlLiterals, tabGrantsForCall } from "./grant-extract";
 import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
-import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, grantOnceFetch, consentFetch, fetchConsent } from "./sw-consent";
+import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, grantOnceFetch, consentFetch, fetchConsent, resolveApproval } from "./sw-consent";
+import { settingBeforeCard, settingCard, settingFacts, settingMeasureDeps, holdSettingChange, releaseSettingChange, noteSettingDeclined, watchSetting, settingEntries, settingChangedElsewhere, type SettingChange } from "./sw-change-setting";
 import { ASK_POLICY_CAUSE, navOnlyWhy, startLeftWhy, judgeCall, fetchFacts, navigateFacts, actFacts, noteAct, dropActs, actsOf, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
-import { checkProposals, recordedFetches, measureBreadth, breadthNote, measureActBreadth, actBreadthNote, type PolicyProposal } from "./policy-proposal";
+import { checkProposals, recordedFetches, measureBreadth, breadthNote, measureActBreadth, actBreadthNote, measureSettingBreadth, measureSettingRows, settingBreadthNote, recordedSettingKeys, type PolicyProposal, type SettingBreadth } from "./policy-proposal";
 import { approveManifest, checkManifestProposal, draftCardNote, type CheckedManifest } from "./sw-manifest-proposal";
 import { approveLibrary, checkLibraryProposal, isLibraryDraft, precheckLibrary, type CheckedLibrary } from "./sw-library-proposal";
 import { isExtensionSender, senderSelfApproves } from "./sw-site-access";
@@ -78,7 +79,7 @@ import { checkVerifyRequest, verifyAsked, verifyVerb, withoutPageVision, workerV
 import { topDocument } from "./worker-vision";
 import { capPageAnswer, capPageContext } from "./page-answer-caps";
 import { firstUserTurn } from "../agent/run-assembly";
-import { hostAsks, raiseAsk, stepAsks } from "./sw-asks";
+import { hostAsks, raiseAsk, stepAsks, type StepAsk } from "./sw-asks";
 import { ARRIVAL_ASK, ARRIVAL_DENIED } from "../contract";
 import { arrivalAnsweredText, arrivalDeniedText, clickDeniedText, arrivalWaitingText, arrivalHold, arrivalLine, arrivalSettled, arrivalVerdict, clearArrival, holdArrival, judgeTurnStart, watchArrivals, watchBetweenTurns } from "./nav-arrival";
 import { adoptOnTab } from "./adopt-run";
@@ -536,12 +537,21 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
      *  page's run never does (`pageStartPayload`), nor one handed to the worker: within the turn of its hand-over `p` is
      *  still the page's, and after it the stored copy has the tool stripped (`markWorkerRun`). */
     const offersProposals = (): boolean => p.builtBy === "worker" && byWorker() && runsInWorker(p, "propose_policy");
+    /** Each `propose_policy` call's `setting` measures, from its precheck to its card: keyed by the call's own arguments
+     *  object, so a second call with the same rule is measured again over fresh samples. */
+    const settingMeasures = new WeakMap<object, (SettingBreadth | undefined)[]>(); // state: plumbing
+    /** The run's messages as the loop holds them, or none. */
+    const runMessages = (): readonly import("../contract").NeutralMessage[] => {
+        try { return contextByRun.get(runId)?.().messages ?? bgRuns.get(runId)?.messages ?? []; } catch { return []; }
+    };
     /** Whether this run may ask the person to store a program manifest (`propose_manifest`): one the worker built, whose
      *  tools offer it (the settings turned ml.sh on when it started). Whether the host answers is the check's. */
     const offersManifests = (): boolean => p.builtBy === "worker" && byWorker() && runsInWorker(p, "propose_manifest");
     /** Whether this run may ask the person to install a Python package (`python_install`): one the worker built, whose
      *  tools offer it (`OFFER_PYTHON_INSTALL`, sw-run-start.ts). */
     const offersInstall = (): boolean => p.builtBy === "worker" && byWorker() && runsInWorker(p, "python_install");
+    /** Whether this run may ask to change a setting (`change_setting`): one the worker built, whose tools offer it. */
+    const offersSetting = (): boolean => p.builtBy === "worker" && byWorker() && runsInWorker(p, "change_setting");
     /** `p` as the run is stored for a later turn or a worker restart: a run handed to the worker during this turn
      *  (`makeWorkerRun`) stays the worker's. `p` is the turn's start payload, written before the hand-over, and storing
      *  it as it is would give the run back to the page that built it, whose RESUME_RUN would then be honoured. Its tools
@@ -809,7 +819,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // The last event of each step that carried its tool, by RAW seq: a nested ask re-emits it with the step's asks, so
         // the ask rides the event every surface already renders (sw-asks.ts). A turn's own; gone with it.
         const lastStepEv = new Map<number, Record<string, unknown>>();   // state: plumbing — one turn's step events, for re-emitting a step with its asks
-        const emitStep = (ev: Record<string, unknown>): void => {
+        const emitStep = (ev: Record<string, unknown>, liveAsks?: StepAsk[]): void => {
             // Once the run is aborted (CANCEL_RUN), stop fanning steps: an in-flight tool's DONE resolves
             // AFTER the abort (the page tool round-trip isn't cancellable), and a straggler landing after the
             // page's cancelled result would wrongly re-show "running" in the panel. Drop it at the source.
@@ -826,7 +836,11 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             if (rawSeq != null && ev.tool != null) { const { asks: _asks, ...rest } = ev; lastStepEv.set(rawSeq, rest); }
             // A step that raised asks carries them on every later event too (its DONE included), so no surface, export
             // or saved session sees the step without what it asked.
-            const asks = seq != null && ev.asks === undefined && ev.tool != null ? stepAsks(runId, seq) : undefined;
+            const later = seq != null && ev.asks === undefined && ev.tool != null;
+            const asks = later ? stepAsks(runId, seq) : undefined;
+            // A waiting ask's raw facts, for the card the person answers from: only the live fans below get them. What is
+            // kept (the session server, the store, both buffers, so both exports) gets the scrubbed asks (sw-asks.ts).
+            const live = later ? stepAsks(runId, seq, true) : liveAsks;
             const event = {
                 kind: "agent-step", id: runId, ts: Date.now(), save: false,
                 session: { hash: runId, turn: step }, ...ev, ...(asks?.length ? { asks } : {}), step, localStep: rawStep, seq,
@@ -838,12 +852,13 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             // Always fan to the PAGE (overlay / off card). For devtools ALSO fan to the panel — and the
             // page fan lets the optional corner card coexist with the panel (agentHudInDevtools); the
             // shell drops the page copy when no card is mounted, and never loops it back to the panel.
-            toPageUi(tabId, { type: "ML_DEBUG_TO_PAGE", event });
+            const shown = live?.length ? { ...event, asks: live } : event;
+            toPageUi(tabId, { type: "ML_DEBUG_TO_PAGE", event: shown });
             // ALWAYS feed a connected DevTools panel (no-op if none). A background-hosted run is the SOLE source
             // of its events — the shell receives them over chrome.runtime and never re-forwards them as ML_DEBUG_EVENT, so
             // this can't double-relay. Gating on `surface === "devtools"` left an off/card run's panel (if the
             // user also has one open) stuck on the connect-time replay — the "panel stopped updating" bug.
-            relayDebugEvent(tabId, event);
+            relayDebugEvent(tabId, shown, event);
             ingestSessionEvent(event, { tabId, trusted: true, hosts: byWorker() });
             // Cross-page: remember this step so a fresh page after a nav can rebuild the card mid-run.
             if (p.crossPage !== false) bufferReplay(tabId, event);
@@ -873,8 +888,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         const openTaskTable = (): void => openTasks(runId, (text, task, end) => fanEvent({ kind: "agent-task-say", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, text, task, ...end }));
         // The run's steps may now raise nested asks: a call made from inside a running step that needs the person.
         unhostAsks = hostAsks({
-            runId, unattended: !!p.unattended, routing: p.approvalRouting || "ui", signal: abortCtl.signal,
-            emit: (seq, asks) => { const base = lastStepEv.get(seq - seqBase); if (base) emitStep({ ...base, asks }); },
+            runId, unattended: !!p.unattended, routing: p.approvalRouting || "ui", signal: abortCtl.signal, keep: forStored,
+            emit: (seq, asks, live) => { const base = lastStepEv.get(seq - seqBase); if (base) emitStep({ ...base, asks }, live); },
             stepOf: (seq) => stepBase + (Number(lastStepEv.get(seq - seqBase)?.step) || 0),
             running: (seq) => !!lastStepEv.get(seq - seqBase)?.pending,
         });
@@ -1046,7 +1061,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // eviction (its worker forgot the hold, and the page may have moved). A run's first turn is on the person's page.
         void judgeTurnStart(tabId, runId, { first: !resumeMessages, force: resurrected || !!arrivalHold(runId) });
         const startEvent = {
-            kind: "agent", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 },
+            kind: "agent", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0, ...(p.forkOf && !resurrected && !resumeMessages ? { forkOf: p.forkOf } : {}) },
             // A fresh run's task as the model got it, the page context in front (`firstUserTurn`); the bubble shows the task.
             task: resurrected ? (resumeOriginalTask ?? p.task) : firstUserTurn(modelTask, resumeMessages ? undefined : p.pageContext), model: p.model, maxSteps: p.maxSteps,
             ...(p.display && !resurrected && p.builtBy === "worker" ? { display: p.display }
@@ -1212,11 +1227,15 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 },
                 // Every result crosses into the model's context here, without the config's secrets; the text as the tool
                 // wrote it goes to the execution log's `key`, which the person reads and the model never does.
+                // The `key` keeps the backend's own secrets for the person, never a registered value (forPerson).
                 forModel: async (name, result) => {
                     const r = await forModel(result);
-                    if (r.changed) recordRunLog(runId, { level: "warn", subsystem: "tool", kind: "scrubbed", reason: "config-secret", key: result, detail: { tool: name } });
-                    return r.text;
+                    const registered = Object.keys(r.counts).length > 0;
+                    if (r.changed) recordRunLog(runId, { level: "warn", subsystem: "tool", kind: "scrubbed", reason: registered ? "registered-secret" : "config-secret", key: forPerson(result), detail: { tool: name, ...(registered ? { names: Object.keys(r.counts).sort().join(",") } : {}) } });
+                    return r.text + redactedNote(r.counts);
                 },
+                scrubText: (text, live) => live ? forLive(text) : forPerson(text),
+                scrubStored: forStored,
                 // A call routed for the page-built run it was, whose run is handed to the worker before it is sent (a revoke while
                 // it was being built, nav-handover.ts), is built again as the worker's run: never sent to the page as it was.
                 // A page the run is held on (nav-arrival.ts) runs nothing of it: the call is answered by the hold, or waits for
@@ -1269,6 +1288,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                 // What the world may ask for while it runs: re-pipes of what it was sent, those stored tables, and ml.sh.
                                 serve: isoServer(runId, reads, { deref: wholeDerefFor(runId), holders: valueHolders, columns: readStoredColumns, ...(sh ? { sh } : {}) }),
                                 // Made only for a script that names it, as a survey's is (tryReadonly below).
+                                // The person's settings, read now, for a script that names them in a run the worker built.
+                                ...(p.builtBy === "worker" && execNames(js).settings ? { settings: async () => settingEntries(await getConfig()) } : {}),
                                 ...(snap && execNames(js).current ? { current: async () => withTasks(withPolicies(withRuntime(await withEnv(await withUserWatches(snap({ model: modelNow(), log: eventsForRun(await runLog.all(), runId) })), tabId, !!p.autoApproveReadonly, !byWorker())), runId), runId) } : {}),
                             });
                             // A reading taken after a wait for the person is not simultaneous with one taken before: say so.
@@ -1744,7 +1765,15 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     if (name === "propose_policy") {
                         if (!offersProposals()) return `Error: propose_policy is not offered in this run.`;
                         const c = checkProposals(args);
-                        return "error" in c ? c.error : null;
+                        if ("error" in c) return c.error;
+                        // A `setting` row is measured here, once: an allow that frees nothing, or a rule too costly to measure,
+                        // is refused before any card, and the measure that passed is the one the card shows (`settingMeasures`).
+                        if (c.proposals.some((q) => q.consumer === "setting")) {
+                            const m = measureSettingRows(c.proposals, await settingMeasureDeps(), recordedSettingKeys(runMessages()));
+                            if ("error" in m) return m.error;
+                            settingMeasures.set(args, m.measures);
+                        }
+                        return null;
                     }
                     // A manifest draft is resolved through the host and checked as the store would; nothing runs.
                     if (name === "propose_manifest") {
@@ -1798,10 +1827,16 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         const c = offersProposals() ? checkProposals(args) : undefined;
                         if (c && "proposals" in c) {
                             proposal = c.proposals;
-                            let messages: readonly import("../contract").NeutralMessage[] = [];
-                            try { messages = contextByRun.get(runId)?.().messages ?? bgRuns.get(runId)?.messages ?? []; } catch { /* no history: measured over nothing, and the card says so */ }
+                            const messages = runMessages();
                             const calls = recordedFetches(messages);
-                            const notes = proposal.map((q) => q.consumer === "act" ? actBreadthNote(q, measureActBreadth(q, actsOf(runId))) : breadthNote(q, measureBreadth(q, calls)));
+                            // The precheck's measure of this very call; measured here only if no precheck ran. A setting changed
+                            // since does not change what the card says: the judge decides at the call.
+                            const measured = settingMeasures.get(args);
+                            settingMeasures.delete(args);
+                            const settings = !measured && proposal.some((q) => q.consumer === "setting") ? await settingMeasureDeps() : undefined;
+                            const notes = proposal.map((q, i) => q.consumer === "act" ? actBreadthNote(q, measureActBreadth(q, actsOf(runId)))
+                                : q.consumer === "setting" ? settingBreadthNote(q, measured?.[i] ?? measureSettingBreadth(q, settings!, recordedSettingKeys(messages)))
+                                : breadthNote(q, measureBreadth(q, calls)));
                             // One card, each rule its own section with its own measured note; one answer adds them all.
                             renderIn = proposal.length === 1
                                 ? { type: "code", text: proposal[0].source, lang: "javascript", format: true, note: notes[0] }
@@ -1843,6 +1878,14 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         }
                         if (!pkg) renderIn = { type: "code", text: "", lang: "json", note: "This package cannot be checked: the core's lock could not be read." };
                     }
+                    // change_setting's card is the worker's: checked again here, drawn from the facts and the Settings text,
+                    // and the change held as the one the person answers. One that no longer passes never becomes a card.
+                    let setting: SettingChange | undefined;
+                    if (tool === "change_setting") {
+                        const c = offersSetting() ? await settingCard(runId, args) : { error: "Error: change_setting is not offered in this run." };
+                        if ("error" in c) return { approved: false, source: "worker", feedback: c.error.replace(/^Error: /, "") };
+                        setting = c.change; renderIn = c.card;
+                    }
                     if (!renderIn) try {
                         const env = await sendTool({ runId, name: tool, args, renderOnly: true }) as { renderIn?: unknown };
                         renderIn = env?.renderIn;
@@ -1876,9 +1919,13 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // A worker tool's approval is granted to the run's state in this worker (worker-tools.ts), rebuilt here
                     // if an eviction took it, so the decision below has somewhere to put it.
                     if (byWorker() && runsInWorker(p, tool)) await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "", pyMedia).catch(() => { /* nothing granted: fails closed */ });
+                    // A setting's card closes when the setting changes anywhere else first: the answer would be to a change
+                    // the card no longer shows.
+                    let stopWatch: (() => void) | undefined;
                     return new Promise<ApprovalDecision>((resolve) => {
                         pendingApprovals.set(key, {
                             resolve: (decision) => {
+                                stopWatch?.();
                                 // A package card stands only on the rows it showed: anything else approving it is a denial.
                                 if (tool === "python_install" && (decision === true || (typeof decision === "object" && !!decision && decision.approved && !decision.cancelled))) {
                                     const j = pkg && offersInstall() ? judgeAnswer(pkg, typeof decision === "object" ? decision.files : undefined) : { ok: false as const, reason: "no-check", why: "the run does not offer python_install, or its card could not be checked" };
@@ -1888,7 +1935,15 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                         decision = { approved: false, source: "user", feedback: "The approval did not carry the files the card showed, so it counts as a denial." };
                                     }
                                 }
-                                const ok = decision === true || (typeof decision === "object" && !!decision && decision.approved);
+                                const ok = decision === true || (typeof decision === "object" && !!decision && decision.approved && decision.source !== "worker");
+                                // A setting change not approved is not written; a guarded one the PERSON declined is not asked again this run.
+                                if (setting && ok && typeof decision === "object" && decision.source === "policy") holdSettingChange(runId, setting, "policy");
+                                if (setting && !ok) {
+                                    releaseSettingChange(runId, setting.key);
+                                    const d = typeof decision === "object" && decision ? decision : undefined;
+                                    if (setting.class === "guarded" && !d?.cancelled && d?.source !== "worker" && d?.source !== "policy") void noteSettingDeclined(runId, setting.key);
+                                    if (d?.source === "worker") recordRunLog(runId, { subsystem: "setting", kind: "card-closed", reason: "worker", detail: { key: setting.key } });
+                                }
                                 // What a decision remembers (consents, grants) is read from the model's arguments, which can be
                                 // anything: a throw there must not leave the gate hanging, so the decision is still delivered.
                                 // A grant that was not minted fails closed: the call it was for is refused.
@@ -1963,6 +2018,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                 // is judged again when one changes (`rejudgePending`): its facts, resolved here.
                                 tool === "fetch_url" && !(args as { credentials?: unknown }).credentials && byWorker() && runsInWorker(p, "fetch_url")
                                     ? { ...base, consumer: "fetch" as const, facts: fetchFacts(String((args as { url?: unknown }).url ?? ""), { rendered: !!(args as { rendered?: unknown }).rendered }) }
+                                    // An ordinary setting's card too; a guarded one's is the person's alone (no facts, never judged again).
+                                    : setting?.class === "ordinary" ? { ...base, consumer: "setting" as const, facts: settingFacts(setting) }
                                     : base)({ key, runId, seq: gateSeq ?? -1, step: step ?? -1, tool, arguments: args, ts: Date.now(), routing: p.approvalRouting || "ui" }),
                         });
                         // Patch the pending step to show approve/deny (awaitingApproval) + the In preview. ALL
@@ -1972,6 +2029,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         // the same origin-authed SET_APPROVAL, so the gate is unforgeable across every surface.
                         // approvalRouting "external" SUPPRESSES the UI buttons (the gate still blocks — only the
                         // __mlApprovals channel resolves it); "ui"/"both" show them as before.
+                        if (setting) { const k = setting.key; stopWatch = watchSetting(k, () => { resolveApproval(key, { approved: false, source: "worker", feedback: settingChangedElsewhere(k) }); }); }
                         emitStep({ step, seq, pending: true, awaitingApproval: p.approvalRouting !== "external", approvalExternal: p.approvalRouting === "external" || undefined, tool, arguments: args, renderIn, grants: grants.length ? grants : undefined, askWhy });
                     });
                 },
@@ -1986,6 +2044,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 },
                 // A click or a type is the `act` consumer, judged on the element the page resolves for it (docs/spec/POLICIES.md,
                 // "Acting on a page is a consumer"). The self-approval list is the builtin `allow`, and any row beats it.
+                // change_setting: checked, then judged as the `setting` consumer, before any card (sw-change-setting.ts).
+                settingPolicy: (a) => offersSetting() ? settingBeforeCard(runId, a) : Promise.resolve({ refused: "Error: change_setting is not offered in this run." }),
                 actPolicy: async (name, a) => {
                     const v = await judgeAct(name, a);
                     // An answer that decides ends the call before its precheck runs: nothing is left for a later, identical call to reuse.

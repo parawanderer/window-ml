@@ -1020,6 +1020,8 @@ test("a run of the same tool folds into one row, and opens again", async () => {
     // It says what the six rows could not: how many, how many failed, how long.
     await expect(streak.locator(".astreak-n")).toHaveText("× 6");
     await expect(streak.locator(".astreak-bad")).toHaveText("1 failed");
+    // ...but the calm view, which this page opens in, does not draw the failure count: the model usually recovers.
+    await expect(streak.locator(".astreak-bad")).toBeHidden();
     // The members are NOT drawn while it is folded — that is the whole point.
     await expect(page.locator('[data-astep-seq="303"]')).toHaveCount(0);
 
@@ -1318,7 +1320,26 @@ test("phone (touch): a long press lifts a pinned row for a drag, and a quick swi
         expect(await pinnedKeys()).toEqual([CHAT, CAPPED, POINTERS]);
         const scrolls = await scroller.evaluate((e) => e.scrollHeight > e.clientHeight);
         if (scrolls) expect(await scroller.evaluate((e) => e.scrollTop)).toBeGreaterThan(top0);
+        // THE LIST MUST BE STILL before the press. A touch on a list the swipe's fling is still moving stops the fling
+        // and starts no press, in the browser as on a phone: measured, every lift came LONG_PRESS_MS (+1 to 3 ms) after
+        // the touch, a press during the fling never lifted at all, and the lift landed 4 of 10 times after the swipe
+        // against 10 of 10 without it. A fixed wait was a guess at when the fling ends; this waits for it, and fails
+        // if the list never comes to rest.
+        const still = () => scroller.evaluate((e) => new Promise((resolve) => {
+            const t0 = performance.now();
+            let top = e.scrollTop, since = t0;
+            const tick = () => {
+                const now = performance.now();
+                if (e.scrollTop !== top) { top = e.scrollTop; since = now; }
+                if (now - since >= 200) resolve(true);
+                else if (now - t0 >= 3000) resolve(false);
+                else requestAnimationFrame(tick);
+            };
+            requestAnimationFrame(tick);
+        }));
+        expect(await still(), "the list came to rest after the swipe").toBe(true);
         await scroller.evaluate((e) => { e.scrollTop = 0; });
+        expect(await still(), "the list is still at the top").toBe(true);
 
         // A LONG PRESS lifts the row, and the drag that follows moves it, not the list.
         const last = await box(POINTERS), first = await box(CHAT);
@@ -1515,18 +1536,55 @@ test("one session, one menu: the list's dots and the chat's offer the same thing
         .evaluateAll((els) => els.map((e) => e.firstChild?.textContent?.trim()));
 
     await page.locator(".chat-row-more").first().click();
-    expect(await labels(".chat-row-menu")).toEqual(["Pin to the top", "Rename…", "Look at the page", "Copy session id", "Delete…"]);
+    expect(await labels(".chat-row-menu")).toEqual(["Summary", "Pin to the top", "Rename…", "Look at the page", "Copy session id", "Delete…"]);
     await page.keyboard.press("Escape");
 
     // The open session's menu: the same list, plus the one thing that can only be done where a transcript is held.
     await row(page, WAITING).click();
     await page.locator(".chat-head-more").first().click();
-    expect(await labels(".chat-head-menu")).toEqual(["Pin to the top", "Rename…", "Look at the page", "Export chat…", "Copy session id", "Delete…"]);
+    expect(await labels(".chat-head-menu")).toEqual(["Summary", "Pin to the top", "Rename…", "Look at the page", "Export chat…", "Copy session id", "Delete…"]);
     // CALM VIEW IS NOT AMONG THEM. It is how the page reads, not something done to this session, and it lives in the
     // gear with the other page-wide choices — it used to be here too, behind a condition on the window's width.
     await expect(page.locator(".chat-head-menu")).not.toContainText("Calm view");
     expect(errors).toEqual([]);
     await page.close();
+});
+
+test("Summary opens the session's summary page from a row's menu and from the open session's, over the transcript on a phone", async () => {
+    // docs/spec/SESSION_SUMMARY.md: the page reads the index row live, draws a line only where a source answers it,
+    // and on a phone is a dismissable overlay that leaves the transcript where it was.
+    const { page, errors } = await open(DESKTOP);
+    const lineOf = (field) => page.locator(`.sum-line[data-field="${field}"] dd`);
+    await page.locator(`.chat-row-wrap:has(.chat-row[data-session="${WAITING}"]) .chat-row-more`).first().click();
+    await page.getByRole("menuitem", { name: "Summary" }).click();
+    const dialog = page.getByRole("dialog", { name: "Cheapest AMS → LIS fare" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator(".sum-hash")).toHaveText(WAITING.split(":")[1]);
+    await expect(lineOf("state")).toHaveText("waiting on you");
+    await expect(lineOf("asks")).toHaveText("1 pending");
+    await expect(lineOf("model")).toHaveText("qwen3:32b");
+    await expect(lineOf("page")).toContainText("flights.example");
+    // The tabs not built yet each say what they will hold, in one line.
+    await dialog.getByRole("tab", { name: "Files" }).click();
+    await expect(dialog.locator(".sum-empty")).toHaveText(/files/i);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await page.close();
+
+    // A phone: the open session's ⋮, the page over the transcript, and closing it leaves the transcript as it was.
+    const phone = await open(PHONE, `#s=${encodeURIComponent(WAITING)}`);
+    const p = phone.page;
+    await expect(p.locator(".chat-head-more").first()).toBeVisible();
+    const at = p.url();
+    await p.locator(".chat-head-more").first().click();
+    await p.getByRole("menuitem", { name: "Summary" }).click();
+    const sheet = p.getByRole("dialog", { name: "Cheapest AMS → LIS fare" });
+    await expect(sheet).toBeVisible();
+    await sheet.getByRole("button", { name: "Close" }).click();
+    await expect(sheet).toHaveCount(0);
+    expect(p.url(), "an overlay, not a route: the session stays open where it was").toBe(at);
+    expect([...errors, ...phone.errors]).toEqual([]);
+    await p.close();
 });
 
 test("a thing that cannot be done stays on the menu and says why, in words, not a tooltip", async () => {
@@ -3577,7 +3635,7 @@ test("an empty box whose placeholder would wrap stays on one row, still", async 
     const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(CHAT)}`);
     const row = page.locator(".composer .composer-row");
     const box = row.locator(".cinput");
-    await box.evaluate((el) => { el.placeholder = "Send a message (or paste an image) to continue, ".repeat(6); });
+    await box.evaluate((el) => { el.placeholder = "Send a message to continue, ".repeat(6); });
     // An edit makes the box re-measure, and clearing it leaves it empty with only the placeholder in it.
     await box.fill("x");
     await row.evaluate((el) => {
@@ -3690,6 +3748,33 @@ test("a busy session's list dot pulses when it appears, then rests at full colou
         .filter((a) => a.playState === "running" && a.effect?.getTiming().iterations === Infinity)
         .map((a) => `${a.animationName} on ${a.effect?.target?.className}`)), { timeout: 6000 }).toEqual([]);
     await expect.poll(() => dot.evaluate((d) => getComputedStyle(d).opacity), { timeout: 6000, message: "it rests at full colour" }).toBe("1");
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// --- the composer's usage figure follows the session while it is open ---
+
+// The footer's figure is the LATEST sample's prompt+completion. It is drawn by the composer, a child of the open
+// pane, and must move when a new sample arrives on the open session, not only after the session is left and re-opened.
+test("an open chat session's footer usage figure follows a new usage sample without re-opening", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
+    const gauge = page.locator(".composer-foot .usage-gauge");
+    await expect(gauge.locator(".tt-pop")).toContainText("236");
+    for (const [turn, tokens] of [[1, 300], [2, 350], [3, 399]]) {
+        await page.evaluate(([k, turn, tokens]) => {
+            const hash = k.split(":")[1], ts = Date.now() + turn * 10;
+            const base = { id: `${hash}-${turn}`, ts, save: true, session: { hash, turn } };
+            globalThis.__chatFake.emit(k, { ...base, kind: "chat", streaming: false,
+                request: { model: "qwen3:32b", extend: null, messages: [{ role: "user", content: `again ${turn}` }], images: null, toolIds: null, schema: false, think: null, maxTokens: null },
+                config: { system: null, model: "qwen3:32b", think: null, schema: false, toolIds: null, maxTokens: null, save: true } });
+            globalThis.__chatFake.emit(k, { ...base, ts: ts + 1, kind: "chat-result", model: "qwen3:32b", extend: null, reasoning: null, sources: null, structured: false,
+                usage: { promptTokens: tokens - 10, completionTokens: 10, totalTokens: tokens }, content: `answer ${turn}` });
+        }, [CHAT, turn, tokens]);
+    }
+    await expect(page.getByText("answer 3")).toBeVisible();
+    // The demo's model has no known window, so the bare figure and the tooltip both carry the number.
+    await expect(page.locator(".composer-foot .usage-total")).toHaveText("399 tok");
+    await expect(gauge.locator(".tt-pop")).toContainText("399 tokens in context");
     expect(errors).toEqual([]);
     await page.close();
 });

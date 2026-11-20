@@ -12,7 +12,7 @@
 import type { ArchiveOp } from "../archive/archive-worker";
 import type { ArchiveInput } from "../archive/db";
 import type { MlDebugEvent } from "../contract/contract-debug";
-import type { StoredSessionRow } from "../session/session-store";
+import type { SessionHistory, StoredSessionRow } from "../session/session-store";
 import type { BackupForm, RestoreInspection } from "./backup-file";
 import type { Secret } from "./backup-format";
 import { SettingsError, applyRestore, collectSettings, planRestore, type RestorePlan, type StorageSnapshot, type StorageWriter } from "./backup-settings";
@@ -21,9 +21,10 @@ import { SettingsError, applyRestore, collectSettings, planRestore, type Restore
 export interface BackupDeps {
     /** one archive worker op (`archiveCall`) */
     call<T>(op: ArchiveOp["op"], args?: ArchiveOp["args"]): Promise<T>;
-    /** the live session store's rows, and one session's events (`SessionStore.open`, `.read`) */
+    /** the live session store's rows, one session's events and its history (`SessionStore.open`, `.read`, `.history`) */
     liveRows(): Promise<StoredSessionRow[]>;
     readEvents(hash: string): Promise<MlDebugEvent[]>;
+    readHistory(hash: string): Promise<SessionHistory | null>;
     /** the three storage areas, read now */
     storage(): Promise<StorageSnapshot>;
     writer: StorageWriter;
@@ -51,7 +52,7 @@ export async function createBackup(deps: BackupDeps, o: { form: BackupForm; incl
     await deps.call("backupBegin");
     try {
         for (const row of await deps.liveRows()) {
-            const input: ArchiveInput = { summary: row.summary, events: await deps.readEvents(row.hash), history: row.history ?? null, split: row.split, bytes: row.bytes };
+            const input: ArchiveInput = { summary: row.summary, events: await deps.readEvents(row.hash), history: await deps.readHistory(row.hash), split: row.split, bytes: row.bytes };
             await deps.call("backupPut", { input });
         }
     } catch (e) {

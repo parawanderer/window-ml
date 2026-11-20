@@ -15,7 +15,7 @@ import { CALL_TITLE } from "../../tools/tool-params";
 import katexCss from "katex/dist/katex.min.css";
 import { sessionMap, turnsRun, config } from "../store";
 import { renderMermaid } from "../../mermaid/mermaid-client";
-import { serializeSessionJson } from "./export-json";
+import { exportedAsks, serializeSessionJson } from "./export-json";
 import type { Session, AgentStep } from "../store";
 import { pretty, fullStamp, beautifyJs, escapeHtml, highlight, markdown, truncate } from "../format";
 import { promptLine, type PromptDisplay } from "../../contract/contract-run";
@@ -37,6 +37,7 @@ import { annotatedConfig, resolveModel, shownModel } from "../model";
 import { askOutcomeLines, unaskedCalls, unaskedLines } from "../../shell/sh-call";
 import { putSubject } from "../../shell/sh-put";
 import { shownText } from "../../python/pkg-card";
+import { settingValueLines } from "../../setting-text";
 
 type Sidecar = { name: string; bytes: Uint8Array };
 
@@ -397,7 +398,7 @@ function writeAgent(s: Session, d: Sink): void {
         d.head(`Step ${st.step} · ${st.tool || "?"}${said ? ` — “${said}”` : ""}`);
         if (st.approval) d.note(approvalNote(st.approval));
         // Each nested ask: what was asked while the step ran, how it was answered, and the facts it was judged on.
-        for (const a of st.asks ?? []) {
+        for (const a of exportedAsks(st.asks ?? [])) {
             d.note(askNote(a));
             // Once an allowed call ran, what it reported: the same lines as the card under the step.
             for (const l of askOutcomeLines(a)) d.note(`${l.label}: ${l.value}`);
@@ -450,6 +451,16 @@ function writeAgent(s: Session, d: Sink): void {
                 d.table(["name", "version", "file", "size", "source", "sha256"], v.files.map((r) => [esc(r.name), esc(r.version), esc(r.filename), r.size === null ? "in the core" : r.size, r.source, r.sha256]));
                 d.note(`${v.totalBytes.toLocaleString("en-US")} bytes to download${v.loaded.length ? `; already loaded: ${v.loaded.map(esc).join(", ")}` : ""}`, true);
             } else d.inline("Install refused", `${asked}: ${v.reason} at ${esc(v.at)}`, { code: true });
+            renderedIn = true;
+        } else if (st.renderIn && st.renderIn.type === "setting") {
+            // change_setting's card as the person saw it: both values in full, hidden characters escaped as on the card.
+            const ri = st.renderIn;
+            const esc = (t: string): string => { const s = shownText(t); return s.hidden.length ? `${s.text} [${s.hidden.join(" ")}]` : s.text; };
+            d.inline("Change setting", `${ri.name} (${ri.key})`, { code: true });
+            d.block("Now", settingValueLines(ri.from).map(esc).join("\n"));
+            d.block("New", settingValueLines(ri.to).map(esc).join("\n"));
+            const notes = [ri.reason ? `Always asks: ${ri.reason}.` : "", ri.why ? `The agent says: "${esc(ri.why)}"` : "", ri.synced ? "Applies to every browser signed in to this profile." : ""].filter(Boolean);
+            if (notes.length) d.note(notes.join(" "), true);
             renderedIn = true;
         } else if (st.renderIn && st.renderIn.type === "action" && st.renderIn.ask) {
             // fetch `ask` mode: a clean In — the URL, the FULL question, and who answered it + the tokens spent

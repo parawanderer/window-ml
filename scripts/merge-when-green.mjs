@@ -57,6 +57,8 @@ const ROOT = process.env[PIN_SUPPORT] || path.resolve(import.meta.dirname, "..")
 const SELF = path.relative(path.resolve(import.meta.dirname, ".."), import.meta.filename).split(path.sep).join("/");
 const REPO = "parawanderer/window-ml";
 const POLL_MS = 60_000, POLL_LIMIT = 90;
+/** How long a merging arm waits before re-reading a BLOCKED merge state GitHub may not have recomputed yet. */
+const BLOCKED_RECHECK_MS = 20_000;
 /** Below this many GitHub API calls left in the hour, a waiter sleeps until the budget resets: every session on the
  *  account shares the 5,000 an hour, and a few waiters polling at once once ran it out (2026-10-09). */
 const API_RESERVE = 300;
@@ -335,11 +337,25 @@ export function judge(f) {
             };
         }
         return {
-            ok: false,
+            ok: false, staleGate: true,
             reason: `BLOCKED though the tests run is green and no required context is missing: approval, or a gate this tool cannot see (mergeStateStatus BLOCKED)`,
         };
     }
     return { ok: true, reason: `OK (run ${f.runId} green, tests -${f.tests.removed}/+${f.tests.added} lines)` };
+}
+
+/**
+ * What to do about a BLOCKED that is NOT the missing-context trap (2026-11-19: #2018 sat BLOCKED with all six required
+ * contexts green and no review required; Shane merged it with the ordinary button and no bypass, so the state was
+ * GitHub's, stale). A merging arm re-checks once, and if the state survives it attempts the merge PINNED to the head —
+ * a real gate refuses it there and GitHub's own answer is the one reported. A one-shot check, or an arm that does not
+ * merge, keeps refusing: nothing could happen past it anyway.
+ * @returns {"none" | "refuse" | "recheck" | "judge"}
+ */
+export function blockedPlan({ staleGate, wait, merge, rechecked }) {
+    if (!staleGate) return "none";
+    if (!wait || !merge) return "refuse";
+    return rechecked ? "judge" : "recheck";
 }
 
 /** Everything the rule needs about PR `pr`, from GitHub and the fetched remote. */
@@ -618,7 +634,7 @@ async function main() {
         }
     }
     if (!pr) { console.error("usage: node scripts/merge-when-green.mjs <pr> [--wait] [--merge] [--session <your session id>] [--read <comment id>] [--await-review]"); process.exit(2); }
-    let f, v, reran = false;
+    let f, v, reran = false, blockedRechecked = false;
     for (let i = 0; ; i++) {
         f = facts(pr, session, read, awaitReview);
         v = judge(f);
@@ -644,6 +660,17 @@ async function main() {
                 await new Promise((r) => setTimeout(r, 2000));
             }
             continue;
+        }
+        const plan = blockedPlan({ staleGate: !!v.staleGate, wait, merge, rechecked: blockedRechecked });
+        if (plan === "recheck") {
+            console.log(`${pr}: ${v.reason}; re-checking in ${BLOCKED_RECHECK_MS / 1000} s before letting GitHub judge the merge`);
+            blockedRechecked = true;
+            await new Promise((r) => setTimeout(r, BLOCKED_RECHECK_MS));
+            continue;
+        }
+        if (plan === "judge") {
+            console.log(`${pr}: still BLOCKED after a re-check; attempting the merge pinned to ${f.sha.slice(0, 8)} — GitHub refuses it if the gate is real`);
+            v = { ok: true, reason: v.reason };
         }
         if (!v.pending || !wait || i >= POLL_LIMIT) break;
         // While the run is still going, one call a minute says so; the full facts wait until it is done.

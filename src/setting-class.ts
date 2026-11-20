@@ -78,6 +78,7 @@ export const SETTING_CLASSES: Readonly<{ [K in keyof MlConfig]: SettingDecl }> =
     autoApproveReadonly: { class: "gate", reason: "runs read-only page surveys without asking" },
     autoApprovePython: { class: "gate", reason: "runs Python without asking" },
     autoApproveSelfSource: { class: "gate", reason: "reads the agent's own source without asking" },
+    shellRevealsAllow: { class: "gate", reason: "runs the listed programs that show other processes without asking" },
 
     shellEnabled: { class: "guarded", reason: "lets ml.sh run programs on this machine", widens: on },
     shellRoots: { class: "guarded", reason: "the folders ml.sh may reach", widens: added },
@@ -102,6 +103,8 @@ export const SETTING_CLASSES: Readonly<{ [K in keyof MlConfig]: SettingDecl }> =
     sessionStoreBudgetMB: { class: "guarded", reason: "how much disk saved sessions may use before the oldest go", widens: tighter },
     valueStoreBudgetMB: { class: "guarded", reason: "how much disk the bodies of large fetched tables may use", widens: (from, to) => (to as number) < (from as number) },
     exportToolDefs: { class: "guarded", reason: "whether an export carries the full tool definitions", widens: off },
+    taskNotifyOnly: { class: "guarded", reason: "whether a finished task starts the run's next turn with no message from you", widens: off },
+    taskTurnChainMax: { class: "guarded", reason: "how many turns finished tasks may start in a row with no message from you", widens: (from, to) => (to as number) > (from as number) },
 
     model: { class: "ordinary", domain: model },
     ocrModel: { class: "ordinary", domain: model },

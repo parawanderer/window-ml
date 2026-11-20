@@ -293,6 +293,59 @@ to diff. Global (persistent) policies are edited there the same way as a run's. 
 at once ("these five no longer match anything this session does"), as one card the person confirms; removing narrows
 what runs without asking, so it cannot escalate, but it is still the person's list.
 
+## The effective view: one session's policies as rows
+
+A session's policies are read as ROWS, one per policy, placed against the others of the same consumer, by `sessionPolicies(hash)`
+(`sw-policies.ts`, rows built in `sw-policy-view.ts`) beside `judgeCall` and from the same lists. The page that shows them is a
+separate piece of work; this section is the worker's contract.
+
+- **A row is `{consumer, layer, entry, wins, overrides, overriddenBy, removal}`, `removal` being `{class, exposes, reach}`.** `layer` is `default` (the built-in rule,
+  one row per consumer that has a policy), `global`, or `session`. `entry` is the policy's `id`, `label`, `source`, `effect`,
+  `origin`, `created` and why it broke. NOTHING ELSE: the row type has no field for a value, a call's arguments or a result,
+  so a consumer whose policies talk about files shows PATHS and nothing a file held.
+- **The layers never change a verdict.** For the consumers that exist (`fetch`, `sh`, `act`), `judgeCall` takes the strictest
+  effect across every scope (`deny`, then `ask`, then `allow`), so a session `allow` does not override a global `deny`.
+  `overrides` follows that order: a row beats the rows of the same consumer with a weaker effect, on a call both match; equal
+  effects override nothing. `wins` is true when no row of the consumer beats it. The layer only decides which of two rows of the
+  same effect `judgeCall` names. The default never overrides (it is the weakest) and is beaten by any `ask` or `deny`.
+- **A consumer with another order registers it.** The hide and show consumer of ruling 34 orders by most specific, a tie hides,
+  and a session `show` beats a default `hide`; it calls `registerPrecedence(consumer, (a, b) => …)` beside its judge, and `wins`,
+  `overrides`, `overriddenBy` and a removal's `exposes` follow it. The enumeration test for such a consumer runs against its OWN
+  judge (the test for the hook does so with a toy one); until a consumer registers, its rows are ordered by strictness, which is
+  right only if its judge is.
+- **A policy whose script breaks is still a row.** `judgeCall` skips it for the call it broke on (`broken` is per call), but the
+  next call may not break it, so the row is read by strictness like any other and carries `entry.broken`: `wins` means "on a
+  call both match and whose script runs", and a row with `entry.broken` is one that may not be applied.
+- **A registered order that cannot be trusted is not used.** A judge decides a call both rows match, so for two rows of different
+  effects exactly one beats the other, and no row beats itself. An order that throws, or breaks that for a pair (both ways, neither
+  way, or a row over itself), is replaced by strictness for that pair, and every removal in the view is classed `widens` (confirm
+  required); the read always answers. A classifier that throws is read as `widens`.
+- **A consumer's class can only add caution.** A classifier that says a removal narrows is overruled when the entry is not an
+  allow and the removal would leave another row (the built-in default included) to decide: the class is `widens`.
+- **A policy is a script, so "on a call both match" is not decided here.** The read says what wins WHERE both match, never that
+  they overlap. The enumeration test holds it against `judgeCall` over every pair of layers and effects.
+- **Two removal classes, decided by the worker and sent in the row.** Removing an `allow` NARROWS (fewer calls run unasked):
+  one gesture. Removing a `deny` or an `ask` WIDENS: the page shows the entry and `removal.exposes`, the rows that would
+  decide the calls this one decided (the default among them), and only then sends `confirm`. `removal.reach` says whose
+  policies it changes: `session` is this session's alone, `all` is a GLOBAL row's, which every session loses, and the page shows the layer
+  with it. A global `allow`'s removal is still one gesture; the layer is shown, not confirmed. The worker enforces it: a widening
+  `removeChecked` without `confirm` is refused with the row, so a caller that did not show the effect cannot skip it. A consumer
+  that needs another rule (the files host's `hide` and `show`) registers a classifier (`registerRemovalClass`); the read and the
+  removal name no consumer.
+- **The message.** `POLICIES` `{ op: "session", hash }` reads the rows and `{ op: "removeChecked", hash, id, confirm? }`
+  removes one; both are EXTENSION PAGES ONLY like every `POLICIES` op, and no page-relayed message carries either. A policy that
+  is not in this session's view (another session's) is refused.
+- **The host seam (the contract the tab will read through).** `SessionHost.sessionPolicies(key) -> rows | null` and
+  `removePolicy(key, id, confirm?)`, with ONE SessionFeed event `policies-changed {hash}` as the change signal. `null` means
+  unknown (the runtime is unreachable, or the host has no policy store), never "none". The host splits the page's
+  `runtime:hash` key on the LAST `:` and hands the worker the bare hash; the worker never sees a runtime. In v1 the extension
+  host alone answers (it maps the event from `onPoliciesChanged`, storage `onChanged` being only its own source) and every other
+  host answers `null`, so the tab hides the remove there. A remote route (a sealed hub command) is left open and is not built.
+- **What the renderer decides and what the worker does.** The row carries `removal.class` and `removal.exposes`, so the page shows
+  a widening removal's confirm from the row it already holds, with no second read. That confirm is display: the gate is the
+  worker's refusal of a widening `removeChecked` without `confirm`. A row's `source` is shown as its label with the source behind
+  a disclosure, and a broken policy (`entry.broken`) as one line on its row.
+
 ## A change takes effect at once
 
 On every call not yet started:
@@ -694,8 +747,8 @@ and the run-scope lifetime rules (it survives a resume and is removed at archive
   at a root's top, a held symlink target, or a linked template), or a `hide` in a layer below it. By the layer rule
   below, a session `show` overrides a person's global `hide`. A shown path is readable AND writable, and is never listed
   in `hiddenSecrets`. The credential directories (`.ssh`, `.gnupg`, `.aws` and the rest) and the masks under `$HOME` are
-  not defaults a `show` releases in this version: a `show` that matches one is refused, naming it. This is the
-  coordinator's call narrowing ruling 34, open to Shane's override.
+  not defaults a `show` releases in this version: a `show` that matches one is refused, naming it. This was the
+  coordinator's call narrowing ruling 34; Shane's ruling 46 (2026-11-18) keeps it.
 - **A pattern** is an absolute path inside a root, or a glob within the roots using `*`, `?` and `[…]` inside one path
   segment; `**` is refused, since on Linux every match is a mask the host builds by walking the tree. At most 512
   characters, and at most 256 entries a scope.
@@ -760,7 +813,9 @@ defaults do on each platform, and the file browser marks the name as hidden (the
 item asks for).
 
 **Known limits.** On Linux a `hide` is resolved when the call is spawned, so a file the call creates that matches it is
-not masked for that call; macOS's rules match by pattern and cover it. The next call's spawn holds it on both.
+not masked for that call; macOS's rules match by pattern and cover it. The next call's spawn holds it on both. A file
+inside a credential directory, or under a mask in `$HOME`, has no `show` that releases it (ruling 46): a layout that
+keeps a file a call needs in one has no override in this version, and moves that file out.
 
 **The read, for the view.** The view of the effective list is the access tab of small-fixes' per-session Session
 summary page, a read-only layered list (default < global < session) with a scope chip, an "overrides <rule>" line and
@@ -830,8 +885,28 @@ hidden until the person picks it, and never all at once by default. The coordina
 - The upgrade: there was no earlier hide list, so the fixture is today's policy store, with no `files` rows, read by
   the new code. Its policies decide as before, and the view shows the four defaults only.
 
+**Other sessions' files, later** (ruling 91, 2026-11-20; NOT BUILT AND NOT SCHEDULED). Each session's folder on disk
+is private to it, and the host refuses every other session's folder under `window-ml-files/` by default
+([FILE_ATTACHMENTS.md](FILE_ATTACHMENTS.md), "One folder per session" and H17). Shane's direction for when sharing is
+taken up: the person writes a policy that lets a session read other sessions' folders, and it is an entry in these
+layers, not a store of its own.
+
+- **The entry.** Consumer `files`, effect `show-sessions`, `source` a session folder's recorded name or a glob over
+  those names within one workspace's `window-ml-files/`. It lifts H17's deny for what it matches and nothing else.
+- **Read-only, always.** Another session's files are outside data (ruling 57), so a lifted folder is readable and never
+  writable, whatever the entry says: the host keeps the write deny on it and refuses a write there as `EROFS`. The
+  editable version is a copy into the reader's own `agent/`.
+- **The layers.** It sits in the session and global layers as `show` does, and the most specific entry wins; a `hide`
+  over a path inside a shown folder still holds that path, and the folder's own hidden files stay hidden.
+- **Who writes it.** The person, by their own edit (Shane's direction covers that); no page, `change_setting` or
+  `ml.settings`. Whether the model may propose one on a card, as for `show`, is open (Open questions).
+- **Without a host** it is out of the first cut: the browser copies have no shared tree, and a session reads another's
+  files only once a host is connected.
+
 ## Open questions
 
+- **A model's card for `show-sessions`** (ruling 91, "Other sessions' files, later"). Shane's direction covers the
+  person writing the entry. Whether the model may also propose one, approved on a card as a `show` is, is not ruled.
 - **Measuring breadth.** A proposal, not decided: run a proposed policy over a corpus and show what it changes, namely
   every call in the run log, from all sessions, that today asks or is refused, plus calls generated from each consumer's
   descriptions (for a shell, one per effect class of each installed manifest). "Would have allowed 14 past calls

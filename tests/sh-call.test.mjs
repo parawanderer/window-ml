@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { credentialFor, factsFlavour, flavourReplan, manifestSha256, parseShRun, planSpawn, shFacts, shCardLines, headText, shOut, shResult, wireCodeOf, manifestFor, SHIPPED_MANIFESTS, ShRefused, SH_LIMITS, envelopeFor, envelopeMismatch, envelopeText, protectedChangesText, shOutcome, shOutcomeLines, SH_CHANGES_SHOWN, unaskedCalls, unaskedLines, isTildeArg, tildeLines } from "../src/shell/sh-call.ts";
+import { credentialFor, factsFlavour, flavourReplan, manifestSha256, parseShRun, planSpawn, shFacts, shCardLines, headText, shOut, shResult, wireCodeOf, manifestFor, SHIPPED_MANIFESTS, ShRefused, SH_LIMITS, envelopeFor, envelopeMismatch, envelopeText, protectedChangesText, shOutcome, shOutcomeLines, SH_CHANGES_SHOWN, unaskedCalls, unaskedLines, isTildeArg, tildeLines, hiddenSecretsLines, SH_HIDDEN_SHOWN } from "../src/shell/sh-call.ts";
 import { HostClient, HostError, hostTakesEnvelope, READ_CHUNK, bytesOf } from "../src/shell/host-protocol.ts";
 
 const S = { cwd: "/w" };
@@ -507,6 +507,27 @@ test("tilde: the facts carry the host's entries ([] from a host with none), and 
     assert.deepEqual(tildeLines([]), []);
 });
 
+test("hiddenSecrets: an older host's facts give [] and no card line; a host's list reaches the card, one line each, all of them", () => {
+    assert.deepEqual(shFacts(facts()).hiddenSecrets, []);
+    assert.ok(shCardLines(shFacts(facts())).every((l) => l.label !== "Held"));
+    const list = Array.from({ length: 20 }, (_, i) => `/w/p${i}/.env`);
+    const f = shFacts(facts({ hiddenSecrets: list }));
+    assert.deepEqual(f.hiddenSecrets, list);
+    assert.notEqual(f.hiddenSecrets, list, "a copy");
+    const held = shCardLines(f).filter((l) => l.label === "Held");
+    assert.equal(held.length, 20, "the card lists every file, past the answer's bound");
+    assert.deepEqual(held[0], { label: "Held", value: "/w/p0/.env (unreadable to this call)" });
+    assert.deepEqual(shCardLines(f).map((l) => l.label).slice(0, 4), ["Runs", "Program", "In", "Held"], "after where it runs");
+    assert.deepEqual(hiddenSecretsLines([]), []);
+    assert.deepEqual(shFacts(facts({ hiddenSecrets: "nope" })).hiddenSecrets, [], "a field of another shape is none");
+});
+
+test("upgrade: facts stored before hiddenSecrets (no key) still draw the card, with no Held line", () => {
+    const old = shFacts(facts());
+    delete old.hiddenSecrets;
+    assert.ok(shCardLines(old).every((l) => l.label !== "Held"));
+});
+
 test("the card's In line marks a cwd outside the roots (synthetic: a host refuses such a cwd, so no host fact carries it)", () => {
     const line = (inRoot) => shCardLines(shFacts(facts({ cwd: { path: "/elsewhere", inRoot } }))).find((l) => l.label === "In");
     assert.deepEqual(line(false), { label: "In", value: "/elsewhere (outside the workspace roots)", warn: true });
@@ -819,6 +840,23 @@ test("K3: the card's Sandbox applied line is the host's report, and a mismatch w
     assert.match(m.value, /not the write roots, exec program-only that was asked for/);
 });
 
+// --- the held files: the answer lists at most SH_HIDDEN_SHOWN and counts the rest ---
+
+test("hiddenSecrets: the result carries none from an older host, all of a short list, and the first 16 plus a count of a long one", () => {
+    const out = { stdout: shOut({ ptr: "o", size: 0, sha256: "", truncated: false }, null, new Uint8Array()), stderr: shOut({ ptr: "e", size: 0, sha256: "", truncated: false }, null, new Uint8Array()) };
+    const done = () => ({ event: "done", id: "c1", code: 0, signal: null, ok: true, timedOut: false, cancelled: false, durationMs: 3, stdout: {}, stderr: {} });
+    const run = (hiddenSecrets) => shResult(done(), { placement: "host-sandbox", hiddenSecrets }, null, out);
+    for (const none of [undefined, []]) { const r = run(none); assert.ok(!("hiddenSecrets" in r) && !("hiddenSecretsMore" in r), "nothing in the answer"); }
+    assert.deepEqual(run(["/w/.env"]).hiddenSecrets, ["/w/.env"]);
+    assert.equal(run(["/w/.env"]).hiddenSecretsMore, undefined);
+    assert.equal(SH_HIDDEN_SHOWN, 16);
+    const twenty = Array.from({ length: 20 }, (_, i) => `/w/p${i}/.env`);
+    const r = run(twenty);
+    assert.deepEqual(r.hiddenSecrets, twenty.slice(0, 16));
+    assert.equal(r.hiddenSecretsMore, 4);
+    assert.equal(run(twenty.slice(0, 16)).hiddenSecretsMore, undefined, "exactly 16 is complete");
+});
+
 // --- the protected-name tripwire (K3b): what changed during the call, reported, never "nothing" when unknown ---
 
 test("K3b: done.protectedChanged reaches the result as the host's list; absent or malformed is null, never []", () => {
@@ -940,6 +978,12 @@ test("an unasked record that carries tilde entries shows them after who allowed 
     const lines = unaskedLines({ by: "default", argv: ["cat", "/h/n.txt"], tilde, outcome: {} });
     assert.deepEqual(lines.slice(0, 2), [{ label: "Allowed by", value: "the built-in default" }, { label: "~", value: "~/n.txt is /h/n.txt" }]);
     assert.ok(unaskedLines({ by: "default", argv: ["ls"], outcome: {} }).every((l) => l.label !== "~"));
+});
+
+test("an unasked record that carries held files shows a line each; one without draws none", () => {
+    const lines = unaskedLines({ by: "default", argv: ["ls"], hiddenSecrets: ["/w/.env", "/w/.netrc"], outcome: {} });
+    assert.deepEqual(lines.slice(1), [{ label: "Held", value: "/w/.env (unreadable to this call)" }, { label: "Held", value: "/w/.netrc (unreadable to this call)" }]);
+    assert.ok(unaskedLines({ by: "default", argv: ["ls"], outcome: {} }).every((l) => l.label !== "Held"));
 });
 
 test("only a span that carries an unasked record with an argv is a line", () => {

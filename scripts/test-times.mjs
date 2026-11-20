@@ -49,7 +49,7 @@ export function historyDir(env = process.env) {
  * @param {string} text the reporter's output
  * @param {string} root the repo root the files are relative to
  * @param {(file: string) => string} genreOf the genre of a repo-relative file
- * @returns {Map<string, {file: string, genre: string, wall: number|null, sumTop: number, tests: {name: string, ms: number, ok: boolean}[]}>}
+ * @returns {Map<string, {file: string, genre: string, wall: number|null, sumTop: number, tests: {name: string, ms: number, ok: boolean, first: boolean}[]}>}
  */
 export function parseRun(text, root, genreOf = () => "core") {
     const files = new Map();
@@ -67,7 +67,7 @@ export function parseRun(text, root, genreOf = () => "core") {
         if (r.k === "file") f.wall = r.ms;
         else if (r.k === "test") {
             if (r.nesting === 0) f.sumTop += r.ms;
-            if (!r.suite) f.tests.push({ name: String(r.name), ms: r.ms, ok: !!r.ok });
+            if (!r.suite) f.tests.push({ name: String(r.name), ms: r.ms, ok: !!r.ok, first: !!r.first });
         }
     }
     return files;
@@ -175,8 +175,9 @@ export function warningsFor(run, { history = new Map(), baseline = {} } = {}) {
             const rec = { file: f.file, name: t.name, ms: t.ms, ok: t.ok };
             const b = checkSlowerThanHistory(rec, prior, baseline[f.file]?.[t.name]);
             if (b) out.b.push(b);
-            // A test in the committed baseline is not new, however thin the local history: its slowness is known.
-            else if (baseline[f.file]?.[t.name] == null) {
+            // A test in the committed baseline is not new, however thin the local history: its slowness is known. The file's
+            // first top-level test carries the file's top-level before() hooks, so it is not comparable with its peers.
+            else if (baseline[f.file]?.[t.name] == null && !t.first) {
                 const c = checkDisproportionate(rec, prior.length, fileMedian, genreMedian, f.genre);
                 if (c) out.c.push(c);
             }

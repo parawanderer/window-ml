@@ -1730,6 +1730,63 @@
               "properties": {
                 "type": {
                   "type": "string",
+                  "const": "setting"
+                },
+                "key": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "tip": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "class": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "guarded",
+                        "ordinary"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
+                    }
+                  ]
+                },
+                "from": {},
+                "to": {},
+                "why": {
+                  "type": "string"
+                },
+                "synced": {
+                  "type": "boolean"
+                },
+                "host": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "key",
+                "name",
+                "class",
+                "from",
+                "to",
+                "synced"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
                   "const": "action"
                 },
                 "verb": {
@@ -2434,6 +2491,63 @@
               "properties": {
                 "type": {
                   "type": "string",
+                  "const": "setting"
+                },
+                "key": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "tip": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "class": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "guarded",
+                        "ordinary"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
+                    }
+                  ]
+                },
+                "from": {},
+                "to": {},
+                "why": {
+                  "type": "string"
+                },
+                "synced": {
+                  "type": "boolean"
+                },
+                "host": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "key",
+                "name",
+                "class",
+                "from",
+                "to",
+                "synced"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
                   "const": "action"
                 },
                 "verb": {
@@ -2572,11 +2686,15 @@
           "type": "string"
         },
         "cause": {
-          "description": "Why it asks, as a slug: why the policy is gone (`archived`, `removed`, `narrowed`), `outside-dialect`, `ask-policy` (an `ask` policy matched, and the card offers no \"remember\"), `nav-only` (a read of an origin a policy lets the run go to, not read), or `start-left` (a read of the start origin once the tab has left it).",
+          "description": "Why it asks, as a slug: why the policy is gone (`archived`, `removed`, `narrowed`), `outside-dialect`, `ask-policy` (an `ask` policy matched, and the card offers no \"remember\"), `nav-only` (a read of an origin a policy lets the run go to, not read), `start-left` (a read of the start origin once the tab has left it), or `reveals` (a call whose program shows other processes and is not in `shellRevealsAllow`, and would otherwise run unasked).",
           "type": "string"
         },
         "policy": {
           "description": "The gone policy's label, or for `ask-policy` the policy that asks; absent when no policy is involved.",
+          "type": "string"
+        },
+        "program": {
+          "description": "`reveals` only: the program \"Always allow\" adds to `shellRevealsAllow`, the manifest's `program`.",
           "type": "string"
         },
         "bridged": {
@@ -2783,6 +2901,13 @@
             "additionalProperties": true
           }
         },
+        "hiddenSecrets": {
+          "description": "The files at the roots' tops the sandbox held unreadable for the call, when any were: one line each.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "files": {
           "description": "The `/files` arguments the host mapped to the uploads folder (`HostFilesMapped`), when any were: the line shows `/files/x is /real/x`, the argv the model wrote beside the one the process got.",
           "type": "array",
@@ -2842,7 +2967,7 @@
           "type": "string"
         },
         "seq": {
-          "description": "The step seq to scroll to, when the earlier call still has one.",
+          "description": "The revised step's stored seq (the one a stored step carries, multi-turn offset included), when the earlier call still has one. An export written before this held the turn-local value: resolve by `ref`.",
           "type": "number"
         },
         "label": {

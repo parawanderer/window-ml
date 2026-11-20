@@ -4,7 +4,7 @@
 verb, attaching a PDF to an agent run, and every attachment to a worker-built run (any message) and a long paste as
 pointers, `ml.dereference` of `@file:`, `look` at a document and upload progress are built; Python's `files` and the
 files panel are next (Shane and the calm-chat-motion session); a session's files as a directory `/files/` is ruled,
-not built (2026-11-12).** The order is
+not built (2026-11-12), read by range with `ml.fs` for JS (ruled 2026-11-17).** The order is
 three slices, each landing on its own: text files, then PDFs, then documents as `@file:` pointers in agent runs. Slice
 3's contact points with the python, shell and policies lanes were ruled on by their coordinator (2026-10-28,
 "Rulings" below).
@@ -377,7 +377,8 @@ no `/attached/` directory and no `open()` of one. The call names it, `files: { n
 `tables` map accepts an `@file:` pointer as a source like a URL; the sandbox's existing `read_csv`/`open` redirect
 resolves a name it was given. Specified on the python side in PYTHON_DIALECT.md. REOPENED 2026-11-12 for approved and
 `full` cells, which get a mounted `/files/` ("A session's files as a directory", below); the restricted dialect
-keeps this.
+keeps this. AMENDED 2026-11-17: `files` becomes paths under `/files/`, read by range, for every cell, the restricted
+dialect included through the loader redirect ("`/files/` read by range, and `ml.fs`", "Slice 3's `files` in Python").
 
 A paged document is injected as the pages, not only as its bytes (Shane, 2026-10-28): raw PDF bytes are close to
 useless in the sandbox, which has no PDF library and would spend its step budget parsing one.
@@ -637,7 +638,9 @@ lane's read of this spec):
    the worker by then; if it is ever built, `O_TRUNC` truncates before the open hook runs, so `open('w')` needs a
    `setattr` wrapper or it restores the old bytes. A truly lazy mount, nothing held until a file is opened, needs a
    synchronous channel (`FS.createLazyFile` uses synchronous XHR; WORKERFS over posted Blobs is unmeasured, needs
-   `FileReaderSync`, which the lockdown does not allow, and fails a write with EIO, not EROFS); it is not proposed. A
+   `FileReaderSync`, which the lockdown does not allow, and fails a write with EIO, not EROFS); it is not proposed.
+   SUPERSEDED 2026-11-17: `/files/` is read by range over route A's file system type ("`/files/` read by range, and
+   `ml.fs`", below). A
    cell still raises the cost: reading a whole file grows wasm memory by its size, `mmap` copies into the heap, and a
    copy out of `attached/` is a new node, so item 6's three times bounds the worst case. Emscripten's JS-side
    `FS.trackingDelegate` (`onCloseFile`, `onWriteToFile`) sees every close, raw `os.open`/`os.write`/`os.close`
@@ -671,7 +674,8 @@ lane's read of this spec):
 
 **A kernel death.** The restart terminates the worker (the existing kill path). What was posted is safe; files still
 open are lost, and nothing is salvaged from the dead interpreter's heap, which may be corrupt. The restart reloads
-`/files/` from the shelf into the fresh MEMFS and tells the model which module failed, and what survived (as a cell
+`/files/` from the shelf into the fresh MEMFS (AMENDED 2026-11-17: it remounts and loads nothing, "`/files/` read by
+range, and `ml.fs`") and tells the model which module failed, and what survived (as a cell
 result, or an inbox item for a detached cell): `variables gone; /files/ kept
 (12 files); w.npy was open and is lost.` The restart's message and its delivery are the async lane's (ASYNC_CALLS.md).
 
@@ -693,13 +697,315 @@ model-made or page-derived file must not borrow. Its text is untrusted input lik
 attachment today. Nothing is evicted silently. When the session's files made by its runs are over the quota, a post is
 refused by name and the cell's result says so: `w.npy was not kept: the session holds 1.4 GB of files made by its runs;
 delete some in the files panel.` A flush over the quota raises ENOSPC for that file
-when it is made, and the cell's result names it (item 3).
+when it is made, and the cell's result names it (item 3). A restore can leave a session over its quota; it is then
+marked over it and refuses writes the same way until it is back under (ruling 48, "A restore over the quota", below).
 
 **The host's disk.** `/files/` is the browser sandbox's, never the `ml.sh` workspace's, and the two never alias: an argv
 item `/files/x` is a host path, as today. Bytes cross only as `@file:` handles: `ml.sh.put` writes one out (ruling 3),
 and a read brings a workspace file in, into `/files/` with provenance "read from disk <path>" (the async
 lane's). The model's text says it in one line: `/files/ is the browser sandbox's, not the workspace's.` A proposal
-of 2026-11-13 reopens this for directories the person mounts ("Host directories in the sandbox", next).
+of 2026-11-13 reopens this for directories the person mounts ("Host directories in the sandbox", next). AMENDED
+2026-11-20 (ruling 91): this holds without a host, with a host older than H16, and before a session's first mount;
+once the session's own folder is mounted, `/files` is that folder ("One folder per session").
+
+### `/files/` read by range, and `ml.fs` (ruled 2026-11-17)
+
+RULED 2026-11-17 (Shane, in the coordinator's session): the `/files/` file system must not put all files in memory, so
+that several concurrent sessions stay usable, and it gets JS-side access, `ml.fs`. RULED 2026-11-17 (Shane, ruling 23,
+in the coordinator's session): `ml.fs` reuses Node's `fs` syntax, because models already write it unprompted, as
+Python gets plain `open`. **The principle: each language gets the file API the model already knows; where we are
+narrower, the error names the form that works.** Written by the session-store lane from
+`docs/spec/SESSION_HISTORY_STORE.md` §6a, with the coordinator's rulings of the same day. It amends items 1, 4 and 6 of
+"The mount", the restart in "A kernel death", slice 3's "Python" paragraph, "The files API" (whose `ml.files` it
+replaces) and the quota's open question. Nothing here is built.
+
+**Why it changes.** The mount above is eager: every file's bytes reach the worker at interpreter start, one times the
+directory, up to three times once cells read it (item 6), against a worker that dies at a 2.6 GB JS heap. A
+session's directory grows for the whole session and outlives kernel deaths, so its size is unbounded while the
+worker's memory is not, and several sessions share one offscreen document and, in `full` mode, one worker. Item 1 set
+a lazy mount aside on two grounds: it needs a synchronous channel, and `Atomics.wait` would block the interrupt
+buffer, so Stop would fall through to the kill. Route A's measurement since ("Host directories in the sandbox",
+2026-11-13, `notebooks/pyodide-mount/`, the prototype file system type in `node-worker.mjs`) answers the second:
+a sliced wait stops 300 times out of 300, under `lockdownReadonly` too, a request costs 0.26 ms end to end, and a
+chunked read gives 103 MB/s in 512 KiB chunks to 4 GiB. The first ground is that same channel.
+
+#### One reader, three front ends
+
+**ONE ranged reader over the shelf**, in the offscreen document, which already owns the shelf (item 3). It answers
+`stat`, `list` (each entry with its stat) and `read(path, offset, length)`, and reads a range of a kept file without
+loading it: `Blob.slice(a, b).arrayBuffer()` over the stored Blob. Today every stored-value reader reads a whole Blob
+(`readStoredText`, `readStoredBytes`, `withStoredTables`); this is a new method on the store, beside them. Three
+front ends call it and nothing else:
+
+1. **The Python mount**: route A's file system type, served by this reader instead of `wmlhost`. `lookup`, `readdir`
+   with stats, `getattr`, and the stream ops `open`, `read`, `llseek`, `close` go to the reader; writes are below.
+2. **`ml.fs`** for JS, below.
+3. **`/history/`** later (SESSION_HISTORY_STORE.md §6b), over the session store instead of the shelf.
+
+**The bounds.** No front end holds a whole file.
+
+| What | Bound |
+| --- | --- |
+| One read, reader to front end | at most one 512 KiB chunk per request (`READ_CHUNK`, `src/shell/host-protocol.ts:16`); a longer read is several |
+| One session's cache in the worker | a fixed number of chunks (proposed 32, 16 MiB), oldest dropped |
+| What a cell holds | what the cell itself reads into a variable, as today; a whole-file `f.read()` still grows wasm memory by the file |
+| The offscreen document, all sessions | the chunks in flight: sessions × one chunk, plus the Blob handles, which hold no bytes |
+| `ml.fs` | `readFile` refuses above a cap (below); `handle.read` returns at most one chunk per call |
+
+MEASURED (`notebooks/session-store/`, `ranged.ipynb`; a lab, not the product: an extension page stands in for the
+offscreen document, a dedicated worker with a 16 MiB cache for the Pyodide worker, the channel to Python left out
+since route A measured it): each session's directory is two 128 MiB files, read lazily through 512 KiB chunks
+or loaded whole, for 1, 4 and 8 sessions at once in a fresh browser per configuration. Lazily, with the reader's
+garbage collected as it goes, the browser grew by about 51 MiB for one session, 169 MiB for four and 219 MiB for
+eight: the cache (16 MiB a session) and a fixed overhead, independent of the directory's size. Loaded whole, it grew
+by the directory for every session: about 262 MiB for one, 1.0 GiB for four, 2.0 GiB for eight. A reader that
+allocates a fresh buffer per chunk and lets V8 collect it holds garbage up to the bytes it READ (1.1 GiB for one
+session reading 1.25 GiB) until a collection runs, and at eight sessions that pushed the machine out of the normal
+memory-pressure level: **the reader copies into a fixed buffer** (route A's shared one), never a buffer per chunk.
+
+**Eager under a measured size, or not at all.** RULED 2026-11-19 (the coordinator, an infra call, on the collected
+figures above): **lazy only, at every size**; no eager mount under a threshold. What an "eager under T" rule could save is time on small files, and the lab's timings were taken while other
+test runs shared the machine, so none of them is used here; whatever it saves, it would cost a second code path and a
+mount whose memory depends on what a session holds, which is the cost the ruling removes. The decision rests on the
+memory figures above.
+
+**Stop still works**: the mount's blocked operations are route A's, with the `Atomics.notify` beside the Stop's store
+that route A requires; the 300-of-300 rows are rerun on this server before it lands.
+
+**A kernel death remounts.** The restart mounts `/files/` again and loads nothing, so a large directory no longer makes
+the restart slow; open writable files are lost, as before.
+
+#### `ml.fs`: Node's `fs/promises`, with a session's files as its disk
+
+`ml.fs` IS the `fs/promises` surface, and `ml.fs.promises === ml.fs`, so both `await ml.fs.readFile(p, "utf8")` and the
+`fs.promises.readFile` habit work. Every member returns a promise, takes Node's arguments, and answers Node's shapes:
+`readFile` with an encoding gives a string and without one a `Uint8Array` (Node's `Buffer` is a subclass of it);
+`stat` gives Node's fields (`size`, `mtimeMs`, `birthtimeMs`, `isFile()`, `isDirectory()`); `readdir(p, { withFileTypes:
+true })` gives Dirent-shaped entries; errors are `Error`s with Node's `code`, `syscall` and `path`.
+
+**Members, and whether each reads or writes.** `open`'s flag decides for a handle: `r` reads; `r+`, `w`, `wx`, `w+`,
+`a`, `ax`, `a+` and any flag not in this list write.
+
+| Member | Kind | Notes |
+| --- | --- | --- |
+| `readFile(path, options?)` | read | refuses above `ML_FS_READFILE_MAX` (proposed 8 MiB) with `ERR_FS_FILE_TOO_LARGE`, Node's own code for the same refusal past 2 GiB; the message names `open()` with `handle.read()` or `handle.readLines()` |
+| `readdir(path, options?)` | read | `withFileTypes` supported; `recursive` supported |
+| `stat(path)`, `lstat(path)` | read | `lstat` answers as `stat`: no symlinks exist |
+| `access(path, mode?)` | read | `W_OK` on `attached/` rejects with `EROFS` |
+| `open(path, "r")` | read | returns a FileHandle |
+| `handle.read({ buffer?, offset?, length?, position? })` | read | at most one chunk (512 KiB) per call; `bytesRead` as Node's |
+| `handle.readLines(options?)` | read | an async iterator of lines, read chunk by chunk |
+| `handle.stat()`, `handle.close()` | read | |
+| `writeFile(path, data)` | write | chunked to the shelf (below) |
+| `appendFile(path, data)` | write | |
+| `open(path, flag)` with a write flag; `handle.write`, `handle.truncate` | write | |
+| `mkdir(path, options?)`, `rmdir(path)` | write | `recursive` supported |
+| `rm(path, options?)`, `unlink(path)` | write | `ml.files.remove`'s rule, below |
+| `rename(from, to)`, `copyFile(from, to)` | write | within the session's files only |
+| `cp(src, dest, options?)` | write | AMENDED 2026-11-20 (rulings 36 and 60, as ML_TABLE.md uses it): `src` is a path in the session's files (a directory needs `recursive: true`, as Node's) or a `@tool:` pointer or fetch result, whose stored whole is written ("Dumping a `@tool:` value into `agent/`"); `dest` must be under `/files/agent/` |
+
+**The gate.** The READ members join the read-only dialect: a survey may call them on the session's own files without
+asking. The WRITE members follow the rule this spec already has for files a run makes: a write to a run-made file in
+`/files/` runs free, as a cell's would ("Lifetime and quota"); a write that touches the person's file (`attached/`)
+is refused with `EROFS`, as the mount refuses it (item 2); a delete follows `ml.files.remove`'s rule (below), which
+keeps a cited file's frozen version. A write member in a survey takes the survey out of the dialect, as any other
+effect does. Extending the dialect carries what docs/dev/readonly-exec.md, "The rule for extending the dialect",
+requires: adversarial tests that try to reach a write, a path outside the session, a handle used after `close`, and a
+method smuggled as a value (`ml.fs.readFile` passed as a callback), each `NotInDialect`, `Denied` or inert; halting
+tests (`readLines` over a file growing while it is read, a `readdir` recursion over a deep tree); a `CONVERTS` or
+`NO_CONVERSION` decision for each member; and a re-check of the whole contract. `ml.fs` is an object, so it is its own
+branch of `mlFacade`, beside `ml.fetch` (policy.ts:520-531 copies functions only).
+
+**Hidden and secret-looking files.** Every front end of the reader (`ml.fs`, the Python mount, the file browser)
+applies the hide list (ruling 34: hide and show entries, the most specific wins, a tie hides) BEFORE it answers. The
+rule's text and the answer's shape (listed by name or absent, the error code a read gets) are files-host's hide-list
+spec's (POLICIES.md, "Hiding files"), and this spec only references them. Slice 2 does not land `readFile` or any other
+read member in the read-only dialect before that rule exists. The invariant Python already has carries over: as a
+cell's `open()` of a file that looks like a secret asks, a dialect read of such a file through an `ml.fs` read member
+asks, and is never answered free.
+
+**The extra columns.** `ml.files.list()`'s rows (who made it, last read, whether a transcript cites it) become extra
+fields on the stat result, under one key that cannot be mistaken for Node's: `stat.ml = { madeBy, lastReadMs, cited }`.
+`madeBy` is `"person"` or `{ run, cell }` or `{ disk: path }`; `cited` is true when the transcript names a frozen
+version. Node's own fields keep Node's meaning, and a field we cannot answer is ABSENT, never zero: no `ino`, `dev`,
+`uid`, `gid`, `nlink`, `blocks`; `atimeMs` is `lastReadMs` when we have it, else absent.
+
+**Paths.** One root, the session's files.
+
+- `/` is that root; `/files/` is the same directory, so `/files/x` and `/x` name one file, and a path a Python cell
+  printed works unchanged.
+- A relative path resolves against `/files/`. `..` is resolved lexically and stops at the root: `/files/../../etc/x`
+  is `/etc/x` under the root, which does not exist.
+- Anything that does not name a file in this session's files is `ENOENT`, with the same message whether or not
+  something exists elsewhere: another session's file, a host path, an extension file. The error never says why.
+- No symlinks: `symlink`, `link` and `readlink` are missing members (below).
+
+**Narrower than Node, listed once.** Each throws, at the call, an `Error` with code `ERR_ML_FS_UNSUPPORTED` and a
+message naming the form that works, so a builder tests each:
+
+- every `*Sync` member (`readFileSync`, `writeFileSync`, `existsSync`, …): "use `await ml.fs.readFile`";
+- every callback form (a function as the last argument): "use the promise form";
+- `createWriteStream`: "use `open()` with `handle.write()`". AMENDED 2026-11-20 (the coordinator's ruling):
+  `createReadStream` left this list; it is a member, as "`ml.fs`" under rulings 22 and 23 has it;
+- `watch`, `watchFile`, `unwatchFile`;
+- `chmod`, `chown`, `lchown`, `utimes`, `lutimes`, `fchmod`;
+- `symlink`, `link`, `readlink`, `realpath` (`realpath` of an existing path answers the path; of a missing one,
+  `ENOENT`);
+- `mkdtemp`, `statfs`. AMENDED 2026-11-20: `cp` left this list; it is a member (the table above), since ruling 36's
+  dump and ML_TABLE.md's byte-exact copy are `ml.fs.cp`. `opendir` left it too (the coordinator's ruling): it is a
+  member, paging its entries, as "`ml.fs`" under rulings 22 and 23 has it;
+- encodings: `utf8`, `utf-8`, `latin1`, `base64`, `hex` and none; any other: "supported: …".
+
+**Parity with Node, tested side by side** (Shane, 2026-11-17). Node's `fs/promises` is the oracle. One corpus of
+scripts runs twice, against Node on a temporary directory and against `ml.fs` on a session holding the same files,
+and compares return values, `stat` fields, Dirent shapes, thrown `code`s and `bytesRead`, member by member: each
+member of the table, every flag of `open`, the path cases (relative, `..` past the root, `/` against `/files/`), and
+each error (`ENOENT`, `EISDIR`, `ENOTDIR`, `EEXIST`, `ENOTEMPTY`). Where `ml.fs` is narrower by design, the row
+asserts `ERR_ML_FS_UNSUPPORTED` instead, so a member listed above can neither start working unnoticed nor fail some
+other way. Fields `ml.fs` leaves absent are compared as absent. The corpus is written with slice 2 and runs in the
+unit suite against the node:vm harness, and once against the real extension in e2e.
+
+**Python is not this API.** Python gets the mount and its own `open` and `os`; nobody builds an `ml.fs` binding there.
+
+**Who may call it.** A worker-built run only, in the isolated world: the same routing as `ml.current` and `ml.sh`
+(`src/sw/exec-routing.ts`: a new `ExecNames.fs`, an `EXEC_REASONS` entry and its `FORCED` text). With no isolated
+world, an exec naming `ml.fs` is refused; it is never bound for a page-started caller, never in an unapproved page's
+main world, and a page's `window.ml` has no `fs`. The session is the run's, read from the worker's run record, never
+from anything the script says. The current session's files only.
+
+**The scrub.** A model reads `ml.fs` text through the exec's result, which crosses `forModel` as every tool result
+does. A ranged read adds one rule, because `scrubSecrets` works on a whole string: a text range is scrubbed over a
+window widened on each side by the longest form in the current secret set, computed per read from what `secretsOf`
+returns, then cut back to the range. A secret that overlaps the range is replaced in the read where it starts and
+removed from the read it ends in, so **a read never returns a secret split across two reads**, and `bytesRead` counts
+the source bytes consumed. **Text and binary, in one rule:** a range read with an encoding (`readFile(p, "utf8")`,
+`readLines`, `handle.read` decoded) is TEXT and is scrubbed by the window above; a range read without one (a
+`Uint8Array`) is BINARY and is returned unscrubbed, as an attachment's bytes are today, its bytes reaching the model
+only inside an exec's result, which `forModel` scrubs whole. The residual this leaves is named: a script that decodes
+byte ranges itself and returns them in separate execs can split a secret across two results, as any script can split
+a string it built today; the boundary is `forModel`'s, unchanged.
+
+The window's bound: the secret registry's cap (8 to 512 characters, the coordinator's call, landing with files-host's
+scrub PR 1 in SECRET_HANDLES.md) bounds it at 512 once that rule merges. Until then a config secret has no length cap,
+so the window is unbounded today; the reader therefore never widens past a CEILING of 4,096 characters. When the
+longest form exceeds it, a text range of a file at most `ML_FS_READFILE_MAX` (8 MiB) is scrubbed over the whole file
+and then cut, and a text range of a larger file is refused with an error naming the setting's KEY only (`modelFilter`,
+say), never its value or its length. A form that long is a filter or URL nobody keeps; the refusal is the honest outcome.
+
+**Long results** follow the existing pointer rule: a long `ml.fs` value reaches the model as a `@tool:` pointer with a
+preview, like any other exec value.
+
+#### Writes
+
+- **Where they land: the shelf, by chunk.** A write member, and a Python file's close (item 3), sends its bytes to the
+  offscreen document in chunks of at most 512 KiB, never a whole file in one message (the runtime message limit is
+  64 MiB, measured in `notebooks/session-store/chrome-bounds.ipynb`); the offscreen document writes each at its
+  offset into a pending part and commits the file as one new stored Blob at the commit point (below). A write may seek
+  back and overwrite, and a file may be truncated (zipfile patches its headers, sqlite writes pages anywhere): the
+  pending part is a list of ranges over stored chunks and the version it replaces, composed into a Blob without
+  copying bytes. Its writer reads it back through the same handle; until the commit, every other reader sees the
+  previous version.
+- **The quota** (this spec's open question): with nothing loaded at start, the quota is no longer a start-time budget.
+  It bounds what a session's runs keep on disk: the person's attachments do not count, run-made files do, at their
+  stored size (not three times). Its value is the DevTools Settings flag `filesQuotaMB` (the coordinator's call,
+  2026-11-19; owned by the session-store lane), default 1024 MiB per session, below the value store's budget; a stored
+  value that is not a positive whole number reads as the default, and a larger number widens it. The model may propose
+  a change to it (ruling 76, Shane, 2026-11-19) through `change_setting` (MODEL_SETTINGS.md, "The surface"), as for
+  `taskTurnChainMax`: the key is guarded, so a change always asks the person. Over the quota, a write rejects with
+  `ENOSPC`, and the message names `ml.fs.rm`, the files panel, and proposing a larger `filesQuotaMB` with
+  `change_setting`. It is checked on every chunk written, not only at the commit.
+- **The commit point, for now** (ruling 75, Shane, 2026-11-19, accepting the coordinator's call): a file commits when
+  it is CLOSED, in both modes, as Python's and Node's own files do; each file is atomic on its own, and a cell that
+  fails keeps the files it already closed. An `ml.fs` write member is a transaction of one (`writeFile` commits at its
+  end, a write handle at `close()`). The reader's write side stays a transaction that commits atomically over all of
+  its files, so committing every write of a cell together when it succeeds stays one switch away.
+- **A worker evicted mid-file.** A commit is atomic: an uncommitted file's pending part is discarded when its writer
+  goes (a worker evicted, a kernel killed, a tab closed), the previous version stands, and the next turn's start
+  message says which file was not written. Nothing is half-written.
+
+#### `ml.files` is superseded
+
+RULED 2026-11-19 (Shane, ruling 60, in the coordinator's session). `ml.fs` replaces the proposed `ml.files` ("The files API", below). Its rules are kept: `list()` is `readdir` with
+`stat`, a read the dialect may call; `remove(paths)` is `rm`/`unlink`, judged as written: the runs' files go free, the
+person's ask unless a policy allows, and a cited file keeps its frozen version. Nothing built or model-facing names
+`ml.files` (searched: only this spec), so the rename costs no code.
+
+#### Slice 3's `files` in Python
+
+The Python mount's design is not fixed until the packages lane's measurement of the mounts (ruling 36, "Python's view:
+two mounts", below); that slice is the packages lane's.
+
+RECOMMENDATION: **`files` becomes paths under `/files/`, read by range,** for every cell, the restricted dialect
+included. `files: { name: "@file:3fa91c2" }` binds `name` to the path `/files/attached/3fa91c2/<name>`; the loader
+redirect (`read_csv`, `Image.open`, `read_html`) and, in cells that have it, `open` read it through the mount. A paged
+document keeps its pages object (`doc.pages[n].text`, `.png()`), each page read on access. The reason: an injected
+value is a whole copy into the heap at the call's start (`withStoredTables`, offscreen.ts, `blob.arrayBuffer()`),
+which is exactly what this ruling removes; a size bound on it would refuse a file the mount reads fine; and one way in
+means one bound to test. The restricted dialect still has no `open()` or `os` (PYTHON_DIALECT.md): it reads the path
+only through the loader redirect, which is read-only.
+
+#### The file browser shows the mounts, and its menu sends commands
+
+RULED 2026-11-17 (Shane's idea, the details the coordinator's calls, in the coordinator's session). The files panel
+("The files panel", above) becomes a browser over every mount a session has.
+
+1. **One tree over mounts:** the `/files/` shelf, each `ml.sh` root, and later `/history/`. It is listed lazily, one
+   directory at a time when the person opens it, through the same ranged reader as every other front end; no whole
+   tree is held in memory (ruling 22).
+2. **A context-menu item is a session-contract COMMAND** (SESSION_CONTRACT.md, "Commands"), never a direct `chrome.*`
+   or host call from `src/chat/`. Any host of the renderer (the extension, a later VS Code extension) sends the
+   identical command and gets the identical answer. The first item is hiding or unhiding a path as a secret; the
+   command and its handler are files-host's hide-list spec's, and this spec only references them.
+3. **A hidden file is listed by name, with its hidden state.** The browser never reads its bytes, to preview, size or
+   anything else.
+4. **The menu is the person's gesture only.** No model tool, no `ml.fs` member and no page-started message reaches
+   these commands; they come from the person's own clients, under the session contract's own sender rules.
+5. **Over the hub, as the rest of a session** (Shane, ruling 24 as refined, 2026-11-17). The directory listing (the
+   mounts, then per directory its entries with name, size, kind and hidden state) and every menu command are
+   session-contract events and commands. They reach a renderer only through `SessionFeed`, so the hub path carries them
+   as it carries the rest of a session, and no extension-only side channel exists. Listing stays lazy over the hub too:
+   a request names one directory and gets one page, and file bytes never ride a listing. A page is bounded so its
+   sealed message fits the hub's `max_payload_bytes` (1 MiB less the envelope, `docs/dev/hub-client.md`): at most 500
+   entries and 256 KiB of JSON, with a cursor for the next page.
+6. **window-ml-hub needs no change.** The hub relays sealed payloads it cannot read (window-ml-hub's README and
+   its `PROTOCOL.md`), so a new command and a new event kind pass through it as opaque bytes. The change is to the
+   session contract only (SESSION_CONTRACT.md: the listing command, its event, and the hide-list command by reference),
+   with the version rule that contract follows; no `@hub-compat` label.
+7. **The phone's RENDERING is deferred, as UI work only.** On the phone a person is monitoring a task already set up,
+   not arranging its files, so the phone's browser view and any remote unhide wait. Nothing else is deferred: the
+   listing and the commands are host-neutral and already reach the phone through the hub, so its view needs no
+   contract change when it comes. Built first for the desktop renderer hosts: the extension, and a later VS Code
+   extension.
+
+#### A `python_install` candidate worker
+
+never mounts `/files/` and never gets `ml.fs` (the packages lane's constraint): the worker an install is tried in sees
+no session's files.
+
+#### What it owes, and the slices
+
+`ml.fs` is a new `ml.*` member: the red-team pass AGENTS.md requires (a page-started run, a page's main world, an
+unapproved page, a forged path, another session's file, a write to `attached/`, a smuggled method), each new store
+declared with `defineState`, its JSDoc and `agent_api_docs` entry, and a prompt review. The members and their JSDoc
+are what the model reads.
+
+1. The ranged reader on the shelf, and chunked writes with the atomic commit. Must not break: an attachment's
+   existing readers, the value store's budget and holders check.
+2. `ml.fs` read members in the isolated world, the routing, the dialect entry with its tests, the scrub window, the
+   red-team pass, and the Node parity corpus for the read members. Must not break: `ml.current`'s and `ml.sh`'s routing rows.
+3. `ml.fs` write members, the quota setting, and the parity corpus extended to them.
+4. The Python mount on route A's type over the reader, slice 3's `files` as paths, the restart's remount, once the
+   packages lane's measurement of the mounts (ruling 36) fixes its design. Must not break: route A's Stop rows, rerun
+   on this server.
+5. The file browser over the mounts, its listing command and event, and the menu's first command. Test obligation:
+   the listing and one command round-trip through the chat page's web build against the fake host, with no `chrome`
+   (the `chat-web` skill).
+6. Each owner reruns in Chrome what it builds on: the reader's slice reruns `ranged.ipynb` against the real offscreen
+   document; the mount's slice reruns route A's Stop and cost rows (`notebooks/pyodide-mount/`) against this reader.
+
+**Owners** (the coordinator, 2026-11-19, ruling 54). The ranged reader and `ml.fs`: the session-store lane. The Python
+mount (slice 4): the async lane, on this reader; the packages lane's measurement of the mounts (ruling 36) informs its
+design.
 
 ### Host directories in the sandbox, and a cell's edits as diffs (proposed 2026-11-13)
 
@@ -917,12 +1223,14 @@ nothing is built. Where it disagrees with "Host directories in the sandbox" abov
 **The proposal: primary follows the host.** One `/files`, two copies, and which one is primary depends on whether a
 host is mounted (Shane):
 
-- With a host mounted, a folder in the workspace, `<workspace>/window-ml-files/`, is primary, with the same layout
-  (`attached/<handle>/<name>` read-only, the rest writable). A cell's `open()` and `ml.sh` see one set of bytes, so a
-  cell's write is there for the next `cp` with no sync between them. `cp`, `sed -i` and `open()` reach the uploads at
-  `/files/attached/3fa91c2/data.csv` (on disk at `~/git/proj/window-ml-files/attached/3fa91c2/data.csv`), with
-  no `ml.sh.put` or read-back to teach the model; those stay as mechanisms, not as advice. Finder is the truth for the
-  person; the panel is a view of the folder.
+- With a host mounted, the session's own folder in the workspace, `<workspace>/window-ml-files/<session folder>/`
+  (ruling 91, "One folder per session" below), is primary, with the same layout (`attached/<handle>/<name>` read-only,
+  `agent/` the run's, ruling 36). A cell's `open()` and `ml.sh` see one set of bytes, so a cell's write is there for
+  the next `cp` with no sync between them. `cp`, `sed -i` and `open()` reach the uploads at
+  `/files/attached/3fa91c2/data.csv` (on disk at
+  `~/git/proj/window-ml-files/2026-11-20-q3-sales-7c41e2/attached/3fa91c2/data.csv`), with no `ml.sh.put` or
+  read-back to teach the model; those stay as mechanisms, not as advice. Finder is the truth for the person; the panel
+  is a view of the folder.
 - The browser store (MEMFS over the shelf, as ruled above) is then a capped backup, synced when convenient. A file over
   the quota lives on disk and is not backed up; the panel shows it with its size.
 - With no host present, or when the host dies, the browser copy is the working store and the model works there, as
@@ -935,14 +1243,15 @@ host is mounted (Shane):
   host is mounted, a cell's `/files` is backed by the folder (the same bytes `ml.sh` sees), and an `ml.sh` argv maps it
   (H9 below). The folder's real path also works, since it lies inside the workspace mount; the transcript, the diffs and
   the exports write it as `/files`, so one file has one name in the record. The model is told the real path in one line,
-  for a program that prints it, with the home directory written as `~` (`~/git/proj/window-ml-files`; Shane, 2026-11-13:
+  for a program that prints it, with the home directory written as `~`
+  (`~/git/proj/window-ml-files/2026-11-20-q3-sales-7c41e2`; Shane, 2026-11-13:
   model-facing text writes a path under the home as `~`, the run log keeps it raw). The rule for which form
   (coordinator, 2026-11-13): `~` is written only where its consumer expands it. `ml.sh`'s argv and cwd expand a leading
   `~` on a host with `hello.tilde`, so a path the model is to reuse in `ml.sh` (H9's refusal sentence, a mapped-path
   mention) is written as `~`. A path the model is to reuse in a cell (the mount list, a cell's own error or result
   naming a mounted path) stays raw, since nothing expands `~` in `open()`. Prose that names a path without expecting
   reuse writes `~`. Where the host cannot map an argv item (H9), it fails with `/files is on disk while the host is
-  connected: ~/git/proj/window-ml-files/x`.
+  connected: ~/git/proj/window-ml-files/2026-11-20-q3-sales-7c41e2/x`.
 - The folder is ignored by git by default, through `.git/info/exclude` (the clone's own list, never a committed
   `.gitignore`), so uploads never show in `git status` or a commit unless the person moves them out. The person can
   name another folder, inside a mount.
@@ -978,12 +1287,63 @@ path, never as empty or gone. Uploads and writes made meanwhile sync forward whe
 run log keeps the raw paths a run used, so a later read without the host says where they were. A cell running when
 the host goes gets "Unmounted or disconnected during a cell" (above): the next read through the mount fails.
 
-**Sessions and mounts** (decided, Shane, 2026-11-13):
+**Sessions and mounts** (decided, Shane, 2026-11-13; the first bullet replaced by ruling 91, 2026-11-20):
 
-- Several sessions mounting one repository share one folder; each session's browser copy stays its own.
+- Each session mounting a repository has its own folder under `window-ml-files/`, and its browser copy stays its own
+  ("One folder per session", next). REPLACED 2026-11-20 (ruling 91): this said that several sessions mounting one
+  repository share one folder.
 - Archiving or deleting a session never deletes anything on disk.
 - With several mounts, one is the session's primary workspace, chosen at the first approval: cells start there and
   the uploads folder lives there.
+
+**One folder per session** (RULED 2026-11-20, Shane's ruling 91 in the coordinator's session: "I think you need to do
+the subfolder per session yeah"). Rulings 81 and 86 make each run's `/files` private and `/files/agent/` its home, so
+one folder shared by every session mounting the repository cannot hold. The folder's NAME below was ruled by the
+coordinator the same day.
+
+- **The layout on disk.** `<workspace>/window-ml-files/` holds one folder per session, and only those. A session's
+  folder holds ruling 36's layout: `attached/<handle>/<name>`, read-only to the model, and `agent/`, the run's. So
+  `~/git/proj/window-ml-files/2026-11-20-q3-sales-7c41e2/attached/3fa91c2/data.csv` is that session's
+  `/files/attached/3fa91c2/data.csv`. A session's folder is made when the session first mounts the workspace with a
+  host that has H16 (`attached/` and `agent/` inside it); a session that never mounts one has no folder.
+- **The model still sees `/files`.** Everything that names "the folder" in this section and in H9, H14 and H16 means
+  the session's own folder: H9 maps `/files/x` to `<session folder>/x`, the sync and the watch cover that folder only,
+  and the real path the model is told in one line is that folder's. Nothing that runs in a session ever sees
+  `window-ml-files/` as its `/files`.
+- **`.git/info/exclude`** holds one line, `/window-ml-files/`, written once for the workspace by the first session that
+  makes a folder there and left in place after. So a new session adds no line and no other file is written.
+- **The folder's name** (RULED 2026-11-20, the coordinator): `<date>-<slug>-<id6>`, as in
+  `2026-11-20-q3-sales-7c41e2`. `<date>` is the session's creation day, local time. `<slug>` is the session's title at the moment the folder is
+  made, lowercased, with every run of characters outside `a-z0-9` turned into one `-`, trimmed of `-` and cut to 32
+  characters at a `-` where one falls; it is omitted, with its `-`, when the title is empty or the default. `<id6>` is
+  the first six hex characters of the session id. Readable in Finder, sorted by date in a listing, and the id part
+  tells two sessions of one title apart.
+  - Stable under a rename: the name is fixed when the folder is made and recorded in the session's record (the folder
+    name, beside the workspace's root). Renaming the session changes the panel's label, never the folder, so a path in
+    a transcript, a diff or a script the person kept still names it. The panel shows the session's current title with
+    the folder's name beside it.
+  - A collision, a directory of that name that the session's record does not name (another session whose id shares six
+    characters, or one the person made): the new folder takes the next free suffix, `-2`, `-3`, and records it. An
+    existing directory is never adopted, never written into and never merged. The session's record, never the name,
+    says which folder is a session's.
+  - A folder the person renamed or moved in Finder is lost to its session: the next mount finds no folder by the
+    recorded name and makes a new one, and the panel says `This session's folder 2026-11-20-q3-sales-7c41e2 is gone from
+    ~/git/proj/window-ml-files; a new one was made.` The browser copy keeps working.
+- **Sibling folders are refused by default** (ruling 91, the coordinator's addition confirmed by Shane on 2026-11-20).
+  Every other folder under `window-ml-files/` lies inside the mounted workspace, so a cell or an `ml.sh` call could
+  reach it by its real path. The host refuses it for every reader, by H17 below: a cell's `open()` through the mount, a
+  path argument at `spawn`, a recursive reader's walk, and an interpreted script under the sandbox profile. The
+  script's refusal holds only under the sandbox: with the sandbox off for the workspace, a script reaching a sibling
+  is not bounded, H17's stated gap. The
+  refusal names nothing of the other session: `window-ml-files/ holds other sessions' files, which this session cannot
+  read; its own files are /files.` A listing of `window-ml-files/` shows this session's folder only.
+- **Sharing between sessions** stays deferred (ruling 81). Shane's direction for later: the person may write a policy
+  that lets a session read other sessions' folders, as a `show`-style entry in POLICIES.md's layers ("Hiding files",
+  "Other sessions' files, later"). Not built and not scheduled.
+- **What holds when.** With a host connected and the session's folder mounted (H16 on both sides), `/files` is backed by
+  that folder, and the statement in "A session's files as a directory" and in "`/files`: the layout" that the host's
+  disk never aliases `/files` does not hold for that session. Without a host, with a host older than H16, or before
+  the session's first mount, it holds: `/files` is the browser sandbox's, and an argv `/files/x` is a host path.
 
 **Three limits, kept apart:**
 
@@ -1022,15 +1382,16 @@ into the repository's object store and hash every build output. A delete or over
 and that card, kept in the transcript, is the only record of it. A workspace that is not a git repository falls back
 to #1780's before copies for cells, and gets no diff for an `ml.sh` call (open).
 
-**The files API.** The model lists, ages and clears its own files in code (use case 6), with the same names in JS and
-Python:
+**The files API.** SUPERSEDED 2026-11-19 by `ml.fs` (RULED 2026-11-19, Shane, ruling 60, in the coordinator's session: "`ml.files` is superseded", above), which keeps both
+rules below: `list()` is `readdir` with `stat`, `remove(paths)` is `rm`/`unlink`. As proposed on 2026-11-13: the model
+lists, ages and clears its own files in code (use case 6), with the same names in JS and Python:
 
 - `ml.files.list()` returns one row per file: path, size, who made it, created, modified, last read, and whether a
   transcript cites it. It is a read, so the read-only dialect may call it. On a disk backing Python's `os.scandir`
   already answers everything but who made it.
 - `ml.files.remove(paths)` deletes, judged as above: the runs' files go free, the person's ask unless a policy allows
   it. Deleting a file the transcript cites keeps its frozen version, so the record never loses what the model read.
-- The quota refusal ("Lifetime and quota") names the way out: `... delete some with ml.files.remove, or in the files
+- The quota refusal ("Lifetime and quota") names the way out: `... delete some with ml.fs.rm, or in the files
   panel.` The Python binding's form is the Pyodide lane's to choose.
 
 **Dropped alternatives.**
@@ -1051,14 +1412,21 @@ Python:
 never taken into the backup; a file over the quota is not backed up, by size or by growing after it was listed; a change
 to `attached/` on disk never replaces the frozen original; a conflict keeps both copies; the git snapshot leaves the
 person's index, HEAD and stash list unchanged; a delete git cannot undo asks, by every route (`os.remove`,
-`ml.files.remove`, an `ml.sh` `rm` judged by its manifest); an `ml.sh` program that runs code (`bash -c`, a manifest
+`ml.fs.rm`, an `ml.sh` `rm` judged by its manifest); an `ml.sh` program that runs code (`bash -c`, a manifest
 saying `runs-code` or `unknown`, no manifest) asks whatever its argv; the first commit in a session asks; a cell's
 `open()` of a file that looks like a secret asks, as an `ml.sh` read of it does; a page or a page-started run reaches
-neither the folder nor `ml.files`.
+neither the folder nor `ml.fs`. AMENDED 2026-11-20 (ruling 91, for e3; H17 and H18): another session's folder under
+`window-ml-files/` is refused to a session by its real path, by a `..` from the session's own folder, through a
+symlink inside the workspace that points at it, by a recursive reader's walk from the workspace root, and by a script
+under `ml.sh` (`python3 tool.py` opening it), each read and write; a listing of `window-ml-files/` shows the session's
+own folder only; a script under `ml.sh` cannot write, create, delete or rename in `attached/` on disk; the refusal
+names no other session; two sessions whose ids share six characters get two folders, and a directory the record does
+not name is never written into.
 
 **Open.**
 
-- The folder's name (`window-ml-files/` is a proposal) and whether the person sets it per workspace.
+- The folder's name (`window-ml-files/` is a proposal) and whether the person sets it per workspace. A session's
+  folder inside it: ruled by the coordinator 2026-11-20 ("One folder per session").
 - Windows: how a `C:\Users\...` path appears in the sandbox's POSIX tree.
 - A workspace that is not a git repository: whether `ml.sh` calls get a diff by another snapshot.
 - The background sync's cadence (a value to pick).
@@ -1190,7 +1558,8 @@ refusal and gives a sentence for it:
   now.
 - While a host is connected, at `spawn` the host maps an argument the program's manifest marks as a PATH, when it
   equals `/files` or starts with `/files/`, to the same path under the folder's real path
-  (`~/git/proj/window-ml-files/data.csv` as the model sees it), and the call's `cwd` likewise. The mapped path then
+  (`~/git/proj/window-ml-files/2026-11-20-q3-sales-7c41e2/data.csv` as the model sees it; the session's own folder,
+  ruling 91), and the call's `cwd` likewise. The mapped path then
   carries the facts like any other path argument: the host refuses at `spawn` a call that WRITES a path in
   `attached/` (H6's rule, for a process), and an overwrite git cannot undo still asks.
 - Which operand is written comes from a manifest field naming it (the last operand for `cp` and `mv`, every operand
@@ -1208,7 +1577,8 @@ refusal and gives a sentence for it:
   the uploads folder would break use cases 2 to 4).
 - A `/files` argument the host cannot place, because the program has no manifest or the manifest does not describe
   that position, is refused with the sentence of "`/files` on the person's disk" naming the real path:
-  `/files is on disk while the host is connected: ~/git/proj/window-ml-files/data.csv`. Such a call asks
+  `/files is on disk while the host is connected: ~/git/proj/window-ml-files/2026-11-20-q3-sales-7c41e2/data.csv`.
+  Such a call asks
   anyway (no manifest), so the refusal costs one retry with the real path.
 - The call's record keeps both forms, the argv the model wrote and the argv the process got. The model sees a mapped
   path with the home written as `~`; the run log keeps both argvs raw, and the sidebar and both exports show both
@@ -1263,28 +1633,59 @@ nothing into the repository.
   (a copy of the person's index, for its stat cache) and a private `GIT_OBJECT_DIRECTORY`, both in the host's own
   directory, with the repository's object directory as an alternate (`GIT_ALTERNATE_OBJECT_DIRECTORIES`). The person's
   index, HEAD, stash list and object store are unchanged; the private directory is deleted when the diff is made.
-- H11. Changed files are hashed with `git hash-object -w --no-filters --stdin-paths` and entered with
-  `git update-index --index-info`, never `git add` or `update-index --add`, which run a clean filter. Every git spawn
-  carries the git belt (`core.fsmonitor=false`, `core.pager=cat`, `GIT_OPTIONAL_LOCKS=0`), so no filter, textconv,
-  fsmonitor or hook runs. Untracked files are included; ignored files are not, except the uploads folder. The snapshot
-  runs whatever `repoConfigRunsCode` says: the belt, `--no-filters`, `--no-ext-diff` and `--no-textconv` leave no path
-  by which the repository's config runs a program, and the e3 row with a clean filter, an fsmonitor and a hook
-  configured is the pass condition for that case too. AMENDED 2026-11-13 (host lane): the belt alone was not enough,
-  since the person's global config (`git lfs install` sets `filter.lfs.clean`) also runs a program; H7's
-  `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM` close that. AMENDED 2026-11-17 (host lane, found building H10): nor
-  for a spawn that writes the scratch index (`write-tree`, `read-tree`, `update-index`). The write runs the
-  repository's `post-index-change` hook, and its check of a racily clean entry reads the file through the clean
-  filter, at the entry's path from the process's directory, since `write-tree` never enters `GIT_WORK_TREE`. So each
-  scratch spawn also sets `core.hooksPath=/dev/null` and runs in, and names as `GIT_WORK_TREE`, an empty directory of
-  the scratch store (window-ml-host `src/snapshot.rs`). The changed set is the host's own stat comparison against
-  the scratch index, not a git status.
+- H11. Changed files are hashed with `git hash-object -w --no-filters --stdin-paths` and entered with `git update-index
+  --index-info`, never `git add` or `update-index --add`, which run a clean filter. Every git spawn carries the git belt
+  (`core.fsmonitor=false`, `core.pager=cat`, `GIT_OPTIONAL_LOCKS=0`), so no filter, textconv, fsmonitor or hook runs.
+  Untracked files are included; ignored files are not, except the uploads folder. The snapshot runs whatever
+  `repoConfigRunsCode` says: the belt, `--no-filters`, `--no-ext-diff` and `--no-textconv` leave no path by which the
+  repository's config runs a program, and the e3 row with a clean filter, an fsmonitor and a hook configured is the pass
+  condition for that case too. AMENDED 2026-11-13 (host lane): the belt alone was not enough, since the person's global
+  config (`git lfs install` sets `filter.lfs.clean`) also runs a program; H7's `GIT_CONFIG_GLOBAL` and
+  `GIT_CONFIG_NOSYSTEM` close that. AMENDED 2026-11-17 (host lane, found building H10): nor for a spawn that writes the
+  scratch index (`write-tree`, `read-tree`, `update-index`). The write runs the repository's `post-index-change` hook,
+  and its check of a racily clean entry reads the file through the clean filter, at the entry's path from the process's
+  directory, since `write-tree` never enters `GIT_WORK_TREE`. So each scratch spawn also sets `core.hooksPath=/dev/null`
+  and runs in, and names as `GIT_WORK_TREE`, an empty directory of the scratch store (window-ml-host `src/snapshot.rs`).
+  The changed set is the host's own stat comparison against the scratch index, not a git status. AMENDED 2026-11-19 (the
+  coordinator's call): an untracked file whose path looks like a secret (the host's `facts::looks_secret`: a dotenv name
+  other than the three templates, `*.pem`, `id_*`, a credentials directory such as `.ssh` or `.aws` among its
+  components) is never entered, inside the uploads folder or out, so it is in neither tree and the diff draws no body
+  for it. It is not silently absent: the name rule also matches ordinary files (`id_*` matches `id_utils.py`), so its
+  path joins H12's not-captured list with the reason "withheld: the name looks like a secret". That list is H12's. A
+  tracked one is H13's.
 - H12. Bounds: no file over the diff cap (1 MB, "The diff's cap") goes into the tree; it is compared by size and
   sha256 instead. The walk stops at `WALK_CAP` (20 000) entries; past that the call's diff is null with the reason.
 - H13. The diff is `git diff-tree --no-ext-diff --no-textconv` of the two trees. Its body goes out as held output (a
   pointer, as stdout does), and `done` carries the summary line (`edited a.py (+3 −1); deleted old.log`). A change is
-  reported as "changed during this call", never attributed to the call's process, since another process may have
-  written meanwhile. An orphaned call's snapshot reports through `status`/`ended`, as `protectedChanged` does. A
-  workspace that is not a git repository gets a null diff (open, as in the section above).
+  reported as "changed during this call", never attributed to the call's process, since another process may have written
+  meanwhile. An orphaned call's snapshot reports through `status`/`ended`, as `protectedChanged` does. A workspace that
+  is not a git repository gets a null diff (open, as in the section above). AMENDED 2026-11-19 (the coordinator's call):
+  the body of a file whose path looks like a secret never reaches the model through the diff, tracked or untracked. A
+  tracked one that changed is listed by path as "changed, contents withheld", with no line of its body in the held
+  output or the summary. "Changed" includes a deleted tracked file (no line of the old body) and a mode-only change. By
+  the coordinator's call, a blob shown under an ordinary name is withheld the same way when its id equals the blob of a
+  path that looks like a secret in either tree: `cp .env notes.txt` of a tracked `.env`, or `git mv .env notes.txt`,
+  shows `notes.txt` as "changed, contents withheld". The scrub by value (#1948) is the second layer under this rule,
+  never the reason to show a body. A name says nothing of a hardlink to a held file under another name, a copy of an
+  untracked secret file (its blob is in neither tree to compare), an edited copy, or a secret in an ordinary file: those
+  reach the diff, and only the scrub by value stands between them and the model.
+  AMENDED 2026-11-19 (the coordinator's calls, on the host lane's questions while building H13). (1) The orphan
+  report is split out as H13b, a later change of the host lane's. Until it lands an orphaned call's `ended` carries
+  `diff: null` with a `diffReason` saying an orphaned call's diff is not reported; it is never an absent `diff`. (2)
+  On `done`, `diff` is `{ ptr, size, sha256, truncated, summary, fromHead }`, or `null` with a `diffReason` ("not a
+  git repository"); an absent `diff` means an older host. (3) A withheld path reads `changed <path> (contents
+  withheld)` whether it was added, edited, deleted or only changed mode, with no size, hash or line count, in the
+  over-the-cap list too. (4) The empty blob is left out of the blob-id match, since an empty tracked `.env` would
+  otherwise withhold every empty file; an empty file whose own path looks like a secret is still withheld by name.
+  (5) Past 1000 withheld or reconciled paths the patch is left out whole and the change list stays; the body and the
+  summary say so, with the count. (6) A file that crosses the diff cap during the call, or stops or starts being
+  captured, reads `edited <path> (was/now over the diff cap)` or `(was/now not captured: <reason>)`, with no patch.
+  A big file of unchanged size with no hash in either snapshot (past H12's budget) reads `not compared`. An
+  untracked file withheld by name in both snapshots is not named as a change; every not-captured path is listed in
+  the body after each call. (7) The report is always on: every call whose repository is the working directory's, or
+  the one its arguments name, is snapshotted, with no opt-out. A pipe snapshots its first stage's repository only.
+  The host lane's measurement (release builds, start to done for `true`): about 170 ms on a clean clone of 2 215
+  files, about 315 ms at 19 000 clean files, 1.6 to 1.9 s at 19 000 files with every stat changed.
 - H14. The diff's file list is what the call's end flushes to the browser backup ("The sync").
 
 **Telling an old host apart** (H15). `hello` gains `mounts: true` and `snapshot: true` (and `filesArgv: true`, H9;
@@ -1294,7 +1695,42 @@ depends on `hello.tilde`: a host without it gets the raw path in that sentence, 
 
 - H16. AMENDED 2026-11-13 (host lane): the step after H15, in the host lane. Creating the uploads folder, writing
   `.git/info/exclude` and the folder watch ("`/files` on the person's disk" names them), so the Owners line above and
-  this list agree.
+  this list agree. AMENDED 2026-11-20 (ruling 91): the uploads folder is the session's own folder,
+  `window-ml-files/<session folder>/`, which the worker names in `mount`'s `uploads` (H1), and the exclude line is
+  `/window-ml-files/`, written once ("One folder per session").
+- H17. PROPOSED 2026-11-20 (ruling 91; the mechanisms are the spec writer's guesses for the host lane to correct).
+  Other sessions' folders are refused, by default, for every reader. The host takes the parent of `mount`'s `uploads`
+  as the sessions folder and holds its device and inode beside the session's own folder's, as H6 holds `attached/`.
+  Every refusal is the code `OtherSession` with the one sentence of "One folder per session", which names no other
+  session's folder.
+  - A cell's request: the walk (H4) refuses a path that passes through the sessions folder into any child but the
+    session's own, matched by device and inode, so a `..`, another spelling or another case reaches the same check; a
+    symlink is refused by H4 already. A `list` of the sessions folder answers the session's own folder only.
+  - At `spawn`: a path argument or the `cwd`, read or written, whose realpath or an existing ancestor's device and
+    inode lies in the sessions folder outside the session's own folder. A symlink elsewhere in the workspace that
+    resolves into a sibling is caught by the realpath.
+  - A recursive reader (`rg pat .`, `find`, `tar`) whose directory argument holds the sessions folder beneath it is not
+    refused under the sandbox, which hides the siblings (next), so the walk passes them by. With the sandbox turned off
+    for the workspace, the host's bounded walk (the one behind `containsSecret`) gains `containsOtherSession`, and a
+    call where it is true is refused with the sentence plus `name a directory that does not hold window-ml-files/`;
+    past the walk's cap it is `unknown` and the call asks.
+  - The sandbox profile, for a script the argv does not describe (`python3 tool.py`, `node x.mjs`, `bash -c`): on
+    macOS, read and write denies on the sessions folder's subtree, then an allow of the session's own folder (SBPL's
+    later rule wins), with H18's `attached/` deny after both; on Linux, a tmpfs over the sessions folder with the
+    session's own folder bound back over it, since Landlock grants and cannot deny beneath a grant. Applied under
+    every envelope, an absent one's floor included; if the floor cannot carry it, the host lane says so and such a
+    call asks. With the sandbox off, a script reaching a sibling is not bounded: a stated gap, beside the sandbox-off
+    gaps `SHELL.md` already states.
+  - Lifted only by a policy, later (POLICIES.md, "Other sessions' files, later"), and then for reading only.
+- H18. PROPOSED 2026-11-20 (the coordinator's question under ruling 91, with e3). `attached/` under the sandbox profile.
+  H6 refuses a cell's write into `attached/` and H9 a process's write when its argv names a path there, but a program
+  that runs code (`python3 tool.py`) can write into `attached/` with no argv naming it: the profile confines writes to
+  the roots, `attached/` lies inside a root, and the protected names (`sandbox::protected_rels`) do not include it. The
+  `runs-code` ask does not close this, since the person approving `python3 tool.py` is not told it writes `attached/`.
+  So the profile denies write, create, unlink and rename under each `attached/` the host holds, by its realpath (on
+  macOS a `file-write*` deny on the subpath; on Linux a read-only re-bind, as the protected names get), under every
+  envelope, an absent one's floor included. With the sandbox off it is not bounded for a process, a stated gap; the
+  backstop is the browser copy, which keeps the frozen original whatever happens on disk ("The sync").
 
 **What runs free, what asks, what is refused.** AMENDED 2026-11-13 (host lane): the `EROFS` row is a cell's store; an
 `ml.sh` process is bounded by the roots until H9's written operand lands (H1). The default policy's rows, each with the
@@ -1326,6 +1762,8 @@ rows still compose with it.
 | a write to a protected name of the root, or under any `.git` (AMENDED 2026-11-13, host lane: H6b) | refused (`Protected`) | `protected` |
 | a write whose basis changed since it was judged | refused (`ChangedSinceJudged`) | `basis` |
 | a `/files` path argument | mapped to the real path, then judged as it | H9, the manifest |
+| any read or write in another session's folder under `window-ml-files/` (AMENDED 2026-11-20, ruling 91: H17) | refused (`OtherSession`) | H17 |
+| a write into `attached/` by a process its argv does not describe (AMENDED 2026-11-20: H18) | refused by the sandbox profile | H18 |
 | a `/files` argument the manifest does not place | refused | H9 |
 | `git status`, `git diff`, `git add` | free | the manifest, `repoConfigRunsCode` false |
 | the first commit in a session | asks | extension side |
@@ -1393,12 +1831,18 @@ delete of one git cannot undo asks, for a cell and for an `ml.sh` call whose man
   The scratch index and the private object directory live outside the worktree and are gone after the diff; a build
   that drops `GIT_OBJECT_DIRECTORY` turns this row red.
 - What the snapshot takes (H11). An ignored `.env` never enters a tree; an ignored file inside the uploads folder does;
-  an untracked file the call creates appears in the after-tree.
+  an untracked file the call creates appears in the after-tree. AMENDED 2026-11-19: an untracked `.env.local` that is
+  not ignored, and an untracked `id_ed25519` inside the uploads folder, enter neither tree; an untracked ordinary file
+  beside them still does. An untracked `id_utils.py` is in neither tree and is in the not-captured list with the name
+  reason.
 - Bounds (H12). A workspace with a FIFO, a socket and an unreadable file snapshots within budget and lists them as not
   captured, never opening them. A changed file over the cap is reported by size and sha256, never its body; a file
   under the cap whose only change is its mtime is not reported.
 - The report (H13). The body goes out as a held pointer and `done` carries only the summary line; a change by another
-  process reads "changed during this call", unattributed.
+  process reads "changed during this call", unattributed. AMENDED 2026-11-19: a tracked `.env` the call changed is
+  listed as "changed, contents withheld", and no line of its old or new body is in the held output, the summary, the run
+  log or either export. A tracked `.env` the call deleted is listed the same way, with no line of its old body. `cp .env
+  notes.txt` of a tracked `.env` lists `notes.txt` as "changed, contents withheld", with no line of its body.
 - An old host (H15). With a `hello` carrying neither field the worker sends no `mount`, `fetch`, `store`, `list`,
   `remove`, `rename`, `stat` or snapshot call and no probe; `mounts: "yes"`, `1` or `{}` read as absent.
 - Pages, four ways. Each new message type is refused at the router from a page, the host seeing nothing; a
@@ -1418,6 +1862,18 @@ delete of one git cannot undo asks, for a cell and for an `ml.sh` call whose man
   over the cap (hash only the stat-changed files, or a cache by basis); H13's orphan report keeps the private object
   directory beside the ledger; a copied index breaks on a split index (`sharedindex`), so H10 falls back to building
   the tree from `HEAD`.
+- AMENDED 2026-11-19 (host lane, H12, each measured first). The before-hash of a file over the cap comes from a cache
+  keyed by the whole stat (device, inode, size, mtime and ctime to the nanosecond), held for a call's two snapshots,
+  with a budget of 2 GiB of uncached bytes per snapshot; past the budget a big file is listed with its size and no
+  hash. A hash is kept only when the file's mtime and ctime are both more than 2 s before the read began (git's
+  racy-clean rule: a same-size rewrite inside one tick of a coarse filesystem keeps the whole stat); otherwise the
+  file is read again at every snapshot. "Not captured" means out of the tree, tracked or not, so a file that crosses the cap or turns unreadable
+  during a call shows as an add or a delete in the tree diff, and H13's report reconciles that with the lists. Git
+  lists no FIFO, socket or device, so the host finds them by type in the directories the listings reached and never
+  opens one; an ignored one is left out except in the uploads folder. Known limit: one in a directory holding no file
+  git lists is not found, and it is in no tree either. `WALK_CAP` counts tracked and untracked files, not ignored
+  ones, and is checked before any file is read. A changed set whose listing passes 1 MiB (about 25 500 files) errors
+  where it once hung.
 
 **Ruled with it** (Shane, 2026-11-13): the three settlements, the argv refusal replaced by a mapping in path positions
 (H9), the snapshot writing nothing into the repository (H10), and the sandbox and `gitUndoable` both holding (the
@@ -1471,9 +1927,9 @@ Fetched values stay out.
 
 **Open.**
 
-- The quota's value and where it is set: a DevTools Settings flag, by the standing rule for a new setting. The whole
-  directory loads at start (item 1), so the quota is also a start-time budget: the value sits under the worker's
-  2.6 GB heap with room for item 6's worst case.
+- The quota's value and where it is set: a DevTools Settings flag, by the standing rule for a new setting. AMENDED
+  2026-11-17: nothing loads at start any more, so the quota is a disk quota, not a start-time budget ("`/files/` read
+  by range, and `ml.fs`", "Writes"); SETTLED 2026-11-19 (the coordinator): `filesQuotaMB`, default 1024 per session.
 - A post arriving for a path the person deleted or renamed during the run. The lean: it is kept under the written name
   as a new file, and the inbox notice says so, since the delete removed the old bytes, not the model's work.
 - Whether a frozen version's provenance "read from disk <path>" may reach a page through `dereference`, or is scrubbed
@@ -1487,7 +1943,8 @@ calls under 22 to 25 (docs/plan/repl/README.md). Nothing below is built. This se
 session's files as a directory" above: its layout (`/files/` itself writable), its mount (an eager MEMFS that loads the
 whole directory into the worker) and its quota multiplier (the three times measured for that MEMFS). The rest of that
 section stands: the handle folders under `attached/`, provenance as a field, frozen when cited, the kernel-death
-message, the host's disk never aliasing `/files`.
+message, and the host's disk never aliasing `/files` while no session folder is mounted. AMENDED 2026-11-20 (ruling
+91): once a session's own folder is mounted, that folder backs `/files` for the session ("One folder per session").
 
 **The principle (ruling 22).** No part of `/files` ever holds all of a session's files in memory, and several sessions
 at once stay usable. Every read is ranged or streamed, every listing is lazy, one directory at a time, and a write is
@@ -1568,16 +2025,16 @@ value; dump then reload equals the stored table, its values and its declared dty
 
 ### Python's view: two mounts (ruling 36)
 
-Python sees `/files` through Emscripten mounts, never a mount that loads whole files:
+Python sees `/files` through Emscripten mounts, never a mount that loads whole files. ONE store, the shelf, holds
+both folders (the coordinator's call, 2026-11-19): no OPFS copy of `agent/`, so the quota, the atomic commit, the
+backup and any commit-on-cell-success live in one place.
 
-- **`attached/` on WORKERFS**: lazy slices of a `Blob`, read-only. The 2026-11-12 measurement found WORKERFS needs
-  `FileReaderSync`, which the lockdown does not allow, and fails a write with EIO, not EROFS; both are to be
-  measured by the packages notebook, and if WORKERFS cannot run under the lockdown, the fallback is a custom read-only
-  mount over the same ranged reader (Open questions, below).
-- **`agent/` on a custom mount over OPFS synchronous access handles**: each `read` and `write` goes to the file's
-  handle at its offset, so nothing is held but the buffer the call passes. A write is in the store when the call
-  returns, which removes the close-and-flush safety net the MEMFS design needed (item 3 above), to be confirmed by
-  the notebook.
+- **Both `attached/` and `agent/` on route A's file system type over the ranged reader** ("One reader, three front
+  ends", above). Python's `open()` is synchronous, and route A's sliced wait makes each read and write synchronous from
+  Python's view while the offscreen document serves it from the shelf; `FileReaderSync`, which the lockdown does not
+  allow, is not needed. `attached/` is read-only (EROFS). A write to `agent/` streams to the shelf chunk by chunk
+  ("Writes", above), so the worker holds one chunk, not a cell's output, and lands at the commit point. A case the
+  shelf cannot serve synchronously goes to the coordinator as a case, not as a second store.
 - **The scrub runs inside the mount's read**, chunked with an overlap of the longest registered form minus one byte,
   so a registered value in a file never reaches the kernel. It preserves LENGTH: in the mount a match is replaced by
   the same number of filler bytes (`*`, 0x2A), never by `[REDACTED:<NAME>]`, because Python seeks by offset and reads
@@ -1587,7 +2044,7 @@ Python sees `/files` through Emscripten mounts, never a mount that loads whole f
 
 **To be measured by the packages notebook, before this is fixed** (ruling 36, no figure here is this section's):
 whether the restricted fork gates `open()` on a mount; whether worker memory stays flat reading ranges of a 1 GiB
-file; whether WORKERFS runs under the lockdown; the cost of the scrub inside the read, both the plaintext registry's and
+file; the cost of the scrub inside the read, both the plaintext registry's and
 ruling 32's hash-only matcher's; and whether a Parquet writer wheel exists.
 
 ### Backup and restore carry the files (ruling 35)
@@ -1595,8 +2052,9 @@ ruling 32's hash-only matcher's; and whether a Parquet writer wheel exists.
 A backup (docs/spec/BACKUP_FORMAT.md, docs/dev/backup.md) is the archive's SQLite schema holding every session; it
 gains the session's files. Two tables, in the schema `migrate` builds:
 
-- `files (hash, path, kind, size, sha256, mtime, provenance, hidden)`: one row per file of a session (`hash`, the
-  session), its path under `/files`, and `hidden` set for a file the person marked secret.
+- `files (hash, path, kind, size, sha256, mtime, provenance, hidden, omitted)`: one row per file of a session (`hash`,
+  the session), its path under `/files`, `hidden` set for a file the person marked secret, and `omitted` saying why a
+  row has no chunks (`"size"` in a month file, ruling 47, below), null when its bytes are there.
 - `file_chunks (sha256, idx, data)`: a file's bytes in chunks of 1 MiB, keyed by the file's content hash, so a file
   attached to two sessions is held once, as `images` is today.
 
@@ -1642,21 +2100,79 @@ to warn, so the backup's `meta` records `files: <count>` for a later version to 
 a fixture of a pre-files backup restores with no files and no error; a backup with files restores them byte-identical;
 a hidden file restores as a hidden name with no bytes.
 
+### The archive folder's month files carry them too (ruling 47)
+
+Shane's ruling 47 (2026-11-18): a session's files go into the archive folder's month files, not only into the one-off
+backup, in the same two tables and the same volumes. A session moved into the archive keeps its files, so there is still
+one place each session lives, and the folder is a copy of it. A setting leaves out files over a size, since the folder
+is often on a drive a cloud service syncs.
+
+- **The setting**, the coordinator's call (2026-11-19), open to Shane's override: `archiveFileMaxMB`, a number in MB
+  like `sessionStoreBudgetMB` and `valueStoreBudgetMB`, default 100. A file larger than it is left out of the month
+  files; 0 removes the limit. It is in DevTools Settings beside the archive folder's form (the rule for a new setting)
+  and in the chat page's Extension tab where the folder is set. It changes only the folder: a one-off backup carries
+  every file that is not hidden, whatever its size. The default is reasoned from an assumed uplink, not measured
+  (below).
+- **Why 100 MB.** A sync rewrites each dirty month whole (archive.md, "Dirty months"), 30 seconds after an archive write
+  and every 6 hours, so a file in a month is uploaded again each time any session of that month changes, by the cloud
+  client that syncs the folder. At an uplink of 20 Mbit/s, an assumption for a home connection and not a measurement,
+  100 MB is about 40 seconds of upload per file per rewrite: past it the folder costs more than a copy is worth to most
+  people, and a person who wants the large files kept raises the limit or makes a one-off backup. A data file a run made
+  (a Parquet or a CSV of a fetched table) is usually well under it; a model checkpoint or a video is not.
+- **Changing the limit marks the months it affects dirty**, as switching the form does (backup.md): raising it, every
+  month holding a file omitted by size that is now within it; lowering it, every month holding a file now over it. The
+  next sync rewrites those months, so the folder matches the setting from that sync on, and no other month is rewritten.
+  Row: with months A (an omitted 150 MB file), B (a 60 MB file) and C (small files only), raising the limit to 200 marks
+  only A dirty and the sync writes the file into A; lowering it to 50 marks only B and the sync leaves the file out of
+  B.
+- **What is left out is named.** A file over the limit keeps its `files` row, with no chunks and `omitted: "size"`, and
+  the month's `meta` lists it with the limit in force when the month was written. A restore from the folder lists it
+  under its path as "not in the archive folder: over <the limit> MB", read from that `meta`, and a read of it fails with
+  that reason. Its bytes are still in the browser's archive while the session is: only a wiped profile loses them.
+- **A hidden file** is left out of the month files as it is out of a backup, by the same rule (above), and a month file
+  is a set of volumes as a backup is. A month's first volume keeps the month's name (`2026-10.wmlbak`); the others are
+  `2026-10.v2.wmlbak` and on, in the month's form. An install from before this does not read those names as months
+  (`MONTH_FILE`, `src/archive/archive-folder.ts`), so it ignores them.
+- **An older install reading a new month.** The first volume is an ordinary month file with two more tables and more
+  `meta` keys. An install from before this reads its sessions as it always has and ignores the `files` and `file_chunks`
+  tables and the volume list, with no error; it imports the sessions without their files. Row: a fixture of a new first
+  volume, read by the merge as it is on main before this, imports its sessions and reports no error.
+- **A month an older install rewrote.** Such a month comes back without `files` rows (Known limits, below). The newer
+  install's merge never reads an absent `files` row as a deletion: a file leaves the browser's archive only by the
+  person deleting it or by a `removed` entry (backup.md, 3b), never because a month file lacks it. When the merge finds
+  the archive holding files the month lacks, it marks that month dirty, so the next sync writes them back. Row: a month
+  rewritten without `files` rows, merged by the newer install, leaves every file in the browser's archive byte-identical
+  and marks the month dirty.
+- **Known limits.** An install from before this that rewrites a month (a change on a second machine running the older
+  version) writes it without the `files` rows, and the folder's copy of that month's files is lost until a newer install
+  merges that month and rewrites it; the volumes it ignores are left orphaned until then. The sessions themselves, and
+  the files in each browser's archive, are unaffected. Rows: a month with a file over the limit restores it as omitted
+  by size, naming the limit from its `meta`; a month with files restores them byte-identical; and a pre-files month file
+  restores with no files and no error.
+
+### A restore over the quota (ruling 48)
+
+Shane's ruling 48 (2026-11-18): a restore restores every file, since they are the person's, even when that takes a
+session over its quota. The session is then marked over its quota, and a write under `agent/` is refused by name as the
+quota refuses one ("Lifetime and quota", above) until the person deletes enough to be back under. Reads, copies out of
+`attached/`, deletes and renames are unaffected. The restore screen says which sessions came back over their quota and
+by how much.
+
+This is the session's quota, not the browser's storage. A restore the browser's free space cannot hold still fails
+before the shelf is touched ("The staging space", above). Rows: a fixture whose `agent/` total is over the quota
+restores every file byte-identical, a write after it is refused naming the total, and a delete that brings the session
+under lets the next write through.
+
 **Whether the hub changes.** No: `ml.fs` and the mounts are the runtime's, and backup and restore are local. The
 file browser's commands are the session-store amendment's (ruling 24).
 
 ### Open questions, each with a recommendation
 
-Settled as the coordinator's calls and written in above: the dump is `ml.fs.cp`; if WORKERFS cannot run under the
-lockdown, `attached/` gets a custom read-only mount over the ranged reader, never a loosened lockdown; `readFile`'s
-bound is 8 MiB; and no sidecar for JSON or text. Two remain for Shane:
-
-1. **Archive month files.** Whether a session's files go into the archive folder's month files, not only the one-off
-   backup. Recommended yes, the same tables and the same volumes: a session moved to the archive must keep its files,
-   and there is one place each session lives. With a setting to leave out files over a size, since the folder may be
-   a cloud drive.
-2. **A restore over the quota.** Recommended: restore every file (they are the person's), mark the session over its
-   quota, and refuse new writes by name until the person deletes some, as the quota already does.
+Settled as the coordinator's calls and written in above: the dump is `ml.fs.cp`; both folders are on route A's type
+over the ranged reader, one store, the shelf (2026-11-19), never a loosened lockdown; `readFile`'s
+bound is 8 MiB; and no sidecar for JSON or text. The two left for Shane are settled (2026-11-18) and written in
+above: the archive folder's month files carry a session's files, with a size limit (ruling 47), and a restore over
+the quota restores every file and then refuses writes until the session is back under (ruling 48).
 
 ## Trust
 

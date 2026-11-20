@@ -1,9 +1,13 @@
-// sw-scrub.ts — the worker's one crossing for error text: what a page is answered and what a run's model reads, with the config's secrets taken out.
+// sw-scrub.ts — the worker's crossings for text that leaves it: a page's answer (its error strings: the config's secrets, and each registered value as a bare `[REDACTED]`), a page-started model request (every message, bare `[REDACTED]`), a run's model input, a script's input, the run's stored renders and pointers (the config's secrets and each registered value as `[REDACTED:<NAME>]`), the live output and the run log's key (registered values only). `GET_CONFIG`'s data is not among them (SECRET_HANDLES.md, Known limits).
 
 import { getConfig } from "./sw-llm";
-import { mergeSecrets, scrubErrors, scrubSecrets, secretsOf, type SecretSub } from "../secret-scrub";
+import { mapErrorStrings, mergeSecrets, scrubSecrets, secretsOf, type SecretSub } from "../secret-scrub";
 import type { MlConfig } from "../contract/contract-config";
-import type { NeutralMessage } from "../contract/contract-chat";
+import type { NeutralMessage, ToolCall } from "../contract/contract-chat";
+import { heldTail, redactedLine, scrubRegistry, type RegistrySub } from "../secret-registry";
+import { registryIsReady, registryReady, registrySubsNow } from "./sw-secret-registry";
+import { rowForEgress, textForEgress } from "../session/session-row-scrub";
+import type { SessionSummary } from "../session/session-host";
 
 /** The settings `secretsOf` reads. With the legacy site list, exactly the `secret` class of
  *  setting-class.ts (tests/setting-class.test.mjs holds the two together). */
@@ -32,28 +36,251 @@ async function configSecrets(): Promise<SecretSub[]> {
 }
 
 /**
- * A response bound for a page, with every `error` string scrubbed (`scrubErrors`). Applied by the router to every
- * answer to a page-started message and to the streaming port's error. Fails closed: a config that cannot be read
- * leaves an error carrying nothing but that the request failed.
+ * A response bound for a page, with every `error` string scrubbed: the config's secrets, then each registered value as
+ * a bare `[REDACTED]`, so a page never learns a name. Applied by the router to every answer to a page-started message
+ * and to the streaming port's error. Fails closed: a config or a registry that cannot be read leaves an error carrying
+ * nothing but that the request failed.
  * @param response what the handler answered
  * @returns the response a page may read
  */
 export async function forPage<T>(response: T): Promise<T> {
-    try { return scrubErrors(response, await configSecrets()); }
-    catch { return (response && typeof response === "object" && "error" in response ? { error: "The request failed." } : response) as T; }
+    try {
+        const secrets = await configSecrets();
+        await registryReady();
+        const subs = bareSubs();
+        return mapErrorStrings(response, (s) => scrubRegistry(scrubSecrets(s, secrets), subs).text);
+    } catch { return (response && typeof response === "object" && "error" in response ? { error: "The request failed." } : response) as T; }
+}
+
+/** The keys of a render whose strings are image data, which the scrub leaves alone. */
+const IMAGE_KEY = /^(src|image|rawImage)$/;
+/** What a stored string becomes when the secrets could not be read to scrub it. */
+const STORED_WITHHELD = "[withheld: the registered secrets could not be read]";
+
+/**
+ * A value the run STORES or shows beside what the model read (a tool's Out render, a pointer's fuller capture), with
+ * every string scrubbed the way {@link forModel} scrubs a result, less the count line: the sidebar, both exports and a
+ * later `@tool:` read then hold no more than the model saw. Image data is not scanned. An object's keys are scrubbed as
+ * its values are. Fails closed: when the secrets cannot be read, every string is withheld, and every key but one shaped
+ * like a schema's own ({@link SCHEMA_KEY}), so the record keeps its shape.
+ * @param value the render, or a text
+ * @returns the value, copied where something changed
+ */
+export async function forStored<T>(value: T): Promise<T> {
+    let f: (s: string) => string;
+    let key: (k: string) => string;
+    try {
+        const secrets = await configSecrets();
+        await registryReady();
+        const subs = registrySubsNow();
+        f = (s) => scrubRegistry(scrubSecrets(s, secrets), subs).text;
+        key = f;
+    } catch {
+        f = () => STORED_WITHHELD;
+        key = (k) => (SCHEMA_KEY.test(k) ? k : STORED_WITHHELD);
+    }
+    return mapStrings(value, f, key, 8);
 }
 
 /**
- * A tool result bound for a run's model, scrubbed (`scrubSecrets`). The caller keeps the text as the tool wrote it
- * where only the person reads it (the run log's `key`).
- * @param text the tool's result
- * @returns the text the model may read, and whether it differs from `text`
+ * A key kept when the secrets cannot be read: letters only, starting lowercase, at most 32 (`type`, `stdout`,
+ * `byColumn`). The residue, stated: a registered value of that shape used as a key survives that path.
  */
-export async function forModel(text: string): Promise<{ text: string; changed: boolean }> {
+const SCHEMA_KEY = /^[a-z][A-Za-z]{0,31}$/;
+
+/** What a subtree deeper than the stored scrub reads becomes when it holds text. */
+export const DEPTH_WITHHELD = "[withheld: nested deeper than the scrub reads]";
+
+/** Whether a string is anywhere under `value` but under an image key, or a key `key` would change. */
+function holdsText(value: unknown, key: (s: string) => string): boolean {
+    if (typeof value === "string") return true;
+    // A key is text too, where the scrub would change it: a registered value used as a key.
+    return value != null && typeof value === "object"
+        && Object.entries(value).some(([k, v]) => key(k) !== k || (!IMAGE_KEY.test(k) && holdsText(v, key)));
+}
+
+/**
+ * Every string in a value through `f`, but the values under an image key, and every key through `key`.
+ * @param value the value
+ * @param f what each string becomes
+ * @param key what each key becomes
+ * @param depth how deep to look
+ * @returns the value, copied where something changed
+ */
+function mapStrings<T>(value: T, f: (s: string) => string, key: (k: string) => string, depth: number): T {
+    if (typeof value === "string") return f(value) as T;
+    if (value == null || typeof value !== "object") return value;
+    // Deeper than the scrub reads: a subtree holding any text is withheld rather than kept as it is.
+    if (depth < 0) return (holdsText(value, key) ? DEPTH_WITHHELD : value) as T;
+    if (Array.isArray(value)) {
+        let changed = false;
+        const out = value.map((v) => { const s = mapStrings(v, f, key, depth - 1); if (s !== v) changed = true; return s; });
+        return (changed ? out : value) as T;
+    }
+    const entries = Object.entries(value as Record<string, unknown>);
+    const keys = entries.map(([k]) => key(k));
+    let changed = keys.some((k, i) => k !== entries[i][0]);
+    const vals = entries.map(([k, v]) => {
+        if (IMAGE_KEY.test(k)) return v;
+        const s = mapStrings(v, f, key, depth - 1);
+        if (s !== v) changed = true;
+        return s;
+    });
+    if (!changed) return value;
+    // Two keys can scrub to one text (two values of one name, or every key when the registry is unreadable): the later
+    // ones are numbered, so no value is lost, and a key the scrub left alone keeps its name.
+    const taken = new Set(keys.filter((k, i) => k === entries[i][0]));
+    const named = keys.map((k, i) => {
+        if (k === entries[i][0]) return k;
+        let name = k;
+        for (let n = 2; taken.has(name); n++) name = `${k} (${n})`;
+        taken.add(name);
+        return name;
+    });
+    // fromEntries defines each key as data, so a "__proto__" key stays a key.
+    return Object.fromEntries(named.map((k, i) => [k, vals[i]])) as T;
+}
+
+/**
+ * A text bound for a script or a run's model, scrubbed: the config's secrets (`scrubSecrets`), then every registered
+ * secret's value in each of its forms, as `[REDACTED:<NAME>]` (SECRET_HANDLES.md, "The scrub as built"). The caller
+ * keeps the text as the tool wrote it, less the registered values, where only the person reads it (the run log's
+ * `key`, {@link forPerson}).
+ * @param text the tool's result
+ * @returns the text the model may read, whether it differs from `text`, and how many registered values each name had
+ */
+export async function forModel(text: string): Promise<{ text: string; changed: boolean; counts: Record<string, number> }> {
     let secrets: SecretSub[];
-    try { secrets = await configSecrets(); } catch { return { text: "Error: the tool failed (its message could not be checked).", changed: true }; }
-    const out = scrubSecrets(text, secrets);
-    return { text: out, changed: out !== text };
+    try { secrets = await configSecrets(); await registryReady(); } catch { return { text: "Error: the tool failed (its message could not be checked).", changed: true, counts: {} }; }
+    const reg = scrubRegistry(scrubSecrets(text, secrets), registrySubsNow());
+    return { text: reg.text, changed: reg.text !== text, counts: reg.counts };
+}
+
+/**
+ * The messages of a model call the worker composes itself (the utility profile's titles and `side.call`), scrubbed the
+ * way {@link forModel} scrubs a result, in every role: a person's task or a sidebar's excerpt can hold a registered
+ * value. Copies, so the asker's array is left as it was. Fails closed by THROWING, so the call is never sent.
+ * @param messages the call's messages
+ * @returns the messages the backend may get
+ * @throws when the config or the registry cannot be read, with nothing of either in the message, or when a message's
+ *  content is not text
+ */
+export async function forModelMessages(messages: NeutralMessage[]): Promise<NeutralMessage[]> {
+    let secrets: SecretSub[];
+    try { secrets = await configSecrets(); await registryReady(); } catch { throw new Error("The request was not sent: the registered secrets could not be read to check it."); }
+    const subs = registrySubsNow();
+    // A message is text or nothing (NeutralMessage). Content of any other shape (an array of parts an asker built) is
+    // refused rather than sent unread: the scrub reads only strings.
+    if (messages.some((m) => m.content != null && typeof m.content !== "string")) throw new Error("The request was not sent: a message's content was not text.");
+    const scrub = (t: string): string => scrubRegistry(scrubSecrets(t, secrets), subs).text;
+    // The content, and an assistant turn's thinking, which a backend that asks for it is sent too.
+    // An assistant turn's calls carry their arguments as text (or an object whose string leaves are text) too.
+    const deep = (v: unknown): unknown => typeof v === "string" ? scrub(v) : Array.isArray(v) ? v.map(deep) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, deep(x)])) : v;
+    return messages.map((m) => ({
+        ...m,
+        ...(typeof m.content === "string" && m.content ? { content: scrub(m.content) } : {}),
+        ...(m.reasoning ? { reasoning: scrub(m.reasoning) } : {}),
+        ...(Array.isArray(m.tool_calls) ? { tool_calls: m.tool_calls.map((tc) => tc && typeof tc === "object" ? { ...tc, arguments: deep(tc.arguments) as ToolCall["arguments"] } : tc) } : {}),
+    }));
+}
+
+/**
+ * The line a tool result ends with when registered values were taken out of it: names and a count, never a value, so
+ * the model does not conclude the value was absent.
+ * @param counts from {@link forModel}
+ * @returns `\n[1 secret redacted (NAME)]`, or empty
+ */
+export function redactedNote(counts: Record<string, number>): string {
+    const line = redactedLine(counts);
+    return line ? `\n[${line}]` : "";
+}
+
+/**
+ * A text the person reads (the run log's `key`, which keeps an error's raw text for extension pages): the registered
+ * values taken out, the backend's own secrets left as they are.
+ * @param text the raw text
+ * @returns the text without a registered value
+ */
+export function forPerson(text: string): string {
+    if (!registryIsReady()) { void registryReady().catch(() => {}); return REGISTRY_NOT_READ; }
+    return scrubRegistry(text, registrySubsNow()).text;
+}
+
+/** What a crossing that cannot wait shows in place of its text before the registry is read. */
+const REGISTRY_NOT_READ = "[held back: the registered secrets are not read yet]";
+
+/**
+ * A live output's text so far (`streamOutput`), for a crossing that cannot wait: the registered values replaced, and
+ * any tail that begins one held back, so a value split across two deltas never shows its front.
+ * @param text the output so far
+ * @returns what the sidebar may show now
+ */
+export function forLive(text: string): string {
+    // Nothing is shown before the registry is read; the next delta carries the whole output so far.
+    if (!registryIsReady()) { void registryReady().catch(() => {}); return ""; }
+    const subs = registrySubsNow();
+    if (!subs.length) return text;
+    const t = scrubRegistry(text, subs).text;
+    return t.slice(0, t.length - heldTail(t, subs));
+}
+
+/** The registry's substitutions with the bare marker: a page-started request names no secret to the model it drives. */
+function bareSubs(): RegistrySub[] {
+    return registrySubsNow().map((s) => ({ ...s, put: "[REDACTED]" }));
+}
+
+/**
+ * A page-started model request, scrubbed where it leaves the worker for the backend: every message's text, in every
+ * role (the page composed all of them), has each registered value replaced by `[REDACTED]`, with no name and no count.
+ * Nothing about it is reported to the page.
+ * @param payload the request as the page sent it
+ * @returns the request the backend may get (the same object when nothing matched)
+ */
+export async function forBackendFromPage<T>(payload: T): Promise<T> {
+    await registryReady();
+    const subs = bareSubs();
+    if (!subs.length || !payload || typeof payload !== "object") return payload;
+    const msgs = (payload as { messages?: unknown }).messages;
+    if (!Array.isArray(msgs)) return payload;
+    let changed = false;
+    const scrub = (t: string): string => { const r = scrubRegistry(t, subs).text; if (r !== t) changed = true; return r; };
+    const next = msgs.map((m) => {
+        if (!m || typeof m !== "object") return m;
+        const c = (m as { content?: unknown }).content;
+        let out = m as Record<string, unknown>;
+        if (typeof c === "string") out = { ...out, content: scrub(c) };
+        else if (Array.isArray(c)) out = { ...out, content: c.map((part) => part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string" ? { ...part, text: scrub((part as { text: string }).text) } : part) };
+        // An assistant turn carries its calls' arguments as text too: in the neutral shape every sender here builds
+        // (`{ id, name, arguments }`, a string or an object, which API_FORMATS converts at send time), and in OpenAI's
+        // wire shape (`function.arguments`) a page may send as it is.
+        const calls = (m as { tool_calls?: unknown }).tool_calls;
+        if (Array.isArray(calls)) out = { ...out, tool_calls: calls.map((tc) => {
+            if (!tc || typeof tc !== "object") return tc;
+            let call = tc as Record<string, unknown>;
+            if ("arguments" in call) call = { ...call, arguments: scrubArgs(call.arguments, scrub) };
+            const f = call.function as { arguments?: unknown } | undefined;
+            if (f && typeof f === "object" && "arguments" in f) call = { ...call, function: { ...f, arguments: scrubArgs(f.arguments, scrub) } };
+            return call;
+        }) };
+        return out;
+    });
+    return changed ? { ...payload, messages: next } : payload;
+}
+
+/**
+ * A tool call's arguments, scrubbed: a string as text, an object through its JSON (keys included) and back. A scrubbed
+ * JSON that no longer parses is sent as the scrubbed text, which holds no value either.
+ * @param args the arguments, a string or an object
+ * @param scrub the text scrub
+ * @returns the arguments, the same value when nothing changed
+ */
+function scrubArgs(args: unknown, scrub: (t: string) => string): unknown {
+    if (typeof args === "string") return scrub(args);
+    if (!args || typeof args !== "object") return args;
+    const text = JSON.stringify(args);
+    const out = scrub(text);
+    if (out === text) return args;
+    try { return JSON.parse(out); } catch { return out; }
 }
 
 /**
@@ -71,4 +298,27 @@ export async function forModelHistory(messages: NeutralMessage[]): Promise<numbe
         if (r.changed) { messages[i] = { ...m, content: r.text }; changed++; }
     }
     return changed;
+}
+
+/**
+ * A session row as it leaves the worker (the session server's index updates and snapshot, the hub's list, `session.list`,
+ * the HUD's bring-here list): every registered value in its text as `[REDACTED:<NAME>]`, exempt or not (ruling 61,
+ * SECRET_HANDLES.md). Synchronous, since the index is sent from synchronous code;
+ * fails closed: before the registry's first read, the row's text is withheld (`onRegistryChanged` sends it again once it
+ * can be scrubbed). By registered value only.
+ * @param row the row
+ * @returns the row a client may read
+ */
+export function forRow<T extends SessionSummary>(row: T): T {
+    return rowForEgress(row, registryIsReady() ? registrySubsNow() : null);
+}
+
+/**
+ * One text sent beside a row (a held run's page URL in the bring-here list, a title in the storage report), as
+ * {@link forRow} sends a row's.
+ * @param text the text
+ * @returns the text, or undefined when it is withheld
+ */
+export function forRowText(text: string): string | undefined {
+    return textForEgress(text, registryIsReady() ? registrySubsNow() : null);
 }

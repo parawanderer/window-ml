@@ -863,6 +863,27 @@ test("a holder's pid reused by another process is reclaimed: the start time does
     assert.equal(look("held", { dir, deps: { memory } }).job.state, "running", "the real holder is kept");
 });
 
+// A `ps` THAT DID NOT ANSWER is not a process that is gone. On 2026-11-19 about 20:02-20:03 the queue dropped tickets
+// machine-wide under load average 21: `ps -o lstart=` failed, `startTime` returned null for processes that were running,
+// and every read counted them dead — running jobs `lost`, live queued tickets `abandoned` (a waiter died with "ticket
+// … was abandoned before it ran"). Unknown must keep the ticket; only a process that is provably gone loses it.
+test("a start time the machine cannot read is UNKNOWN, not dead: a running job is kept", () => {
+    const dir = tmpDir();
+    writeQueue(dir, [holder(process.pid, "Sat Nov  7 00:00:00 2026")]);
+    const q = look("held", { dir, deps: { memory, probe: { alive: () => true, startTime: () => null } } });
+    assert.equal(q.job.state, "running", "the holder is kept when its start time cannot be read");
+    assert.equal(q.reaped.length, 0);
+});
+
+test("a start time the machine cannot read is UNKNOWN, not dead: a queued ticket is not abandoned", () => {
+    const dir = tmpDir();
+    const queued = { ticket: "me", mode: "attached", kind: "unit", cmd: ["x"], cwd: "/", key: "k1", clone: "/c", by: { pid: process.pid, started: "Sat Nov  7 00:00:00 2026" }, state: "queued", jobs: 2 };
+    writeQueue(dir, [holder(process.pid, startTime(process.pid)), queued]);
+    const q = look("me", { dir, deps: { memory, probe: { alive: () => true, startTime: () => null } } });
+    assert.equal(q.job.state, "queued", "a live waiter whose runner's start time cannot be read still waits");
+    assert.equal(q.reaped.length, 0);
+});
+
 // --- the queue's order ---
 
 test("attached runs are granted in FIFO order, one at a time; the waiting line names the holder", () => {

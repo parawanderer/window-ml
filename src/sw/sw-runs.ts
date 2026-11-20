@@ -157,8 +157,8 @@ export function makeWorkerRun(runId: string): void {
 export function dropHandedMemoryForTest(): void { handedToWorker.clear(); }
 
 /** The tools only a run the worker built offers: they ask the person to store or change something the model drafted
- *  (a policy, a program manifest, a Python package), so a page's run never becomes a way to ask for one. */
-export const WORKER_ONLY_TOOLS: ReadonlySet<unknown> = new Set(["propose_policy", "propose_manifest", "python_install"]);
+ *  (a policy, a program manifest, a Python package, a setting change), so a page's run never becomes a way to ask for one. */
+export const WORKER_ONLY_TOOLS: ReadonlySet<unknown> = new Set(["propose_policy", "propose_manifest", "python_install", "change_setting"]);
 
 /** A run's tools without the {@link WORKER_ONLY_TOOLS}: what a page-built run keeps when it is handed to the worker, in
  *  every copy of it that is stored (here, and `storedP` in sw-run-host.ts). */

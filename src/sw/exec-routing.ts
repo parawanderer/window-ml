@@ -13,13 +13,15 @@ import type { ExecWorld } from "../contract/contract-config";
 
 /** What an approved exec's source asks for, read lexically. A miss is safe: what a script does not name literally is
  *  not sent with it (named-reads.ts), and the main world has no `ml.current`, so it fails there rather than leaking. */
-export interface ExecNames { current: boolean; pointers: boolean; sh: boolean }
+export interface ExecNames { current: boolean; pointers: boolean; sh: boolean; settings: boolean }
 
 /** Read what a script names. */
 export function execNames(js: string): ExecNames {
     const { code, expansions } = expandPointers(js);
     return {
         current: /\bml\s*\.\s*current\b/.test(code),
+        // The person's settings (docs/spec/MODEL_SETTINGS.md): read only in a world of the run's own, like ml.current.
+        settings: /\bml\s*\.\s*settings\b/.test(code),
         // `ml["sh"]` and a destructured `{ sh }` are misses, and safe ones: the main world has no `ml.sh` to reach.
         sh: /\bml\s*\.\s*sh\b/.test(code),
         pointers: expansions.length > 0 || namedReads(code).length > 0 || /\bml\s*\.\s*dereference\s*\(/.test(code),
@@ -30,7 +32,7 @@ export function execNames(js: string): ExecNames {
 export interface Isolation { userScripts: boolean; cdp: boolean }
 
 /** Every reason a route can give, as a runtime list, so a test can place each one (`surveyMayEnterPage`). */
-export const EXEC_REASONS = ["plain", "current", "sh", "pointer", "unapproved-page", "requested", "default"] as const;
+export const EXEC_REASONS = ["plain", "current", "settings", "sh", "pointer", "unapproved-page", "requested", "default"] as const;
 
 /** Why a route was taken, for the execution log and the note the model is given. `requested`: the call's `world`;
  *  `default`: the default world, isolated. */
@@ -46,8 +48,9 @@ export type ExecRoute =
 const ENABLE = "Turn on Debugger-based actions, or allow user scripts, in window.ml Settings → Advanced → \"Debugger-based actions and user scripts\"";
 
 /** Why policy keeps a script out of the page's world, as a `world: "page"` refusal says it. */
-const FORCED: Record<"current" | "sh" | "pointer" | "unapproved-page", string> = {
+const FORCED: Record<"current" | "settings" | "sh" | "pointer" | "unapproved-page", string> = {
     current: "it reads ml.current",
+    settings: "it reads ml.settings",
     sh: "it runs programs through ml.sh",
     pointer: "it reads pointer values",
     "unapproved-page": "this site is not approved for window.ml",
@@ -80,7 +83,7 @@ export function routeExec(js: string, approvedPage: boolean, iso: Isolation, ask
     if (world !== undefined && world !== "page" && world !== "isolated")
         return { where: "refused", reason: "requested", result: `Error: world must be "page" or "isolated", or omitted.` };
     const names = execNames(js);
-    const forced = !approvedPage ? "unapproved-page" : names.sh ? "sh" : names.current ? "current" : names.pointers ? "pointer" : null;
+    const forced = !approvedPage ? "unapproved-page" : names.sh ? "sh" : names.current ? "current" : names.settings ? "settings" : names.pointers ? "pointer" : null;
     const isolated = (reason: ExecReason): ExecRoute | null =>
         iso.userScripts ? { where: "isolated", how: "userScripts", reason } : iso.cdp ? { where: "isolated", how: "cdp", reason } : null;
     const unavailable = (reason: ExecReason): ExecRoute =>
@@ -97,6 +100,8 @@ export function routeExec(js: string, approvedPage: boolean, iso: Isolation, ask
             where: "refused", reason: forced,
             result: forced === "current"
                 ? `Error: this exec reads ml.current, which only an isolated world is given, and none is available. Read ml.current in a read-only exec and act on the page in the next. ${ENABLE}.`
+                : forced === "settings"
+                ? `Error: this exec reads ml.settings, which only an isolated world is given, and none is available. change_setting still works, and its result names the old value. ${ENABLE}.`
                 : forced === "sh"
                 ? `Error: this exec runs programs through ml.sh, which only an isolated world is given, and none is available. ${ENABLE}.`
                 : `Error: this page's site is not approved for window.ml, so an approved exec runs here only in an isolated world, and none is available. ${ENABLE}, or use the other tools.`,

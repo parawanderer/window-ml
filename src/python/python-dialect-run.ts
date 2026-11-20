@@ -142,8 +142,20 @@ def _ml_inside_run(_src, _g):
     import builtins as _bi, _restricted as _r, restricted as _rs
     _keep = lambda _k: not _k.startswith("_") and not hasattr(_bi, _k)
     _ns = {_k: _v for _k, _v in _g.items() if not _k.startswith("_")}
+    # Decimal arithmetic sets the thread context's sticky flags (Inexact, Rounded) from C, a write the ownership check
+    # never sees, so a later cell would read what an inside cell computed. The context's flags and traps are put back
+    # as they were, whatever the run did; its other fields an inside cell cannot set (the context is never owned).
+    import decimal as _dc
+    _ctx = _dc.getcontext()
+    _flags, _traps = dict(_ctx.flags), dict(_ctx.traps)
     try:
-        _v = _rs.run_cell(_ml_trailing_return(_src), _ns, frozenset(${JSON.stringify(nodes)}))
+        try:
+            _v = _rs.run_cell(_ml_trailing_return(_src), _ns, frozenset(${JSON.stringify(nodes)}))
+        finally:
+            for _s, _on in _flags.items():
+                _ctx.flags[_s] = _on
+            for _s, _on in _traps.items():
+                _ctx.traps[_s] = _on
     except (_r.NotInDialect, SystemError) as _e:
         # SystemError: the undo log did not replay cleanly, so nothing about the run is trusted.
         _msg = str(_e) or type(_e).__name__
@@ -178,6 +190,33 @@ def _ml_inside_run(_src, _g):
     return _v
 `;
 
+/** The lifted leaves that write the file or buffer one parameter names, as [module, kind, method, parameter]: refused
+ *  with that parameter bound to anything but None (`dialectSetup`). The manifest marks each `write(buffer arg) when
+ *  <parameter>= is given`; tests/python-dialect-buffer-args.test.mjs holds the two to each other. */
+export const DIALECT_BUFFER_ARGS: [string, string, string, string][] = [
+    ["pandas", "DataFrame", "to_string", "buf"],
+    ["pandas", "Series", "to_string", "buf"],
+];
+
+/** The admitted module functions and ufuncs that write into the array their `out` parameter is given, as [module, name,
+ *  parameter]: refused with it bound to anything but None (`dialectSetup`). The manifest marks each `mutates(the out
+ *  argument) when out= is given`; tests/python-dialect-out-args.test.mjs enumerates every admitted callable taking out
+ *  and holds the two to each other. No C method is here: its checker does not survive a * or ** call, so one with an
+ *  out argument is not listed at all (make-corpus-count.py's UNLISTED). */
+export const DIALECT_OUT_ARGS: [string, string, string][] = [
+    ["numpy", "abs", "out"],
+    ["numpy", "any", "out"],
+    ["numpy", "mean", "out"],
+    ["numpy", "sum", "out"],
+    ["numpy", "rint", "out"],
+];
+
+/** Standard-library manifest names that stay refused inside, with why: `_ml_stdlib` registers every other callable one
+ *  (tests/python-dialect-vocab.test.mjs holds each name to a call that runs or a reason here). */
+export const DIALECT_STDLIB_REFUSED: Record<string, string> = {
+    "random.choice": "it advances the random module's shared generator, a write the ownership check cannot see, so a later cell's draws would depend on an inside cell",
+};
+
 /**
  * Make the interpreter ready to run cells inside the dialect, once per worker: the fork's modules present, its build
  * gate off (no specialization, tier 2 or JIT), the whitelist and manifests written where `load_manifests` reads them,
@@ -187,7 +226,7 @@ def _ml_inside_run(_src, _g):
  */
 export const dialectSetup = (files: Record<string, string>): string => /* python */ `
 def _ml_dialect_setup(_files):
-    import importlib.util, os
+    import importlib.util, json, os
     if importlib.util.find_spec("_restricted") is None or importlib.util.find_spec("restricted") is None:
         return "this Pyodide build has no membership predicate (the stock core, not the restricted-mode fork)"
     import _restricted, restricted
@@ -201,7 +240,154 @@ def _ml_dialect_setup(_files):
     _restricted.reset()
     # What the gate admitted, kept for a library's shape rule: it judges imports by exactly these tables.
     import sys, types
-    sys.modules.setdefault("_ml_libraries", types.SimpleNamespace(pins={})).admitted = restricted.load_manifests(_dir)["modules"]
+    _done = restricted.load_manifests(_dir)
+    sys.modules.setdefault("_ml_libraries", types.SimpleNamespace(pins={})).admitted = _done["modules"]
+    return (_ml_stdlib(_restricted, restricted, json.loads(_files["manifest-stdlib.json"]))
+            or _ml_lifted_reads(_restricted, restricted, _done["kinds"], json.loads(_files["manifest-pandas.json"]))
+            or _ml_buffer_args(_restricted, restricted)
+            or _ml_out_args(_restricted, restricted))
+
+def _ml_stdlib(_restricted, restricted, _man):
+    # load_manifests admits READING each name manifest-stdlib.json lists (allow_module) but registers no call, so a
+    # listed type (decimal.Decimal, io.StringIO) or a C function of another module (decimal.getcontext's is _decimal)
+    # was refused inside. Each listed callable is registered here as the leaf its row describes: lifted, marked fresh
+    # when the row returns fresh, and its kind's listed methods readable; a listed class written in Python
+    # (csv.DictReader) runs its dunders lifted, as pandas' kinds do, or iterating it reads names the gate refuses. The
+    # re functions load_manifests registered itself, with their regex check. A name in DIALECT_STDLIB_REFUSED is
+    # registered with a check that refuses it, saying why. Every name registered is kept on _ml_libraries.stdlib, which
+    # the tests hold to the manifest. Dropped when the fork's load_manifests does this.
+    import importlib, sys, types
+    _refused = ${JSON.stringify(DIALECT_STDLIB_REFUSED)}
+    def _refuse(_key):
+        def _check(func, self, args, kwargs):
+            raise restricted.NotInDialect("not in dialect: " + _key + ": " + _refused[_key])
+        return _check
+    _done, _types = [], {}
+    for _mod, _names in _man["modules"].items():
+        try:
+            _m = importlib.import_module(_mod)
+        except ImportError:
+            continue
+        for _n in _names:
+            _key = _mod + "." + _n
+            if "." in _n or (_mod == "re" and _n in restricted._REGEX):
+                continue
+            _f = getattr(_m, _n, None)
+            if _f is None:
+                return _key + " is listed but this Python has no such name"
+            if isinstance(_f, type):
+                _types[_n] = _f
+            if not callable(_f):
+                continue
+            _row = _man["leaves"].get(_key)
+            if _row is None:
+                return _key + " is listed with no manifest row"
+            # A bound method (random.choice is one, of a hidden Random) is registered by its function, as the gate
+            # looks it up.
+            _f = getattr(_f, "__func__", _f)
+            if _key in _refused:
+                _restricted.allow_call(_f, True, _refuse(_key))
+                continue
+            _restricted.allow_call(_f, True, None)
+            if _row["returns"].split(";")[0].strip() == "fresh":
+                _restricted.allow_fresh(_f)
+            _done.append(_key)
+    _kinds = dict(_man["kinds"])
+    for _n, _t in _types.items():
+        if type(_t.__dict__.get("__init__")) is types.FunctionType:
+            _kinds[_n] = list(_kinds.get(_n, [])) + ["__^"]
+    for _kind, _names in _kinds.items():
+        if _kind not in _types:
+            return "the stdlib kind " + _kind + " is not a type the manifest lists"
+        _restricted.allow_kind(_types[_kind], list(_names))
+        _done.extend(_kind + "." + _n for _n in _names if _n != "__^")
+    sys.modules["_ml_libraries"].stdlib = sorted(_done)
+    return ""
+
+def _ml_lifted_reads(_restricted, restricted, _kinds, _man):
+    # A listed pandas attribute that is a Python property (DataFrame.shape, Series.values) is read under the gate, so its
+    # getter's own reads of pandas internals ('_mgr') were refused and the name was dead inside. The gate reads a name
+    # its kind's DYNAMIC rule admits LIFTED (Objects/object.c), so each such property whose row is pure leaves the
+    # kind's table for its dynamic rule; DataFrame's rule keeps the fork's columns rule beside it. A Series' iloc
+    # indexer reads items lifted, as a DataFrame does, and never writes one: the write barrier would judge the indexer,
+    # a new object at each read, not the Series it writes. Dropped when the fork lifts a listed property itself.
+    import inspect
+    try:
+        import pandas
+        from pandas.core.indexing import _iLocIndexer
+    except ImportError:     # not loaded here, so load_manifests admitted nothing of it either
+        return ""
+    for _kind in ("DataFrame", "Series", "Index"):
+        _cls = getattr(pandas, _kind)
+        _names = _kinds.get("pandas." + _kind, [])
+        _props = frozenset(_n for _n in _names if isinstance(inspect.getattr_static(_cls, _n, None), property)
+                           and _man["leaves"].get(_kind + "." + _n, {}).get("effects") == "pure")
+        if not _props:
+            continue
+        _restricted.allow_kind(_cls, [_n for _n in _names if _n not in _props])
+        if _kind == "DataFrame":
+            _restricted.allow_dynamic(_cls, lambda obj, name, _cls=_cls, _props=_props: isinstance(name, str) and (
+                name in _props or (not hasattr(_cls, name) and name in obj.columns)))
+        else:
+            _restricted.allow_dynamic(_cls, lambda obj, name, _props=_props: name in _props)
+    if "iloc" in _kinds.get("pandas.Series", []):
+        _restricted.allow_kind(_iLocIndexer, ["[]", "[]^"])
+
+def _ml_buffer_args(_restricted, restricted):
+    # Each leaf in DIALECT_BUFFER_ARGS writes the file or buffer its parameter names, which the fork's own deny-list
+    # (restricted._EFFECTFUL) does not know. So it is re-registered with an entry check that refuses the parameter bound
+    # to anything but None, by keyword or by position, and the call asks. A second lifted allow_call replaces the
+    # first's checker; the fork's own check still runs after this one. A parameter the signature lacks is a reason.
+    import inspect
+    for _mod, _kind, _name, _p in ${JSON.stringify(DIALECT_BUFFER_ARGS)}:
+        try:
+            _cls = restricted._kind_class(_mod, _kind)
+        except ImportError:     # the library is not loaded here, so load_manifests admitted nothing of it either
+            continue
+        for _c in (_cls if isinstance(_cls, tuple) else (_cls,) if _cls else ()):
+            _f = restricted._static_function(_c, _name)
+            if _f is None:
+                continue
+            _params = list(inspect.signature(_f).parameters)[1:]
+            if _p not in _params:
+                return f"{_kind}.{_name} has no parameter {_p} in this pandas, so its buffer check cannot be placed"
+            _at = _params.index(_p) if inspect.signature(_f).parameters[_p].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD else None
+            _own = restricted.entry_check(_name, True, arguments=_name in restricted._ENTRY_CHECKED)
+            def _check(func, self, args, kwargs, _name=_name, _p=_p, _at=_at, _own=_own):
+                _a = args if self is not None else args[1:]
+                if (kwargs or {}).get(_p) is not None or (_at is not None and len(_a) > _at and _a[_at] is not None):
+                    raise restricted.NotInDialect(f"not in dialect: {_name}({_p}=…) writes to the file or buffer it is given")
+                _own(func, self, args, kwargs)
+            _restricted.allow_call(_f, True, _check)
+    return ""
+
+def _ml_out_args(_restricted, restricted):
+    # Each function in DIALECT_OUT_ARGS writes into the array its out parameter is given, from C, where the ownership
+    # check never sees it. So it is re-registered, lifted as load_manifests registered it, with a check that refuses out
+    # bound to anything but None, by keyword or by position, before the fork's own entry check; the call asks. A
+    # parameter the signature lacks is a reason, so every cell asks.
+    import importlib, inspect, json
+    for _mod, _name, _p in json.loads(${JSON.stringify(JSON.stringify(DIALECT_OUT_ARGS))}):
+        try:
+            _f = getattr(importlib.import_module(_mod), _name, None)
+        except ImportError:     # the library is not loaded here, so load_manifests admitted nothing of it either
+            continue
+        if _f is None:
+            continue
+        try:
+            _sig = inspect.signature(_f).parameters
+        except (TypeError, ValueError):
+            return f"{_mod}.{_name}: its signature cannot be read, so its out check cannot be placed"
+        if _p not in _sig:
+            return f"{_mod}.{_name} has no parameter {_p} in this numpy, so its out check cannot be placed"
+        _at = list(_sig).index(_p) if _sig[_p].kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD) else None
+        _own = restricted.entry_check(_name, False) if _name in restricted._ENTRY_CHECKED else None
+        def _check(func, self, args, kwargs, _name=_name, _p=_p, _at=_at, _own=_own):
+            if (kwargs or {}).get(_p) is not None or (_at is not None and len(args) > _at and args[_at] is not None):
+                raise restricted.NotInDialect(f"not in dialect: {_name}({_p}=…) writes into the array it is given")
+            if _own is not None:
+                _own(func, self, args, kwargs)
+        _restricted.allow_call(_f, True, _check)
     return ""
 _ml_dialect_setup(${JSON.stringify(files)})
 `;

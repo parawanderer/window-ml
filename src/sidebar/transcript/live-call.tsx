@@ -95,6 +95,17 @@ export function LiveCall({ call, leaving, queued }: { call: LiveToolCall; /** fo
             if (el) { noteLiveCall(el.offsetHeight); noteLiveGlyphs(el, wasStreamed(life.current.arrivals, Date.now() - life.current.at)); }   // the hand-over's window starts now
         };
     }, []);
+    // The caret of a tree sits at the end of its last value: the tree is blocks, so it is placed by measuring (`.jt-args > .live-caret`).
+    const args = useRef<HTMLDivElement>(null);
+    useLayoutEffect(() => {
+        const box = args.current, caret = box?.querySelector<HTMLElement>(":scope > .live-caret");
+        if (!box || !caret) return;
+        const vals = box.querySelectorAll<HTMLElement>(".jt-val"), at = vals.length ? vals[vals.length - 1] : box.querySelector<HTMLElement>(".jt-brace");
+        if (!at) return;
+        const b = box.getBoundingClientRect(), r = at.getBoundingClientRect();
+        caret.style.left = `${Math.round(r.right - b.left + 2)}px`;
+        caret.style.top = `${Math.round(r.top - b.top + (r.height - caret.offsetHeight) / 2)}px`;
+    });
     const onScroll = (): void => { const el = body.current; if (el) follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 8; };
     // HAS IT GONE QUIET? A model that stalls mid-call (a server that stopped, a dropped stream) looked exactly like
     // one writing slowly: a counter that is not moving. Timed by THIS clock from when the count last changed, so a
@@ -127,7 +138,7 @@ export function LiveCall({ call, leaving, queued }: { call: LiveToolCall; /** fo
                     : v.kind === "text"
                         ? <div class={`md live-call-md${v.writing ? " writing" : ""}`} dangerouslySetInnerHTML={{ __html: markdown(closeStreaming(v.text) || "\u200b", { math: true }) }} />
                         : v.kind === "tree"
-                            ? <div class="jt-args">
+                            ? <div class="jt-args" ref={args}>
                                 <JsonNode v={v.value} allOpen defaultOpen />
                                 {v.writing ? <span class="live-caret" aria-hidden="true" /> : null}
                               </div>

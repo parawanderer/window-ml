@@ -25,6 +25,13 @@
 // had nothing: 2026-11-14 the file ran 41 min in CI (run 43598035248) and only the runner's 45-min watchdog ended
 // it, every file queued behind it reported "interrupted". `armFileGuard` below is armed at MODULE LOAD, before
 // `before()`, so the boot is covered too — same Worker + `Atomics.wait` + SIGKILL shape as the writer.
+//
+// Its budget was the whole file's 15 min, so the one stage with no writer — the positive-control cell — could
+// still hold the slot for that long: 2026-11-19 the file was killed at its 900 s budget in CI (run 44519875129,
+// #2005's `test (node 26)`), the three writer rows passed, the boot's packages loaded, and the first Pyodide row
+// never reported. The kill printed nothing (`console.error` does not reach a piped stderr before the SIGKILL),
+// so the log named no stage. The boot and every `cell()` now carry their own 180 s guard — the row's own
+// `timeout` is a timer on the frozen thread and cannot fire — and helpers-fileguard writes its line synchronously.
 import { test, before, after } from "node:test";
 import assert from "node:assert";
 import path from "node:path";
@@ -37,7 +44,12 @@ import { PY_PACKAGE_LOADS } from "../src/python/python-env.ts";
 import { armFileGuard } from "./helpers-fileguard.mjs";
 
 // Armed at module load, before `before()` — the boot is the gap the per-test writers cannot see (header, 2026-11-14).
+// The last resort; the per-phase guards below fire first and name their phase.
 const disarmFileGuard = armFileGuard({ label: "python-bench-stop" });
+
+/** A boot or one cell that has not answered in this long is a hang, not a slow run: the rows' own 180 s timeouts
+ *  cannot fire once a cell has frozen this thread, which is exactly the case the guard exists for. */
+const CELL_GUARD_MS = 180_000;
 
 const DIST = path.resolve(import.meta.dirname, "../dist");
 const hasPyodide = fs.existsSync(path.join(DIST, "pyodide", "pyodide.mjs"));
@@ -106,11 +118,11 @@ const WRITER_SRC = `
         Atomics.wait(a, 0, 2, 5);                    // sleep while the slot still holds 2: the end wipe wakes us
     }
     if (!success) {
-        if (!written) {
-            console.error('python-bench-stop: the script never reached its beacon within ' + workerData.failAfterMs + 'ms');
-        } else {
-            console.error('python-bench-stop: the stop never ended the script within ' + workerData.failAfterMs + 'ms');
-        }
+        const why = !written
+            ? 'python-bench-stop: the script never reached its beacon within ' + workerData.failAfterMs + 'ms'
+            : 'python-bench-stop: the stop never ended the script within ' + workerData.failAfterMs + 'ms';
+        require('node:fs').writeSync(2, why + '\\n');  // synchronous: the SIGKILL below ends the process in this
+                                                     // turn, and a piped stderr written on the event loop loses the line
         process.kill(process.pid, 'SIGKILL');        // process.exit() on a worker thread ends only the THREAD —
                                                      // measured 2026-11-09: a blocked main thread outlives it and
                                                      // the process exits 0. SIGKILL takes the process down loud.
@@ -119,23 +131,28 @@ const WRITER_SRC = `
 
 before(async () => {
     if (skip) return;
-    // Pyodide in Node wants a filesystem path where the worker hands it a URL (python-worker-bridges.test.mjs).
-    shim = fs.mkdtempSync(path.join(os.tmpdir(), "wml-stop-"));
-    fs.mkdirSync(path.join(shim, "pyodide"));
-    fs.writeFileSync(path.join(shim, "pyodide", "pyodide.mjs"),
-        `import { loadPyodide as real } from ${JSON.stringify(pathToFileURL(path.join(DIST, "pyodide", "pyodide.mjs")).href)};\n` +
-        `export const loadPyodide = (o) => real({ ...o, indexURL: ${JSON.stringify(path.join(DIST, "pyodide") + "/")}, packageBaseUrl: ${JSON.stringify(path.join(DIST, "pyodide") + "/")} });\n`);
-    globalThis.self = Object.assign(Object.create(globalThis), {
-        name: "readonly",
-        location: { href: pathToFileURL(shim + "/").href },
-        postMessage: (m) => {
-            posted.push(m);
-            if (m.partial && typeof m.chunk === "string" && m.chunk.includes(BEACON)) Atomics.store(beaconFlag, 0, 1);
-        },
-        addEventListener: (type, fn) => { if (type === "message") handler = fn; },
-    });
-    await import("../src/python/python-worker.ts");
-    handler({ data: { interruptBuffer: flag } });
+    const disarmBoot = armFileGuard({ budgetMs: CELL_GUARD_MS, label: "python-bench-stop: the boot" });
+    try {
+        // Pyodide in Node wants a filesystem path where the worker hands it a URL (python-worker-bridges.test.mjs).
+        shim = fs.mkdtempSync(path.join(os.tmpdir(), "wml-stop-"));
+        fs.mkdirSync(path.join(shim, "pyodide"));
+        fs.writeFileSync(path.join(shim, "pyodide", "pyodide.mjs"),
+            `import { loadPyodide as real } from ${JSON.stringify(pathToFileURL(path.join(DIST, "pyodide", "pyodide.mjs")).href)};\n` +
+            `export const loadPyodide = (o) => real({ ...o, indexURL: ${JSON.stringify(path.join(DIST, "pyodide") + "/")}, packageBaseUrl: ${JSON.stringify(path.join(DIST, "pyodide") + "/")} });\n`);
+        globalThis.self = Object.assign(Object.create(globalThis), {
+            name: "readonly",
+            location: { href: pathToFileURL(shim + "/").href },
+            postMessage: (m) => {
+                posted.push(m);
+                if (m.partial && typeof m.chunk === "string" && m.chunk.includes(BEACON)) Atomics.store(beaconFlag, 0, 1);
+            },
+            addEventListener: (type, fn) => { if (type === "message") handler = fn; },
+        });
+        await import("../src/python/python-worker.ts");
+        handler({ data: { interruptBuffer: flag } });
+    } finally {
+        disarmBoot();
+    }
 }, { timeout: 180000 });
 
 after(() => {
@@ -146,13 +163,20 @@ after(() => {
 /** Post one bench script the way the offscreen document does and wait for the worker's answer to it. */
 async function cell(code) {
     const id = nextId++;
-    handler({ data: { id, code, image: null, hardened: true, tables: null, persist: true, stream: true } });
-    for (let i = 0; i < 6000; i++) {
-        const done = posted.find((m) => m.id === id && !m.partial && !m.started && !m.booted && !m.spending);
-        if (done) return done;
-        await new Promise((r) => setTimeout(r, 10));
+    // The handler runs the script on THIS thread: a cell that freezes it cannot be ended by the row's timer, so
+    // the guard names the cell and SIGKILLs 180 s in (2026-11-19, run 44519875129: the one gap with no writer).
+    const disarm = armFileGuard({ budgetMs: CELL_GUARD_MS, label: "python-bench-stop: cell " + id });
+    try {
+        handler({ data: { id, code, image: null, hardened: true, tables: null, persist: true, stream: true } });
+        for (let i = 0; i < 6000; i++) {
+            const done = posted.find((m) => m.id === id && !m.partial && !m.started && !m.booted && !m.spending);
+            if (done) return done;
+            await new Promise((r) => setTimeout(r, 10));
+        }
+        throw new Error("no answer for cell " + id);
+    } finally {
+        disarm();
     }
-    throw new Error("no answer for cell " + id);
 }
 
 /**
@@ -215,9 +239,10 @@ test("the writer's backstop SIGKILLs the whole process, so a blocked main thread
             workerData: { sab: new SharedArrayBuffer(4), beacon: new SharedArrayBuffer(4), failAfterMs: 200 },
         });
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
-    `], { timeout: 10_000 });
+    `], { timeout: 10_000, encoding: "utf8" });
     assert.equal(r.signal, "SIGKILL", `the backstop killed the process itself: signal ${r.signal}, status ${r.status}`);
     assert.ok(Date.now() - t0 < 5000, "killed at the backstop's deadline, not by the spawn's own timeout");
+    assert.match(r.stderr, /never reached its beacon within 200ms\n/, `the kill names the stage: ${JSON.stringify(r.stderr)}`);
 });
 
 // --- the file guard: the whole file, boot included, cannot outlive its budget ---
@@ -232,9 +257,12 @@ test("the file guard SIGKILLs its own process when the file does not disarm it i
         import { armFileGuard } from ${JSON.stringify(guard)};
         armFileGuard({ budgetMs: 200, label: "child" });
         await new Promise(() => {});
-    `], { timeout: 10_000 });
+    `], { timeout: 10_000, encoding: "utf8" });
     assert.equal(r.signal, "SIGKILL", `the file guard killed the process itself: signal ${r.signal}, status ${r.status}`);
     assert.ok(Date.now() - t0 < 5000, "killed at the guard's budget, not by the spawn's own timeout");
+    // The line must survive the kill: stderr through the event loop is lost when the SIGKILL lands first
+    // (2026-11-19, run 44519875129), which leaves the failure with no stage named.
+    assert.match(r.stderr, /^child did not finish within 200ms: SIGKILL\n/, `the kill names what died: ${JSON.stringify(r.stderr)}`);
 
     // And the disarm is real: a file that finishes in time is never killed, even with a budget this tight.
     const ok = spawnSync(process.execPath, ["--input-type=module", "-e", `

@@ -28,6 +28,16 @@ const root = () => doc.getElementById("root");
 const show = (C, props) => { render(null, root()); render(h(C, props), root()); return root(); };
 const buttons = (host) => [...host.querySelectorAll("button")].map((b) => b.textContent);
 const button = (host, label) => [...host.querySelectorAll("button")].find((b) => b.textContent === label);
+/**
+ * Wait until `find()` returns something, or fail naming what was missing. A fixed `tick()` is not a wait: it passes
+ * when the machine is idle and misses a render that a loaded one has not committed — the local failure of 2026-11-19
+ * was `Cannot read properties of undefined (reading 'click')` on the encryption row at load 40, taken from a button
+ * whose label is only drawn after an ASYNC keyring read (`backup-section.tsx:251`, `keyringSet`).
+ */
+async function until(find, ms, what) {
+    for (const end = Date.now() + ms; Date.now() < end; await tick(50)) { const found = find(); if (found) return found; }
+    assert.fail(`waited ${ms} ms for ${what}`);
+}
 const type = async (input, v) => { input.value = v; input.dispatchEvent(new win.Event("input", { bubbles: true })); await tick(); };
 const GROUPS = ["K7QF", "2MXR", "9TWD", "H4BN", "6CJV", "PZ3E", "8GYA"];
 
@@ -218,19 +228,20 @@ test("setting up encryption writes the recovery key to no storage, and stores no
     const { keyringState, idbKeyringStore } = await import("../src/backup/backup-keyring.ts");
     writes.length = 0;
     const host = show(M.LocalBackup, {});
-    await tick(100);
-    button(host, "Set up encryption and back up…").click(); await tick();
-    const [a, b] = root().querySelectorAll("input");
+    const setup = await until(() => button(host, "Set up encryption and back up…"), 20_000, "the encryption set-up button (its label waits for the keyring read)");
+    setup.click(); await tick();
+    const [a, b] = await until(() => { const ins = root().querySelectorAll("input"); return ins.length >= 2 ? ins : null; }, 10_000, "the two passphrase fields");
     await type(a, "a long enough passphrase"); await type(b, "a long enough passphrase");
-    button(root(), "Continue").click();
+    (await until(() => button(root(), "Continue"), 10_000, "the Continue button")).click();
     for (let i = 0; i < 100 && !root().querySelector(".bk-group"); i++) await tick(50);   // Argon2 runs here
     const groups = [...root().querySelectorAll(".bk-group")].map((g) => g.textContent);
     assert.equal(groups.length, 7, "the key is shown");
     assert.equal((await keyringState(idbKeyringStore())).set, false, "nothing is stored while the key is only shown");
-    button(root(), "I have saved it").click(); await tick();
+    (await until(() => button(root(), "I have saved it"), 10_000, "the \"I have saved it\" button")).click(); await tick();
+    const askInput = await until(() => (/Type group (\d)/.test(root().textContent) ? root().querySelector("input") : null), 10_000, "the field that types a group back");
     const ask = Number(/Type group (\d)/.exec(root().textContent)[1]);
-    await type(root().querySelector("input"), groups[ask - 1]);
-    button(root(), "Finish set-up").click();
+    await type(askInput, groups[ask - 1]);
+    (await until(() => button(root(), "Finish set-up"), 10_000, "the Finish set-up button")).click();
     for (let i = 0; i < 40 && !(await keyringState(idbKeyringStore())).set; i++) await tick(50);
     assert.equal((await keyringState(idbKeyringStore())).set, true, "stored once the key was typed back");
     const all = writes.join("\n");

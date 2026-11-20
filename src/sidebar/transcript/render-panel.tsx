@@ -4,8 +4,8 @@
 // Extracted from app.tsx; leans on the shared primitives in ./ui-kit.
 import type { ComponentChildren } from "preact";
 import { GLYPH, RESOLVED_LABEL, rungLabel, rungMeta } from "../export/fetch-ladder";
-import { IconCheck, IconChevron, IconCopy, IconEye, IconEyeOff, IconRows, IconSummary } from "../icons";
-import { scrollToStepSeq } from "./step-scroll";
+import { IconCheck, IconClose, IconCopy, IconExpand, IconEye, IconEyeOff, IconRows, IconSummary } from "../icons";
+import { scrollToStepSeq, revisionStepSeq } from "./step-scroll";
 import { useState, useRef, useEffect, useLayoutEffect, useMemo } from "preact/hooks";
 import { signal } from "@preact/signals";
 import type { RenderDescriptor, LocateSubstep, CodeRevision } from "../../contract/contract-render";
@@ -32,9 +32,11 @@ import {
     highlightToken, highlightEl, clearHighlight, tokenHover, pickedHover,
 } from "../ui-kit";
 import { displaySource } from "../code-block";
-import { DiffLines } from "../code-diff";
+import { DiffLines, SplitLines } from "../code-diff";
+import { Dialog } from "../dialog";
 import { copyText } from "../copy-hash";
 import { PkgCardRender } from "../card/pkg-card-view";
+import { SettingCardRender } from "../card/setting-card-view";
 import { useRawView } from "../raw-view";
 
 /** A tool's returned DOM ELEMENTS, as a hoverable list. Each row carries the same stateless
@@ -607,6 +609,28 @@ function notesForBlock(ctx: CodeCtx | undefined, rv: number): Map<number, string
     return notes && !notesHidden.has(key) ? notesByLine(notes) : undefined;
 }
 
+/** The three views of a revising call's block: its code, the diff against the call it revises, and that diff in two columns. */
+export type RevisionView = "code" | "diff" | "split";
+/** Narrower than this (px of the block's own width) two code columns do not fit, and `split` draws as `diff`. */
+export const SPLIT_MIN_PX = 520;
+
+/** Is this element narrower than `min` px? Measured on the element itself (a panel can be dragged to any width, and so
+ *  can a docked bench), re-read on every resize. Unmeasurable (no layout, no ResizeObserver) reads as wide enough. */
+function useNarrow(el: { current: HTMLElement | null }, min: number): boolean {
+    const [narrow, setNarrow] = useState(false);
+    useLayoutEffect(() => {
+        const node = el.current;
+        if (!node) return;
+        const read = (w: number): void => setNarrow(w > 0 && w < min);
+        read(node.getBoundingClientRect().width);
+        if (typeof ResizeObserver === "undefined") return;
+        const ro = new ResizeObserver((es) => read(es[0]?.contentRect.width ?? node.getBoundingClientRect().width));
+        ro.observe(node);
+        return () => ro.disconnect();
+    }, [min]);
+    return narrow;
+}
+
 /** WHAT CHANGED SINCE THE CALL THIS REVISES. The commonest loop in a run is: a code tool fails, the model
  *  retries with a tweak, and the reader diffs two twenty-line blocks by eye to find the one line that moved.
  *
@@ -615,38 +639,62 @@ function notesForBlock(ctx: CodeCtx | undefined, rv: number): Map<number, string
  *  calls it wrote a minute apart are not spaced the same way.
  *
  *  The header says WHAT it is diffing against and takes you there, because a diff whose other side you
- *  cannot see is half an answer. The model's own account of the change sits BESIDE the diff, marked as its
- *  claim: it answers from what it MEANT to change, and the two disagree exactly when this is worth reading. */
-function CodeDiff({ revision, after, lang, hash, failed }: { revision: CodeRevision; after: string; lang: string; hash?: string; failed?: boolean }) {
-    // OPEN ONLY WHEN THE STEP FAILED. That is when "what did I change" is the question you are actually
-    // asking — a retry that WORKED is a step whose output you want, and pinning a diff open above it pushes
-    // that output out of the viewport to answer a question nobody asked. Collapsed it is one line, and the
-    // line still says what it revises and by how much, so nothing is hidden.
+ *  cannot see is half an answer. At its right a switch (code | diff | split) REPLACES the body in place: one
+ *  body at a time, so the diff never stacks on top of the code and doubles the block's height. The model's own
+ *  account of the change sits BESIDE the diff views, marked as its claim: it answers from what it MEANT to
+ *  change, and the two disagree exactly when this is worth reading.
+ *
+ *  `children` is the code view (the block's own, with its tools); without them the view is a plain `Code`.
+ *  `view` is the one it opens on, which a caller only sets to show a particular one (the gallery).
+ *  @group transcript, code
+ *  @gallery code view {"revision":{"ref":"9d3822f","tool":"exec","seq":1,"label":"the timeline survey","before":"const a = [1, 2, 3];\nconst n = a.length;\nreturn n;","claim":"Counts both lists."},"after":"const a = [1, 2, 3];\nconst b = [4, 5];\nconst n = a.length + b.length;\nreturn n;","lang":"javascript","view":"code"}
+ *  @gallery diff view {"revision":{"ref":"9d3822f","tool":"exec","seq":1,"label":"the timeline survey","before":"const a = [1, 2, 3];\nconst n = a.length;\nreturn n;","claim":"Counts both lists."},"after":"const a = [1, 2, 3];\nconst b = [4, 5];\nconst n = a.length + b.length;\nreturn n;","lang":"javascript","view":"diff"}
+ *  @gallery split view {"revision":{"ref":"9d3822f","tool":"exec","seq":1,"label":"the timeline survey","before":"const a = [1, 2, 3];\nconst n = a.length;\nreturn n;","claim":"Counts both lists."},"after":"const a = [1, 2, 3];\nconst b = [4, 5];\nconst n = a.length + b.length;\nreturn n;","lang":"javascript","view":"split"}
+ *  @gallery narrow, split falls back to diff {"revision":{"ref":"9d3822f","tool":"exec","seq":1,"label":"the timeline survey","before":"const a = [1, 2, 3];\nconst n = a.length;\nreturn n;","claim":"Counts both lists."},"after":"const a = [1, 2, 3];\nconst b = [4, 5];\nconst n = a.length + b.length;\nreturn n;","lang":"javascript","view":"split","splitMinPx":100000}
+ *  @gallery failed step opens on the diff {"revision":{"ref":"9d3822f","tool":"exec","seq":1,"before":"const n = 1;\nreturn n;"},"after":"const n = 2;\nreturn nn;","lang":"javascript","failed":true}
+ */
+export function CodeDiff({ revision, after, lang, hash, failed, view: initial, splitMinPx = SPLIT_MIN_PX, children }: { revision: CodeRevision; after: string; lang: string; hash?: string; failed?: boolean; view?: RevisionView; splitMinPx?: number; children?: ComponentChildren }) {
+    // THE DIFF IS WHERE IT OPENS ONLY WHEN THE STEP FAILED. That is when "what did I change" is the question you
+    // are actually asking — a retry that WORKED is a step whose output you want, and a diff in front of the
+    // code answers a question nobody asked. The code is one click away, and the header still says what it
+    // revises and by how much, so nothing is hidden.
     //
-    // Focus mode folds it either way: it reads the run as a conversation, and this is a debugger's question
-    // even on a failure. Seeded like every other focus fold (see useFocusFold) rather than bound to the
-    // signal, so a diff you opened stays open through the next poll.
+    // Focus mode opens on the code either way: it reads the run as a conversation, and this is a debugger's
+    // question even on a failure. Seeded like every other focus fold (see useFocusFold) rather than bound to the
+    // signal, so a view you picked stays through the next poll.
     // THE NUMBERS ONLY WHEN THEY LINE UP WITH SOMETHING. They earn their width because the new-side column
-    // is the same numbering the code block below draws — so a diff row, a margin note and the failure mark
+    // is the same numbering the code block draws — so a diff row, a margin note and the failure mark
     // all name the same line and you can read straight down between them. With the block's own gutter off
-    // they line up with nothing, and are just width taken in a narrow panel. A failure turns that gutter on
-    // by itself (see `Code`), so the two can never disagree.
+    // they line up with nothing, and are just width taken in a narrow panel. A failure turns that gutter on by
+    // itself (see `Code`), so the two can never disagree.
     const nums = codeLineNumbers.value || !!failed;
     const focus = focusMode.value;
-    const [open, setOpen] = useState(!!failed && !focus);
+    const dflt: RevisionView = failed && !focus ? "diff" : "code";
+    const [picked, setPicked] = useState<RevisionView>(initial ?? dflt);
     const seeded = useRef(focus);
-    if (seeded.current !== focus) { seeded.current = focus; setOpen(!!failed && !focus); }
+    if (seeded.current !== focus) { seeded.current = focus; setPicked(dflt); }
+    const [maxed, setMaxed] = useState(false);
+    const root = useRef<HTMLDivElement>(null);
+    const narrow = useNarrow(root, splitMinPx);
     const before = lang === "python" ? pyFormat(revision.before).text : displaySource(revision.before, lang, true);
     const rows = useMemo(() => codeDiff(before, after), [before, after]);
     // Nothing to show is not the same as nothing to say: a retry whose source is IDENTICAL is a fact worth
-    // stating, since the model believes it changed something.
+    // stating, since the model believes it changed something. There is no diff to switch to then.
     const stat = rows ? diffStat(rows) : { added: 0, removed: 0 };
+    const shown: RevisionView = !rows ? "code" : picked === "split" && narrow ? "diff" : picked;
+    const bodyOf = (v: RevisionView, plain: boolean): ComponentChildren => v === "code"
+        ? (plain || !children ? <Code text={after} lang={lang} /> : children)
+        : v === "split" ? <SplitLines rows={rows!} lang={lang} numbers={nums} class="r-diff-body" />
+        : <DiffLines rows={rows!} lang={lang} numbers={nums} class="r-diff-body" />;
+    const claim = shown !== "code" && revision.claim
+        ? <div class="r-diff-claim"{...cursorTipOn("The model's own account of what it changed. The diff below is computed from the two sources; this is not.")}>
+            <span class="r-diff-claim-tag">the model says:</span> <Prose md={revision.claim} steps={sessionMap.get(hash || "")?.steps} hash={hash} /></div>
+        : null;
+    const VIEWS: [RevisionView, string][] = [["code", "The code of this call."], ["diff", "What changed since the call this revises, one column."],
+        ["split", narrow ? `Old and new side by side. Too narrow for two columns here (under ${splitMinPx}px), so this shows the diff.` : "Old and new side by side."]];
     return (
-        <div class={`r-diff${open ? "" : " closed"}`}>
+        <div class="r-diff" ref={root} data-view={shown}>
             <div class="r-diff-head">
-                <button class={`r-diff-tri${open ? " open" : ""}`} onClick={() => setOpen(!open)} aria-expanded={open}>
-                    <IconChevron />
-                </button>
                 <span class="r-diff-lbl">revises</span>
                 {/* The pill IS the pointer, and it navigates — the same gesture a citation makes. The SHELL
                     is the shared PointerChip, so a reference reads the same here as it does under a step:
@@ -657,25 +705,39 @@ function CodeDiff({ revision, after, lang, hash, failed }: { revision: CodeRevis
                     not, because an id you can copy beats a name we invented. */}
                 <PointerChip cls="r-diff-ref"
                     label={revision.label ? `${revision.tool}: ${revision.label}` : revision.ref}
-                    onClick={() => scrollToStepSeq(revision.seq, hash, "in")}
+                    onClick={() => scrollToStepSeq(revisionStepSeq(revision.ref, sessionMap.get(hash || "")?.steps), hash, "in")}
                     tip={<>Go to the {revision.tool} call this revises{revision.label ? <> — the model called it "{revision.label}"</> : null}.</>} />
                 {rows
                     ? <span class="r-diff-stat"><b class="r-diff-add">+{stat.added}</b> <b class="r-diff-del">−{stat.removed}</b></span>
                     : <span class="r-diff-same">no change — the source is identical</span>}
+                <span class="r-diff-tools">
+                    {rows
+                        ? <span class="r-diff-seg" role="group" aria-label="View">
+                            {VIEWS.map(([v, tip]) => <button key={v} type="button" class={`r-diff-segbtn${picked === v ? " on" : ""}`}
+                                aria-pressed={picked === v} data-fallback={v === "split" && narrow ? "" : undefined}
+                                onClick={() => setPicked(v)} {...cursorTipOn(tip)}>{v}</button>)}
+                        </span>
+                        : null}
+                    <button type="button" class="icon-btn r-diff-max" aria-label="Maximise this view" onClick={() => setMaxed(true)} {...cursorTipOn("Open this view full size.")}><IconExpand /></button>
+                </span>
             </div>
-            {/* The model's CLAIM, always marked as one. It is never a substitute for the rows below it, and it
-                lives INSIDE the fold — collapsed, this has to be one line. */}
-            {open && revision.claim
-                ? <div class="r-diff-claim"{...cursorTipOn("The model's own account of what it changed. The diff below is computed from the two sources; this is not.")}>
-                    <span class="r-diff-claim-tag">the model says:</span> <Prose md={revision.claim} steps={sessionMap.get(hash || "")?.steps} hash={hash} /></div>
-                : null}
-            {open && rows
-                /* BOTH line numbers, old then new — the standard two-column gutter, and the reason it earns
-                   its width here is that the NEW column is the same numbering the code block below this one
-                   draws. So a diff row, a margin note and a failure mark all name the same line, and you can
-                   read straight down between them instead of counting. A row that exists on only one side
-                   leaves the other column blank, which is exactly the claim being made. */
-                ? <DiffLines rows={rows} lang={lang} numbers={nums} class="r-diff-body" />
+            {/* The model's CLAIM, always marked as one. It stays with the diff views, and is never a substitute for the rows. */}
+            {claim}
+            {/* EXACTLY ONE body: the switch replaces it, so a diff never stacks over the code. */}
+            {shown === "code"
+                ? bodyOf("code", false)
+                : <div class="r-diff-view">{bodyOf(shown, false)}</div>}
+            {maxed
+                ? <Dialog onClose={() => setMaxed(false)} labelledBy={`rev-max-${revision.ref}`}>
+                    <div class="r-max">
+                        <div class="r-max-head">
+                            <h2 id={`rev-max-${revision.ref}`}>Revises {revision.label ? `${revision.tool}: ${revision.label}` : revision.ref} · {shown}</h2>
+                            <button type="button" class="icon-btn" aria-label="Close" onClick={() => setMaxed(false)} {...cursorTipOn("Close (Esc).")}><IconClose /></button>
+                        </div>
+                        {claim}
+                        <div class="r-max-body">{bodyOf(shown, true)}</div>
+                    </div>
+                </Dialog>
                 : null}
         </div>
     );
@@ -725,13 +787,16 @@ function PythonInRender({ d, live, failLine, ctx, failed }: { d: Extract<RenderD
                 line MAP is published on the element rather than passed between descriptors: the In and the
                 Out are two independent RenderDescriptors rendered in two separate blocks, and threading one
                 through the other would couple them for the sake of one number. */}
-            {d.revision ? <CodeDiff revision={d.revision} after={fmt.text} lang="python" hash={ctx?.hash} failed={failed} /> : null}
-            <div class="code-block" data-cite="in" data-rev={rv} data-py-map={fmt.changed ? JSON.stringify(fmt.map) : undefined}
-                ref={block} tabIndex={0} onKeyDown={find.onKey}>
-                {find.bar ? <div class="code-find">{find.bar}</div> : null}
-                {ctx ? <CodeTools ctx={ctx} lang="python" src={fmt.text} /> : null}
-                <Code text={fmt.text} lang="python" lineIds="pyline" markLine={failAt} markTitle={failNote} notes={notesForBlock(ctx, rv)} />
-            </div>
+            {(() => {
+                const blk = (
+                    <div class="code-block" data-cite="in" data-rev={rv} data-py-map={fmt.changed ? JSON.stringify(fmt.map) : undefined}
+                        ref={block} tabIndex={0} onKeyDown={find.onKey}>
+                        {find.bar ? <div class="code-find">{find.bar}</div> : null}
+                        {ctx ? <CodeTools ctx={ctx} lang="python" src={fmt.text} /> : null}
+                        <Code text={fmt.text} lang="python" lineIds="pyline" markLine={failAt} markTitle={failNote} notes={notesForBlock(ctx, rv)} />
+                    </div>);
+                return d.revision ? <CodeDiff revision={d.revision} after={fmt.text} lang="python" hash={ctx?.hash} failed={failed}>{blk}</CodeDiff> : blk;
+            })()}
         </div>
     );
 }
@@ -1537,14 +1602,18 @@ export function PyBenchOut({ d, running, marks }: { d: Extract<RenderDescriptor,
  *  purely because of where it was cited. Pass `ctx` to get the tools; without it this is just the block.
  *
  *  A descriptor with several `rules` (a policy proposal) draws one section per rule instead.
+ *  @gallery revising call {"d":{"type":"code","lang":"javascript","text":"const n = 1 + 1;\nreturn n;","revision":{"ref":"9d3822f","tool":"exec","seq":1,"label":"the timeline survey","before":"const n = 1;\nreturn n;","claim":"Counts both lists."}},"ctx":{"hash":"g1","seq":2}}
  *  @gallery {"d":{"type":"code","lang":"javascript","text":"// Rule 1 of 2: allow\nreturn true;\n\n// Rule 2 of 2: deny\nreturn false;","note":"Rule 1 of 2. Covers 3 of 3 fetches.\n\nRule 2 of 2. Covers none.","rules":[{"effect":"allow","source":"return c.host === \"a.example\";","note":"Covers 3 of 3 fetches."},{"effect":"deny","source":"return c.url.includes(\"/admin/\");","note":"Covers none."}]}} */
 export function CodeRender({ d, failLine, ctx, failed }: { d: Extract<RenderDescriptor, { type: "code" }>; failLine?: number | null; ctx?: CodeCtx; failed?: boolean }) {
     const rv = rev.value;   // subscribe: a landed annotation repaints the block (retained via data-rev below)
-    const [map, setMap] = useState<number[] | null>(null);
-    const shownFail = failLine != null ? (map?.[failLine] ?? failLine) : null;
     // The annotator has to number the lines the READER sees, and `Code` beautifies JS internally — so the
     // source it will draw is derived here rather than assumed to be `d.text`.
     const shown = displaySource(d.text, d.lang, d.format, d.marks);
+    // The map from the typed lines to the shown ones, derived HERE (it is what `Code` derives and reports through
+    // `onMap`): a revising call can be showing its diff, with no `Code` mounted to report anything, and a stack trace
+    // beside it still resolves through this map.
+    const map = useMemo(() => (shown === d.text ? null : lineMapBetween(d.text, shown)), [d.text, shown]);
+    const shownFail = failLine != null ? (map?.[failLine] ?? failLine) : null;
     const block = useRef<HTMLDivElement>(null);
     const find = useCodeFind(block);
     // A several-rule proposal draws one section per rule. `text` stays the whole proposal (the raw view and the export
@@ -1560,11 +1629,7 @@ export function CodeRender({ d, failLine, ctx, failed }: { d: Extract<RenderDesc
             ))}
         </div>
     );
-    return (
-        <div class="code-block" data-cite="in" data-rev={rv} data-py-map={map ? JSON.stringify(map) : undefined}
-            ref={block} tabIndex={0} onKeyDown={find.onKey}>
-            {find.bar ? <div class="code-find">{find.bar}</div> : null}
-            {d.revision ? <CodeDiff revision={d.revision} after={shown} lang={d.lang === "python" ? "python" : "javascript"} hash={ctx?.hash} failed={failed} /> : null}
+    const inner = <>
             {ctx ? <CodeTools ctx={ctx} lang={d.lang === "python" ? "python" : "javascript"} src={shown} /> : null}
             {/* Said out loud, because the rendered text is not always what the caller typed: `exec` expands
                 pointer macros before running, so a reader comparing this against the raw args would
@@ -1574,12 +1639,24 @@ export function CodeRender({ d, failLine, ctx, failed }: { d: Extract<RenderDesc
                 statement across several rows, so the marked row is where the statement STARTS and the token
                 that actually threw can be a few lines down. Said only when the line really moved — an
                 unconditional caveat is noise that undermines the times it is true. */}
-            <Code text={d.text} lang={d.lang} format={d.format} marks={d.marks} onMap={setMap}
+            <Code text={d.text} lang={d.lang} format={d.format} marks={d.marks}
                 lineIds="line" markLine={shownFail}
                 markTitle={shownFail != null && shownFail !== failLine
                     ? "This line failed. It is shown reflowed for reading — in the code as written this was one line, so the failure is somewhere in the statement starting here."
                     : "This line failed."}
                 notes={notesForBlock(ctx, rv)} />
+    </>;
+    return (
+        <div class="code-block" data-cite="in" data-rev={rv} data-py-map={map ? JSON.stringify(map) : undefined}
+            ref={block} tabIndex={0} onKeyDown={find.onKey}>
+            {find.bar ? <div class="code-find">{find.bar}</div> : null}
+            {/* The toolbar is positioned against its nearest positioned ancestor. On a revising call that has to be
+                the CODE (`.code-body`), or it sits over the REVISES header above it. */}
+            {d.revision
+                ? <CodeDiff revision={d.revision} after={shown} lang={d.lang === "python" ? "python" : "javascript"} hash={ctx?.hash} failed={failed}>
+                    <div class="code-body">{inner}</div>
+                </CodeDiff>
+                : inner}
         </div>
     );
 }
@@ -1803,6 +1880,7 @@ export function RenderPanel({ d, marks, live, failLine, ranMs, ranSince, ctx, li
         }
         case "code": return <CodeRender d={d} failLine={failLine} ctx={ctx} failed={failed} />;
         case "packages": return <PkgCardRender request={d.request} verdict={d.verdict} />;
+        case "setting": return <SettingCardRender d={d} />;
         // The SAME grid a DataFrame gets (scroll-capped, sticky header, sort, copy-CSV, hide) — answer-render
         // already made this call for a cited df, and a fetched CSV is the same kind of object. The bare
         // alternative had no max-height, so a 200-row fetched table rendered as an unbroken wall in the step.
