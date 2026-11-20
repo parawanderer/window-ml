@@ -149,10 +149,12 @@ so the same holds, with no heuristic.
 **The flow (RULED 2026-11-20, Shane: the model may answer an `input()` itself, or escalate it to the person).**
 1. **The call says it is waiting, at once.** A leased cell that calls `input(prompt)` or `getpass(prompt)` resolves
    its tool call AT ONCE, with no lease wait. The status is new, beside `detached`: `{ status: "waiting-input", id,
-   prompt, masked, tail }`. It is a task row like a detached cell's: `task await` and `task cancel` work on it, it
-   shows in `ml.current.tasks`, and the kernel stays locked as for any running cell. A cell that had already detached
-   when it asks gets the same state as an inbox item, `[task <id> waiting for input: "<prompt>"]`. That item crosses
-   the inbox's checks, wakes a waiting `await`, and with no turn running starts one (rule 4b, slice C) under its gates.
+   prompt, masked: false, tail }`, or for a `getpass` `{ status: "waiting-person", id, prompt, masked: true, tail }`
+   (step 4: only the person can answer it). It is a task row like a detached cell's: `task await` and `task cancel` work
+   on it, it shows in `ml.current.tasks`, and the kernel stays locked as for any running cell. A cell that had already
+   detached when it asks gets the same state as an inbox item, `[task <id> waiting for input: "<prompt>"]`. That item
+   crosses the inbox's checks, wakes a waiting `await`, and with no turn running starts one (rule 4b, slice C) under its
+   gates.
 2. **Two new `task` verbs, no new tool.**
    - `task send <id> text`: the stdin write, which `input()` returns. The verb is not called `answer`, which is
      already a tool's name.
@@ -161,11 +163,15 @@ so the same holds, with no heuristic.
    - `send` resumes the cell under a fresh lease, so its result is the cell's next state: `finished` (the cell's
      result), `detached`, or `waiting-input` again.
    - A wizard is that loop, one round per question.
+   - Each state after the first carries only the output since the previous state, so a wizard's rounds never repeat
+     earlier output. The cell's whole output is one stored value at the end, in its finished result, as any cut
+     result is.
    - `escalate` CANNOT work as written. Its next state exists only once the person answers, which may be hours later.
      So `escalate` answers at once with `{ status: "waiting-person", id }`. The next state then arrives as any
      detached result does: to a `task await`, or through the inbox, starting a turn if none is running.
 4. **Masked.** A `getpass` (`masked: true`) never accepts `send` with plain text; `send` on it is refused by name. The
-   model is told a masked answer is awaited and that the person has been asked. Recommended: the card is raised AT ONCE,
+   model is told a masked answer is awaited and that the person has been asked, by the status itself:
+   `waiting-person` with `masked: true`, never `waiting-input`. Recommended: the card is raised AT ONCE,
    without the model's `escalate`, since nothing else can answer it. Open for files-host: whether `send` may name a
    registered secret BY NAME (`send <id> secret:PLUG_PASSWORD`), which only `SECRET_HANDLES.md` can allow.
 5. **The gate: free in a readonly cell, judged in a full one** (recommended). The text only becomes the return value
@@ -180,7 +186,11 @@ so the same holds, with no heuristic.
 6. **The record.** A `send` is a step like any tool call. The transcript, the run log and both exports show it with
    the prompt it answered, quoted as program output. The cell's own output echoes prompt and answer as a notebook
    does. A person's unmasked answer is ordinary text and reaches the model, through the echo, the variables and the
-   inbox item that resumes the run. A masked answer is a session secret (below) and does not.
+   inbox item that resumes the run. On its way to the model it passes the same scrub as the cell's output (`forModel`:
+   the extension's own key and every registered value). The residual is the variable's: the scrub runs where a text
+   crosses to the model, never on the kernel's values. So a secret the person types into an UNMASKED box is masked only
+   if it is already registered, and the cell's code holds it in plaintext either way. A masked answer is a session
+   secret (below) and does not reach the model.
 7. **Edges.**
    - **Nobody answers.** It stays `waiting-input` or `waiting-person`, and no new timeout is invented. The existing cap
      (`detachedTaskMaxMin`) still kills the cell, which withdraws any card.
@@ -230,11 +240,11 @@ user: <- input(); the model: task escalate <id>; the person types "shane"
 password: <- getpass(); masked, card raised at once; registered as a session secret before the cell resumes
 ```
 Each question is its own round, raised only when the program asks, so at most one is open per cell and they come in
-order. The model reads `waiting-input` with prompt `host [localhost]: ` and sends `db.internal` (judged: a library's setup
-runs in a full-mode cell). The next state is `waiting-input` again, with `user: `, and the model escalates that one because it does not
-know the name. The person answers on the card, and the next state, a masked `waiting-input` for `password: `, raises
-its card at once. The person answers, and the cell finishes. A card names the cell's task and quotes its prompt as
-program output. The cell's output reads
+order. The model reads `waiting-input` with prompt `host [localhost]: ` and sends `db.internal` (judged: a library's
+setup runs in a full-mode cell). The next state is `waiting-input` again, with `user: `, and the model escalates that
+one because it does not know the name. The person answers on the card, and the next state, `waiting-person` with
+`masked: true` for `password: `, raises its card at once. The person answers, and the cell finishes. A card names the
+cell's task and quotes its prompt as program output. The cell's output reads
 `host [localhost]: db.internal`, `user: shane` and `password: ` with nothing after the last. If the password card
 is dismissed, `getpass` raises `EOFError` and the wizard fails as it would with closed stdin. The first two answers stay
 in the output and the variables, where the model may read them.
@@ -280,8 +290,8 @@ in the output and the variables, where the model may read them.
   answers it.
 - **Bounded.** Each rule fires at most `times` (default 1, ceiling a small constant), so a program that asks again
   cannot loop forever. A rule used up falls back to `waiting-input`.
-- **Masked.** A masked prompt is never matched by a plain-text reply, only by a registered secret's NAME, if
-  `SECRET_HANDLES.md` allows it (open for files-host, as for `send`).
+- **Masked.** A masked prompt (`waiting-person`, `masked: true`) is never matched by a plain-text reply, only by a
+  registered secret's NAME, if `SECRET_HANDLES.md` allows it (open for files-host, as for `send`).
 - **Recorded.** Each firing is in the cell's output echo and the run log with the rule's index, so the transcript
   shows which answer the program got and why.
 

@@ -431,10 +431,10 @@ Some programs print a link and a code and wait for the person to approve (gh aut
 To sign in, open this link and enter the code:
 ![sign-in prompt](@tool:a1b2:out)
 Tell me when you have approved it.
-5. Do not open the link yourself, and do not await the task before answering: the person cannot see your answer until you finish. Its result starts your next turn.
+5. Do not open the link yourself, and do not await the task before answering: the person cannot see your answer until you finish. Its result arrives as a [task <id> …] message.
 ```
 
-Measured: 819 characters, about 205 tokens at four characters a token, paid only when the model reads that section. Step 1 matters: an `ml.sh` call
+Measured: 837 characters, about 209 tokens at four characters a token, paid only when the model reads that section. Step 1 matters: an `ml.sh` call
 that names no `timeoutMs` keeps the host's 120 s default (rule 4b, "The cap"), and a device code usually lasts longer
 than that. The cap clamps it to `detachedTaskMaxMin`. Checked: `TASK_AWAIT_MAX_MS` is 10 min (`sw-tasks.ts:125`). An
 await inside the turn would hold the answer, and so the link, from the person, which is why step 5 says not to.
