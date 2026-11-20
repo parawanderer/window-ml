@@ -553,24 +553,72 @@ an exec card for a read that changes nothing. This slice makes it free in the su
 wire a Pyodide cell calls, in a run the worker built, and nowhere else. It adds no new read: the survey returns what
 the isolated exec already returns, from the same function.
 
-**One function, two callers.** The survey's `ml.settings()` calls `settingEntries` (`src/sw/sw-change-setting.ts`),
-the function the isolated exec's member calls, so the two never differ. The slice changes that function from a deny
-list to an allow list over the class, so both callers change with it:
+**One function, two callers, read by caller.** The survey's `ml.settings()` calls `settingEntries`
+(`src/sw/sw-change-setting.ts`), the function the isolated exec's member calls, with the caller as a parameter
+(`"exec"` or `"survey"`; the wire is a survey caller). The slice changes that function from a deny list to an allow
+list over the class, so both callers change with it, and the survey's column is narrower for the reason in "Where a
+freely read value can go", below:
 
-| Class | Read in a survey and in an isolated exec | Entry |
+| Class | Isolated exec (behind its card) | Survey and wire (free) |
 | --- | --- | --- |
-| **ordinary** | yes | `{ value, mode: "read-write", class: "ordinary" }` |
-| **guarded** | yes | `{ value, mode: "read-write", class: "guarded" }`, the shell keys' paths in full |
-| **gate** | yes | `{ value, mode: "read", class: "gate" }` |
-| **secret** | no | `{ mode: "hidden", class: "secret" }` |
-| any class not in this table | no | `{ mode: "hidden", class: <its class> }` |
+| **ordinary** | value | value |
+| **guarded** | value, the shell keys' paths in full | value only for a key `ml.config()` returns; otherwise held |
+| **gate** | value | value only for a key `ml.config()` returns; otherwise held |
+| **secret** | hidden | hidden |
+| any class not in this table | hidden | hidden |
 
-`READABLE_CLASSES` in code is exactly the three readable rows. A class added to the declaration later is hidden in
-both callers until someone adds it there, and the row that enumerates `SETTING_CLASSES` reds on a class it does not
-name. The gate keys are readable on purpose, as they are on the isolated exec today: three of them are in
-`ml.config()` already, free to any approved page, and `shellRevealsAllow` is what the model reads to say why a call
-asked. (Open question 9 as first written said "the secret and gate classes unreadable"; the build has read the gate
-keys since #1952, and this slice keeps it so, so the survey never contradicts the isolated exec or `ml.config()`.)
+The entries: a value is `{ value, mode, class }` as today (`mode` is `"read-write"` for a key in the read-write set,
+`"read"` for a gate key). A held key is `{ mode, class, held: "exec" }`: it is still in the read-write set, so `mode`
+still says so, it has no `value` field, and `held` tells the model the value is read with an exec that names
+`ml.settings`, which asks. A hidden key is `{ mode: "hidden", class }`. Today the held keys are the guarded
+`shellEnabled`, `shellRoots`, `shellPath`, `shellSandbox`, `execDefaultWorld`, `agentStartPage`, `agentSeesFocus`,
+`siteRequests`, `listPageSessions`, `persistUiRuns`, `sessionArchive`, `sessionRetentionDays`, `sessionStoreBudgetMB`,
+`valueStoreBudgetMB`, `exportToolDefs`, `taskNotifyOnly`, `taskTurnChainMax` and the gate `shellRevealsAllow`. The
+guarded and gate keys read free are `apiFormat`, `serverToolsOff`, `commanderServerTools`, `selfIntrospection`,
+`pierceClosedShadow`, `cdp`, `debugMode` and the three `autoApprove*` keys.
+
+No list of keys is written down in code. The survey's rule is read from two declarations: the class
+(`SETTING_CLASSES`) and the keys `publicConfig` returns (`src/contract/contract-config.ts`), taken from
+`Object.keys(publicConfig(DEFAULT_CONFIG, false))`. So a key added to `ml.config()` becomes free here with it, and a
+new guarded key is held until it is. `READABLE_CLASSES` names the three readable classes. A class added to the
+declaration later is hidden in both callers until someone adds it there, and the row that enumerates
+`SETTING_CLASSES` reds on a class it does not name. The gate keys are readable on purpose (ruled by the coordinator
+on #2045, 2026-11-20), as they are on the isolated exec today. Open question 9 as first written said "the secret and
+gate classes unreadable"; the build has read the gate keys since #1952, and this slice keeps it so on the isolated
+exec.
+
+**Where a freely read value can go.** A free read is only as narrow as the free calls after it. Once the model holds a
+value, it can put it in any call that needs no card. Every outward call a worker-built run makes with no card, on
+today's defaults and every setting:
+
+| Free call | Where it goes | What the model chooses in it | A free setting value on it |
+| --- | --- | --- | --- |
+| `fetch_url` of the page the run is on (`isCurrentPage`, `src/dom/dom.ts`) | the page's server | nothing: the URL must equal the page's, query included; only the fragment is dropped, and it never reaches a server | cannot ride |
+| `fetch_url` to the tab's origin, the start origin while on it, or an origin a navigate card or an arrival `allow` consented (`fetchSameOrigin`, `src/sw/sw-run-host.ts`) | that origin's server | the whole path, query and body | **rides** |
+| `navigate` within the origin or to a consented one (`navNeedsConsent`) | that origin's server | path and query | **rides** |
+| `fetch_url` of the agent's own repository (`autoApproveSelfSource`, on by default; `isSelfSourceUrl` checks host and owner/repo only) | GitHub | the ref, the rest of the path, the query | **rides** |
+| the read-only survey's page leg (`surveyMayEnterPage`), and the page-realm read tools (`findByText`, `sampleText`, `describeElement` and the rest of `gated: false, realm: "page"` in the tool registry) | the page's own scripts, which can read the script text and the arguments (`docs/dev/readonly-exec.md`, "Threat questions answered") | literals in the script, selectors, search text | **rides** |
+| a URL a person approved earlier in the run, or remembered (`fetchNeedsConsent`) | that host | nothing: the URL is matched exactly | cannot ride |
+| a free `ml.sh` call (`shellEnabled` off by default; the built-in default frees reads and writes inside the roots and nothing with a network effect, `boundFor("host-sandbox")`, `src/effects.ts`) | the local disk inside the roots | arguments | cannot leave the machine |
+| a free `python_exec` cell (`autoApprovePython` off by default; restricted mode, no network) | nowhere | nothing outward | cannot ride |
+| every model step, `look`, `locate`, `ml.embed`, a `fetch_url` `ask` reader | the configured model server | the prompt | accepted: everything the model reads already goes there, and the person configured it |
+| the hub, once paired | the person's own paired devices, sealed | the run's stream | accepted: the person's own devices |
+
+So any value the survey returns can reach the page the run is on, any origin it was consented to, and GitHub, with
+no card. A value is free here only if that adds nothing:
+
+- **a key `ml.config()` returns**: the same survey reads it free today (`config` is in `workerReadonlyMl`), so it
+  already rides every channel above, and this slice adds nothing;
+- **an ordinary key**: accepted. Its domain is closed (boolean, enum word, number, `hours`, currency code, a model id
+  on the server's list), so it carries a preference, never a path, a host, a site list or a credential. What it adds
+  is fingerprinting bits (the theme, the currency, a price, an hours window), the same kind a page reads from the
+  browser itself;
+- **every other guarded or gate key**: not accepted, so held. Their values are the person's paths (the shell keys),
+  a URL (`agentStartPage`), which programs run free (`shellRevealsAllow`), and what a run reaches or keeps (the
+  session and task keys). The exec card is what stands between an injected model and them, and it stays.
+
+A channel added later that carries model-chosen text with no card is a change to this table, and it reopens the
+second bullet.
 
 **An unreadable key is present and hidden, never absent.** A hidden entry has no `value` field at all, never `null`,
 `""` or a length, so it says nothing about whether the key is set. It is told apart from "no such setting", where the
@@ -615,9 +663,9 @@ reading a setting for free frees nothing it is then used for.
 
 **Tests** (rows that fail first):
 
-- the class table: enumerate `SETTING_CLASSES`; every key of a readable class has its `value` in both callers, every
-  secret's entry is exactly `{ mode: "hidden", class: "secret" }` with no `value` key; the allow list, called with a
-  class name it does not hold, hides it;
+- the class table: enumerate `SETTING_CLASSES` and every caller; each key's entry is a value, held or hidden exactly
+  as the table and the `publicConfig` keys say, with no `value` key on a held or hidden one; the allow list, called
+  with a class name it does not hold, hides it; a key added to `publicConfig` in a test copy becomes free;
 - the survey: in a worker-built run `ml.settings()` answers free with the entries `settingEntries` returns; in a
   page-built run it does not, in the worker realm or the page realm;
 - the page leg: a worker-built run's survey naming `ml.settings` and also `document` is never sent to the page;
@@ -644,7 +692,10 @@ client. The builder does not edit it. The wire row gains the worker-built condit
 - the member on a wire client by a forged run id, by a tab's sender, or by a client the worker did not open;
 - a survey naming `ml.settings` answered in the page's main world;
 - a write through a returned entry reaching the stored config or a later call's result;
-- a setting read for free used to free a gated call (`ml.sh`, a fetch).
+- a setting read for free used to free a gated call (`ml.sh`, a fetch);
+- a held or hidden key's value reaching the page the run is on, a consented origin, GitHub or any other host with
+  no card, through each free call in "Where a freely read value can go", the survey's page leg and the page-realm
+  read tools included.
 
 ## Threat model
 
