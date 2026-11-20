@@ -167,6 +167,13 @@ export interface StartRunPayload {
     autoApproveSelfSource?: boolean;
     /** `selfIntrospection`: give this run's read-only surveys `ml.current`. Absent is on. */
     selfIntrospection?: boolean;
+    /** `false`: send this turn's task as it is, with no registered secret taken out (ruling 39, SECRET_HANDLES.md). Honoured
+     *  only for an extension page's call: a page's turn is always scrubbed by value. */
+    scrubInput?: boolean;
+    /** The worker's: this run's user turns were scrubbed as they were sent, so a resume does not scrub its history's user
+     *  turns again. Absent on a session stored before the input scrub, whose user turns a resume scrubs on the way to the
+     *  model. Stripped from a page's payload. */
+    inputScrubbed?: boolean;
     /** trusted config flag → the background may auto-approve an in-dialect exec survey */
     autoApproveReadonly: boolean;
     /** agent option → surface `@tool:<id>` tokens on rich tool results (so the model can cite exact outputs) */
@@ -293,6 +300,8 @@ export interface ResumeRunPayload {
     task: string;
     /** a budget chosen for this continuation; omitted keeps the one the run was started with */
     maxSteps?: number;
+    /** `false`: send this turn's task as it is (as on START_RUN); honoured only for an extension page's call */
+    scrubInput?: boolean;
 }
 
 /** INJECT_MESSAGE payload — a.say() steering a RUNNING background run: the text is pushed into that
@@ -304,6 +313,8 @@ export interface InjectMessagePayload {
     /** The page ends its turn waiting for the person (`handle.waitForPerson`): the run stops and this prompt is shown,
      *  labelled as the site's, above the reply box. `text` is then empty. */
     waitForPerson?: string;
+    /** `false`: send this message as it is (as on START_RUN); honoured only for an extension page's call */
+    scrubInput?: boolean;
     /** A stable id for this steer message, minted page-side, so the SW can fan an `agent-say-seen`
      *  event (the "seen" indicator) keyed to the same bubble when the loop actually drains it. */
     sayId?: string;

@@ -25,6 +25,7 @@ import { pyMediaFor } from "./worker-media";
 import { hostRun } from "./sw-run-host";
 import { bgRuns, bufferReplay, isWorkerRun, makeWorkerRun, runControllers, runInboxes, runModelFor, runRebuilds, startingControllers, tabPageUrl, workerRunsStarting, beginStart, endStart, sessionTokens, releaseSessionTokens, turnByRun } from "./sw-runs";
 import { attachFiles, attachPaste, readPdfOffscreen } from "./sw-attach";
+import { forTurn, type TurnScrub } from "./sw-scrub";
 import type { FilePointer } from "../pointers/file-pointer";
 import { storeHeld } from "./sw-values";
 import { originOf } from "../site-access";
@@ -92,10 +93,16 @@ export async function startUserRun(tabId: number, req: UserRunRequest, opts: { k
 /** {@link startUserRun} once the run has its id: attach the files, assemble, adopt, host. */
 async function startMinted(tabId: number, tab: chrome.tabs.Tab, url: string, ml: ReturnType<typeof workerMl>, runId: string, req: UserRunRequest, files: SentFile[] | undefined, opts: { keep?: boolean; approvalRouting?: "both"; answer?: true; sender?: Omit<PromptOrigin, "surface"> }): Promise<{ hash: string }> {
     const shelf = sessionTokens(runId).files;
-    const attached = await attachFiles(runId, files, 1, { read: readPdfOffscreen, store: storeHeld, shelf });
+    // What the person sends is scrubbed by registered value where it becomes the turn (ruling 39): the task as framed, its
+    // files at rest, a long paste's pointer and the page context. Read first, so a store that cannot be read refuses the
+    // run before anything is held (ruling 44).
+    const scrub = await forTurn();
+    const attached = await attachFiles(runId, files, 1, { read: readPdfOffscreen, store: storeHeld, shelf, scrub });
     const recipe = userRunOptions(ml, { ...req, files: attached.files }, opts.sender);
+    recipe.task = scrub.text(recipe.task);
+    if (recipe.display) recipe.display = scrub.deep(recipe.display);
     if (!recipe.task && !(req.images && req.images.length)) throw new Error("Nothing to do: the run has no task and no image.");
-    const typed = String(req.task || "").trim();
+    const typed = scrub.text(String(req.task || "").trim());
     const paste = await attachPaste(runId, typed, 1, { store: storeHeld, shelf });
     if (paste) Object.assign(recipe, withPasteLine(recipe, typed, paste.line));
     // propose_policy and change_setting only here: a run the worker builds for the person may ask them for a policy or a
@@ -140,7 +147,7 @@ async function startMinted(tabId: number, tab: chrome.tabs.Tab, url: string, ml:
     const surface: StartRunPayload["surface"] = cfg.debugMode === "overlay" || cfg.debugMode === "devtools" ? cfg.debugMode : "off";
     const payload: StartRunPayload = {
         ...startPayload(asm, {
-            runId, systemPrompt: asm.systemPrompt, pageContext: capPageContext(adopted.pageInfo), think: null,
+            runId, systemPrompt: asm.systemPrompt, pageContext: scrubbedContext(scrub, capPageContext(adopted.pageInfo)), think: null,
             maxSteps: recipe.maxSteps ?? DEFAULT_MAX_STEPS, surface, stream: recipe.stream, toolTokens: true, origin: recipe.origin,
             navigate: true, crossOrigin: true, approvalRouting: opts.approvalRouting ?? "ui",
             page: { origin: new URL(url).origin, url, title: tab.title || undefined },
@@ -160,9 +167,12 @@ async function startMinted(tabId: number, tab: chrome.tabs.Tab, url: string, ml:
         throw new Error("Cancelled before the run started.");
     }
     endStart(runId, starting);
-    hostRun({ type: "START_RUN", payload }, tabId, () => { workerRunsStarting.delete(runId); });
+    hostRun({ type: "START_RUN", payload }, tabId, () => { workerRunsStarting.delete(runId); }, undefined, undefined, undefined, scrub.note());
     return { hash: runId };
 }
+
+/** A page context through the turn's scrub, absent when there is none. */
+const scrubbedContext = (scrub: TurnScrub, ctx: string | undefined): string | undefined => (ctx ? scrub.text(ctx) : ctx);
 
 let steerSeq = 0;
 
@@ -399,28 +409,37 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
         // A message with nowhere to go holds nothing: a run at the end of its turn (its inbox closed) is busy, and one
         // neither running nor stored is gone. Checked again after the awaits below, which a turn can end during.
         if (runControllers.has(hash) ? action === "continue" || !runInboxes.has(hash) : !stored) return runControllers.has(hash) ? "busy" : "none";
+        // The message is scrubbed by registered value where it becomes a turn (ruling 39): its words, a right-clicked
+        // element, its files at rest and a long paste. The note goes to the model after it; the bubble never shows it.
+        let note = "";
         if (action === "send") {
-            const deps = { read: readPdfOffscreen, store: storeHeld, shelf };
+            const scrub = await forTurn();
+            const deps = { read: readPdfOffscreen, store: storeHeld, shelf, scrub };
             const files = await attachFiles(hash, checked.files, turn, deps);
             added.push(...files.added);
-            framed = framePrompt(typed, body.elementContext, files.files);
-            const paste = await attachPaste(hash, typed.trim(), turn, deps);
+            const said = scrub.text(typed.trim());
+            framed = framePrompt(scrub.text(typed), body.elementContext ? scrub.deep(body.elementContext) : undefined, files.files);
+            framed = { text: scrub.text(framed.text), ...(framed.display ? { display: scrub.deep(framed.display) } : {}) };
+            const paste = await attachPaste(hash, said, turn, deps);
             if (paste) {
                 added.push(...paste.added);
-                const lined = withPasteLine({ task: framed.text, display: framed.display }, typed.trim(), paste.line);
+                const lined = withPasteLine({ task: framed.text, display: framed.display }, said, paste.line);
                 framed = { text: lined.task, display: lined.display };
             }
+            note = scrub.note();
         }
-        const { display } = framed;
         if (action === "send" && !framed.text && !attached.length) return takeBack("none");
+        // With a note, the bubble shows the words without it, as a display does.
+        const display = note && !framed.display ? { typed: framed.text, context: [] } : framed.display;
         const text = routed.notes ? (framed.text ? `${framed.text}\n\n${routed.notes}` : routed.notes) : framed.text;
+        const steered = `${text}${note}`;
         const shown = attached.length ? { images: attached } : {};
         if (runControllers.has(hash)) {
             if (action === "continue") return "busy";
             // A run with an inbox takes the steer (steerRun): only then is the message, and what it attached, the run's.
             if (!runInboxes.has(hash)) return takeBack("busy");
             rollBack = noteSend(hash, turn, added);
-            return steerRun(hash, text, origin, display, routed.images, attached) ? "steer" : takeBack("busy");
+            return steerRun(hash, steered, origin, display, routed.images, attached) ? "steer" : takeBack("busy");
         }
         if (!stored) return takeBack("none");
         // A resume already starting (another send still in the awaits below) makes this one busy: a second RESUME_RUN
@@ -430,7 +449,7 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
             if (action !== "send") return takeBack("busy");
             rollBack = noteSend(hash, turn, added);
             const held = pendingSteers.get(hash) ?? [];
-            held.push({ text, origin, display, images: routed.images, shown: attached, takeBack: () => takeBack(undefined) });
+            held.push({ text: steered, origin, display, images: routed.images, shown: attached, takeBack: () => takeBack(undefined) });
             pendingSteers.set(hash, held);
             return "steer";
         }
@@ -459,7 +478,7 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
             const steps = stepBudget(body.maxSteps);
             endStart(hash, starting);
             hostRun({ type: "RESUME_RUN", payload: { runId: hash, task: text, ...(steps ? { maxSteps: steps } : {}) } },
-                tabId, () => { /* reported through the session's events */ }, action === "send" ? origin : undefined, undefined, routed.images);
+                tabId, () => { /* reported through the session's events */ }, action === "send" ? origin : undefined, undefined, routed.images, note);
             hosted = true;
             flushPendingSteers(hash);
         } finally {

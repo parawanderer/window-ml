@@ -11,6 +11,7 @@ import { AGENT_START_PAGE } from "../contract/contract-config";
 import type { MlDebugEvent } from "../contract/contract-debug";
 import { imagesRefusal, type PromptOrigin, type SentFile } from "../contract/contract-run";
 import { FilesRefused, checkFilesField, type FileTarget } from "../attached-files";
+import { TurnUnreadable } from "../secret-registry";
 import { bytesToB64 } from "../pdf/pdf-wire";
 import { clientUiOf } from "../agent/current-client";
 import type { SessionHistory } from "./session-store";
@@ -79,8 +80,9 @@ export interface CommandDeps {
     focusTab(tabId: number, windowId?: number): Promise<boolean>;
     /** outline an element or point on a tab's page (fire and forget) */
     highlight(tabId: number, ref: { selector: string } | { token: string } | null): void;
-    /** push a message into a RUNNING background loop's inbox and show it in the transcript; false when no loop runs */
-    steer(hash: string, text: string, origin?: PromptOrigin): boolean;
+    /** push a message into a RUNNING background loop's inbox and show it in the transcript; false when no loop runs.
+     *  Throws {@link TurnUnreadable} when the secrets it is scrubbed against cannot be read (ruling 44) */
+    steer(hash: string, text: string, origin?: PromptOrigin): boolean | Promise<boolean>;
     /** abort a background-hosted run and close its open gates; false when none was live */
     cancelRun(hash: string): boolean;
     /** resolve one open approval gate; false when it was already closed */
@@ -316,6 +318,8 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             if (e instanceof ImagesRefused) return fail("unsupported", e.message);
             // Its files were refused (a PDF to a run a page built, one that would not read): said, never "unavailable".
             if (e instanceof FilesRefused) return fail("invalid", e.message);
+            // The secrets it is scrubbed against could not be read (ruling 44): held, with the reason.
+            if (e instanceof TurnUnreadable) return fail("unavailable", e.message);
             return fail("unavailable", "the page this session ran on is not reachable (reloaded, or the extension cannot run there)");
         }
     };
@@ -565,6 +569,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             } catch (err) {
                 if (err instanceof ImagesRefused) return fail("unsupported", err.message);
                 if (err instanceof FilesRefused) return fail("invalid", err.message);
+                if (err instanceof TurnUnreadable) return fail("unavailable", err.message);
                 return fail("failed", (err as Error)?.message || String(err));
             }
         },
@@ -587,6 +592,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
                 try { outcome = await (c.vision === true ? deps.sendChat(s.id.hash, text, images, att.files, true) : deps.sendChat(s.id.hash, text, images, att.files)); } catch (err) {
                     if (err instanceof ImagesRefused) return fail("unsupported", err.message);
                     if (err instanceof FilesRefused) return fail("invalid", err.message);
+                    if (err instanceof TurnUnreadable) return fail("unavailable", err.message);
                     throw err;
                 }
                 if (outcome === "turn") return ok({ mode: "turn" });
@@ -599,7 +605,10 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             // navigated), and the inbox is the same one the handle's `say` reaches.
             if (running && !images.length && !att.files && !c.elementContext) {
                 if (text.length > STEER_TEXT_MAX) return fail("invalid", "that message is too long to steer with");
-                if (deps.steer(s.id.hash, text, commandOrigin(from, c.ui))) return ok({ mode: "steer" });
+                try { if (await deps.steer(s.id.hash, text, commandOrigin(from, c.ui))) return ok({ mode: "steer" }); } catch (err) {
+                    if (err instanceof TurnUnreadable) return fail("unavailable", err.message);
+                    throw err;
+                }
             }
             const r = await viaPage(s.id.hash, "send", { text, ...(images.length ? { images } : {}), ...(att.files ? { files: att.files } : {}), ...(c.elementContext ? { elementContext: c.elementContext } : {}) }, commandOrigin(from, c.ui));
             if (typeof r !== "string") return r;

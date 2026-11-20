@@ -29,6 +29,7 @@ import { type LlmResult, type NeutralMessage } from "../contract/contract-chat";
 import { type ChatHeldFile, type StoredSession } from "../contract/contract-messages";
 import { type MlDebugEvent } from "../contract/contract-debug";
 import { defineState } from "../state-registry";
+import { forTurn, type TurnScrub } from "./sw-scrub";
 
 /** Live background chats. Small on purpose: each holds a whole history, and the worker's memory is shared with
  *  every run. The oldest idle chat is dropped when a new one would exceed it; a SAVED chat is only dropped from
@@ -192,6 +193,7 @@ export async function startBackgroundChat(opts: {
     vision?: true;
 }): Promise<string> {
     const d = need();
+    const scrub = await forTurn();   // a store that cannot be read refuses the chat before anything starts (ruling 44)
     const prep = await prepare(d, opts.model ?? null, opts.images, opts.files, opts.vision === true);
     evict();
     const hash = mintHash();
@@ -208,7 +210,7 @@ export async function startBackgroundChat(opts: {
         files: [],
     };
     chats.set(hash, chat);
-    void turn(chat, opts.text, opts.images, prep);
+    void turn(chat, opts.text, opts.images, prep, scrub);
     return hash;
 }
 
@@ -230,9 +232,11 @@ export async function sendBackgroundChat(hash: string, text: string, images?: st
     const chat = chats.get(hash) ?? (await rehydrate(hash));
     if (!chat) return "not-found";
     if (chat.running) return "busy";
+    // Read before anything else: a store that cannot be read holds the message (ruling 44), with nothing sent.
+    const scrub = await forTurn();
     const prep = await prepare(need(), chat.model, images, files, vision === true);
     if (chat.running) return "busy";   // another send took the turn while the files were read
-    void turn(chat, text, images, prep);
+    void turn(chat, text, images, prep, scrub);
     return "turn";
 }
 
@@ -320,7 +324,7 @@ async function drawPages(d: ChatDeps, f: { pdf: AttachedPdf; doc: PdfDoc; aims: 
  * derived from the hash and the turn number rather than drawn at random, so a turn that is somehow reported twice
  * is recognised as one turn rather than recorded as two.
  */
-async function turn(chat: BgChat, text: string, images: string[] | undefined, prep: Prepared): Promise<void> {
+async function turn(chat: BgChat, text: string, images: string[] | undefined, prep: Prepared, scrub: TurnScrub): Promise<void> {
     const { plan } = prep;
     const d = need();
     const id = `${chat.hash}-${++chat.turns}`;
@@ -355,12 +359,19 @@ async function turn(chat: BgChat, text: string, images: string[] | undefined, pr
     }
     // Attached files are part of the message the model reads, as `<file>` blocks after the typed words; `display`
     // keeps the words and the files apart for the transcript (attached-files.ts).
+    // What the person sends is scrubbed by registered value where it becomes the turn (ruling 39): the words, the files'
+    // text and a PDF's pages, which the model reads and the chat stores; the note after it is the model's only.
     const framed = frameFiles(text, files);
-    const content = notes.length ? (framed.text ? `${framed.text}\n\n${notes.join("\n\n")}` : notes.join("\n\n")) : framed.text;
+    const words = scrub.text(framed.text);
+    const said = notes.length ? (words ? `${words}\n\n${notes.join("\n\n")}` : notes.join("\n\n")) : words;
+    const note = scrub.note();
+    const content = `${said}${note}`;
     const user: NeutralMessage = { role: "user", content };
-    const display = framed.display;
+    const display = framed.display ? scrub.deep(framed.display) : note ? { typed: words, context: [] } : undefined;
     if (pictures.length) user.images = pictures;
-    const messages = [...chat.messages, user];
+    // A chat stored before the input scrub holds the person's earlier turns raw: they are scrubbed on the way to the model
+    // and left as stored.
+    const messages = [...chat.messages.map((m) => (m.role === "user" && typeof m.content === "string" && m.content ? { ...m, content: scrub.text(m.content) } : m)), user];
 
     const streaming = !!d.stream;
     d.emit({
@@ -387,9 +398,10 @@ async function turn(chat: BgChat, text: string, images: string[] | undefined, pr
         if (controller.signal.aborted) throw new Error("cancelled");
         const answer: NeutralMessage = { role: "assistant", content: result.content };
         if (result.sources?.length) answer.sources = result.sources;
-        chat.messages = [...messages, answer];
+        chat.messages = [...chat.messages, user, answer];
         chat.lastTs = d.now();
-        for (const f of prep.files ?? []) if ("pdf" in f) chat.files.push(await holdPdf(d, chat.hash, f));
+        // A PDF's pages are held as the model read them, scrubbed; its bytes as attached.
+        for (const f of prep.files ?? []) if ("pdf" in f) chat.files.push(await holdPdf(d, chat.hash, { ...f, doc: scrub.deep(f.doc) }));
         if (chat.save) await persist(chat);
         d.emit({
             kind: "chat-result", id, ts: d.now(), save: chat.save, session, content: result.content,
