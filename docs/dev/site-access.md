@@ -59,6 +59,18 @@ config's secrets stay, a registered value goes), and a page-started model reques
 (`forBackendFromPage` in the router's `FETCH_LLM` and stream port: every role, a bare `[REDACTED]`, nothing said back to
 the page). `tests/secret-scrub-crossings.test.mjs` holds a row per crossing.
 
+**What the person or a page sends is scrubbed where it becomes a turn** (SECRET_HANDLES.md, ruling 39, by value):
+`forTurn` (`sw-scrub.ts`) takes out each registered value and the extension's own saved API key
+(`[REDACTED:window-ml-api-key]`, from 12 characters) at every entry point, never inside `hostRun`/`hostTurn`, whose
+synchronous registration the steer flush relies on: a page's and an extension page's `START_RUN`/`RESUME_RUN`
+(`scrubTurnInput`), the person's run and later messages (`sw-run-start.ts`), steers (the session command, an extension
+frame's `INJECT_MESSAGE`, a page's `pageInject`), the chat page's chat (`sw-chat.ts`) and an attachment's text at rest
+(`sw-attach.ts`). A person's turn shows names, and the model reads a note after it that the bubble does not show
+(`hostRun`'s `inputNote`); a page's turn is bare, and a page's `scrubInput: false` does not turn it off. A store that
+cannot be read refuses the turn (`TurnUnreadable`, ruling 44). A run stored before this has no `inputScrubbed`, and a
+resume scrubs its history's user turns on the way to the model. `tests/turn-scrub.test.mjs` and
+`tests/turn-scrub-paths.test.mjs`.
+
 **A page's screenshot is of its own tab, or nothing.** `CAPTURE_TAB` goes through the debugger by tab id when CDP is
 on; otherwise `captureOwnTab` (`sw-capture.ts`) takes `captureVisibleTab` only while the sender's tab is the one its
 window shows, and throws the shot away if the window showed another tab while it was taken. `captureVisibleTab` takes a

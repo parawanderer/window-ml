@@ -70,7 +70,7 @@ let n = 0;
 const run = () => `run-${++n}`;
 /** A value no setting of any class takes, so a key that gets past its class is stopped by its value, not its class. */
 const PROBE = "~~~ not a value ~~~";
-const CLASS_REFUSAL = /is a secret setting|decides which calls run without asking|has no control in Settings/;
+const CLASS_REFUSAL = /is a secret setting|decides which calls run without asking|decides what of the person's own messages the model reads|has no control in Settings/;
 
 // --- A: the class table is the whole guard, and it covers every key ---
 
@@ -84,7 +84,7 @@ test("RED TEAM: every config key is refused by its class or reaches its value ch
         assert.equal(SC.modelWritable(key), placed && decl.class !== "secret" && decl.class !== "gate", `${key}: modelWritable disagrees with its class and place`);
         const r = await S.checkSettingChange({ key, value: PROBE }, deps());
         if (decl.class === "secret") assert.match(r.error ?? "", /is a secret setting/, `${key}: ${JSON.stringify(r)}`);
-        else if (decl.class === "gate") assert.match(r.error ?? "", /decides which calls run without asking/, `${key}: ${JSON.stringify(r)}`);
+        else if (decl.class === "gate") assert.match(r.error ?? "", new RegExp(decl.refusal ?? "decides which calls run without asking"), `${key}: ${JSON.stringify(r)}`);
         else if (!placed) assert.match(r.error ?? "", /has no control in Settings/, `${key}: ${JSON.stringify(r)}`);
         else assert.ok(!r.error || !CLASS_REFUSAL.test(r.error), `${key}: a writable key was refused by its class: ${r.error}`);
     }
@@ -93,7 +93,7 @@ test("RED TEAM: every config key is refused by its class or reaches its value ch
 test("RED TEAM: the secret and gate classes hold exactly the keys they are meant to, and each has a sentence of its own", T, async () => {
     const byClass = (c) => Object.keys(SC.SETTING_CLASSES).filter((k) => SC.SETTING_CLASSES[k].class === c).sort();
     assert.deepEqual(byClass("secret"), ["apiKey", "chatUrl", "modelFilter", "pageApprovalDomains", "priceSnapshotUrl"], "a key joined or left the secret class: the server URL, the key, the model whitelist and the two other hosts are the run's never to read");
-    assert.deepEqual(byClass("gate"), ["autoApprovePython", "autoApproveReadonly", "autoApproveSelfSource", "shellRevealsAllow"], "the gate's keys changed: a run must never be able to decide what runs without asking");
+    assert.deepEqual(byClass("gate"), ["autoApprovePython", "autoApproveReadonly", "autoApproveSelfSource", "scrubPersonInput", "shellRevealsAllow"], "the gate's keys changed: a run must never be able to decide what runs without asking, or what of the person's input the model reads");
     for (const key of byClass("gate")) {
         assert.ok(has(SETTING_PLACES, key), `${key} has no Settings row, so this row would not prove the CLASS refuses it`);
         // The opposite of the default, and for an array-valued key a type-CORRECT list too: the class refuses the key,
@@ -101,7 +101,8 @@ test("RED TEAM: the secret and gate classes hold exactly the keys they are meant
         const values = [!DEFAULT_CONFIG[key], ...(Array.isArray(DEFAULT_CONFIG[key]) ? [["ps"]] : [])];
         for (const value of values) {
             const r = await S.checkSettingChange({ key, value }, deps());
-            assert.ok("error" in r && /decides which calls run without asking/.test(r.error), `${key} = ${JSON.stringify(value)}: ${JSON.stringify(r)}`);
+            const sentence = SC.settingDecl(key).refusal ?? "decides which calls run without asking";
+            assert.ok("error" in r && r.error.includes(sentence), `${key} = ${JSON.stringify(value)}: ${JSON.stringify(r)}`);
         }
     }
     const unplaced = Object.keys(DEFAULT_CONFIG).filter((k) => !has(SETTING_PLACES, k)).sort();

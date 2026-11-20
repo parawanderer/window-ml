@@ -10,6 +10,7 @@ import { ingestSessionEvent } from "./sw-sessions";
 import { ourToolTexts } from "./builtin-texts";
 import { approvalFor, stopForPerson, gatePageTurn, type PersonTurn } from "./sw-start-approval";
 import { toPageUi } from "./sw-side-panel";
+import { forTurn, type TurnScrub } from "./sw-scrub";
 
 /** The shortest gap between two of a run's waits for the person (`waitForPerson`). */
 export const WAIT_GAP_MS = 10_000;
@@ -54,16 +55,23 @@ export async function pageInject(p: InjectMessagePayload, sender: chrome.runtime
     const cfg = await getConfig();
     const verdict = await gatePageTurn({ type: "INJECT_MESSAGE", runId: p.runId, tabId, origin, text: p.text, p: payload, model: payload.model || cfg.model || null, pageHistory: false, known: true, personClaimed: claimed, siteTools: ourToolTexts(payload, payload.pageUrl ?? "").siteTools });
     if ("error" in verdict) return { error: verdict.error };
+    // A page's steer is scrubbed by registered value before it is queued, with the bare `[REDACTED]` (ruling 39): the page
+    // reads the reply. Its text folded ahead of the person's is scrubbed apart from theirs. A store that cannot be read
+    // refuses it (ruling 44).
+    let scrub: TurnScrub;
+    try { scrub = await forTurn({ site: true }); } catch (e) { await verdict.refund(); return { error: (e as Error).message }; }
     const inbox = runInboxes.get(p.runId);
     if (!inbox || inbox.tabId !== tabId) return { data: false };
-    const own = verdict.pagePrefix ? p.text.slice(verdict.pagePrefix.length + 2) : p.text;
-    inbox.queue.push({ ...(p.sayId ? { id: String(p.sayId) } : {}), text: !verdict.person ? pageTurnText(origin, p.text) : verdict.pagePrefix ? `${pageTurnText(origin, verdict.pagePrefix)}\n\n${own}` : p.text });
+    const prefix = verdict.pagePrefix ? scrub.text(verdict.pagePrefix) : undefined;
+    const own = scrub.text(verdict.pagePrefix ? p.text.slice(verdict.pagePrefix.length + 2) : p.text);
+    const text = prefix ? `${prefix}\n\n${own}` : own;
+    inbox.queue.push({ ...(p.sayId ? { id: String(p.sayId) } : {}), text: !verdict.person ? pageTurnText(origin, text) : prefix ? `${pageTurnText(origin, prefix)}\n\n${own}` : own });
     const base = { id: p.runId, ts: Date.now(), save: false, session: { hash: p.runId, turn: 0 } };
     const say = p.sayId ? { sayId: String(p.sayId) } : {};
     // The page's text with its name, the person's as theirs: a page's own text folded ahead of the person's stays the page's.
-    const events = !verdict.person ? [{ kind: "agent-site-say", ...base, text: p.text, site: origin, ...say }]
-        : verdict.pagePrefix ? [{ kind: "agent-site-say", ...base, text: verdict.pagePrefix, site: origin }, { kind: "agent-say", ...base, text: own, ...say }]
-            : [{ kind: "agent-say", ...base, text: p.text, ...say }];
+    const events = !verdict.person ? [{ kind: "agent-site-say", ...base, text, site: origin, ...say }]
+        : prefix ? [{ kind: "agent-site-say", ...base, text: prefix, site: origin }, { kind: "agent-say", ...base, text: own, ...say }]
+            : [{ kind: "agent-say", ...base, text: own, ...say }];
     for (const event of events) {
         toPageUi(tabId, { type: "ML_DEBUG_TO_PAGE", event });
         relayDebugEvent(tabId, event);

@@ -81,7 +81,7 @@ export async function checkSettingChange(args: Record<string, unknown>, deps: Se
     const decl = settingDecl(key);
     if (!decl) return { error: `Error: there is no setting "${key.slice(0, 64)}". ml.settings() lists them.` };
     if (decl.class === "secret") return { error: `Error: ${key} is a secret setting: it can be neither read nor changed by a run.` };
-    if (decl.class === "gate") return { error: `Error: ${key} decides which calls run without asking, so a run cannot change it. The person can, in Settings: ${settingLink(key)}.` };
+    if (decl.class === "gate") return { error: `Error: ${key} ${decl.refusal ?? "decides which calls run without asking"}, so a run cannot change it. The person can, in Settings: ${settingLink(key)}.` };
     if (!modelWritable(key, SETTING_PLACES)) return { error: `Error: ${key} has no control in Settings, so a run cannot change it.` };
     if (!("value" in args)) return { error: `Error: change_setting needs \`value\`, the new value of ${key}.` };
     const to = args.value;
