@@ -800,6 +800,16 @@ disposes it when the worker dies, which aborts every write still open.
   worker gets a channel and Python sees no `/files`. Tests run the real worker against an in-memory reader on a second
   thread (`tests/files-mount-py.test.mjs`, `tests/fixtures/files-channel-fake.mjs`).
 
+## `input()` and `getpass()` (proposed, not built)
+
+Today nothing sets Pyodide's stdin (`pyodideLoadOptions`, `python-env.ts`), and the cell's Worker has no `prompt` for
+Pyodide's default to call, so `input()` and `getpass.getpass()` read EOF and raise `EOFError` (measured on stock Pyodide
+under Node; the restricted core in the worker is guessed to match). The proposal replaces both at kernel start: the call
+resolves at once as `waiting-input`, the model answers with `task send` or hands it to the person with `task escalate`,
+and a `getpass` answer is a session secret the model is never shown. It is written in
+`docs/spec/SHELL_INTERACTIVE.md`, "Typed input: who answers a program's prompt". A page's own `prompt()` is left
+alone.
+
 ## Traps
 
 - **A worker-hosted run keeps one namespace across its cells; every other call is stateless** (a page's `ml.pythonExec`, a page-hosted agent).
