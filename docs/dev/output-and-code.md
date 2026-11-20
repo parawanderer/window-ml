@@ -312,6 +312,9 @@ context menu. The in-cell find walks text nodes and a link is one, so a match ma
   `MAX_LINK_CHARS` (2048). A U+FEFF is whitespace to the scanner, so a URL ends before it.
 - **Boundaries:** a URL stops at whitespace, quotes, a backtick and angle brackets; trailing `.,;:!?)]}'"` is not part of
   it, except a closer that a bracket inside the URL opened (`…/Foo_(bar)`).
+- **An output embedded in a reply** (`![…](@tool:…:out)`) is linked too: a non-JSON value holding a link draws as plain
+  output (`ValueOut`), a short inline value goes through `LinkedLine`, and the embed's jump-to-step ignores a click on an
+  anchor. A JSON value keeps its highlighting and its addresses stay text, in the text view and the tree.
 - **Not covered:** output drawn by another path (`ExecError`, a retry's diff, a live call's code being written, the
   locate step's prompt and output) is still inert text.
 
