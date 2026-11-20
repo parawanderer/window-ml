@@ -2060,11 +2060,15 @@ backup and any commit-on-cell-success live in one place.
   a Parquet file, a pickle). The filler shows the value's length, which the hash-only store gives anyway
   (SECRET_HANDLES.md, ruling 32). A write is not scrubbed: what the kernel writes it already held.
   AS BUILT (#2058): in `RangedReader.read` in the offscreen document, the one path every read of both folders takes.
-  Each read asks the service worker for the forms (`FILES_SECRET_FORMS`, answered to the offscreen document only, no
-  relay entry: the config's `secretsOf` forms and every registry form, plaintext), holds them for that read only,
-  reads the range widened on each side by the longest form's UTF-8 length less one byte (at least the GitHub token
-  pattern's), clamped to the file, masks every match and the GitHub token pattern with 0x2A (`src/secret-mask.ts`),
-  and copies out the range alone. Forms that cannot be read fail the read with `EIO`; nothing unmasked is served. The
+  Each read asks the service worker for the forms (`FILES_SECRET_FORMS`: the config's `secretsOf` forms and every
+  registry form, plaintext). The worker answers through `isOffscreenSender`, the same check `FILES_ATTACHED` makes,
+  and anyone else gets `{forms: null}`; the type has no relay entry. Nothing caches the forms, on either side: they
+  are asked for at every read and held for that read only, so a secret added between two reads through one
+  descriptor is masked in the second. The read takes the range widened on each side by the longest form's UTF-8
+  length less one byte (at least the GitHub token pattern's), clamped to the file's start and end, masks every match
+  and the GitHub token pattern with 0x2A (`src/secret-mask.ts`), and copies out the range alone: a match that crosses
+  either edge is masked in the part inside the range, and a form longer than the range, covering it and straddling
+  both edges, masks the whole range. Forms that cannot be read fail the read with `EIO`; nothing unmasked is served. The
   values never reach the Pyodide worker. Matching is on BYTES: a form is matched as its UTF-8 bytes, and the registry's
   forms already list its JSON-escaped, percent-encoded, base64 and shell-escaped spellings; ASCII letters fold for a
   form marked case-insensitive. The residual is named: a value written in another encoding (a UTF-16 file) or inside
