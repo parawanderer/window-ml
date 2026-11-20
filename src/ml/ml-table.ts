@@ -10,8 +10,8 @@ import type { Table, TableLike } from "../contract/contract-fetch";
 import { googleSheetCsvUrl, isElement, elPath } from "../dom/dom";
 import { mlFetchCache } from "./ml-fetch-cache";
 import { pageTable } from "./ml-python";
-import { isTable, isStoredTable } from "../table/table-brand";
-import { asTable, tableFromDelimited, tableOf } from "../table/table-data";
+import { isTable } from "../table/table-brand";
+import { asTable, copyTable, tableFromDelimited, tableOf } from "../table/table-data";
 import { currentHasTool } from "../tools/tool-exec";
 
 /** What a `ml.table` source is, by its shape. `url` is resolved (a site path made absolute, a fetch result's URL). */
@@ -163,9 +163,9 @@ async function readSource(ml: MlApi, k: TableSourceKind, opts: TableOpts): Promi
             if (!t) throw new Error(`ml.table(${JSON.stringify(k.ref)}): that output is not a table.`);
             notDelimited("a pointer's table");
             if (o.raw) throw new Error(`ml.table(${JSON.stringify(k.ref)}, { raw }): a stored table keeps the types it was read with. Read its source URL with raw instead.`);
-            // A stored table's reads go to the value store and answer new arrays each time, so it is handed out as is;
-            // a whole one is copied.
-            return isStoredTable(t) ? t : fresh(t);
+            // Always a copy: a stored facade's `rows` is the value store's own preview, so the facade itself would let an
+            // edit reach the run's stored value. The copy keeps a stored table's reader, so its whole-table reads still work.
+            return copyTable(t, { python: currentHasTool("python_exec") });
         }
         case "table": {
             notDelimited("a table value");

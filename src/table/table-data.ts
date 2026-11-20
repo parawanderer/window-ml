@@ -11,7 +11,7 @@
 // What stays ours is the part that is about THIS project: which cells become numbers (below), and what a
 // model is shown of a table it did not fetch.
 import Papa from "papaparse";
-import { brandTable, brandStored } from "./table-brand";
+import { brandTable, brandStored, storedReader } from "./table-brand";
 // The TABLE TYPES live in contract.ts, not here: they cross the message channel (a fetch result, a pointer
 // read, an agent output) and `agent_api_docs` is generated from that file, so a type defined here would be
 // invisible to the model that has to use it. This module owns the PARSERS; contract.ts owns the shape.
@@ -605,11 +605,23 @@ export function asTable(t: TableLike, opts: { python?: boolean; readColumns?: St
             throw new NotATable(`This table is read-only — it holds output a step already produced.`, String(key));
         },
     }));
-    return reader ? brandStored(facade) : facade;
+    return reader ? brandStored(facade, reader) : facade;
 }
 
 /** Reads named columns of a stored table, every row: the page's line to the value store, bound to the run that holds it. */
 export type StoredColumnReader = (names: string[]) => Promise<{ rowCount: number; columns: Record<string, TableCell[]> }>;
+
+/** A COPY of a table facade that its caller owns: new row arrays, new column list, and, for a stored table, the same
+ *  store reader, so the copy's `col`/`select`/`records` still read every row. A stored facade's `rows` is the value
+ *  store's own preview array, so handing the facade out would let an edit reach the stored value (ruling 57). */
+export function copyTable(t: Table, opts: { python?: boolean } = {}): Table {
+    const like: TableLike = {
+        columns: [...t.columns], shape: [t.shape[0], t.shape[1]], dtypes: { ...t.dtypes }, rows: t.rows.map((r) => [...r]),
+        ...(t.delimiter ? { delimiter: t.delimiter } : {}), ...(t.truncated ? { truncated: true } : {}), ...(t.headerless ? { headerless: true } : {}),
+    };
+    const reader = storedReader(t) as StoredColumnReader | undefined;
+    return asTable(like, { ...opts, ...(reader ? { readColumns: reader } : {}) });
+}
 
 /** Members a script reaches for on a column or a table when it forgot the `await`. Each throws on a pending read. */
 const MISSED_AWAIT = ["length", "map", "filter", "forEach", "reduce", "slice", "indexOf", "includes", "join", "at", "find", "some", "every", "rows", "columns", "shape", "dtypes", "0"];
