@@ -21,11 +21,12 @@ const MAX_ENUM_VARIANTS = 6;
 
 /** Every component the code index lists: [name, root-relative file, line, summary]. */
 function indexedComponents() {
-    const out = execFileSync(process.execPath, [path.join(ROOT, "scripts/index.mjs"), "", "--kind", "function", "--exported"], { cwd: ROOT, encoding: "utf8", maxBuffer: 64 << 20 });
+    const out = execFileSync(process.execPath, [path.join(ROOT, "scripts/index.mjs"), "", "--kind", "component", "--exported", "--sig"], { cwd: ROOT, encoding: "utf8", maxBuffer: 64 << 20 });
     const rows = [];
     for (const line of out.split("\n")) {
-        const [, name, where, summary] = line.split("\t");
-        if (!name || !/^[A-Z]/.test(name) || !/\.tsx:\d+$/.test(where ?? "") || where.startsWith("src/gallery/")) continue;
+        const [, name, where, sig, summary] = line.split("\t");
+        // Function declarations only: a `const Foo = () =>` is also kind "component", and the gallery never listed those.
+        if (!name || !/^(export\s+)?(default\s+)?(async\s+)?function\b/.test(sig ?? "") || !/^[A-Z]/.test(name) || !/\.tsx:\d+$/.test(where ?? "") || where.startsWith("src/gallery/")) continue;
         const [file, ln] = where.split(":");
         rows.push({ name, file, line: Number(ln), summary: summary === "(undocumented)" ? "" : summary ?? "" });
     }

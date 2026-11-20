@@ -61,7 +61,7 @@ import path from "node:path";
 const ROOT = path.resolve(import.meta.dirname, "..");
 /** Where the cache lives. ctags-style: one flat file at the root, gitignored, rebuilt when a file's bytes change. */
 const CACHE = path.join(ROOT, ".index-cache.tsv");
-const CACHE_VERSION = "v4";
+const CACHE_VERSION = "v5";
 /** Every source tree the index covers. `src/` recursively; tests and scripts are deliberately out (a long test file
  *  is a long LIST, and indexing it by purpose would drown the modules). The bench page is UI, not tests: its components
  *  are found and shown in the gallery like any other. */
@@ -239,10 +239,14 @@ function scanSource(rel, text) {
             : declarator === "interface" || declarator === "type" ? "type"
             : declarator === "enum" ? "enum" : "const";
         let signature = headOf(lines, i);
+        // A capitalised function DECLARATION in a .tsx file is a component (`export function TimeChart(...)` is how most
+        // of the UI is written). A capitalised function in a .ts file has no JSX to render and stays a function.
+        if (kind === "function" && /^[A-Z]/.test(name) && /\.tsx$/.test(rel)) kind = "component";
 
         if (kind === "const") {
             // A component, a hook and a plain value are all `const` to the scanner, and telling them apart is what
             // makes `--kind component` mean anything. Capitalised + JSX/arrow → component; `use*` → hook.
+            // (A capitalised `function` declaration in a .tsx file is a component too; see above.)
             const rhs = l.slice(l.indexOf(name) + name.length).replace(/^\s*:[^=]*/, "").replace(/^\s*=\s*/, "");
             if (/^[A-Z]/.test(name) && /=>|\bfunction\b/.test(rhs)) kind = "component";
             else if (/^use[A-Z]/.test(name)) kind = "hook";
