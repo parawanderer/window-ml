@@ -1,18 +1,20 @@
 {
-  "commit": "8d9104424cf0ffaf28372c100b2446e88a4263ef",
-  "extracted_at": "2026-11-20T07:44:52+00:00",
+  "commit": "1fda7decc15211d9bfdad75e5b2c47c125d436c6",
+  "extracted_at": "2026-11-20T08:16:35+00:00",
   "rows": [
     {
       "cell": 0,
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 315,
+      "ms": 170,
       "refused": null,
       "run": "0e50d876651789db531cd3d6ee1c3ac6",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -21,7 +23,7 @@
       "cell": 1,
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 79,
+      "ms": 47,
       "refused": null,
       "run": "0e50d876651789db531cd3d6ee1c3ac6",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -31,12 +33,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 67,
+      "ms": 41,
       "refused": null,
       "run": "1a1edf057a65ca8a516f323df07a3b61",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -45,7 +49,7 @@
       "cell": 1,
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 72,
+      "ms": 40,
       "refused": null,
       "run": "1a1edf057a65ca8a516f323df07a3b61",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -55,12 +59,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 72,
+      "ms": 46,
       "refused": null,
       "run": "0ec7d4f4f0796f3f638d9995e356ad9b",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -70,7 +76,7 @@
       "fullError": "TypeError",
       "inside": false,
       "model": "qwen3.6:35b",
-      "ms": 79,
+      "ms": 39,
       "refused": "not in dialect: item access on NoneType (line 1)",
       "run": "0ec7d4f4f0796f3f638d9995e356ad9b",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -79,7 +85,7 @@
       "cell": 2,
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 88,
+      "ms": 53,
       "refused": null,
       "run": "0ec7d4f4f0796f3f638d9995e356ad9b",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -89,12 +95,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 78,
+      "ms": 47,
       "refused": null,
       "run": "d16714506b07cc9f21210b823d420d43",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -104,12 +112,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 81,
+      "ms": 46,
       "refused": null,
       "run": "97fb7053d967e121cd9681881c580440",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -118,7 +128,7 @@
       "cell": 1,
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 67,
+      "ms": 40,
       "refused": null,
       "run": "97fb7053d967e121cd9681881c580440",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -127,7 +137,7 @@
       "cell": 0,
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 66,
+      "ms": 40,
       "refused": null,
       "run": "be30cb07c776f3ce6ef6ba96181d4cab",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -137,7 +147,7 @@
       "inside": true,
       "insideError": "SyntaxError",
       "model": "qwen3.6:35b",
-      "ms": 69,
+      "ms": 39,
       "refused": null,
       "run": "addef6bb6c21c39192c38ef306dc68c9",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -147,12 +157,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 77,
+      "ms": 46,
       "refused": null,
       "run": "addef6bb6c21c39192c38ef306dc68c9",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -161,7 +173,7 @@
       "cell": 2,
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 64,
+      "ms": 41,
       "refused": null,
       "run": "addef6bb6c21c39192c38ef306dc68c9",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -171,7 +183,7 @@
       "fullError": "NameError",
       "inside": false,
       "model": "qwen3.6:35b",
-      "ms": 57,
+      "ms": 38,
       "refused": "not in dialect: a refusal during the run was caught by library code",
       "run": "89302ad63c79fd6bdf121ed2004a4f82",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -181,12 +193,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 79,
+      "ms": 56,
       "refused": null,
       "run": "89302ad63c79fd6bdf121ed2004a4f82",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -196,12 +210,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 75,
+      "ms": 51,
       "refused": null,
       "run": "29135d104167cf89c594de781020d346",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -210,7 +226,7 @@
       "cell": 1,
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 88,
+      "ms": 47,
       "refused": null,
       "run": "29135d104167cf89c594de781020d346",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -220,12 +236,14 @@
       "csv": [
         {
           "form": "fetched URL, by page path",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 63,
+      "ms": 43,
       "refused": null,
       "run": "800388c568223835722d6281db90f592",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -235,12 +253,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 70,
+      "ms": 47,
       "refused": null,
       "run": "da5ecceba5856e3222d5e44cf3100866",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -249,7 +269,7 @@
       "cell": 1,
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 78,
+      "ms": 49,
       "refused": null,
       "run": "da5ecceba5856e3222d5e44cf3100866",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -259,12 +279,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 102,
+      "ms": 53,
       "refused": null,
       "run": "96754b028718dd836fec6983fd6c032f",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -273,7 +295,7 @@
       "cell": 0,
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 74,
+      "ms": 48,
       "refused": null,
       "run": "9e35f8ac7a235cc6551734a3fdf9d16e",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -283,60 +305,66 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
+      "inside": true,
+      "model": "qwen3.6:35b",
+      "ms": 41,
+      "refused": null,
+      "run": "640452f7898fcd6dc13442e423dea0ee",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 1,
+      "csv": [
+        {
+          "form": "fetched URL",
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
+        }
+      ],
+      "inside": true,
+      "model": "qwen3.6:35b",
+      "ms": 44,
+      "refused": null,
+      "run": "640452f7898fcd6dc13442e423dea0ee",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 0,
+      "csv": [
+        {
+          "form": "fetched URL",
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
+        }
+      ],
+      "inside": true,
+      "model": "qwen3.6:35b",
+      "ms": 44,
+      "refused": null,
+      "run": "103533fc8438a10a829e2df50f49b659",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": true,
+      "model": "qwen3.6:35b",
+      "ms": 46,
+      "refused": null,
+      "run": "103533fc8438a10a829e2df50f49b659",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 0,
       "inside": true,
       "model": "qwen3.6:35b",
       "ms": 65,
-      "refused": null,
-      "run": "640452f7898fcd6dc13442e423dea0ee",
-      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
-    },
-    {
-      "cell": 1,
-      "csv": [
-        {
-          "form": "fetched URL",
-          "served": true
-        }
-      ],
-      "inside": true,
-      "model": "qwen3.6:35b",
-      "ms": 73,
-      "refused": null,
-      "run": "640452f7898fcd6dc13442e423dea0ee",
-      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
-    },
-    {
-      "cell": 0,
-      "csv": [
-        {
-          "form": "fetched URL",
-          "served": true
-        }
-      ],
-      "inside": true,
-      "model": "qwen3.6:35b",
-      "ms": 78,
-      "refused": null,
-      "run": "103533fc8438a10a829e2df50f49b659",
-      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
-    },
-    {
-      "cell": 1,
-      "inside": true,
-      "model": "qwen3.6:35b",
-      "ms": 76,
-      "refused": null,
-      "run": "103533fc8438a10a829e2df50f49b659",
-      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
-    },
-    {
-      "cell": 0,
-      "inside": true,
-      "model": "qwen3.6:35b",
-      "ms": 70,
       "refused": null,
       "run": "33315b179090a59f5cb49196f94685a1",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -346,12 +374,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 72,
+      "ms": 54,
       "refused": null,
       "run": "157a09d2cb3310b64dc81072ae117fb7",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -361,12 +391,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 72,
+      "ms": 45,
       "refused": null,
       "run": "c5bf5ae40ba569529e01b08e380e92e6",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -376,7 +408,7 @@
       "fullError": "TypeError",
       "inside": false,
       "model": "qwen3.6:35b",
-      "ms": 78,
+      "ms": 45,
       "refused": "not in dialect: item access on NoneType (line 1)",
       "run": "c5bf5ae40ba569529e01b08e380e92e6",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -386,7 +418,7 @@
       "fullError": "TypeError",
       "inside": false,
       "model": "qwen3.6:35b",
-      "ms": 65,
+      "ms": 45,
       "refused": "not in dialect: item access on NoneType (line 1)",
       "run": "c5bf5ae40ba569529e01b08e380e92e6",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -396,12 +428,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 69,
+      "ms": 41,
       "refused": null,
       "run": "c5bf5ae40ba569529e01b08e380e92e6",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -410,7 +444,7 @@
       "cell": 4,
       "inside": false,
       "model": "qwen3.6:35b",
-      "ms": 72,
+      "ms": 36,
       "refused": "not in dialect: call on builtin_function_or_method (line 1)",
       "run": "c5bf5ae40ba569529e01b08e380e92e6",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -419,7 +453,7 @@
       "cell": 5,
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 100,
+      "ms": 44,
       "refused": null,
       "run": "c5bf5ae40ba569529e01b08e380e92e6",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -428,7 +462,7 @@
       "cell": 6,
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 94,
+      "ms": 50,
       "refused": null,
       "run": "c5bf5ae40ba569529e01b08e380e92e6",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -438,12 +472,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": false,
       "model": "qwen3.6:35b",
-      "ms": 72,
+      "ms": 52,
       "refused": "not in dialect: attribute 'round' of numpy.ndarray (line 3)",
       "run": "7f45bc6da74b3562444cd7b05d750a1c",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -453,12 +489,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": false,
       "model": "qwen3.6:35b",
-      "ms": 90,
+      "ms": 44,
       "refused": "not in dialect: attribute 'round' of numpy.ndarray (line 3)",
       "run": "7f45bc6da74b3562444cd7b05d750a1c",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -468,7 +506,7 @@
       "inside": true,
       "insideError": "SyntaxError",
       "model": "qwen3.6:35b",
-      "ms": 75,
+      "ms": 44,
       "refused": null,
       "run": "c0fdea44b5229b7f46e890dd4e7414dc",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -478,7 +516,7 @@
       "inside": true,
       "insideError": "SyntaxError",
       "model": "qwen3.6:35b",
-      "ms": 64,
+      "ms": 37,
       "refused": null,
       "run": "c0fdea44b5229b7f46e890dd4e7414dc",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -488,12 +526,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 66,
+      "ms": 42,
       "refused": null,
       "run": "c0fdea44b5229b7f46e890dd4e7414dc",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -502,7 +542,7 @@
       "cell": 3,
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 68,
+      "ms": 46,
       "refused": null,
       "run": "c0fdea44b5229b7f46e890dd4e7414dc",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -512,7 +552,7 @@
       "fullError": "TypeError",
       "inside": false,
       "model": "qwen3.6:35b",
-      "ms": 75,
+      "ms": 47,
       "refused": "not in dialect: item access on NoneType (line 1)",
       "run": "4f5bcd120f169e352a3ccf1fd855a7de",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -522,12 +562,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 66,
+      "ms": 42,
       "refused": null,
       "run": "4f5bcd120f169e352a3ccf1fd855a7de",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -536,7 +578,7 @@
       "cell": 2,
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 69,
+      "ms": 42,
       "refused": null,
       "run": "4f5bcd120f169e352a3ccf1fd855a7de",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -546,12 +588,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 69,
+      "ms": 45,
       "refused": null,
       "run": "2dab4d91ca549838477db2f940a4af1e",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -560,7 +604,7 @@
       "cell": 1,
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 80,
+      "ms": 47,
       "refused": null,
       "run": "2dab4d91ca549838477db2f940a4af1e",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -569,7 +613,7 @@
       "cell": 2,
       "inside": false,
       "model": "qwen3.6:35b",
-      "ms": 80,
+      "ms": 48,
       "refused": "not in dialect: call on builtin_function_or_method (line 6)",
       "run": "2dab4d91ca549838477db2f940a4af1e",
       "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
@@ -578,7 +622,7 @@
       "cell": 0,
       "inside": false,
       "model": "deepseek.deepseek-flash",
-      "ms": 68,
+      "ms": 42,
       "refused": "not in dialect: call on type (line 2)",
       "run": "4bf2819c33791e3c391a2ed25eb58368",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -588,12 +632,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "deepseek.deepseek-flash",
-      "ms": 93,
+      "ms": 50,
       "refused": null,
       "run": "bf5cf6cf8ee76044b6bf7bfddd6ca846",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -602,7 +648,7 @@
       "cell": 1,
       "inside": false,
       "model": "deepseek.deepseek-flash",
-      "ms": 75,
+      "ms": 48,
       "refused": "not in dialect: attribute 'rint' of module (line 1)",
       "run": "bf5cf6cf8ee76044b6bf7bfddd6ca846",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -611,7 +657,7 @@
       "cell": 2,
       "inside": false,
       "model": "deepseek.deepseek-flash",
-      "ms": 75,
+      "ms": 42,
       "refused": "not in dialect: attribute 'rint' of module (line 1)",
       "run": "bf5cf6cf8ee76044b6bf7bfddd6ca846",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -620,7 +666,7 @@
       "cell": 0,
       "inside": false,
       "model": "deepseek.deepseek-flash",
-      "ms": 83,
+      "ms": 48,
       "refused": "not in dialect: attribute 'rint' of module (line 2)",
       "run": "0f7631c70f7803a84de39ee8d75c7a51",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -630,12 +676,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "deepseek.deepseek-v4-pro",
-      "ms": 77,
+      "ms": 44,
       "refused": null,
       "run": "be673fd01d166e0b7f9c6cc2b82fecaf",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -644,7 +692,7 @@
       "cell": 1,
       "inside": false,
       "model": "deepseek.deepseek-v4-pro",
-      "ms": 87,
+      "ms": 42,
       "refused": "not in dialect: attribute 'round' of numpy.ndarray (line 2)",
       "run": "be673fd01d166e0b7f9c6cc2b82fecaf",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -654,7 +702,7 @@
       "inside": true,
       "insideError": "KeyError",
       "model": "deepseek.deepseek-v4-pro",
-      "ms": 97,
+      "ms": 52,
       "refused": null,
       "run": "7846f89817dad232c5c91dd538e03ce8",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -663,7 +711,7 @@
       "cell": 1,
       "inside": true,
       "model": "deepseek.deepseek-v4-pro",
-      "ms": 74,
+      "ms": 42,
       "refused": null,
       "run": "7846f89817dad232c5c91dd538e03ce8",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -672,7 +720,7 @@
       "cell": 0,
       "inside": true,
       "model": "deepseek.deepseek-v4-pro",
-      "ms": 72,
+      "ms": 42,
       "refused": null,
       "run": "9655897ad9f1eb10d560bccb93694c57",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -682,12 +730,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "glm-4.7-flash:latest",
-      "ms": 65,
+      "ms": 42,
       "refused": null,
       "run": "d13f4d30e8e37ec033b212681862f74d",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -696,7 +746,7 @@
       "cell": 1,
       "inside": true,
       "model": "glm-4.7-flash:latest",
-      "ms": 76,
+      "ms": 46,
       "refused": null,
       "run": "d13f4d30e8e37ec033b212681862f74d",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -705,7 +755,7 @@
       "cell": 2,
       "inside": true,
       "model": "glm-4.7-flash:latest",
-      "ms": 101,
+      "ms": 55,
       "refused": null,
       "run": "d13f4d30e8e37ec033b212681862f74d",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -714,7 +764,7 @@
       "cell": 0,
       "inside": true,
       "model": "glm-4.7-flash:latest",
-      "ms": 82,
+      "ms": 45,
       "refused": null,
       "run": "44164568760138eaf7168784a1559294",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -724,12 +774,14 @@
       "csv": [
         {
           "form": "fetched URL, by page path",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "glm-4.7-flash:latest",
-      "ms": 77,
+      "ms": 46,
       "refused": null,
       "run": "44164568760138eaf7168784a1559294",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -739,12 +791,14 @@
       "csv": [
         {
           "form": "fetched URL, by page path",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "glm-4.7-flash:latest",
-      "ms": 72,
+      "ms": 43,
       "refused": null,
       "run": "44164568760138eaf7168784a1559294",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -753,7 +807,7 @@
       "cell": 3,
       "inside": true,
       "model": "glm-4.7-flash:latest",
-      "ms": 84,
+      "ms": 44,
       "refused": null,
       "run": "44164568760138eaf7168784a1559294",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -763,7 +817,7 @@
       "fullError": "NameError",
       "inside": false,
       "model": "glm-4.7-flash:latest",
-      "ms": 75,
+      "ms": 43,
       "refused": "not in dialect: a refusal during the run was caught by library code",
       "run": "44164568760138eaf7168784a1559294",
       "sweep": "bench/prompt-budget-cuts/csv-total",
@@ -773,7 +827,7 @@
       "cell": 5,
       "inside": true,
       "model": "glm-4.7-flash:latest",
-      "ms": 66,
+      "ms": 44,
       "refused": null,
       "run": "44164568760138eaf7168784a1559294",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -783,12 +837,14 @@
       "csv": [
         {
           "form": "fetched URL, by page path",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "glm-4.7-flash:latest",
-      "ms": 62,
+      "ms": 39,
       "refused": null,
       "run": "44164568760138eaf7168784a1559294",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -797,7 +853,7 @@
       "cell": 7,
       "inside": true,
       "model": "glm-4.7-flash:latest",
-      "ms": 70,
+      "ms": 45,
       "refused": null,
       "run": "44164568760138eaf7168784a1559294",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -808,13 +864,15 @@
         {
           "form": "fetched URL",
           "parseError": "TypeError",
-          "served": "raised"
+          "path": "/sales.csv",
+          "served": "raised",
+          "taskTable": true
         }
       ],
       "fullError": "TypeError",
       "inside": false,
       "model": "glm-4.7-flash:latest",
-      "ms": 79,
+      "ms": 48,
       "refused": "not in dialect: attribute 'read_csv' of module (line 4)",
       "run": "3806af2f860eb55f68ec79470a27b15c",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -823,7 +881,7 @@
       "cell": 0,
       "inside": false,
       "model": "litellm.google/gemini-flash-latest",
-      "ms": 62,
+      "ms": 45,
       "refused": "not in dialect: attribute 'round' of numpy.ndarray (line 10)",
       "run": "1dbf3f6a3fac5db3e262e7b92a2365ea",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -832,7 +890,7 @@
       "cell": 1,
       "inside": false,
       "model": "litellm.google/gemini-flash-latest",
-      "ms": 67,
+      "ms": 50,
       "refused": "not in dialect: call on type (line 3)",
       "run": "1dbf3f6a3fac5db3e262e7b92a2365ea",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -841,7 +899,7 @@
       "cell": 2,
       "inside": false,
       "model": "litellm.google/gemini-flash-latest",
-      "ms": 61,
+      "ms": 41,
       "refused": "not in dialect: attribute 'iloc' of Series (line 1)",
       "run": "1dbf3f6a3fac5db3e262e7b92a2365ea",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -850,7 +908,7 @@
       "cell": 0,
       "inside": true,
       "model": "litellm.google/gemini-flash-latest",
-      "ms": 68,
+      "ms": 49,
       "refused": null,
       "run": "7ebed513b8ac1e506e429c96d319d511",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -859,7 +917,7 @@
       "cell": 1,
       "inside": false,
       "model": "litellm.google/gemini-flash-latest",
-      "ms": 67,
+      "ms": 50,
       "refused": "not in dialect: call on type (line 4)",
       "run": "7ebed513b8ac1e506e429c96d319d511",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -868,7 +926,7 @@
       "cell": 2,
       "inside": false,
       "model": "litellm.google/gemini-flash-latest",
-      "ms": 66,
+      "ms": 40,
       "refused": "not in dialect: call on type (line 3)",
       "run": "7ebed513b8ac1e506e429c96d319d511",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -877,7 +935,7 @@
       "cell": 3,
       "inside": false,
       "model": "litellm.google/gemini-flash-latest",
-      "ms": 65,
+      "ms": 45,
       "refused": "not in dialect: attribute 'iloc' of Series (line 1)",
       "run": "7ebed513b8ac1e506e429c96d319d511",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -886,7 +944,7 @@
       "cell": 0,
       "inside": true,
       "model": "litellm.google/gemini-flash-latest",
-      "ms": 78,
+      "ms": 41,
       "refused": null,
       "run": "0eb5cefbc04694f3ffa9eff545cc4335",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -895,7 +953,7 @@
       "cell": 1,
       "inside": false,
       "model": "litellm.google/gemini-flash-latest",
-      "ms": 64,
+      "ms": 41,
       "refused": "not in dialect: call on type (line 4)",
       "run": "0eb5cefbc04694f3ffa9eff545cc4335",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -905,7 +963,7 @@
       "fullError": "AttributeError",
       "inside": false,
       "model": "openrouter.minimax/minimax-m3",
-      "ms": 66,
+      "ms": 49,
       "refused": "not in dialect: attribute 'keys' of FrameLocalsProxy (line 4)",
       "run": "bc39339c6dbea8a6ebb3d9669f839997",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -914,7 +972,7 @@
       "cell": 1,
       "inside": false,
       "model": "openrouter.minimax/minimax-m3",
-      "ms": 71,
+      "ms": 40,
       "refused": "not in dialect: attribute 'shape' of DataFrame (line 4)",
       "run": "bc39339c6dbea8a6ebb3d9669f839997",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -923,7 +981,7 @@
       "cell": 0,
       "inside": false,
       "model": "openrouter.minimax/minimax-m3",
-      "ms": 67,
+      "ms": 42,
       "refused": "not in dialect: a generator expression outside consumer position (line 8)",
       "run": "dd4878ad41bfb006efd0561f12ee44fd",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -932,7 +990,7 @@
       "cell": 1,
       "inside": false,
       "model": "openrouter.minimax/minimax-m3",
-      "ms": 69,
+      "ms": 47,
       "refused": "not in dialect: a generator expression outside consumer position (line 9)",
       "run": "dd4878ad41bfb006efd0561f12ee44fd",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -942,12 +1000,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "openrouter.minimax/minimax-m3",
-      "ms": 62,
+      "ms": 45,
       "refused": null,
       "run": "a5bb96a1728acffe81045a12a1a66db0",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -957,7 +1017,7 @@
       "fullError": "TypeError",
       "inside": false,
       "model": "openrouter.minimax/minimax-m3",
-      "ms": 64,
+      "ms": 44,
       "refused": "not in dialect: item access on NoneType (line 3)",
       "run": "a5bb96a1728acffe81045a12a1a66db0",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -966,7 +1026,7 @@
       "cell": 2,
       "inside": true,
       "model": "openrouter.minimax/minimax-m3",
-      "ms": 77,
+      "ms": 47,
       "refused": null,
       "run": "a5bb96a1728acffe81045a12a1a66db0",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -976,12 +1036,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": false,
       "model": "qwen3.6:35b",
-      "ms": 74,
+      "ms": 41,
       "refused": "not in dialect: attribute 'dtype' of Series (line 4)",
       "run": "fdb0bd7b8b1f342f4eb53c75483bedbe",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -990,7 +1052,7 @@
       "cell": 1,
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 63,
+      "ms": 40,
       "refused": null,
       "run": "fdb0bd7b8b1f342f4eb53c75483bedbe",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -999,7 +1061,7 @@
       "cell": 0,
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 69,
+      "ms": 48,
       "refused": null,
       "run": "78544884b2edfadd4bfbf105971fee7c",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1009,12 +1071,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 66,
+      "ms": 45,
       "refused": null,
       "run": "af8a9d0cd2e5d58f408fbb2c453c0ede",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1023,7 +1087,7 @@
       "cell": 1,
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 77,
+      "ms": 50,
       "refused": null,
       "run": "af8a9d0cd2e5d58f408fbb2c453c0ede",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1032,7 +1096,7 @@
       "cell": 0,
       "inside": false,
       "model": "deepseek.deepseek-flash",
-      "ms": 66,
+      "ms": 49,
       "refused": "not in dialect: call on type (line 2)",
       "run": "f864d73bfdbad93e9360e187164b62ec",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1042,12 +1106,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": false,
       "model": "deepseek.deepseek-flash",
-      "ms": 71,
+      "ms": 54,
       "refused": "not in dialect: attribute 'str' of Series (line 4)",
       "run": "c5e4f8e00d3270db69e3dcdb6c4ff737",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1056,7 +1122,7 @@
       "cell": 1,
       "inside": true,
       "model": "deepseek.deepseek-flash",
-      "ms": 76,
+      "ms": 42,
       "refused": null,
       "run": "c5e4f8e00d3270db69e3dcdb6c4ff737",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1066,7 +1132,7 @@
       "fullError": "AttributeError",
       "inside": false,
       "model": "deepseek.deepseek-flash",
-      "ms": 71,
+      "ms": 44,
       "refused": "not in dialect: attribute 'strip' of float (line 2)",
       "run": "5dbb7254590b2b0aed52c72035b929d2",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1075,7 +1141,7 @@
       "cell": 1,
       "inside": false,
       "model": "deepseek.deepseek-flash",
-      "ms": 76,
+      "ms": 45,
       "refused": "not in dialect: call on type (line 2)",
       "run": "5dbb7254590b2b0aed52c72035b929d2",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1084,7 +1150,7 @@
       "cell": 0,
       "inside": true,
       "model": "deepseek.deepseek-v4-pro",
-      "ms": 77,
+      "ms": 42,
       "refused": null,
       "run": "6ad62069e13119c555f59a673d539fd2",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1093,7 +1159,7 @@
       "cell": 0,
       "inside": true,
       "model": "deepseek.deepseek-v4-pro",
-      "ms": 65,
+      "ms": 45,
       "refused": null,
       "run": "d5cf05e59cae38c72781c935b6beb4ba",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1102,7 +1168,7 @@
       "cell": 0,
       "inside": false,
       "model": "deepseek.deepseek-v4-pro",
-      "ms": 72,
+      "ms": 44,
       "refused": "not in dialect: attribute 'keys' of FrameLocalsProxy (line 2)",
       "run": "f092096dc759a8c6c77ddbfab9c705c3",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1111,7 +1177,7 @@
       "cell": 1,
       "inside": true,
       "model": "deepseek.deepseek-v4-pro",
-      "ms": 81,
+      "ms": 47,
       "refused": null,
       "run": "f092096dc759a8c6c77ddbfab9c705c3",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1122,12 +1188,14 @@
         {
           "form": "fetched URL",
           "indexReset": true,
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "glm-4.7-flash:latest",
-      "ms": 82,
+      "ms": 46,
       "refused": null,
       "run": "88e9ba4e5284d9ed1b8504129bc54f4a",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1137,12 +1205,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "glm-4.7-flash:latest",
-      "ms": 70,
+      "ms": 47,
       "refused": null,
       "run": "65face10419f09031f3e719aadd3a69e",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1151,7 +1221,7 @@
       "cell": 0,
       "inside": false,
       "model": "glm-4.7-flash:latest",
-      "ms": 68,
+      "ms": 47,
       "refused": "not in dialect: attribute 'iloc' of Series (line 3)",
       "run": "540299695743945d6946e6f0a978efa6",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1160,7 +1230,7 @@
       "cell": 0,
       "inside": false,
       "model": "litellm.google/gemini-flash-latest",
-      "ms": 79,
+      "ms": 51,
       "refused": "not in dialect: call on type (line 9)",
       "run": "b416f0e5efe43755410f31c1a1f56c78",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1169,7 +1239,7 @@
       "cell": 1,
       "inside": false,
       "model": "litellm.google/gemini-flash-latest",
-      "ms": 62,
+      "ms": 43,
       "refused": "not in dialect: call on type (line 2)",
       "run": "b416f0e5efe43755410f31c1a1f56c78",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1178,7 +1248,7 @@
       "cell": 2,
       "inside": true,
       "model": "litellm.google/gemini-flash-latest",
-      "ms": 71,
+      "ms": 51,
       "refused": null,
       "run": "b416f0e5efe43755410f31c1a1f56c78",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1187,7 +1257,7 @@
       "cell": 3,
       "inside": false,
       "model": "litellm.google/gemini-flash-latest",
-      "ms": 78,
+      "ms": 46,
       "refused": "not in dialect: the attribute __name__ (line 1)",
       "run": "b416f0e5efe43755410f31c1a1f56c78",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1196,7 +1266,7 @@
       "cell": 0,
       "inside": true,
       "model": "litellm.google/gemini-flash-latest",
-      "ms": 66,
+      "ms": 45,
       "refused": null,
       "run": "5547329c28230a2ea5c2125f544d7e36",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1205,7 +1275,7 @@
       "cell": 1,
       "inside": false,
       "model": "litellm.google/gemini-flash-latest",
-      "ms": 67,
+      "ms": 41,
       "refused": "not in dialect: call on type (line 2)",
       "run": "5547329c28230a2ea5c2125f544d7e36",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1214,7 +1284,7 @@
       "cell": 0,
       "inside": false,
       "model": "litellm.google/gemini-flash-latest",
-      "ms": 85,
+      "ms": 51,
       "refused": "not in dialect: attribute 'columns' of DataFrame (line 2)",
       "run": "08b8e7640a9f8562451cf07659e2ff24",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1223,7 +1293,7 @@
       "cell": 1,
       "inside": false,
       "model": "litellm.google/gemini-flash-latest",
-      "ms": 66,
+      "ms": 40,
       "refused": "not in dialect: call on type (line 5)",
       "run": "08b8e7640a9f8562451cf07659e2ff24",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1232,7 +1302,7 @@
       "cell": 0,
       "inside": false,
       "model": "openrouter.minimax/minimax-m3",
-      "ms": 70,
+      "ms": 54,
       "refused": "not in dialect: a generator expression outside consumer position (line 6)",
       "run": "f6db0cbd6f816936d5f9bb3b57afdaf9",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1241,7 +1311,7 @@
       "cell": 1,
       "inside": false,
       "model": "openrouter.minimax/minimax-m3",
-      "ms": 66,
+      "ms": 42,
       "refused": "not in dialect: a generator expression outside consumer position (line 5)",
       "run": "f6db0cbd6f816936d5f9bb3b57afdaf9",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1250,7 +1320,7 @@
       "cell": 2,
       "inside": false,
       "model": "openrouter.minimax/minimax-m3",
-      "ms": 70,
+      "ms": 45,
       "refused": "not in dialect: attribute 'keys' of FrameLocalsProxy (line 1)",
       "run": "f6db0cbd6f816936d5f9bb3b57afdaf9",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1259,7 +1329,7 @@
       "cell": 3,
       "inside": false,
       "model": "openrouter.minimax/minimax-m3",
-      "ms": 74,
+      "ms": 40,
       "refused": "not in dialect: a generator expression outside consumer position (line 2)",
       "run": "f6db0cbd6f816936d5f9bb3b57afdaf9",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1268,7 +1338,7 @@
       "cell": 4,
       "inside": false,
       "model": "openrouter.minimax/minimax-m3",
-      "ms": 60,
+      "ms": 43,
       "refused": "not in dialect: attribute 'dtype' of Series (line 1)",
       "run": "f6db0cbd6f816936d5f9bb3b57afdaf9",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1278,12 +1348,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "openrouter.minimax/minimax-m3",
-      "ms": 56,
+      "ms": 49,
       "refused": null,
       "run": "bd0a34e2c29d1d401010fe7aef07df0b",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1293,12 +1365,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "openrouter.minimax/minimax-m3",
-      "ms": 87,
+      "ms": 40,
       "refused": null,
       "run": "bd0a34e2c29d1d401010fe7aef07df0b",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1307,7 +1381,7 @@
       "cell": 2,
       "inside": true,
       "model": "openrouter.minimax/minimax-m3",
-      "ms": 58,
+      "ms": 39,
       "refused": null,
       "run": "bd0a34e2c29d1d401010fe7aef07df0b",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1317,7 +1391,7 @@
       "inside": true,
       "insideError": "KeyError",
       "model": "openrouter.minimax/minimax-m3",
-      "ms": 54,
+      "ms": 36,
       "refused": null,
       "run": "bd0a34e2c29d1d401010fe7aef07df0b",
       "sweep": "bench/prompt-budget-cuts/csv-total",
@@ -1327,7 +1401,7 @@
       "cell": 4,
       "inside": true,
       "model": "openrouter.minimax/minimax-m3",
-      "ms": 61,
+      "ms": 44,
       "refused": null,
       "run": "bd0a34e2c29d1d401010fe7aef07df0b",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1337,12 +1411,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "openrouter.minimax/minimax-m3",
-      "ms": 68,
+      "ms": 49,
       "refused": null,
       "run": "730ec778c812e75d25a171c79762eb6c",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1352,7 +1428,7 @@
       "fullError": "TypeError",
       "inside": false,
       "model": "qwen3.6:35b",
-      "ms": 72,
+      "ms": 40,
       "refused": "not in dialect: item access on NoneType (line 1)",
       "run": "a5a2ab563f3a6fa42be5a2e28985113b",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1362,12 +1438,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 60,
+      "ms": 39,
       "refused": null,
       "run": "a5a2ab563f3a6fa42be5a2e28985113b",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1377,7 +1455,7 @@
       "fullError": "TypeError",
       "inside": false,
       "model": "qwen3.6:35b",
-      "ms": 67,
+      "ms": 47,
       "refused": "not in dialect: item access on NoneType (line 1)",
       "run": "a5a2ab563f3a6fa42be5a2e28985113b",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1387,7 +1465,7 @@
       "fullError": "TypeError",
       "inside": false,
       "model": "qwen3.6:35b",
-      "ms": 69,
+      "ms": 40,
       "refused": "not in dialect: item access on NoneType (line 1)",
       "run": "a5a2ab563f3a6fa42be5a2e28985113b",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1397,12 +1475,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 71,
+      "ms": 43,
       "refused": null,
       "run": "7fec7c79ecc068c5de722a4becc3be09",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1412,12 +1492,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 65,
+      "ms": 51,
       "refused": null,
       "run": "cedc0ac58ba2011bc5f2158ecf6c6921",
       "sweep": "bench/prompt-budget-cuts/csv-total"
@@ -1427,12 +1509,14 @@
       "csv": [
         {
           "form": "fetched URL",
-          "served": true
+          "path": "/sales.csv",
+          "served": true,
+          "taskTable": true
         }
       ],
       "inside": true,
       "model": "qwen3.6:35b",
-      "ms": 82,
+      "ms": 43,
       "refused": null,
       "run": "cedc0ac58ba2011bc5f2158ecf6c6921",
       "sweep": "bench/prompt-budget-cuts/csv-total"

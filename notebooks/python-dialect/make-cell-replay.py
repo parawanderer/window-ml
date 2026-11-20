@@ -177,7 +177,10 @@ readable `/files/` path, or an `io.StringIO`/`BytesIO` the cell owns; a URL the 
 cells stop at their first `read_csv`, so this replay (`--read-csv-served`) serves the calls that rule serves and judges
 the rest of each cell. Each call is classed by its source: a URL a `fetch_url` earlier in the run fetched, compared after
 resolving both against the page as the fetch cache keys them (`by page path` when either named it as a path, which needs
-V2 to resolve a page path in `read_csv` as `tables` does); an owned buffer; a URL not fetched; anything else. A served
+V2 to resolve a page path in `read_csv` as `tables` does); an owned buffer; a URL not fetched; anything else. The replay
+holds one table's bytes, so it serves only a fetched URL that resolves to the task's /sales.csv on the page's origin
+(`taskTable`, recorded with the resolved path for every URL call); a fetched URL naming another file, or an owned
+buffer, is left as written and still asks. A served
 call becomes a frame the cell builds itself from columns real pandas parsed outside, from the task's /sales.csv bytes,
 with the call's literal keywords from the allowed list. A frame read with `index_col` has its index reset to columns,
 and a call whose keywords make pandas raise is left as written (served, it would raise that error in the cell, with
@@ -192,7 +195,8 @@ code("""
 calls = served[served.csv.notna()].explode("csv")
 calls = pd.concat([calls[["run", "cell", "model"]].reset_index(drop=True), pd.json_normalize(calls.csv.tolist())], axis=1)
 print(f"{len(calls)} read_csv calls in {calls[['run', 'cell']].drop_duplicates().shape[0]} cells")
-display(calls.groupby(["form", calls.served.astype(str).rename("served")]).size().to_frame("calls"))
+assert not calls[calls.served.eq(True)].taskTable.ne(True).any(), "a served call that is not the task's table"
+display(calls.groupby(["form", calls.taskTable.astype(str).rename("taskTable"), calls.served.astype(str).rename("served")]).size().to_frame("calls"))
 print("cells with no card: as recorded", int(plain.inside.sum()), "| read_csv served", int(served.inside.sum()), "| of", len(served))
 """)
 
