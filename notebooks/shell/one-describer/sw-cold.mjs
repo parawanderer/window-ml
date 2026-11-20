@@ -11,6 +11,10 @@
 // Not a test: run it through the queue as a batch job:
 //   node scripts/test-slot.mjs run --kind batch -- node notebooks/shell/one-describer/sw-cold.mjs
 // Smoke: node notebooks/shell/one-describer/sw-cold.mjs --variants control,b-z --wakes 3 --launches 1 --out <file>
+//
+// What it writes: its results and builds stay under out/ (sw-cold.json, sw-cold-work/), but the build it runs (`node build.mjs --outdir
+// <out>/sw-cold-work/base`, from the checkout) regenerates the checkout's generated sources (src/*.gen.ts, gitignored) and, when stale, the
+// tracked docs/spec/export.schema.json. Run it in your own clone, not a shared checkout.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
