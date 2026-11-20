@@ -1,6 +1,7 @@
 # Spec (proposed): settings the model can see and change
 
-**Status: proposed 2026-11-13; discovery, the surface and part (c) built (#1815, #1952, #2001).** From
+**Status: proposed 2026-11-13; discovery, the surface, part (c) and the survey read built (#1815, #1952, #2001, the
+survey read's PR).** From
 Shane's words in the calm-chat-motion session (2026-11-13) and the points agreed there, handed to the settings-specs
 lane by the policies/python/desktop/manifests coordinator. Questions 1 and 2 of the first review (`ml.config()` stays as
 it is; the guarded class is not a second mechanism) were ruled by Shane on 2026-11-13 as proposed. Shane also ruled on
@@ -99,7 +100,7 @@ exec's `ml.config()` is open question 1, a later slice.
   the fatigue refusal cannot wait for a later key. Built (#1952).
 - **`propose_policy` rows of consumer `setting`** (part (c)): "Proposing a `setting` policy", below. Built (#2001).
 - **`ml.settings()` in a read-only survey** (open question 9): "`ml.settings()` in a read-only survey", below.
-  Not built.
+  Built (the survey read's PR).
 
 ## Four classes of setting
 
@@ -252,9 +253,10 @@ sidebar, the DevTools panel, the chat page or over the hub. The guards are the o
   (`markWorkerRun`), adoption (`adoptSession` in `src/sw/sw-sessions.ts`, which hydrates a saved session's payload and
   calls `makeWorkerRun`) and the resume. On the three that are not `startUserRun` the toolset is the payload's, which
   cannot carry `change_setting`; a test per caller asserts none yields the tool or `ml.settings()` to a page;
-- `ml.settings()` exists only on the `ml` an isolated-world exec gets in a run the worker built, and an exec naming
-  it is routed as one naming `ml.current` is: in an isolated world, or refused (`src/sw/exec-routing.ts`, whose test
-  for `ml.current` grows `ml.settings`), so a page's script never reads it;
+- `ml.settings()` exists on the `ml` an isolated-world exec gets in a run the worker built, and as a free read in
+  that run's worker survey and on its `ml` wire ("`ml.settings()` in a read-only survey", below). An exec naming it is
+  routed as one naming `ml.current` is: in an isolated world, or refused (`src/sw/exec-routing.ts`, whose test for
+  `ml.current` grows `ml.settings`), and a survey naming it never enters the page, so a page's script never reads it;
 - `injected.ts` does not define it on the page's `window.ml`, and there is no `HANDLE_MAP` entry for either half, so
   nothing on a page can name it; the existing `SET_MODEL` stays the page's only write.
 
@@ -546,12 +548,12 @@ is inert and the measure does not enumerate them), and the `change_setting` tool
 - a label claiming a narrower scope than the measure;
 - a mixed proposal hiding a setting row behind a fetch row.
 
-## `ml.settings()` in a read-only survey (open question 9, not built)
+## `ml.settings()` in a read-only survey (open question 9)
 
-Today `ml.settings()` exists only on the `ml` an isolated-world exec gets, so every read of a setting costs the person
-an exec card for a read that changes nothing. This slice makes it free in the survey's **worker realm** and on the `ml`
-wire a Pyodide cell calls, in a run the worker built, and nowhere else. It adds no new read: the survey returns what
-the isolated exec already returns, from the same function.
+Before this slice `ml.settings()` existed only on the `ml` an isolated-world exec gets, so every read of a setting
+cost the person an exec card for a read that changes nothing. This slice makes it free in the survey's **worker
+realm** and on the `ml` wire a Pyodide cell calls, in a run the worker built, and nowhere else. It adds no new read:
+the survey returns a subset of what the isolated exec returns, from the same function.
 
 **One function, two callers, read by caller.** The survey's `ml.settings()` calls `settingEntries`
 (`src/sw/sw-change-setting.ts`), the function the isolated exec's member calls, with the caller as a parameter

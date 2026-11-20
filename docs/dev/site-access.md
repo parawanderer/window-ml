@@ -792,7 +792,9 @@ run's `@tool:` values by naming the run.
 
 **Members.** They are the worker survey's own facade (`workerReadonlyMl` through `mlFacade` with realm `worker`), cut to
 `ML_READONLY_METHODS`. What reads the page (`queryAll`, `a11y`) is absent, and answered as `Absent` with the list of what
-the code does have. A member added to `ML_READONLY_METHODS` later arrives here without a second list. `full` has the same
+the code does have. A member added to `ML_READONLY_METHODS` later arrives here without a second list. `settings` is the one member
+bound per client: only a client whose handle names a run the worker built (`isWorkerRun`) has it, read as a survey's
+is, with every guarded or gate value `ml.config()` does not return held (`docs/spec/MODEL_SETTINGS.md`). `full` has the same
 set this round: the gated members (a live fetch, `chat`, `click`) come with the consent path, each with its own gate.
 `dereference` is read from the run's resolver and answers `{ text, meta?, warning? }`, or the pointer when the value is
 over `WIRE_VALUE_CAP` (2^20 JSON characters). No read reaches that today: the run's store holds the text the model was

@@ -610,3 +610,34 @@ test("property: parseShRun refuses a $secret in an env value even when handlesIn
     const ok = parseShRun([["true"], { env: { X: "1" } }]);
     assert.equal(ok.env.X, "1");
 });
+
+// --- ml.settings on the wire: only for a client bound to a run the worker built ---
+
+test("settings answers for a worker-built run's client, held and hidden the way a survey's are, and is Absent for a run-less client", T, async () => {
+    const got = {};
+    let nested = 0;
+    await wireRun(async (wire, bg) => {
+        if (nested++) {
+            // The second cell is a page-surface PYTHON_EXEC (no run): its client has run null, so no `settings`.
+            got.runless = await wireCall(bg, wire, "settings");
+            got.runlessConfig = await wireCall(bg, wire, "config");
+            got.runlessWire = wire;
+            return;
+        }
+        got.run = await wireCall(bg, wire, "settings");
+        got.cfg = await wireCall(bg, wire, "config");
+        await bg.send({ type: "PYTHON_EXEC", requestId: "rl", payload: { code: "1", hardened: true } }, {});
+    }, { configExtra: { apiKey: "sk-SENTINEL-123", shellRoots: ["/home/secret-root"] } });
+    const e = got.run.value;
+    assert.ok(e && typeof e === "object", `positive control: a worker-built run's client is answered: ${JSON.stringify(got.run)}`);
+    assert.deepEqual(e.apiKey, { mode: "hidden", class: "secret" });
+    assert.equal(e.shellRoots.held, "exec");
+    assert.ok(!("value" in e.shellRoots), "a held key carries no value");
+    assert.equal(e.cdp.class, "guarded");
+    assert.ok("value" in e.cdp, "a key ml.config() returns is a value");
+    const text = JSON.stringify(got.run);
+    for (const s of ["sk-SENTINEL-123", "secret-root"]) assert.ok(!text.includes(s), `${s} is not on the wire`);
+    assert.equal(got.runlessWire?.run ?? null, null, "the second client is bound to no run");
+    assert.equal(got.runless.error?.code, "Absent", `a run-less client has no settings: ${JSON.stringify(got.runless)}`);
+    assert.ok("value" in got.runlessConfig, "positive control: the run-less client is otherwise served");
+});
