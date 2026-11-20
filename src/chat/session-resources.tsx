@@ -144,7 +144,7 @@ export function fmtAxisTokens(n: number): string {
  * the plot, or the arrow keys, reads one call (`useTimeReadout`, the reading `TimeChart` uses), with the panel's cursor tip.
  * @gallery {"points":[{"ts":1795100000000,"prompt":1200,"completion":180,"cached":0},{"ts":1795100060000,"prompt":2600,"completion":420,"cached":1100},{"ts":1795100200000,"prompt":4100,"completion":90},{"ts":1795100500000,"prompt":5200,"completion":760},{"ts":1795101400000,"prompt":9800,"completion":310}]}
  * @gallery-flow readout tests/gallery-flows/UsageChartView.mjs {"points":[{"ts":1795100000000,"prompt":1200,"completion":180,"cached":0},{"ts":1795100060000,"prompt":2600,"completion":420,"cached":1100},{"ts":1795100200000,"prompt":4100,"completion":90},{"ts":1795100500000,"prompt":5200,"completion":760},{"ts":1795101400000,"prompt":9800,"completion":310}]}
- * @group chat
+ * @group chat chart
  */
 export function UsageChartView({ points }: { points: ChartPoint[] }) {
     const c = usageChart(points, VB_W, VB_H);
