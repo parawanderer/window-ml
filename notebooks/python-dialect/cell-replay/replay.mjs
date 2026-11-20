@@ -27,8 +27,10 @@
 // judges the rest of the cell. Each `<x>.read_csv(src, ...)` call (found with `ast`, so a parenthesis inside a string is
 // not miscounted) is classed by its source: a URL the run fetched with `fetch_url` before the cell, resolved against the
 // page as the fetch cache keys it (`fetched URL`, or `fetched URL, by page path` when the cell or the fetch named it as a
-// path); an `io.StringIO`/`BytesIO` call (`owned buffer`); a URL not fetched; or anything else. A served call is
-// replaced by `pd.DataFrame(replay_csv_<k>)`, a frame the cell builds itself from columns parsed OUTSIDE by real pandas
+// path); an `io.StringIO`/`BytesIO` call (`owned buffer`); a URL not fetched; or anything else. The replay holds one
+// table's bytes, the task's /sales.csv, so only a fetched URL that resolves to that file on the page's origin is served
+// (each URL call records its resolved `path` and `taskTable`); a fetched URL naming any other file, and an owned
+// buffer, whose bytes the replay cannot know, are left as written and still ask. A served call is replaced by `pd.DataFrame(replay_csv_<k>)`, a frame the cell builds itself from columns parsed OUTSIDE by real pandas
 // from the task's /sales.csv bytes with the call's literal keywords (a builtin type name such as `dtype=str` included) from ruling 71's allowed list (a frame read with
 // `index_col` has its index reset to columns, and a keyword that is not a literal, or not on the list, is dropped and
 // counted; a call whose keywords make pandas raise is left as written and marked `served: "raised"` with the error's
@@ -101,7 +103,8 @@ def _replay_kw_value(node):
     return eval(compile(ast.Expression(node), "<kw>", "eval"), {"__builtins__": {}}, dict(_REPLAY_KW_TYPES))
 def _replay_serve(ns, code, page, fetched):
     import ast, json, pandas as _pd
-    from urllib.parse import urljoin
+    from urllib.parse import urljoin, urlsplit
+    origin = urlsplit(page)[:2]
     for k in [k for k in ns.keys() if k.startswith("replay_csv_")]: del ns[k]
     try: tree = ast.parse(code)
     except SyntaxError: return json.dumps({"code": code, "csv": []})
@@ -118,12 +121,15 @@ def _replay_serve(ns, code, page, fetched):
         src = n.args[0] if n.args else next((k.value for k in n.keywords if k.arg == "filepath_or_buffer"), None)
         lit = src.value if isinstance(src, ast.Constant) and isinstance(src.value, str) else lits.get(src.id) if isinstance(src, ast.Name) else None
         fn = src.func if isinstance(src, ast.Call) else None
+        path = task = None
         if lit is not None:
             u = urljoin(page, lit.strip())
             form = ("fetched URL, by page path" if keyed[u] or lit.strip().startswith("/") else "fetched URL") if u in keyed else "URL not fetched"
+            path, task = urlsplit(u).path, urlsplit(u)[:2] == origin and urlsplit(u).path.rstrip("/") == "/sales.csv"
         elif fn is not None and (getattr(fn, "attr", None) or getattr(fn, "id", None)) in ("StringIO", "BytesIO"): form = "owned buffer"
         else: form = "other"
-        row = {"form": form, "served": form.startswith("fetched") or form == "owned buffer"}
+        row = {"form": form, "served": form.startswith("fetched") and task}
+        if path is not None: row["path"], row["taskTable"] = path, task
         if row["served"] and not any(e[0] < at(n.end_lineno, n.end_col_offset) and at(n.lineno, n.col_offset) < e[1] for e in edits):
             kw, dropped = {}, 0
             for k in n.keywords:
