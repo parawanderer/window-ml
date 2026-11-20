@@ -73,6 +73,12 @@ const GENRES = {
         about: "reading a PDF: page measurements, the classifier, the reader on the synthetic fixtures, the worker host",
         files: ["pdf-measure.test.mjs", "pdf-classify.test.mjs", "pdf-read.test.mjs", "pdf-fixtures.test.mjs", "pdf-host.test.mjs"],
     },
+    // Secrets (SECRET_HANDLES.md, site-access.md): the registry of values held as secrets, the scrub that keeps them out
+    // of what a page or the model reads, as each crossing applies it and over a ranged read, and the input that takes one.
+    secrets: {
+        about: "secrets: the registry, the scrub at each crossing and over a ranged read, and the secret input",
+        files: ["secret-registry.test.mjs", "secret-scrub-crossings.test.mjs", "secret-scrub-range.test.mjs", "secret-input.test.mjs"],
+    },
     // Backup and restore (docs/dev/backup.md): the file format and the keys, the storage-key inventory held to the sources,
     // the settings collect/preview/apply, the backup file over the archive's SQLite, and the sequence that drives them.
     backup: {
