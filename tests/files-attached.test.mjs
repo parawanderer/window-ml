@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { wireRun, OFFSCREEN, SITE, plain } from "./ml-wire-harness.mjs";
 import { createFilesSource } from "../src/python/files-source.ts";
 import { HANDLE_MAP } from "../src/page-relay.ts";
+import { valueForms } from "../src/secret-registry.ts";
 
 const TEXT = "alpha\nbeta\ngamma\n";
 const ask = (bg, session, sender = OFFSCREEN) => bg.send({ type: "FILES_ATTACHED", session }, { ...sender }).then(plain);
@@ -46,6 +47,35 @@ test("FILES_ATTACHED: a missing, empty, non-string or unknown session answers no
 test("FILES_ATTACHED is not a page's message: the relay has no entry for it", () => {
     assert.equal("FILES_ATTACHED" in HANDLE_MAP, false);
     assert.ok(!Object.values(HANDLE_MAP).some((e) => e.type === "FILES_ATTACHED" || e.responseType === "FILES_ATTACHED"));
+});
+
+// --- the secrets' forms, for the mount's mask ---
+
+const API_KEY = "sk-live-0123456789abcdef";
+const REGISTERED = "hunter2-correct-horse";
+const REGISTRY = { ml_secret_registry: [{ name: "DB_PASS", value: REGISTERED }] };
+const askForms = (bg, sender = OFFSCREEN) => bg.send({ type: "FILES_SECRET_FORMS" }, { ...sender }).then(plain);
+
+test("FILES_SECRET_FORMS answers the config's and the registry's forms to the offscreen document, and null to anyone else", { timeout: 30000 }, async () => {
+    const { bg } = await wireRun(async () => {}, { calls: [{ name: "python_exec", args: { code: "print(1)" } }], configExtra: { apiKey: API_KEY }, local: REGISTRY });
+    const { forms } = await askForms(bg);
+    const finds = forms.map((f) => f.find);
+    assert.ok(finds.includes(API_KEY), "the API key");
+    assert.ok(finds.includes(REGISTERED), "the registered value");
+    for (const f of valueForms(REGISTERED)) assert.ok(finds.includes(f), `the registered value's form ${f}`);
+    assert.ok(forms.some((f) => f.ci === true && /host/.test(f.find)), "the server URL, in any case");
+    for (const f of forms) assert.deepEqual(Object.keys(f).filter((k) => k !== "ci"), ["find"], "a form carries its text and case rule only");
+    assert.equal(new Set(finds).size, finds.length, "each form once");
+    assert.deepEqual([...finds].sort((a, b) => b.length - a.length), finds, "longest first");
+    assert.deepEqual(await askForms(bg, PAGE), { forms: null }, "a page's tab sender");
+    assert.deepEqual(await askForms(bg, { url: "chrome-extension://test/popup.html" }), { forms: null }, "another extension page");
+    assert.deepEqual(await askForms(bg, { url: "chrome-extension://test/offscreen.html", tab: { id: 1 } }), { forms: null }, "the offscreen URL on a tab");
+    assert.deepEqual(await askForms(bg, {}), { forms: null }, "no sender facts");
+});
+
+test("FILES_SECRET_FORMS is not a page's message: the relay has no entry for it", () => {
+    assert.equal("FILES_SECRET_FORMS" in HANDLE_MAP, false);
+    assert.ok(!Object.values(HANDLE_MAP).some((e) => e.type === "FILES_SECRET_FORMS" || e.responseType === "FILES_SECRET_FORMS"));
 });
 
 // --- the offscreen document's source ---
@@ -107,4 +137,17 @@ test("attached: the store's rows are scanned once per new key, not at every list
     answer = { files: [...answer.files, { handle: "h2", name: "b.txt", key: "k2", bytes: 3, sha256: "y" }] };
     assert.deepEqual((await src.attached("s1")).map((f) => f.attachedMs), [10, 20]);
     assert.equal(scans, 2, "a new key scans again");
+});
+
+test("secretForms: asks the worker at every call, keeps a form's text and case rule only, and throws a fixed message on a failed or malformed answer", async () => {
+    const asked = [];
+    let answer = { forms: [{ find: "s3cr3t-value", ci: false, extra: 1 }, { find: "Host.Example", ci: true }] };
+    const src = createFilesSource({ store: () => fakeStore([]), send: async (m) => { asked.push(m); if (answer instanceof Error) throw answer; return answer; } });
+    assert.deepEqual(await src.secretForms(), [{ find: "s3cr3t-value" }, { find: "Host.Example", ci: true }]);
+    await src.secretForms();
+    assert.deepEqual(asked, [{ type: "FILES_SECRET_FORMS" }, { type: "FILES_SECRET_FORMS" }], "no cache: one ask per call");
+    for (const bad of [new Error("boom s3cr3t-value"), undefined, { forms: null }, { forms: "x" }, { forms: [{ find: 7 }] }, { forms: [null] }]) {
+        answer = bad;
+        await assert.rejects(() => src.secretForms(), (e) => e.message === "the secrets could not be read", JSON.stringify(String(bad)));
+    }
 });

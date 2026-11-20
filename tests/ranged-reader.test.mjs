@@ -4,6 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { RangedReader, DIR_PAGE_MAX, FILES_HOME } from "../src/session/ranged-reader.ts";
+import { maskOverlap } from "../src/secret-mask.ts";
 
 const T = { timeout: 5000 };
 const KB = 1024;
@@ -38,13 +39,20 @@ const deferred = () => { let resolve; const promise = new Promise((r) => { resol
 
 /** The fake source: `sessions` maps a session to its rows; `data` maps a key to bytes. */
 function fakeSource(sessions, data) {
-    const stats = { blobCalls: 0, slices: [], sizes: [], whole: 0 };
+    const stats = { blobCalls: 0, slices: [], sizes: [], whole: 0, formsCalls: 0 };
     const src = {
         stats,
         fail: null,
         gate: null,
         blobGate: null,
+        forms: [],
+        formsFail: false,
         attached: async (s) => sessions[s] ?? [],
+        secretForms: async () => {
+            stats.formsCalls++;
+            if (src.formsFail) throw new Error(`registry at ${URL_SECRET} unreadable, key ${KEY_SECRET}`);
+            return src.forms;
+        },
         blob: async (key, session) => {
             stats.blobCalls++;
             if (src.blobGate) await src.blobGate.promise;
@@ -263,8 +271,10 @@ test("a 3 MiB file read in 512 KiB chunks never slices more than 512 KiB and nev
     assert.equal(pos, big.length);
     assert.deepEqual(got, big);
     assert.equal(source.stats.slices.length, 6);
-    assert.ok(Math.max(...source.stats.slices) <= CHUNK);
-    assert.ok(Math.max(...source.stats.sizes) <= CHUNK);
+    // Each range is read widened by the mask's overlap on each side (the scrub inside the read), never more.
+    const most = CHUNK + 2 * maskOverlap(source.forms);
+    assert.ok(Math.max(...source.stats.slices) <= most);
+    assert.ok(Math.max(...source.stats.sizes) <= most);
     assert.equal(source.stats.whole, 0, "arrayBuffer/text was never called on the whole Blob");
 });
 
@@ -285,6 +295,121 @@ test("fstat answers the open file's stat", T, async () => {
     assert.equal(st.kind, "file");
     assert.equal(st.size, 1000);
     assert.equal(st.readonly, true);
+});
+
+// --- the scrub inside the read: every match becomes as many `*`, length and offsets kept ---
+
+const SECRET = "s3cr3t-value-0123";
+const stars = (n) => "*".repeat(n);
+/** A file of `n` bytes of `.` with `text` written at each offset in `at`. */
+const fileWith = (n, text, at) => { const b = new Uint8Array(n).fill(0x2e); for (const o of at) b.set(new TextEncoder().encode(text), o); return b; };
+/** One session "s1" holding `bytes` as attached/hs/f.bin, with `forms` registered. */
+function scrubSetup(bytes, forms = [{ find: SECRET }]) {
+    const r = setup({ data: { ks: bytes }, sessions: { s1: [row("hs", "f.bin", "ks", bytes)] } });
+    r.source.forms = forms;
+    return r;
+}
+const readAt = async (ch, fd, pos, len) => { const d = new Uint8Array(len); const n = await ch.read(fd, pos, len, d); return new TextDecoder("latin1").decode(d.subarray(0, n)); };
+
+test("a registered value in a file reads as as many `*`; the size, st_size and every other byte are unchanged", T, async () => {
+    const bytes = fileWith(100, SECRET, [10, 60]);
+    const { ch } = scrubSetup(bytes);
+    const { fd, size } = await ch.open("attached/hs/f.bin");
+    assert.equal(size, 100);
+    assert.equal((await ch.fstat(fd)).size, 100);
+    assert.equal((await ch.stat("attached/hs/f.bin")).size, 100);
+    const got = await readAt(ch, fd, 0, 100);
+    assert.equal(got, `${".".repeat(10)}${stars(SECRET.length)}${".".repeat(60 - 10 - SECRET.length)}${stars(SECRET.length)}${".".repeat(100 - 60 - SECRET.length)}`);
+    assert.equal(got.length, 100);
+});
+
+test("a value split across a 512 KiB range boundary is masked in both reads, each its own half", T, async () => {
+    const at = CHUNK - 5;
+    const bytes = fileWith(CHUNK + 1000, SECRET, [at]);
+    const { ch } = scrubSetup(bytes);
+    const { fd } = await ch.open("attached/hs/f.bin");
+    const a = await readAt(ch, fd, 0, CHUNK);
+    const b = await readAt(ch, fd, CHUNK, CHUNK);
+    assert.equal(a.slice(-6), `.${stars(5)}`);
+    assert.equal(b.slice(0, SECRET.length - 5 + 1), `${stars(SECRET.length - 5)}.`);
+    assert.ok(!(a + b).includes(SECRET.slice(0, 5)) && !(a + b).includes(SECRET.slice(5)), "no fragment of it in either read");
+    assert.equal(a.length + b.length, CHUNK + 1000);
+});
+
+test("the widened window is clamped at the file's start and end: a value at byte 0 and one ending at the last byte are masked", T, async () => {
+    const bytes = fileWith(50, SECRET, [0, 50 - SECRET.length]);
+    const { ch, source } = scrubSetup(bytes);
+    const { fd } = await ch.open("attached/hs/f.bin");
+    assert.equal(await readAt(ch, fd, 0, 3), "***");
+    assert.equal(await readAt(ch, fd, 47, 3), "***");
+    assert.equal(await readAt(ch, fd, 47, 100), "***", "a read past the end is cut at it");
+    assert.ok(source.stats.slices.every((n) => n <= 50), "never sliced past the file");
+});
+
+test("a form longer than the range still masks it when it straddles both edges", T, async () => {
+    const long = `${SECRET}-${"x".repeat(300)}`;
+    const bytes = fileWith(1000, long, [100]);
+    const { ch } = scrubSetup(bytes, [{ find: long }]);
+    const { fd } = await ch.open("attached/hs/f.bin");
+    assert.equal(await readAt(ch, fd, 250, 3), "***");
+    assert.equal(await readAt(ch, fd, 100 + long.length - 1, 2), "*.");
+    assert.equal(await readAt(ch, fd, 99, 2), ".*");
+});
+
+test("a ci form masks either case; a form with non-ASCII characters is matched as its UTF-8 bytes", T, async () => {
+    const text = "GET HTTP://Host.Example/x and pässwörd-1234";
+    const bytes = new TextEncoder().encode(text);
+    const { ch } = scrubSetup(bytes, [{ find: "http://host.example", ci: true }, { find: "pässwörd-1234" }]);
+    const { fd, size } = await ch.open("attached/hs/f.bin");
+    assert.equal(size, bytes.length);
+    assert.equal(await readAt(ch, fd, 0, size), `GET ${stars(19)}/x and ${stars(new TextEncoder().encode("pässwörd-1234").length)}`);
+});
+
+test("the forms are asked at every read: a value registered after a read masks the next one through the same descriptor", T, async () => {
+    const bytes = fileWith(100, SECRET, [20]);
+    const { ch, source } = scrubSetup(bytes, []);
+    const { fd } = await ch.open("attached/hs/f.bin");
+    assert.ok((await readAt(ch, fd, 0, 100)).includes(SECRET));
+    source.forms = [{ find: SECRET }];
+    assert.ok(!(await readAt(ch, fd, 0, 100)).includes(SECRET));
+    assert.equal(source.stats.formsCalls, 2);
+});
+
+test("forms that cannot be read, or are malformed, fail the read with EIO naming nothing, and write nothing into dest", T, async () => {
+    const bytes = fileWith(100, SECRET, [20]);
+    const { ch, source } = scrubSetup(bytes);
+    const { fd } = await ch.open("attached/hs/f.bin");
+    for (const set of [() => { source.formsFail = true; }, () => { source.formsFail = false; source.forms = null; }, () => { source.forms = [{ find: 7 }]; }, () => { source.forms = [null]; }]) {
+        set();
+        const dest = new Uint8Array(100).fill(9);
+        const e = await refused(ch.read(fd, 0, 100, dest), "EIO", "read");
+        assert.ok(!e.message.includes(URL_SECRET) && !e.message.includes(KEY_SECRET) && !e.message.includes(SECRET));
+        assert.ok(dest.every((x) => x === 9), "dest untouched");
+    }
+});
+
+test("a zip with a stored member holding the value keeps every offset: its central directory still points at its entries", T, async () => {
+    // A stored (uncompressed) member's bytes are the file's bytes, so the mask lands inside the member and nowhere else.
+    const member = new TextEncoder().encode(`user=admin\npass=${SECRET}\n`);
+    const name = new TextEncoder().encode("creds.txt");
+    const u16 = (v) => [v & 0xff, v >> 8], u32 = (v) => [v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >>> 24) & 0xff];
+    const local = [...u32(0x04034b50), ...u16(10), ...u16(0), ...u16(0), ...u16(0), ...u16(0), ...u32(0), ...u32(member.length), ...u32(member.length), ...u16(name.length), ...u16(0), ...name, ...member];
+    const central = [...u32(0x02014b50), ...u16(10), ...u16(10), ...u16(0), ...u16(0), ...u16(0), ...u16(0), ...u32(0), ...u32(member.length), ...u32(member.length), ...u16(name.length), ...u16(0), ...u16(0), ...u16(0), ...u16(0), ...u32(0), ...u32(0), ...name];
+    const end = [...u32(0x06054b50), ...u16(0), ...u16(0), ...u16(1), ...u16(1), ...u32(central.length), ...u32(local.length), ...u16(0)];
+    const zip = Uint8Array.from([...local, ...central, ...end]);
+    const { ch } = scrubSetup(zip);
+    const { fd, size } = await ch.open("attached/hs/f.bin");
+    const d = new Uint8Array(size);
+    assert.equal(await ch.read(fd, 0, size, d), zip.length);
+    const dv = new DataView(d.buffer);
+    const eocd = size - 22;
+    assert.equal(dv.getUint32(eocd, true), 0x06054b50);
+    const cdAt = dv.getUint32(eocd + 16, true);
+    assert.equal(dv.getUint32(cdAt, true), 0x02014b50, "the central directory is where the end record says");
+    assert.equal(dv.getUint32(dv.getUint32(cdAt + 42, true), true), 0x04034b50, "the member's header is where the directory says");
+    const dataAt = 30 + name.length;
+    const got = new TextDecoder().decode(d.subarray(dataAt, dataAt + member.length));
+    assert.equal(got, `user=admin\npass=${stars(SECRET.length)}\n`);
 });
 
 // --- errors: plain objects, nothing a source said ---

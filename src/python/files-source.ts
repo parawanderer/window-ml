@@ -1,6 +1,7 @@
 // files-source.ts — the offscreen document's FilesSource: a session's attachments asked of the service worker, their bytes read from the document's own value store.
 
 import type { AttachedFile, FilesSource } from "../session/ranged-reader";
+import type { SecretForm } from "../secret-mask";
 import type { ValueRow } from "../pointers/value-store";
 
 /** What the source needs of the value store: one row's bytes and the rows' metadata. */
@@ -12,13 +13,14 @@ export interface FilesSourceStore {
 /** What the source needs of the world: the value store, and a way to ask the service worker (`chrome.runtime.sendMessage`). */
 export interface FilesSourceDeps {
     store: () => FilesSourceStore;
-    send: (message: { type: "FILES_ATTACHED"; session: string }) => Promise<unknown>;
+    send: (message: { type: "FILES_ATTACHED"; session: string } | { type: "FILES_SECRET_FORMS" }) => Promise<unknown>;
 }
 
 /**
  * The `/files` reader's source. `attached` asks the service worker (FILES_ATTACHED) and stamps each file with its value
  * row's `createdAt`; a failed ask lists nothing. `blob` hands out a held row of THIS session only: a key another session
- * holds, an unheld row or a missing one throws.
+ * holds, an unheld row or a missing one throws. `secretForms` asks the service worker (FILES_SECRET_FORMS) at every call
+ * and keeps nothing; a failed or malformed answer throws, with nothing of the answer in its message.
  * @param deps the store and the ask
  * @returns the source
  */
@@ -44,6 +46,13 @@ export function createFilesSource(deps: FilesSourceDeps): FilesSource {
             const { row, blob } = await deps.store().get(key);
             if (row.held !== true || !row.sessions.includes(session)) throw new Error("not a file of this session");
             return blob;
+        },
+        async secretForms(): Promise<readonly SecretForm[]> {
+            let answer: unknown;
+            try { answer = await deps.send({ type: "FILES_SECRET_FORMS" }); } catch { throw new Error("the secrets could not be read"); }
+            const forms = (answer as { forms?: unknown } | undefined)?.forms;
+            if (!Array.isArray(forms) || forms.some((f) => !f || typeof f.find !== "string")) throw new Error("the secrets could not be read");
+            return forms.map((f) => ({ find: f.find, ...(f.ci === true ? { ci: true } : {}) }));
         },
     };
 }

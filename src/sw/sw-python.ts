@@ -6,6 +6,8 @@ import { senderTrust, tabGrants } from "./sw-consent";
 import { isExtensionSender } from "./sw-site-access";
 import { recordHousekeeping } from "./sw-housekeeping";
 import { ensureOffscreen, forgetOffscreen, isOffscreenSender } from "./sw-offscreen";
+import { secretFormsNow } from "./sw-scrub";
+import type { SecretForm } from "../secret-mask";
 import { activeRuns, attachedFilesOf, execReads, isWorkerRun, onSessionRelease, pageValueSession, runControllers } from "./sw-runs";
 import { valueHolders, budgetBytes as valueBudgetBytes, claimValue } from "./sw-values";
 import { PY_PACKAGE_LOADS } from "../python/python-env";
@@ -426,6 +428,19 @@ export function filesAttached(message: any, sender: chrome.runtime.MessageSender
     const session = message?.session;
     if (!isOffscreenSender(sender) || typeof session !== "string" || !session) return { files: [] };
     return { files: attachedFilesOf(session).map((f) => ({ handle: f.id, name: f.name, key: f.data, bytes: f.bytes, sha256: f.sha256 })) };
+}
+
+/**
+ * FILES_SECRET_FORMS: the offscreen document asks for every secret's forms, to mask them in each read of Python's
+ * `/files` mount (secret-mask.ts). The answer is plaintext, so it is given to the offscreen document only (the
+ * FILES_ATTACHED check, no relay entry); anyone else gets `{ forms: null }`, as does a config or registry that cannot
+ * be read, which fails the read.
+ * @param sender the message's sender
+ * @returns the forms, or null
+ */
+export async function filesSecretForms(sender: chrome.runtime.MessageSender): Promise<{ forms: SecretForm[] | null }> {
+    if (!isOffscreenSender(sender)) return { forms: null };
+    try { return { forms: await secretFormsNow() }; } catch { return { forms: null }; }
 }
 
 /** The leased cells this worker sent and is still waiting on, and the last ones it settled: a `PY_DONE` naming neither

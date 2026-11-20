@@ -77,7 +77,7 @@ const GENRES = {
     // of what a page or the model reads, as each crossing applies it and over a ranged read, and the input that takes one.
     secrets: {
         about: "secrets: the registry, the scrub at each crossing and over a ranged read, and the secret input",
-        files: ["secret-registry.test.mjs", "secret-scrub-crossings.test.mjs", "secret-scrub-range.test.mjs", "secret-input.test.mjs"],
+        files: ["secret-registry.test.mjs", "secret-scrub-crossings.test.mjs", "secret-scrub-range.test.mjs", "secret-input.test.mjs", "secret-mask.test.mjs"],
     },
     // `/files` (FILE_ATTACHMENTS.md, "`/files/` read by range, and `ml.fs`"): the ranged reader over the shelf, the
     // offscreen document's source for it, the synchronous channel Python's mount is served over, and the mount itself.
