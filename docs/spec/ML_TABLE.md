@@ -57,10 +57,14 @@ A source is judged exactly as a source in `python_exec`'s `tables` was:
 | a fetch result | as its `url` above: it is read by its URL alone, never by its `.text` or `.table` | as its URL |
 | a path under `/files/` | the path is readable to the model ([`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md)) | refused, with that spec's errno |
 
-- **Built today** (`src/ml/ml-table.ts`; the table above is the design, and these differ from it):
+- **Built as of 2026-11-20 (#2043)** (`src/ml/ml-table.ts`; the table above is the design, and these differ from it):
   - A Sheet always asks in the read-only dialect: the run's approved store (`approvedSheets`) is not read there yet, so
-    the "Unasked when" cell for a Sheet is not built yet. Outside the dialect `ml.table` itself does not ask; it
-    fetches through `FETCH_SHEET_REQUEST` and parses the CSV.
+    the "Unasked when" cell for a Sheet is not built yet. A direct call from page script, or from an exec the person
+    approved, does not ask in `ml.table`. It sends `FETCH_SHEET`, and the worker's gate (`background.ts`) decides: from
+    a page whose site does not approve its own actions, the read is refused unless the tab holds a grant for that
+    Sheet's id, minted when one of its agent runs approved it. A site that approves its own actions, and an extension
+    page, read any Sheet, still host-locked to the `docs.google.com` export URL. This is the gate python_exec's Sheet
+    read goes through, not `ml.fetch`'s: `ml.fetch` never sends `FETCH_SHEET`.
   - A `/files/` path is not readable yet: the dialect does not ask, and the read throws "ml.table(<path>): /files/ is
     not readable from here yet". The errno refusal from `FILE_ATTACHMENTS.md` is not built yet.
   - A URL never fetches: a URL not in the fetch cache asks in the dialect, and throws on a direct call. A URL that was
