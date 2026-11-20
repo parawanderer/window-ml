@@ -24,8 +24,9 @@ and returning length-prefixed JSON, `describe_call_as` plus `harden_argv`. wasm-
 here has been through it.
 
 A Node harness ran both describers on identical inputs: every vector row, then a differential fuzz. The extension
-side is window-ml at `f304734d`. The harness lives in this session's scratchpad, not in the repo; it becomes a
-notebook if the decision wants it rerun.
+side is window-ml at `f304734d`. The harness and the wrapper's source are `notebooks/shell/one-describer/`; every
+figure below is from [`notebooks/shell/one-describer.ipynb`](../../../notebooks/shell/one-describer.ipynb), which keeps
+them with the commands that reproduce them.
 
 ## The numbers
 
@@ -48,16 +49,16 @@ Size, bytes (raw / gzip -9 / brotli -q11):
 
 | Build | Raw | gzip | brotli |
 | --- | --- | --- | --- |
-| wasm opt `z` | 219,183 | 88,802 | 76,616 |
-| wasm opt `s` | 244,731 | 95,167 | 81,126 |
-| wasm opt `3` | 335,415 | 114,831 | 92,508 |
-| TS describer, esbuild minified | 14,911 | 5,650 | 5,241 |
+| wasm opt `z` | 219,135 | 88,764 | 76,661 |
+| wasm opt `s` | 244,675 | 95,110 | 80,998 |
+| wasm opt `3` | 335,351 | 114,784 | 92,348 |
+| TS describer, esbuild minified | 14,911 | 5,625 | 5,172 |
 
-Time, Node 26 on darwin arm64: compile plus instantiate 2.1–3.0 ms (median of 20 fresh compiles; outliers 10–22 ms).
-Per call over the vectors, median / p95: TS 3.2 / 6.1 µs; wasm `z` 86 µs / 3.5 ms, `s` 70 µs / 0.95 ms, `3` 66 µs /
-0.75 ms. The wasm time is the manifest crossing the boundary as JSON and being parsed by serde on every call (by
-program at `s`: `cat` 14 µs, `gh` 581 µs; manifests 283 B to 28 kB); passing the manifest pre-serialised saves only
-about 20%. A handle ABI (parse each manifest once, describe by handle) would remove that; it was not built, so the
+Time, Node 26 on darwin arm64, taken quiet (1-minute load 2.1): compile plus instantiate 0.20 ms at `z` and `s`,
+0.33 ms at `3` (median of 20 fresh compiles; the slowest 1.5 ms at `z`). Per call over the vectors, median / p95: TS
+1.7 / 3.3 µs; wasm `z` 39 / 402 µs, `s` 33 / 336 µs, `3` 31 / 302 µs. The wasm time is the manifest crossing the
+boundary as JSON and being parsed by serde on every call (by program at `s`: `rmdir` 6 µs, `gh` 329 µs; manifests
+262 B to 28 kB); passing the manifest pre-serialised saves only about 20%. A handle ABI (parse each manifest once, describe by handle) would remove that; it was not built, so the
 describer's own cost is not measured.
 
 Not measured: anything in Chrome. Compile time in the service worker and its memory are Node figures above.
@@ -87,13 +88,13 @@ found no verdict-level disagreement beyond what the 532 vectors already pin, and
 splice) was in both ports, where differential testing cannot see it. Review and the red team's targeted rows found it.
 What one copy keeps: the vectors, the red-team suites, and a differential fuzz against the RECORDED vectors' mutations
 with properties instead of a second port (a refused word stays refused under any splice; a described call stays
-described when an operand is renamed). Not counted here: how often, before this spike, the cross-check caught a
-divergence during review. The PR history of the two ports would give that figure, and it is the one number that could
-turn this answer.
+described when an operand is renamed). The review history agrees (the notebook's section 5): of 31 findings on the
+describer's PRs in both repos, one, borderline, was caught by comparing the ports, and it is a validator gap one reader
+could not have had. Every describer defect was found on one side and the other port followed.
 
-**The size.** At `z`, about 15 times the TS describer (219 kB raw, 89 kB gzip), against a Pyodide core the extension
-already ships at 9.6 MB (`pyodide.asm.wasm`). Per call it is 20 to 30 times slower at the median, and up to 3.5 ms at p95 for the
-largest manifests, on a call that then spawns a process; a handle ABI should close most of that. Size and time are not
+**The size.** At `z`, about 15 times the TS describer (219 kB raw, 89 kB gzip; 16 times at gzip), against a Pyodide core the extension
+already ships at 9.6 MB (`pyodide.asm.wasm`). Per call it is 19 to 24 times slower at the median, and about 0.4 ms at p95 for
+the largest manifests, on a call that then spawns a process; a handle ABI should close most of that. Size and time are not
 the deciding cost.
 
 **Whether the approach serves `riskyRegex`.** No. `riskyRegex` (`src/readonly-exec/limits.ts`) is pure string in,
@@ -111,7 +112,13 @@ regex semantics. There is no second port to collapse.
 
 ## What a decision would still need
 
-1. The cross-check's past catches, from the two repos' review history (above).
+1. ~~The cross-check's past catches.~~ Counted 2026-11-19 from GitHub alone (window-ml #683 to #1989, window-ml-host
+   #3 to #53; the notebook's section 5): 31 findings. **A** (caught by comparing the ports): 1, borderline, window-ml
+   #995, where the TS `validateManifest` accepted an unknown `version` key the host's reader refuses; a validator, not
+   `describeCall`, and with one reader the gap could not exist. **B** (one copy would have caught it: a vector, the red
+   team, a review of one side): 15, the awk splice among them. **C** (a cost of two: a port lagging, an order
+   mismatch, a pin bump, message text): 14. Unclear: 1 (#882 with host #19, a gap in both ports that the red team found
+   while reading the host's side). The shared vectors never passed in one repo and failed in the other.
 2. Compile time and memory in Chrome's service worker, cold after an eviction.
 3. A handle ABI, to measure the describer's own time.
 4. The build and release pipeline in the host's CI, and its review cost in window-ml.
