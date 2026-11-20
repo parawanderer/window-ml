@@ -20,6 +20,7 @@ import { MAX_STRING, PIPE_CHARS_PER_STEP, STEP_BUDGET } from "../readonly-exec/l
 import { derefByRun, runControllers, sessionTokens, turnByRun } from "./sw-runs";
 import { shPut, shRead, shRun, type ShAnswer, type ShCallContext } from "./sw-shell-call";
 import { forPage } from "./sw-scrub";
+import { isOffscreenSender } from "./sw-offscreen";
 import { serveWireCall, wirePointer, WireError, wireClient, deliverIfOpen, type WireMember, type WireClient, type WireFrom, type WireArgsMeter } from "./ml-wire-serve";
 
 /** The largest value a call answers in full, as JSON characters; past it, a pointer read answers its pointer instead.
@@ -33,7 +34,7 @@ export const WIRE_VALUE_CAP = 1 << 20;
  * @returns true when it is
  */
 function senderIs(from: WireFrom, sender: chrome.runtime.MessageSender): boolean {
-    return from.kind === "offscreen" && sender.tab == null && typeof sender.url === "string" && sender.url === chrome.runtime.getURL("offscreen.html");
+    return from.kind === "offscreen" && isOffscreenSender(sender);
 }
 
 /**

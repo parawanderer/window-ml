@@ -5,8 +5,8 @@
 import { senderTrust, tabGrants } from "./sw-consent";
 import { isExtensionSender } from "./sw-site-access";
 import { recordHousekeeping } from "./sw-housekeeping";
-import { ensureOffscreen, forgetOffscreen } from "./sw-offscreen";
-import { activeRuns, execReads, isWorkerRun, onSessionRelease, pageValueSession, runControllers } from "./sw-runs";
+import { ensureOffscreen, forgetOffscreen, isOffscreenSender } from "./sw-offscreen";
+import { activeRuns, attachedFilesOf, execReads, isWorkerRun, onSessionRelease, pageValueSession, runControllers } from "./sw-runs";
 import { valueHolders, budgetBytes as valueBudgetBytes, claimValue } from "./sw-values";
 import { PY_PACKAGE_LOADS } from "../python/python-env";
 import { defineJob } from "../job-registry";
@@ -412,6 +412,20 @@ export function pythonReaped(message: any, sender: chrome.runtime.MessageSender,
     }
     const dropped = message.dropped as { count?: unknown; afterCell?: unknown } | undefined;
     if (dropped && typeof dropped.count === "number" && dropped.count > 0) recordRunLog(run, { subsystem: "python", kind: "dropped", reason: "at-reap", detail: { count: dropped.count, afterCell: Number(dropped.afterCell) || 0 } });
+}
+
+/**
+ * FILES_ATTACHED: the offscreen document asks which files a session holds, for Python's `/files` mount. Answered from the
+ * run's shelf, never from a pointer store made for the asking. Only the offscreen document is answered: anyone else, a
+ * missing session or one this worker does not know gets none.
+ * @param message `{ session }`, the run's id
+ * @param sender who sent it
+ * @returns the files, in the shape the reader lists them (`handle`, `name`, `key`, `bytes`, `sha256`)
+ */
+export function filesAttached(message: any, sender: chrome.runtime.MessageSender): { files: { handle: string; name: string; key: string; bytes: number; sha256: string }[] } {
+    const session = message?.session;
+    if (!isOffscreenSender(sender) || typeof session !== "string" || !session) return { files: [] };
+    return { files: attachedFilesOf(session).map((f) => ({ handle: f.id, name: f.name, key: f.data, bytes: f.bytes, sha256: f.sha256 })) };
 }
 
 /** The leased cells this worker sent and is still waiting on, and the last ones it settled: a `PY_DONE` naming neither

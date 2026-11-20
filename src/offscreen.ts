@@ -51,7 +51,9 @@ import { reapDelay, longTimeout, DEFAULT_REAP_BETWEEN_MS } from "./python/py-rea
 import { createPdfHost } from "./pdf/pdf-host";
 import { b64ToBytes, bytesToB64, type PdfMessage, type PdfReadReply, type PdfRenderReply } from "./pdf/pdf-wire";
 import { importTestCode } from "./python/pkg-install-test";
-import { attachFiles, detachFiles, filesMessage } from "./python/files-host";
+import { attachFiles, detachFiles, filesMessage, setFilesReader } from "./python/files-host";
+import { createFilesSource } from "./python/files-source";
+import { RangedReader } from "./session/ranged-reader";
 import { scanCode } from "./python/pkg-scan";
 import { readScan, type ScanResult } from "./python/pkg-scan-note";
 import { holdResult, takeResult } from "./python/py-held-results";
@@ -66,6 +68,10 @@ const store = (): ValueStore => values ??= new ValueStore({
     budgetBytes: () => writeBudget,
     onEvict: (e) => reportHousekeeping({ subsystem: "value-store", kind: "evict", reason: e.reason, key: e.key, bytes: e.shared ? 0 : e.bytes, ...(e.source || e.shared ? { detail: { ...(e.source ? { source: e.source } : {}), ...(e.shared ? { shared: true } : {}) } } : {}) }),
 });
+
+// `/files` in Python (files-host.ts): the reader over this document's value store and the shelf the worker holds. No hide rule yet (POLICIES.md, ruling 34).
+const filesReader = new RangedReader({ source: createFilesSource({ store, send: (m) => chrome.runtime.sendMessage(m) }) });   // state: plumbing — the one reader, a channel per worker
+setFilesReader(() => filesReader.openChannel("files"));
 
 /**
  * A returned DataFrame larger than its preview → the value store, named on the result as `valueKey` (POINTER_VALUES

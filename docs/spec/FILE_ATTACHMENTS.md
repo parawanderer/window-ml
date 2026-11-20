@@ -1001,8 +1001,9 @@ are what the model reads.
    (`src/secret-scrub-range.ts`), which slice 2's text reads call. The write verbs check the transaction and the path
    and then answer `EROFS` everywhere, `agent/` included, until slice 3 lands the write side; `begin`, `commitTx` and
    `abortTx` of an empty transaction succeed, so a front end that opens one per cell works read-only. The offscreen
-   document's wiring (the source over the worker's shelf, and `setFilesReader`) lands once both this and the Python
-   mount's PR are on main.
+   document's wiring has landed: `setFilesReader` over one `RangedReader` whose source (`src/python/files-source.ts`)
+   asks the service worker for a session's files with `FILES_ATTACHED`, answered from the offscreen document only,
+   and reads the bytes from the offscreen document's own value store, held rows of that session only.
 2. `ml.fs` read members in the isolated world, the routing, the dialect entry with its tests, the scrub window, the
    red-team pass, and the Node parity corpus for the read members. Must not break: `ml.current`'s and `ml.sh`'s routing rows.
 3. `ml.fs` write members, the quota setting, and the parity corpus extended to them.
