@@ -38,6 +38,7 @@ import { addressHash } from "./sidebar/links";
 import { config, psError, holdScope } from "./sidebar/store";
 import { residentNow } from "./sidebar/resource/panel-facts";
 import { residentReader } from "./sidebar/resident-reader";
+import { askScan } from "./sidebar/scan-ask";
 import { DEFAULT_CONFIG, SETTING_PLACES, type MlConfig } from "./contract";
 
 /**
@@ -180,6 +181,8 @@ installServices(hostServices(store, extensionPlatform, {
         try { chrome.runtime.sendMessage({ type: "PRICE_CALLS", payload: { calls } }, (resp: { data?: import("./spend/price-book").CallCost[] } | undefined) => resolve(Array.isArray(resp?.data) ? resp.data : null)); }
         catch { resolve(null); }
     }),
+    // The worker that scrubs is this browser's, so only a local runtime's draft is scanned; a hub device's send ignores "send as is".
+    scanTurn: (runtime, texts) => (localRuntimes.has(runtime) ? askScan(texts) : Promise.resolve(null)),
     findSetting: (query) => { searchSettings(query); settingsTab.value = "extension"; mainView.value = "settings"; },
     // A `window-ml:` link sets this page's hash in place, which the router reads like any other address (LINKS.md).
     // The same address twice changes nothing, so it is read again by hand.

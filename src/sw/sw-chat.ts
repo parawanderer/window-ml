@@ -101,7 +101,7 @@ export interface ChatDeps {
     release?(session: string): void;
     /** the scrub for what the person sends (`forTurn`, ruling 39), read once a message; throws `TurnUnreadable` when the
      *  registered secrets cannot be read, and the message is then not sent (ruling 44) */
-    scrub(): Promise<TurnScrub>;
+    scrub(asIs?: string[]): Promise<TurnScrub>;
 }
 
 /** A message's files once its PDFs are read: a text file as sent, a PDF with its pages, what each page sends, and how
@@ -126,6 +126,8 @@ interface BgChat {
     lastTs: number;
     /** the PDFs of its answered messages, in the order sent, held for its session */
     files: ChatHeldFile[];
+    /** the index from which its messages are as the model read them (`StoredSession.scrubbedFrom`) */
+    scrubbedFrom: number;
 }
 
 let deps: ChatDeps | null = null;
@@ -194,9 +196,11 @@ export async function startBackgroundChat(opts: {
     think?: boolean | null;
     ephemeral?: boolean;
     vision?: true;
+    /** the exemption tokens of the values the person chose to send as is (ruling 39, the composer's chip) */
+    asIs?: string[];
 }): Promise<string> {
     const d = need();
-    const scrub = await d.scrub();   // a store that cannot be read refuses the chat before anything starts (ruling 44)
+    const scrub = await (opts.asIs ? d.scrub(opts.asIs) : d.scrub());   // a store that cannot be read refuses the chat before anything starts (ruling 44)
     const prep = await prepare(d, opts.model ?? null, opts.images, opts.files, opts.vision === true);
     evict();
     const hash = mintHash();
@@ -211,6 +215,7 @@ export async function startBackgroundChat(opts: {
         running: null,
         lastTs: d.now(),
         files: [],
+        scrubbedFrom: 0,
     };
     chats.set(hash, chat);
     void turn(chat, opts.text, opts.images, prep, scrub);
@@ -231,12 +236,12 @@ export async function setBackgroundChatModel(hash: string, model: string): Promi
  *  back; `busy` while a turn is still running, since a chat has no inbox to steer into. Throws {@link ImagesRefused}
  *  before the turn when its images may not be sent (`vision: true` is the client's claim that the model sees; the worker cannot tell a claim from the person's word), and
  *  {@link FilesRefused} when a PDF cannot be read or its text files hold more text than a message takes. */
-export async function sendBackgroundChat(hash: string, text: string, images?: string[], files?: SentFile[], vision?: true): Promise<"turn" | "busy" | "not-found"> {
+export async function sendBackgroundChat(hash: string, text: string, images?: string[], files?: SentFile[], vision?: true, asIs?: string[]): Promise<"turn" | "busy" | "not-found"> {
     const chat = chats.get(hash) ?? (await rehydrate(hash));
     if (!chat) return "not-found";
     if (chat.running) return "busy";
     // Read before anything else: a store that cannot be read holds the message (ruling 44), with nothing sent.
-    const scrub = await need().scrub();
+    const scrub = await (asIs ? need().scrub(asIs) : need().scrub());
     const prep = await prepare(need(), chat.model, images, files, vision === true);
     if (chat.running) return "busy";   // another send took the turn while the files were read
     void turn(chat, text, images, prep, scrub);
@@ -370,11 +375,13 @@ async function turn(chat: BgChat, text: string, images: string[] | undefined, pr
     const note = scrub.note();
     const content = `${said}${note}`;
     const user: NeutralMessage = { role: "user", content };
-    const display = framed.display ? scrub.deep(framed.display) : note ? { typed: words, context: [] } : undefined;
+    const plain = framed.display ? scrub.deep(framed.display) : note ? { typed: words, context: [] } : undefined;
+    const kept = scrub.sentAsIs();
+    const display = kept.length ? { ...(plain ?? { typed: words, context: [] }), asIs: kept } : plain;
     if (pictures.length) user.images = pictures;
     // A chat stored before the input scrub holds the person's earlier turns raw: they are scrubbed on the way to the model
-    // and left as stored.
-    const messages = [...chat.messages.map((m) => (m.role === "user" && typeof m.content === "string" && m.content ? { ...m, content: scrub.text(m.content) } : m)), user];
+    // and left as stored. A turn from `scrubbedFrom` on is as the model read it, a value sent as is included, and is sent so.
+    const messages = [...chat.messages.map((m, i) => (i < chat.scrubbedFrom && m.role === "user" && typeof m.content === "string" && m.content ? { ...m, content: scrub.prior(m.content) } : m)), user];
 
     const streaming = !!d.stream;
     d.emit({
@@ -481,6 +488,7 @@ async function persist(chat: BgChat): Promise<void> {
             hash: chat.hash, messages: chat.messages, model: chat.model, extend: null, numCtx: null, numGpu: null,
             think: chat.think, schema: null, toolIds: null, maxTokens: null, save: true,
             ...(chat.files.length ? { files: chat.files } : {}),
+            scrubbedFrom: chat.scrubbedFrom,
         });
     } catch { /* storage full or unavailable: the turn still happened, and resume just will not have it */ }
 }
@@ -502,6 +510,8 @@ async function rehydrate(hash: string): Promise<BgChat | null> {
         turns: stored.messages.filter((m) => m.role === "assistant").length,
         running: null, lastTs: d.now(),
         files: heldFiles(stored.files),
+        // A record from before `scrubbedFrom` holds turns that may be raw: every one of them stays behind the line.
+        scrubbedFrom: Number.isInteger(stored.scrubbedFrom) && stored.scrubbedFrom! >= 0 ? Math.min(stored.scrubbedFrom!, stored.messages.length) : stored.messages.length,
     };
     chats.set(hash, chat);
     return chat;

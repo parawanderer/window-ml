@@ -170,6 +170,9 @@ export interface StartRunPayload {
     /** `false`: send this turn's task as it is, with no registered secret taken out (ruling 39, SECRET_HANDLES.md). Honoured
      *  only for an extension page's call: a page's turn is always scrubbed by value. */
     scrubInput?: boolean;
+    /** the exemption tokens of the values the person chose to send as is (`SCAN_TURN`, the composer's chip): each leaves
+     *  the value it was made from, matched again at send. Honoured only for an extension page's call. */
+    asIs?: string[];
     /** The worker's: this run's user turns were scrubbed as they were sent, so a resume does not scrub its history's user
      *  turns again. Absent on a session stored before the input scrub, whose user turns a resume scrubs on the way to the
      *  model. Stripped from a page's payload. */
@@ -302,6 +305,8 @@ export interface ResumeRunPayload {
     maxSteps?: number;
     /** `false`: send this turn's task as it is (as on START_RUN); honoured only for an extension page's call */
     scrubInput?: boolean;
+    /** exemption tokens, as on START_RUN; honoured only for an extension page's call */
+    asIs?: string[];
 }
 
 /** INJECT_MESSAGE payload — a.say() steering a RUNNING background run: the text is pushed into that
@@ -315,6 +320,8 @@ export interface InjectMessagePayload {
     waitForPerson?: string;
     /** `false`: send this message as it is (as on START_RUN); honoured only for an extension page's call */
     scrubInput?: boolean;
+    /** exemption tokens, as on START_RUN; honoured only for an extension page's call */
+    asIs?: string[];
     /** A stable id for this steer message, minted page-side, so the SW can fan an `agent-say-seen`
      *  event (the "seen" indicator) keyed to the same bubble when the loop actually drains it. */
     sayId?: string;
@@ -455,6 +462,11 @@ export interface StoredSession {
     /** A worker-hosted chat's PDFs, held so their pages can be read again after the message. Absent in a record
      *  written before 2026-11-17 and in every other chat's: none held. */
     files?: ChatHeldFile[];
+    /** A worker-hosted chat's: the index from which its messages are stored as the model read them, each person's turn
+     *  scrubbed where it was sent (ruling 39), so a later turn sends them as they are and a value sent as is stays.
+     *  The person's turns before it are scrubbed on the way to the model each turn. Absent in a record written before
+     *  2026-11-20: every turn it holds then is before it. */
+    scrubbedFrom?: number;
 }
 
 /** A PDF a worker-hosted chat was sent, held for the chat's session (FILE_ATTACHMENTS.md, "Reading the pages held

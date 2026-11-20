@@ -997,6 +997,22 @@ textarea.cinput { resize: none; overflow-y: auto; line-height: 1.5; font: inheri
 /* The files waiting in a composer, as a row of pills beside the image thumbnails. */
 .cfiles { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .cfiles .el-pill { margin-bottom: 0; }
+/* The registered values found in a composer's draft (`TurnChips`): a row of outlined chips, each naming one value with a control
+   to send it as is. The name only, never the value. Quiet until chosen, then the accent says it will go as it is. */
+.tchips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+/* One registered value found in the draft: its name and its "send as is" control, outlined until chosen. */
+.tchip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 1px 4px 1px 8px; line-height: 1.5;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--panel); font-size: 0.85em; color: var(--fg-dim); }
+.tchip.on { border-color: var(--accent); }
+/* The value's registry name on its chip, cut with an ellipsis when long; never the value. */
+.tchip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono, ui-monospace, monospace); font-size: 0.95em; }
+/* The control on a chip, and on a file's chip with a count: text, so it needs no name of its own, and the panel's tip says what it does. */
+.tchip-as { flex: 0 0 auto; padding: 0 6px; border: none; border-radius: 999px; background: transparent; color: var(--fg-faint);
+  font: inherit; font-size: 0.95em; cursor: pointer; white-space: nowrap; }
+.tchip-as:hover, .tchip-as:focus-visible { color: var(--fg); background: var(--bg); }
+.tchip-as[aria-pressed="true"] { color: var(--accent); }
+.file-pill .file-scan { margin-left: 2px; }
+.tchips-note { color: var(--fg-faint); font-size: 0.85em; }
 /* Context-usage gauge (bottom-right of the composer): a small dial icon + a thin
    bar + the figure — outlined track, colour only in the fill. */
 .usage-gauge { gap: 5px; }
@@ -2125,6 +2141,11 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 .r-ts.hoverable { cursor: help; }
 .r-ts.hoverable:hover { opacity: 1; color: var(--fg-dim); }
 .r-ts-line { flex: 1 1 auto; white-space: pre-wrap; word-break: break-word; }
+/* An http(s) address in tool output (output-links.ts): the output's own colour with the underline that says it is a link,
+   so a log full of them does not turn into a wall of blue. */
+a.out-link { color: inherit; text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 2px; cursor: pointer; }
+a.out-link:hover { text-decoration-thickness: 2px; }
+a.out-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
 /* Midnight: the gutter shows time only, so a day change gets its own divider — without it 00:00:01 sits
    directly under 23:59:58 and reads as one second later. */
 .r-ts-day { display: flex; align-items: center; gap: 8px; margin: 5px 0 3px; user-select: none; -webkit-user-select: none; }
@@ -2368,6 +2389,11 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 .mrow { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .who { font-weight: 600; color: var(--kind); font-size: 0.92em; }
 .utext { white-space: pre-wrap; word-break: break-word; color: var(--fg); }
+/* A registered value's place in a message you sent (`RedactedMark`): its name where the worker put `[REDACTED:<NAME>]`, as a small inline marker. */
+.utext-mark { padding: 0 6px; border: 1px solid var(--border); border-radius: 999px; background: var(--panel); color: var(--fg-dim);
+  font-family: var(--mono, ui-monospace, monospace); font-size: 0.85em; cursor: default; }
+/* The quiet line under a message whose registered values were sent as they were (`SentAsIs`). */
+.sent-asis { margin: 2px 0 0; color: var(--fg-faint); font-size: 0.8em; cursor: default; }
 /* A LONG message, folded (user-text.tsx): its first lines, fading into the bubble, and a round chevron at the text's
    bottom right that opens it. Anchored to the TEXT, not the bubble, so it never sits on the images sent with it. */
 .utext-wrap.long { position: relative; }

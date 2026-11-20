@@ -17,6 +17,7 @@
 // loop, and the SIGKILL in the same turn ends the process before that write lands, so the one line that says
 // what died was lost (2026-11-19, run 44519875129: a file killed at its 900 s budget with nothing in the log).
 import { Worker } from "node:worker_threads";
+import { writeSync } from "node:fs";
 
 /** The watcher's source — a Worker thread, so a WASM spin on the main thread cannot starve its clock.
  *  `import()` not `require()`: the Worker eval inherits the creator's module type, and a `--input-type=module`
@@ -58,6 +59,12 @@ export const FILE_GUARD_MS = 15 * 60_000;
  * @returns {() => void} disarm: call from `after()`, once, when the file is finished
  */
 export function armFileGuard({ budgetMs = FILE_GUARD_MS, label = "file-guard" } = {}) {
+    // THE START LINE, beside the kill's. The kill names what died; without this a wedge in a boot and a wedge in a
+    // cell read the same in a CI log — 2026-11-20, #2058's "cell 2 did not finish within 180s" could not say whether
+    // the cell had begun at all, because the job's log interleaves other files' boots (its own blocks once). Written
+    // with `writeSync` for the kill line's reason: a piped stderr goes through the event loop.
+    const took = budgetMs >= 1000 ? Math.round(budgetMs / 1000) + "s" : budgetMs + "ms";
+    try { writeSync(2, `${label} armed, ${took} budget\n`); } catch { /* stderr closed */ }
     const done = new Int32Array(new SharedArrayBuffer(4));
     const worker = new Worker(WATCH_SRC,
         { eval: true, workerData: { done: done.buffer, budgetMs, label } });

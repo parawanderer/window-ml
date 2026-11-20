@@ -308,7 +308,7 @@ const styles = StyleSheet.create({
     try {
         const names = (rows) => rows.map((r) => r[1]).sort();
         assert.deepEqual(names(f.run("row", "--kind", "const,function")), ["webRow"], "mobile/ is out of a plain query");
-        assert.deepEqual(names(f.run("row|badge", "--mobile", "--kind", "const,function,style")), ["SessionRow", "badge", "row", "webRow"]);
+        assert.deepEqual(names(f.run("row|badge", "--mobile", "--kind", "const,function,component,style")), ["SessionRow", "badge", "row", "webRow"]);
         // A style is one row per KEY of the sheet, one level deep: `padding`'s inner key is not a style.
         const styles = f.run("", "--kind", "style", "--mobile");
         assert.deepEqual(styles.map((r) => [r[1], r[3]]), [["badge", "(undocumented)"], ["row", "The row's frame: a 56px target"]]);
@@ -319,4 +319,39 @@ const styles = StyleSheet.create({
         assert.match(out, /Bare/);
         assert.match(out, /style\tbadge/);
     } finally { f.stop(); }
+});
+
+// ---- component kind: a capitalised function declaration in a .tsx file ---------------------------------------
+
+test("index: a capitalised function declaration in .tsx is a component, a const arrow still is, .ts and lowercase are functions", async () => {
+    const fx = fixture({
+        "src/ui.tsx": `// ui.tsx — components.
+
+/** An exported function component. */
+export function Chart() { return null; }
+
+/** A private function component. */
+function Inner() { return null; }
+
+/** A default-exported function component. */
+export default function Page() { return null; }
+
+/** An arrow component. */
+export const Arrow = () => null;
+
+/** A lowercase helper in a tsx file. */
+export function helper() { return 1; }
+`,
+        "src/make.ts": "// make.ts — no JSX.\n\n/** A constructor-like helper. */\nexport function Make() { return 1; }\n",
+    });
+    try {
+        const kindOf = (name) => fx.run(name, "--word").find((r) => r[1] === name)?.[0];
+        assert.equal(kindOf("Chart"), "component");
+        assert.equal(kindOf("Inner"), "component");
+        assert.equal(kindOf("Page"), "component");
+        assert.equal(kindOf("Arrow"), "component");
+        assert.equal(kindOf("helper"), "function");
+        assert.equal(kindOf("Make"), "function");
+        assert.deepEqual(fx.run("", "--kind", "component").map((r) => r[1]).sort(), ["Arrow", "Chart", "Inner", "Page"]);
+    } finally { fx.stop(); }
 });

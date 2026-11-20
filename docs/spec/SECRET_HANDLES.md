@@ -587,13 +587,22 @@ there waits until the scan answer can ride the hub.
 
 **The flag, three levels.**
 
-- **Per value**: "send as is" on a chip. The send carries, for that turn, a digest of each exempt span's content,
-  never an offset, since the draft can change between the scan and the send. The worker runs detection again at the
-  send and exempts a detected span only if its content matches a digest the turn carries. The exemption is accepted
-  only from an extension-page sender; a page-started call cannot carry one. The value reaches the model and the
-  store, and the stored turn keeps the digests, so a later crossing of that turn (a resumed history,
-  `forModelHistory`) leaves those spans and no other. Every other crossing still scrubs the value: a tool result that
-  echoes it is redacted as before.
+- **Per value**: "send as is" on a chip. The scan (`SCAN_TURN`, an extension sender's only) answers each span with
+  its offsets, its name and a token: HMAC-SHA256 of the span's content under a random key the worker keeps in
+  `chrome.storage.session` (`ml_turn_exempt_key`), which no content script or page reads and which never enters a turn,
+  an export, the run log or anything the model reads. The send carries the tokens of the exempt spans, never an
+  offset, since the draft can change between the scan and the send. The worker matches again at the send and exempts a
+  value only where the token made from its content is one the turn carries, so a token made for one value exempts no
+  other, and text edited around a value leaves it exempt while an edited value is scrubbed. A key that cannot be read,
+  or one minted again after the browser cleared session storage, matches no token: the send exempts nothing, and the
+  chip shows again on the next scan. The exemption is accepted only from the person's own surfaces (the HUD's and
+  sidebar's composer, an extension page's call, this browser's chat page), never from a page or a hub device; from
+  them the field is ignored and the turn is scrubbed. No token is stored: a run's stored turn is what the model read,
+  and a resume does not scrub it again (`inputScrubbed`), and a chat sends the turns it stored from `scrubbedFrom` on
+  as they are, so a later crossing of the turn leaves the value sent as is and scrubs nothing it did not already
+  scrub. The value sent as is is in the stored turn and in both exports, because it is what the model read, and the
+  turn's display names it (`asIs`), so a reader sees it was sent on purpose. Every other crossing still scrubs the
+  value: a tool result that echoes it is redacted as before.
 - **Per call**: an option, `scrubInput: false`, on the calls that start or extend a run (`ml.agent`, `ml.step`,
   `createAgent`, `say`). Built so far in the worker only: `START_RUN`, `RESUME_RUN` and `INJECT_MESSAGE` take it,
   honoured for an extension page's call. `ml.agent`, `ml.step`, `createAgent` and `say` get it in ruling 39's PR 3,

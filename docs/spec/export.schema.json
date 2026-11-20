@@ -465,6 +465,13 @@
               }
             ]
           }
+        },
+        "asIs": {
+          "description": "the names of the registered values the person sent as is (\"send as is\" on the composer's chip): the value is in the message, as the model read it, and this marks it by name",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [

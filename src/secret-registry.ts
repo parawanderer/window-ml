@@ -136,6 +136,19 @@ function findHits(text: string, subs: readonly RegistrySub[]): Hit[] {
     return hits;
 }
 
+/** One match a composer is told of: where in its own text, and whose. Never the value, which the text already holds. */
+export interface SpanHit { start: number; end: number; name: string }
+
+/**
+ * The matches in a text, as {@link scrubRegistry} would replace them: offsets and names only.
+ * @param text the text
+ * @param subs from `registrySubs`
+ * @returns the matches in order, each with the form it matched (`find`), for the worker's own use
+ */
+export function findSpans(text: string, subs: readonly RegistrySub[]): (SpanHit & { find: string })[] {
+    return findHits(text, subs).map((h) => ({ start: h.start, end: h.end, name: h.name, find: text.slice(h.start, h.end) }));
+}
+
 /**
  * A text with every registered form replaced by its marker.
  * @param text the text

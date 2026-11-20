@@ -11,6 +11,7 @@ import { residentNow } from "./resource/panel-facts";
 import { downloadBlob } from "./export/download";
 import { printInFrame } from "./export/print-frame";
 import { toHost } from "./parent-channel";
+import { askScan } from "./scan-ask";
 import { SESSIONS_PORT } from "../session/session-server";
 
 
@@ -74,7 +75,9 @@ export const extensionServices: SidebarServices = {
     // a page's, which frames no file.
     acceptsFiles: (hash) => sessionMap.get(hash)?.kind === "agent",
     acceptsPdf: (hash) => sessionMap.get(hash)?.kind === "agent",
-    sendToSession: async (hash, text, images, files) => { toHost({ __mlSidebarApp: "sessionSend", hash, text, images, ...(files?.length ? { files } : {}) }); return { ok: true }; },
+    sendToSession: async (hash, text, images, files, _progress, asIs) => { toHost({ __mlSidebarApp: "sessionSend", hash, text, images, ...(files?.length ? { files } : {}), ...(asIs?.length ? { asIs } : {}) }); return { ok: true }; },
+    // This frame is an extension page, so the worker answers it (SCAN_TURN is an extension sender's only).
+    scanTurn: (texts) => askScan(texts),
     cancelSession: (hash) => toHost({ __mlSidebarApp: "sessionCancel", hash }),
     continueSession: (hash, maxSteps) => toHost({ __mlSidebarApp: "continueRun", hash, ...(maxSteps ? { maxSteps } : {}) }),
     // This frame is attached to the tab the run is in: if it were gone, so would this panel be.
