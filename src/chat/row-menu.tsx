@@ -8,7 +8,8 @@
 import { signal } from "@preact/signals";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { ArchiveCapability, RuntimeInfo, SessionId, SessionKey, SessionSummary } from "../session/session-host";
-import { IconCamera, IconCompose, IconCopy, IconExport, IconMore, IconPin, IconTrash } from "../sidebar/icons";
+import { IconCamera, IconCompose, IconCopy, IconExport, IconInfo, IconMore, IconPin, IconTrash } from "../sidebar/icons";
+import { summaryFor } from "./session-summary";
 import { truncate } from "../sidebar/format";
 import type { ChatStore } from "./chat-store";
 import { Dialog } from "../sidebar/dialog";
@@ -86,6 +87,7 @@ export function SessionActions({ store, s, rt, title, onExport, onPicked }: {
     const act = (run: () => void) => () => { onPicked(); run(); };
     return (
         <>
+            <MenuItem icon={<IconInfo />} label="Summary" onPick={act(() => { summaryFor.value = key; })} />
             <MenuItem icon={<IconPin />} label={pinnedNow ? "Unpin" : "Pin to the top"} onPick={act(() => void setPin(store, s, rt, !pinnedNow))} />
             {mayRename(rt) ? <MenuItem icon={<IconCompose />} label="Rename…" onPick={act(() => { renaming.value = { s, rt, title }; })} /> : null}
             {/* KEPT AND GREYED rather than dropped. A row that disappears teaches nothing and makes the menu a

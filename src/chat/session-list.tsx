@@ -26,19 +26,11 @@ import { toggleRuntime, foldedRuntimes, pinned, ListToggle, orderPins, readState
 import { endingSeen, isUnread } from "./read-marks";
 import { pinnedInOrder } from "./pin-order";
 import { useReorder } from "./pin-reorder";
+import { approvalsPending, STATUS_LABEL } from "./status-words";
 
 /** The index's status as the panel's status dot draws it. A run stopped at its cap is `err` underneath (the reducer marks
  *  an answer `err` on `hitCap`), and is DRAWN amber, in the list and the transcript alike: it did not fail. */
 const DOT: Record<SessionStatus, Status> = { running: "pending", waiting: "pending", done: "ok", capped: "err", error: "err", cancelled: "err", interrupted: "err" };
-
-/** What each status says in a list, where the dot alone would not tell a waiting run from a working one. */
-const STATUS_LABEL: Partial<Record<SessionStatus, string>> = { waiting: "waiting on you", capped: "stopped at its step cap", cancelled: "cancelled", interrupted: "interrupted", error: "failed" };
-
-/** A session's pending approvals, as the one badge that replaces the `waiting` label. PENDING rather than a bare
- *  count, because "1" beside a title reads as a fact about the run rather than as something waiting on the reader —
- *  and without the word "approval", which the badge's colour and its place in a list of runs already say, and which
- *  a phone's row has no width for. The phone's list (mobile/src/screens/ListScreen.tsx) words it the same. */
-export const approvalsPending = (n: number): string => `${n} pending`;
 
 /** A runtime's heading in the list: its name, whether it is reachable, and what this device may do there. */
 function RuntimeHead({ store, rt, folded, onStart }: { store: ChatStore; rt: RuntimeInfo; folded: boolean; onStart: (kind: StartKind, runtime: string) => void }) {

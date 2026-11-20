@@ -1392,14 +1392,6 @@ html[data-calm]:not([data-theme="light"]), html[data-calm]:not([data-theme="ligh
 .chat-more-corner .hbtn { min-width: 36px; min-height: 36px; border-radius: 50%; }
 .chat-more-float { transition: opacity .12s linear; }
 @keyframes chat-fade { from { opacity: 0; } }
-@keyframes chat-pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
-/* AND THE WAY OUT. A sheet that eased in and then ceased to exist between two frames read as two different
-   surfaces, and the vanish lands exactly where the eye is. Quicker than the entrance: arriving wants to be
-   noticed, leaving does not. The duration is `DISMISS_MS` (use-dismiss.ts), which is what keeps the element
-   mounted for exactly this long. */
-@keyframes chat-unpop { to { opacity: 0; transform: translateY(4px) scale(.985); } }
-.chat-menu.leaving { animation: chat-unpop .11s ease-in both; pointer-events: none; }
-@media (prefers-reduced-motion: reduce) { .chat-menu, .chat-menu.leaving { animation: none; } }
 
 /* ===================== THE RAIL, THE GEAR, AND THE SEARCH PAGE (nav.tsx, search-page.tsx) =====================
    Gemini's chrome, because it is the quietest there is: with the list away, the left edge keeps a column of glyphs —
@@ -1424,36 +1416,6 @@ html[data-calm]:not([data-theme="light"]), html[data-calm]:not([data-theme="ligh
 .chat-list-foot .chat-gear-wide { flex: 1 1 auto; width: 100%; }
 .chat-list-foot .chat-att-n { margin-left: auto; }
 
-/* THE PAGE'S ONE MENU LOOK (menu.tsx): a rounded sheet, a glyph and a label per row, a tick on a toggle — Android's
-   list menu, which Gemini borrowed. The row menu and the gear's menu both use it, so they cannot drift apart. */
-.chat-menu {
-    display: flex; flex-direction: column; min-width: 190px; padding: 6px;
-    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
-    box-shadow: 0 12px 36px rgb(0 0 0 / .45); animation: chat-pop .16s cubic-bezier(.2, .7, .3, 1) both;
-    font-size: 13.5px;
-}
-.chat-menu-item {
-    display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px 10px; border: none; border-radius: 9px;
-    background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; white-space: nowrap;
-}
-.chat-menu-item:hover, .chat-menu-item:focus-visible { background: var(--panel-2); outline: none; }
-.chat-menu-ico { display: inline-flex; color: var(--fg-dim); }
-.chat-menu-ico svg { width: 18px; height: 18px; }
-.chat-menu-label { flex: 1 1 auto; }
-/* The reason a row cannot be used, under its own label. A SECOND LINE rather than a tooltip: a tooltip is
-   pointer-only, and a row that cannot be used is exactly the one a finger or a screen reader most needs told. */
-.chat-menu-note { display: block; color: var(--fg-faint); font-size: .84em; line-height: 1.3; margin-top: 1px; white-space: normal; }
-/* A ROW THAT CANNOT BE USED READS AS ONE. Opacity alone left near-black text still looking black — it dimmed the
-   row without greying it, so the only thing saying the row was unavailable was that clicking did nothing. */
-.chat-menu-item.off { cursor: default; color: var(--fg-faint); }
-.chat-menu-item.off .chat-menu-ico, .chat-menu-item.off .chat-menu-on { opacity: .5; }
-.chat-menu-item.off:hover { background: none; }
-.chat-menu-on { display: inline-flex; color: var(--fg); }
-/* A menu row's current value, dim at its right (the theme row: "Dark"), and its caret, turned down while open. */
-.chat-menu-val { margin-left: auto; color: var(--fg-faint); font-size: .92em; }
-.chat-menu-caret { display: inline-flex; color: var(--fg-faint); transition: transform .15s ease; }
-.chat-menu-caret svg { width: 12px; height: 12px; }
-.chat-menu-caret.open { transform: rotate(90deg); }
 /* The choices under an opening row: the list slides open on a cubic ease (grid rows 0fr→1fr, so closing animates
    too), hung off a thin guide under the parent's icon so they read as its children. */
 .chat-menu-subs {
