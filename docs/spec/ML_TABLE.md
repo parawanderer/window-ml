@@ -294,8 +294,8 @@ Today a stored table's `col`, `select`, `records` and a long `head` each re-pars
 - **Bounds.**
   - The source: at most `FETCH_TABLE_MAX` (64 MB) of bytes, inside `valueStoreBudgetMB` on disk.
   - The decode cache: at most 256 MiB of Arrow buffers (`TABLE_DECODE_CACHE_BYTES`), least recently read first out. A
-    decode larger than the cache serves its one read and is not kept. **Provisional:** chosen, not measured. Slice A's PR
-    measures the decode of the 64 MB CSV in the worker (Arrow buffer bytes and peak heap), commits the figure, and
+    decode larger than the cache serves its one read and is not kept. **Provisional:** chosen, not measured. Slice A's
+    PR measures the decode of the 64 MB CSV in the worker (Arrow buffer bytes and peak heap), commits the figure, and
     sets the constant from it.
   - `table-data.ts`'s `MAX_TABLE_ROWS` (200,000) caps the preview a fetch keeps, not the stored table, which has no
     row cap of its own. `dom.ts` has its own `MAX_TABLE_ROWS` (5,000), for a page table, which is never stored.
@@ -368,14 +368,14 @@ Today a stored table's `col`, `select`, `records` and a long `head` each re-pars
 
   | op | column dtypes | value | a null cell | a NaN cell |
   | --- | --- | --- | --- | --- |
-  | `==`, `!=` | any | the column's kind: number for `int64`/`float64`, string for `str`, boolean for `bool`; for `object`, any one of those, and a cell of another kind never matches | `==`: no match. `!=`: **open for Shane** (below) | is null |
+  | `==`, `!=` | any | the column's kind: number for `int64`/`float64`, string for `str`, boolean for `bool`; for `object`, any one of those, and a cell of another kind never matches | `==`: no match. `!=`: matches (ruling 92, below) | is null |
   | `<`, `<=`, `>`, `>=` | `int64`, `float64`, `str`; `object` compares only cells of the value's kind | number or string as above; never boolean | no match | is null |
   | `in` | any | a list of 0 to 1,000 values, each obeying the `==` rule; an empty list matches nothing | no match | is null |
   | `isnull`, `notnull` | any | none | matches `isnull` | matches `isnull` |
 
-  - **Open for Shane: `!=` on a null cell.** The table above gives SQL's rule for every other op. For `!=`, SQL drops the
-    null row and pandas keeps it (`NaN != x` is true), and the Python member reads the same table as pandas. The
-    coordinator brings it to Shane; slice B does not start before it is answered.
+  - **`!=` on a null cell matches (Shane, ruling 92, 2026-11-20).** `where(column, "!=", x)` keeps a row whose cell is
+    null or NaN, the pandas rule (`NaN != x` is true), because the Python member reads the same table as pandas. Every
+    other op keeps SQL's rule, no match on a null cell. `in` is one of those, and there is no `not in`.
   - **Integers past ±2^53.** The page holds doubles, and the decode holds an `int64` column's 64-bit integers.
     - A number value must be a safe integer (`Number.isSafeInteger`) against an `int64` column, or it is refused;
       a BigInt is accepted, for any 64-bit value.
