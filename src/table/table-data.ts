@@ -11,7 +11,7 @@
 // What stays ours is the part that is about THIS project: which cells become numbers (below), and what a
 // model is shown of a table it did not fetch.
 import Papa from "papaparse";
-import { brandTable, brandStored } from "./table-brand";
+import { brandTable, brandStored, brandEditable, storedReader, markFrozenPart, isFrozenTablePart, READ_ONLY_TABLE } from "./table-brand";
 // The TABLE TYPES live in contract.ts, not here: they cross the message channel (a fetch result, a pointer
 // read, an agent output) and `agent_api_docs` is generated from that file, so a type defined here would be
 // invisible to the model that has to use it. This module owns the PARSERS; contract.ts owns the shape.
@@ -494,7 +494,15 @@ export class NotATable extends Error {
 
 // Everything the facade answers to. A key outside this set is a mistake worth reporting, not a miss.
 const TABLE_KEYS = new Set(["columns", "rows", "shape", "dtypes", "delimiter", "truncated", "headerless",
-    "col", "select", "records", "head"]);
+    "col", "select", "records", "head", "copy"]);
+
+/** Freeze a table's data in place and record each part, so a second freeze of the same value skips the walk. */
+function freezeLike(t: TableLike): void {
+    const part = (x: object): void => { if (!isFrozenTablePart(x)) { Object.freeze(x); markFrozenPart(x); } };
+    if (!isFrozenTablePart(t.rows)) { for (const r of t.rows) part(r); part(t.rows); }
+    part(t.columns); part(t.shape);
+    if (t.dtypes) part(t.dtypes);
+}
 
 // INTEROP keys that must never throw, because the language and the platform read them speculatively on
 // objects they know nothing about: `then` decides whether `await` treats this as a thenable (throwing there
@@ -515,10 +523,16 @@ const INTEROP_KEYS = new Set(["then", "toJSON", "constructor", "valueOf", "toStr
  *
  *  `readColumns` makes a STORED table (POINTER_VALUES slice 7): given for a preview whose whole table is in the value
  *  store, `col`, `select`, `records` and a `head` longer than the preview read every row through it, and so return
- *  PROMISES. `rows` stays the preview. A missed `await` is told so rather than handed `undefined`. */
-export function asTable(t: TableLike, opts: { python?: boolean; readColumns?: StoredColumnReader } = {}): Table {
+ *  PROMISES. `rows` stays the preview. A missed `await` is told so rather than handed `undefined`.
+ *
+ *  `frozen` makes a READ-ONLY table (ruling 57, as amended): `t` itself is frozen in place at every level, with no copy,
+ *  and every table derived from it is read-only too. `copy()` is the way to an editable one. */
+export function asTable(t: TableLike, opts: { python?: boolean; readColumns?: StoredColumnReader; frozen?: boolean; editable?: boolean } = {}): Table {
     const reader = opts.readColumns && (t.truncated || t.rows.length < t.shape[0]) ? opts.readColumns : undefined;
-    opts = { python: opts.python };   // a table built FROM a read is whole, so it carries no reader
+    const frozen = !!opts.frozen;
+    if (frozen) freezeLike(t);
+    const editable = !frozen && !!opts.editable;
+    opts = { python: opts.python, frozen, editable };   // a table built FROM a read is whole, so it carries no reader
     const target: Table = {
         ...t,
         col(name: string): TableCell[] {
@@ -551,6 +565,9 @@ export function asTable(t: TableLike, opts: { python?: boolean; readColumns?: St
             // long as the source says, and it is still missing rows, so it keeps saying so.
             const want = Math.min(Math.max(0, Math.floor(Number(n)) || 0), t.shape[0]);
             return asTable({ ...derived([...t.columns], t.rows.slice(0, want), want, t.columns), ...(t.delimiter ? { delimiter: t.delimiter } : {}) }, opts);
+        },
+        copy(): Table {
+            return copyTable(facade, { python: opts.python });
         },
     };
     // A new table over a subset of this one's rows or columns. Always a COPY of the column list — the facade
@@ -594,22 +611,47 @@ export function asTable(t: TableLike, opts: { python?: boolean; readColumns?: St
         // A miss must be loud on the way in too: `"revenue" in t` answering false is fine, but writing to a
         // table that is not yours should not silently succeed.
         set(_obj, key) {
-            throw new NotATable(`This table is read-only — it holds output a step already produced. Copy what you need (\`t.rows.slice()\`) and build on that.`, String(key));
+            throw new NotATable(frozen ? READ_ONLY_TABLE : `This table is read-only — it holds output a step already produced. Copy what you need (\`t.rows.slice()\`) and build on that.`, String(key));
         },
         // The other two ways to change an object's own keys, refused the same way: a `delete t.rows` that
         // succeeded would leave a facade whose description no longer matches its data.
         deleteProperty(_obj, key) {
-            throw new NotATable(`This table is read-only — \`delete\` cannot remove \`${String(key)}\` from it.`, String(key));
+            throw new NotATable(frozen ? READ_ONLY_TABLE : `This table is read-only — \`delete\` cannot remove \`${String(key)}\` from it.`, String(key));
         },
         defineProperty(_obj, key) {
-            throw new NotATable(`This table is read-only — it holds output a step already produced.`, String(key));
+            throw new NotATable(frozen ? READ_ONLY_TABLE : `This table is read-only — it holds output a step already produced.`, String(key));
         },
     }));
-    return reader ? brandStored(facade) : facade;
+    if (frozen) markFrozenPart(facade);
+    if (editable) brandEditable(facade);
+    return reader ? brandStored(facade, reader) : facade;
 }
 
 /** Reads named columns of a stored table, every row: the page's line to the value store, bound to the run that holds it. */
 export type StoredColumnReader = (names: string[]) => Promise<{ rowCount: number; columns: Record<string, TableCell[]> }>;
+
+/** A READ-ONLY facade over the same data as `t`, frozen in place, with no copy and the same store reader: for a table
+ *  something else goes on holding, such as the fetch cache's. Freezing data already frozen costs nothing. */
+export function freezeTable(t: TableLike, opts: { python?: boolean } = {}): Table {
+    const like: TableLike = {
+        columns: t.columns, shape: t.shape, dtypes: t.dtypes, rows: t.rows,
+        ...(t.delimiter ? { delimiter: t.delimiter } : {}), ...(t.truncated ? { truncated: true } : {}), ...(t.headerless ? { headerless: true } : {}),
+    };
+    const reader = storedReader(t) as StoredColumnReader | undefined;
+    return asTable(like, { ...opts, frozen: true, ...(reader ? { readColumns: reader } : {}) });
+}
+
+/** A COPY of a table facade that its caller owns, editable: new row arrays, new column list, and, for a stored table,
+ *  the same store reader, so the copy's `col`/`select`/`records` still read every row. Only the rows in hand are
+ *  copied, never the whole stored file. What `t.copy()` answers. */
+export function copyTable(t: Table, opts: { python?: boolean } = {}): Table {
+    const like: TableLike = {
+        columns: [...t.columns], shape: [t.shape[0], t.shape[1]], dtypes: { ...t.dtypes }, rows: t.rows.map((r) => [...r]),
+        ...(t.delimiter ? { delimiter: t.delimiter } : {}), ...(t.truncated ? { truncated: true } : {}), ...(t.headerless ? { headerless: true } : {}),
+    };
+    const reader = storedReader(t) as StoredColumnReader | undefined;
+    return asTable(like, { ...opts, editable: true, ...(reader ? { readColumns: reader } : {}) });
+}
 
 /** Members a script reaches for on a column or a table when it forgot the `await`. Each throws on a pending read. */
 const MISSED_AWAIT = ["length", "map", "filter", "forEach", "reduce", "slice", "indexOf", "includes", "join", "at", "find", "some", "every", "rows", "columns", "shape", "dtypes", "0"];

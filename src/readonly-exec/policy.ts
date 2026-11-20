@@ -149,7 +149,7 @@ const BY_KIND: Record<MethodKind | "*", readonly string[]> = {
     // scoped at all: `select` picks columns here and CHANGES THE PAGE'S TEXT SELECTION on an `<input>`, so it
     // could never have joined a flat list. Each returns plain data or another facade, reads nothing outside
     // the table, and mutates nothing — the facade itself refuses writes.
-    table: ["col", "select", "records", "head"],
+    table: ["col", "select", "records", "head", "copy"],
     // An `ml.embed` result (embedding.ts): a unit vector and the two comparisons on it. Each is O(dimensions x
     // candidates), charged before it runs (evaluator.ts `preflight`), and neither reads anything but other embeddings.
     embedding: ["dot", "rank"],
@@ -230,6 +230,7 @@ export const NO_CONVERSION: Readonly<Record<string, Readonly<Record<string, stri
     tokenlist: { forEach: "callback", keys: NONE, values: NONE, entries: NONE },
     console: { log: "recorded through printable(), never converted", info: "as log", warn: "as log", error: "as log", debug: "as log" },
     embedding: { dot: "arguments are validated as embeddings by preflight", rank: "as dot" },
+    table: { copy: NONE },
     ObjectCtor: { keys: "property reads, not conversion", values: "as keys", entries: "as keys", fromEntries: "as keys", assign: "as keys" },
     ArrayCtor: { from: "its first argument is an iterable judged by `iterates` (an array-like included), its mapper by onlyOurFunctions", isArray: DATA, of: DATA },
     PromiseCtor: { all: DATA, allSettled: DATA },
@@ -604,6 +605,23 @@ export function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown,
             // you are on reused no grant, so it is not reported as one.
             if (!(r as { live?: unknown }).live) reused?.push(String(url));
             return r;
+        };
+    }
+    // `ml.table(src, opts)` — a whole table the survey owns (docs/spec/ML_TABLE.md). Judged by the host's source rule
+    // before it reads: a page table, a pointer or a URL already in the fetch cache is free; a Sheet or an unfetched URL
+    // is refused here and goes to the person. The source is resolved ONCE (`_tableSurvey`) and the read is of that
+    // resolution, so a source the page shapes (an accessor answering differently each read) cannot be one kind to the
+    // ask and another to the read. The worker has no page, so the member is absent there, and reaching it defers to the
+    // page like any absent member. Only the three options the host reads are passed, as a fresh copy, never the
+    // script's own object.
+    const tableSurvey = (ml as Record<string, unknown>)["_tableSurvey"];
+    if (!worker && typeof tableSurvey === "function") {
+        out.table = (src: unknown, opts?: unknown): unknown => {
+            const s = (tableSurvey as (src: unknown) => { asks: string | null; read: (o: object) => Promise<unknown> }).call(ml, src);
+            if (s.asks) throw new Denied(s.asks);
+            const o = opts && typeof opts === "object" ? opts as object : {};
+            const own = (k: string): unknown => Object.getOwnPropertyDescriptor(o, k)?.value;
+            return s.read({ raw: own("raw") === true, ...(typeof own("delimiter") === "string" ? { delimiter: own("delimiter") as string } : {}), ...(typeof own("header") === "boolean" ? { header: own("header") as boolean } : {}) });
         };
     }
     // `ml.pipe(text, stages)` — the `grep | head` line scanner, which models reach for constantly, often in place of
