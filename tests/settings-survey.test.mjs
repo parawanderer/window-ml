@@ -65,11 +65,11 @@ test("the default reader is exec", () => {
 
 // --- the held set, pinned ---
 
-test("the keys held from a survey today are exactly the spec's eighteen", () => {
-    const held = Object.entries(S.settingEntries(cfg(), "survey")).filter(([, e]) => e.held === "exec").map(([k]) => k).sort();
-    const spec = ["shellEnabled", "shellRoots", "shellPath", "shellSandbox", "execDefaultWorld", "agentStartPage", "agentSeesFocus", "siteRequests", "listPageSessions", "persistUiRuns", "sessionArchive", "sessionRetentionDays", "sessionStoreBudgetMB", "valueStoreBudgetMB", "exportToolDefs", "taskNotifyOnly", "taskTurnChainMax", "shellRevealsAllow"].sort();
-    assert.equal(spec.length, 18);
-    assert.deepEqual(held, spec);
+test("the keys held from a survey today are exactly the spec's list, and a key that moves is named", () => {
+    const held = Object.entries(S.settingEntries(cfg(), "survey")).filter(([, e]) => e.held === "exec").map(([k]) => k);
+    const spec = ["shellEnabled", "shellRoots", "shellPath", "shellSandbox", "execDefaultWorld", "agentStartPage", "agentSeesFocus", "siteRequests", "listPageSessions", "persistUiRuns", "sessionArchive", "sessionRetentionDays", "sessionStoreBudgetMB", "valueStoreBudgetMB", "exportToolDefs", "taskNotifyOnly", "taskTurnChainMax", "shellRevealsAllow", "scrubPersonInput"];
+    assert.deepEqual(held.filter((k) => !spec.includes(k)), [], "held from a survey but not in MODEL_SETTINGS.md's held list: add it there, or make it a value by putting it in ml.config()");
+    assert.deepEqual(spec.filter((k) => !held.includes(k)), [], "in MODEL_SETTINGS.md's held list but no longer held: take it out there");
 });
 
 // --- the publicConfig derivation, both directions ---
