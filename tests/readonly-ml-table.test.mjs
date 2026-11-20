@@ -2,7 +2,7 @@
 // entry in the read-only dialect's facade (src/readonly-exec/policy.ts `mlFacade`): what it is for, the source rule
 // (docs/spec/ML_TABLE.md, "Sources, and when one asks"), and the ADVERSARIAL probes the dialect's rule asks for
 // (docs/dev/readonly-exec.md, "The rule for extending the dialect").
-import { test, afterEach } from "node:test";
+import { test, afterEach, after } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
 import { evalReadonly, NotInDialect, Denied, NeedsPage } from "../src/readonly-exec.ts";
@@ -10,7 +10,7 @@ import { table, tableSurvey } from "../src/ml/ml-table.ts";
 import { mlFetchCache } from "../src/ml/ml-fetch-cache.ts";
 import { derivedFetchFields, cacheCopy } from "../src/ml/fetch-result.ts";
 import { asTable } from "../src/table/table-data.ts";
-import { READ_ONLY_TABLE, isStoredTable } from "../src/table/table-brand.ts";
+import { READ_ONLY_TABLE, isStoredTable, isFrozenTablePart } from "../src/table/table-brand.ts";
 
 const doc = () => new JSDOM("<!doctype html><body><p id='p'>hello</p></body>").window.document;
 const SALES = { columns: ["region", "amount"], rows: [["north", 10], ["south", 20]] };
@@ -186,6 +186,46 @@ test("a table read for this call alone is editable and not frozen: a page table,
         assert.equal(t.rows[0][1], 999, what);
     }
     assert.deepEqual(mlFetchCache.get(CSV_URL).table.rows[0], ["north", 10], "a parse with options never reaches the cache's table");
+});
+
+/** The service worker's end of the page channel, for a Sheet read: answers each FETCH_SHEET_REQUEST with `csv`, and records the URLs asked. */
+function sheetWorker(csv) {
+    const asked = [];
+    let far = null;
+    globalThis.window = { dispatchEvent: (e) => { far = e.ports[0]; return true; } };
+    return import("../src/page-channel.ts").then(({ toIsolated }) => {
+        toIsolated({ type: "PING" });   // opens the main side, which hands its far port to the window above
+        far.onmessage = (e) => {
+            if (e.data?.type !== "FETCH_SHEET_REQUEST") return;
+            asked.push(e.data.payload.url);
+            far.postMessage({ type: "FETCH_SHEET_RESPONSE", requestId: e.data.requestId, result: { csv, name: "Sales" } });
+        };
+        return { asked, close: () => far.close() };
+    });
+}
+
+test("a Google Sheet's table is parsed for this call alone: editable, not frozen, and a second read does not see the first's edit", async () => {
+    const worker = await sheetWorker("a,b\n1,2\n3,4\n");
+    after(() => { worker.close(); delete globalThis.window; });
+    const SHEET = "https://docs.google.com/spreadsheets/d/abc/edit#gid=3";
+    const { ml } = host();
+    const t = await ml.table(SHEET);
+    assert.equal(worker.asked.length, 1, "the page channel was asked once, for the Sheet's CSV export");
+    assert.match(worker.asked[0], /docs\.google\.com\/spreadsheets\/d\/abc\/export\?/);
+    assert.deepEqual(t.columns, ["a", "b"]);
+    assert.deepEqual(t.rows, [[1, 2], [3, 4]]);
+    for (const [name, part] of [["rows", t.rows], ["a row", t.rows[0]], ["columns", t.columns]]) {
+        assert.ok(!Object.isFrozen(part), `${name} is not frozen`);
+        assert.ok(!isFrozenTablePart(part), `${name} is not a frozen table part`);
+    }
+    t.rows[0][1] = 999; t.rows.push([5, 6]); t.columns.push("c");
+    assert.equal(t.rows[0][1], 999, "a cell write succeeds and is visible");
+    assert.equal(t.rows.length, 3);
+    const again = await ml.table(SHEET);
+    assert.equal(worker.asked.length, 2, "the second read is a fresh fetch and parse");
+    assert.deepEqual(again.rows, [[1, 2], [3, 4]], "the first call's edit is not seen");
+    assert.deepEqual(again.columns, ["a", "b"]);
+    assert.notEqual(again.rows, t.rows);
 });
 
 test("in the dialect a page table is the script's to edit, down to its rows", async () => {
