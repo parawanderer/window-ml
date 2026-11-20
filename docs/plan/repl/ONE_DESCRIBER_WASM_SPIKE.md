@@ -61,7 +61,7 @@ boundary as JSON and being parsed by serde on every call (by program at `s`: `rm
 262 B to 28 kB); passing the manifest pre-serialised saves only about 20%. A handle ABI (parse each manifest once, describe by handle) would remove that; it was not built, so the
 describer's own cost is not measured.
 
-Not measured: anything in Chrome. Compile time in the service worker and its memory are Node figures above.
+Chrome's service worker, cold after an eviction: measured 2026-11-20 (item 2 below, the notebook's section 6).
 
 ## The five answers
 
@@ -71,7 +71,7 @@ their results. A service worker may not use top-level `await`, so there are two 
 handler awaits before its first `planSpawn`: a few milliseconds on the first call after a wake, the describer stays
 synchronous inside. (b) The bytes embedded in the bundle (about 292 kB as base64 at `z`) and compiled synchronously
 with `new WebAssembly.Module` when the module evaluates: no not-yet-loaded state at all, at the cost of the bundle and
-a synchronous compile on every wake; Chrome's limits on synchronous compile in a worker are unmeasured. (a) is the
+a synchronous compile on every wake; Chrome compiles it synchronously in the worker (item 2 below). (a) is the
 smaller change. Either way a describer that failed to load must answer "not described" (the call asks), never throw
 past the gate. The CSP already allows it (`'wasm-unsafe-eval'` in `manifest.json`), and `src/session/image-worker.ts`
 already loads a module.
@@ -121,6 +121,26 @@ regex semantics. There is no second port to collapse.
    while reading the host's side). The shared vectors never passed in one repo and failed in the other. One reader
    classed the 31 findings, and B against C is a judgment per row; `history.json` keeps each row's quote and
    reasoning.
-2. Compile time and memory in Chrome's service worker, cold after an eviction.
+2. ~~Compile time and memory in Chrome's service worker, cold after an eviction.~~ Measured 2026-11-20 (ruling 90;
+   the notebook's section 6, raw timings in `notebooks/shell/data/one-describer/sw-cold.json`). The setup: Chromium
+   151.0.7922.34 on darwin arm64, the built extension with a probe prepended to `background.js`. A control with no wasm
+   ran beside shapes (a) and (b), each at `z` and `s`. Each variant had two fresh profiles of 35 wakes: stopped with
+   DevTools' Stop, woken by a message from the popup page, one call alternating `rmdir` and `gh`. All 350 stopped wakes
+   started a new worker, and every call was described. Chrome does not refuse the synchronous compile at 219 or 245 kB.
+   What the describer adds to a cold wake over the control (the page's send to the answer, median / p95): shape (a)
+   3.0 / 8.1 ms at `z` and 3.2 / 10.5 ms at `s`; shape (b) 3.2 / 8.0 ms at `z` and 5.2 / 13.0 ms at `s`. Inside the
+   worker, the module is ready 12.4 ms after the script starts for shape (a), where the compile overlaps the bundle's
+   own evaluation. For shape (b) it is ready after 2.2 ms, synchronously, base64 decode included. The whole wake takes
+   32 to 34 ms at the median against the control's 29.0 ms. Most of that is the extension's own 3.8 MB script: the
+   control alone answers 13.3 ms after its first line. One cost appears only in a fresh profile: the first compile of
+   shape (a), at install, took 88 to 101 ms (4 starts), while shape (b) took 2.6 to 3.1 ms. Later wakes look like they
+   read a code cache, which was not isolated. Heap after the answer (`Runtime.getHeapUsage`; `performance.memory` is
+   undefined in a service worker): shape (a) adds about 220 to 240 kB, all of it embedder heap; shape (b) adds 324 to
+   382 kB of JS heap, which is the base64 literal. The wasm memory is 1.7 MB in both. The caveat: the load average was
+   6.5 at the start and 18.7 at the end, so other jobs were running. The control's own median round trip moved 4 ms
+   between its two profiles (26.9 and 31.3 ms), as much as the describer adds, so the added figures above are upper
+   bounds measured under load. Read as what the describer adds, the medians of both shapes at `z` are about 3 ms
+   against a bar of 10, and the p95s about 8 ms against 50. Read as the whole wake, the control alone is already over
+   10 ms.
 3. A handle ABI, to measure the describer's own time.
 4. The build and release pipeline in the host's CI, and its review cost in window-ml.
