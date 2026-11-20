@@ -38,6 +38,50 @@ export function nearestPoint(points: TimePoint[], t: number): number {
 }
 
 /**
+ * The READING of a chart over time, apart from what it draws: which sample is under the pointer (or the arrow keys), and the
+ * panel's one cursor tip showing that sample's readout. Spread `handlers` on the box laid over the plot and give it
+ * `ref={box}`, `tabIndex={0}` and an accessible name; draw the rule from `at`.
+ *
+ * Pointer and tap snap to the sample whose position (`fracOf(i)`, a fraction of the plot's width) is nearest; ArrowLeft and
+ * ArrowRight step (from none, the first or the last), Escape, blur and leaving hide. A tip this hook put up is taken down
+ * when the chart unmounts under a still pointer, which raises no leave.
+ * @param count how many samples there are
+ * @param fracOf where sample `i` sits across the plot, 0 to 1
+ * @param tip the readout for sample `i`
+ */
+export function useTimeReadout({ count, fracOf, tip }: { count: number; fracOf: (i: number) => number; tip: (i: number) => ComponentChildren }) {
+    const [at, setAt] = useState<number | null>(null);
+    const box = useRef<HTMLDivElement>(null);
+    const owns = useRef(false);
+    useEffect(() => () => { if (owns.current) cursorTip.value = null; }, []);
+    /** Show sample `i`, with the tip at the pointer, or at the rule when the keyboard moved it. */
+    const show = (i: number, cx?: number, cy?: number) => {
+        setAt(i);
+        const r = box.current?.getBoundingClientRect();
+        const px = cx ?? (r ? r.left + fracOf(i) * r.width : 0);
+        const py = cy ?? (r ? r.top + r.height / 2 : 0);
+        owns.current = true;
+        cursorTip.value = { x: px, y: py, node: tip(i) };
+    };
+    const hide = () => { setAt(null); if (owns.current) { cursorTip.value = null; owns.current = false; } };
+    const fromPointer = (e: PointerEvent) => {
+        const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        const frac = r.width > 0 ? Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) : 0;
+        let best = 0;
+        for (let i = 1; i < count; i++) if (Math.abs(fracOf(i) - frac) < Math.abs(fracOf(best) - frac)) best = i;
+        show(best, e.clientX, e.clientY);
+    };
+    const onKey = (e: KeyboardEvent) => {
+        const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+        if (e.key === "Escape") { hide(); return; }
+        if (!step || !count) return;
+        e.preventDefault();
+        show(Math.min(count - 1, Math.max(0, (at ?? (step > 0 ? -1 : count)) + step)));
+    };
+    return { at, box, hide, handlers: { onPointerMove: fromPointer, onPointerDown: fromPointer, onPointerLeave: hide, onKeyDown: onKey, onBlur: hide } };
+}
+
+/**
  * A stacked area chart over time with a hover readout: a rule at the nearest sample, a dot on each series' top edge,
  * and a tooltip naming the time, every series' value and the total.
  *
@@ -54,11 +98,8 @@ export function TimeChart({ points, series, format, formatTime = defaultTime, la
     points: TimePoint[]; series: TimeSeries[]; format: (v: number) => string; formatTime?: (t: number) => string;
     label: string; axis?: ComponentChildren; height?: number; backdrop?: TimeSeries | null; lines?: TimeLine[];
 }) {
-    const [at, setAt] = useState<number | null>(null);
-    const box = useRef<HTMLDivElement>(null);
-    // A tip this chart put up is taken down if the chart goes away under a still pointer, which raises no leave.
-    const owns = useRef(false);
-    useEffect(() => () => { if (owns.current) cursorTip.value = null; }, []);
+    // The reading (hover, tap, arrows, the tip) is the shared hook's; `x`, `W` and `tip` below are read when it calls them.
+    const { at, box, handlers } = useTimeReadout({ count: points.length, fracOf: (i) => x(points[i].t) / W, tip: (i) => tip(i) });
     if (points.length < 2) return null;
 
     const t0 = points[0].t, t1 = points[points.length - 1].t, span = Math.max(1, t1 - t0);
@@ -107,34 +148,11 @@ export function TimeChart({ points, series, format, formatTime = defaultTime, la
             </div>
         );
     };
-    /** Show sample `i`, with the tip at the pointer, or at the rule when the keyboard moved it. */
-    const show = (i: number, cx?: number, cy?: number) => {
-        setAt(i);
-        const r = box.current?.getBoundingClientRect();
-        const px = cx ?? (r ? r.left + (x(points[i].t) / W) * r.width : 0);
-        const py = cy ?? (r ? r.top + r.height / 2 : 0);
-        owns.current = true;
-        cursorTip.value = { x: px, y: py, node: tip(i) };
-    };
-    const hide = () => { setAt(null); if (owns.current) { cursorTip.value = null; owns.current = false; } };
-    const fromPointer = (e: PointerEvent) => {
-        const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-        const frac = r.width > 0 ? Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) : 0;
-        show(nearestPoint(points, t0 + frac * span), e.clientX, e.clientY);
-    };
-    const onKey = (e: KeyboardEvent) => {
-        const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
-        if (e.key === "Escape") { hide(); return; }
-        if (!step) return;
-        e.preventDefault();
-        show(Math.min(points.length - 1, Math.max(0, (at ?? (step > 0 ? -1 : points.length)) + step)));
-    };
-
     const p = at != null ? points[at] : null;
     return (
         <div class="tc">
             <div class="tc-plot" ref={box} style={{ height: `${height}px` }} tabIndex={0} role="img" aria-label={label}
-                onPointerMove={fromPointer} onPointerDown={fromPointer} onPointerLeave={hide} onKeyDown={onKey} onBlur={hide}>
+                {...handlers}>
                 <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">{back}{areas}{overlays}</svg>
                 {p ? <>
                     {/* The resource panel's cursor line, snapped: the readout is that sample's, and so is the clock. */}
