@@ -36,6 +36,7 @@ import { MenuItem } from "./menu";
 import { SessionModelPicker } from "./model-picker";
 import { ChatSeesImages } from "./sees-images";
 import { DeleteConfirm, RenameDialog, SessionActions, usePeek } from "./row-menu";
+import { SessionSummaryDialog } from "./session-summary";
 import { GearMenu, Rail, mainView, openSession } from "./nav";
 import { SearchPage } from "./search-page";
 import { SettingsPage, settingsAnchor, settingsPlace, settingsTab } from "./settings-page";
@@ -791,6 +792,7 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
             <Lightbox platform={platform} />
             <DeleteConfirm store={store} />
             <RenameDialog store={store} />
+            <SessionSummaryDialog store={store} />
             <ExportChat />
         </div>
     );

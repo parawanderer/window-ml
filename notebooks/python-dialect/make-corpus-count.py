@@ -339,13 +339,21 @@ def kind_methods(kinds):
 # builtin back to its descriptor (tests/python-dialect-out-args.test.mjs).
 UNLISTED = {("numpy", "ndarray"): {"round": "a C method that writes its out argument; its checker does not survive * or ** spreading"}}
 
+# Names listed whatever the count: ruled in (V1, repl-specs 2026-11-19) from the cell replay's first refusals on #1997,
+# where each stopped a cell the count's threshold had not reached. Series.dtype and DataFrame.dtypes are NOT here:
+# str() of a numpy dtype imports from C under the cell's frame, which has no __builtins__ (KeyError), so admitting
+# them would hand the model an error a full run never gives (#2040).
+LISTED = {("numpy", None): {"rint"}, ("pandas", "DataFrame"): {"columns", "shape"}, ("pandas", "Series"): {"iloc"}}
+
 def manifest(mod):
     fns = module_names(mod)
     kinds = kind_methods(KINDS[mod])
     pick = lambda d: sorted(k for k, v in d.items() if v >= MIN_CELLS)
     never = lambda k: UNLISTED.get((mod, k), {})
+    ruled = lambda k: LISTED.get((mod, k), set())
     return {"module": mod, "version_counted_against": (pd if mod == "pandas" else np).__version__, "min_cells": MIN_CELLS,
-            "functions": pick(fns), "kinds": {k: [n for n in pick(v) if n not in never(k)] for k, v in kinds.items()},
+            "functions": sorted(set(pick(fns)) | ruled(None)),
+            "kinds": {k: sorted(n for n in set(pick(v)) | ruled(k) if n not in never(k)) for k, v in kinds.items()},
             "observed": {"functions": dict(sorted(fns.items())), "kinds": {k: dict(sorted(v.items())) for k, v in kinds.items()}},
             "note": "names only; effects, return marking (fresh/alias/internal) and cost shapes are the second pass, after the CPython restricted mode"}
 

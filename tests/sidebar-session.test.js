@@ -416,6 +416,37 @@ test("composer usage gauge: fills against the loaded model's context window (occ
     assert.ok(w.shadow.querySelector(".usage-fill"), "has a fill bar");
 });
 
+test("composer usage gauge: a new figure rolls only the digit that changed, drawn first without a roll, and the footer ships the roll CSS", async () => {
+    const w = await loadSidebarWorld({
+        vram: [{ model: "gemma4:31b", vramGB: 21, contextLength: 1000, expiresAt: null }],
+    });
+    await w.dispatch(chatStart("rol", 0, "hi", { model: "gemma4:31b" }));
+    await w.dispatch(chatResult("rol", 0, "a", { model: "gemma4:31b", usage: { promptTokens: 250, completionTokens: 50, totalTokens: 300 } }));
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector(".row").click();
+    await w.tick(); await w.flush();
+    const pct = () => w.shadow.querySelector(".usage-pct");
+    assert.equal(pct().textContent, "30%");
+    assert.equal(pct().querySelectorAll(".tick-d.rolled").length, 0, "drawn, not changed: nothing rolls");
+    const tens = pct().querySelector(".tick-d");
+    // `Ticking` clears its first-render guard in a mount effect, which Preact schedules on a frame; `tick`/`flush` do not
+    // cross one, so without this the update can land while the guard still says "first render" and nothing rolls.
+    await new Promise((r) => w.window.requestAnimationFrame(() => r()));
+    await w.dispatch(chatStart("rol", 1, "more", { model: "gemma4:31b" }));
+    await w.dispatch(chatResult("rol", 1, "b", { model: "gemma4:31b", usage: { promptTokens: 350, completionTokens: 50, totalTokens: 400 } }));
+    await w.tick(); await w.flush();
+    await w.tick(); await w.flush(); await w.tick();
+    assert.equal(pct().textContent, "40%");
+    const rolled = [...pct().querySelectorAll(".tick-d.rolled")].map((e) => e.textContent);
+    assert.deepEqual(rolled, ["4"], "one roll for the update: only the tens digit changed (0 stayed)");
+    assert.notEqual(pct().querySelector(".tick-d"), tens, "the changed digit is a new element");
+    const css = (await import("node:fs")).readFileSync(new URL("../src/sidebar/sidebar.css", import.meta.url), "utf8");
+    assert.match(css, /\.usage-gauge \.tick-d\.rolled[^{]*\{ animation: chat-tick-in/, "the roll reaches the panel");
+    assert.match(css, /@keyframes chat-tick-in/, "the keyframes ship in the stylesheet the panel and the chat page both load");
+    assert.match(css, /prefers-reduced-motion: reduce\) \{ \.usage-gauge \.tick-d\.rolled/, "reduced motion: no roll");
+    assert.match(css, /\.usage-pct \{[^}]*min-width: 4ch/, "the percentage holds the width of 100%, so the bar does not slide");
+});
+
 test("composer usage gauge: a DEFAULT session (no requested model) uses the RESOLVED model's window", async () => {
     // Regression: a plain ml.chat() has request.model === null (s.model null), but the
     // reply resolved to a resident model. The gauge must look up the RESOLVED model

@@ -8,6 +8,7 @@
     "argwhere",
     "array",
     "mean",
+    "rint",
     "sum",
     "where"
   ],
@@ -129,6 +130,12 @@
       "returns": "fresh; alias(the out argument) when out= is given",
       "cost": "size",
       "why": "a new float, from a pass over the input, or the out array written in place"
+    },
+    "numpy.rint": {
+      "effects": "pure; mutates(the out argument) when out= is given",
+      "returns": "fresh; alias(the out argument) when out= is given",
+      "cost": "size",
+      "why": "a ufunc: a new array of rounded values, or the out array written in place (ruled in, V1 2026-11-19)"
     },
     "numpy.sum": {
       "effects": "pure; mutates(the out argument) when out= is given",

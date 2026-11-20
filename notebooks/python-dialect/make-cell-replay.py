@@ -57,6 +57,7 @@ import wmlnb
 HERE = wmlnb.ROOT / "notebooks" / "python-dialect"
 PLAIN = HERE / "data" / "cell-replay" / "replay.json"
 OWNED = HERE / "data" / "cell-replay" / "replay-owned-plain.json"
+SERVED = HERE / "data" / "cell-replay" / "replay-read-csv-served.json"
 pd.set_option("display.width", 200)
 pd.set_option("display.max_colwidth", 80)
 
@@ -66,7 +67,8 @@ def replay(mode, out):
 
 plain = pd.DataFrame(wmlnb.extract(PLAIN, lambda: replay("", PLAIN), source={}))
 owned = pd.DataFrame(wmlnb.extract(OWNED, lambda: replay("--owned-plain", OWNED), source={}))
-pd.DataFrame(wmlnb.provenance(PLAIN, OWNED))
+served = pd.DataFrame(wmlnb.extract(SERVED, lambda: replay("--read-csv-served", SERVED), source={}))
+pd.DataFrame(wmlnb.provenance(PLAIN, OWNED, SERVED))
 """)
 
 md("""
@@ -99,10 +101,14 @@ def klass(text):
         if re.search(rx, text): return name
     return "unclassified"
 
-for df in (plain, owned):
+for df in (plain, owned, served):
     df["class"] = df.refused.map(klass)
     df["outcome"] = df["class"].fillna("finished inside")
     df.loc[df.inside & df.insideError.notna(), "outcome"] = "inside, raised (no card: the error is the result)"
+# A served read_csv whose keywords make pandas raise raises that error in the cell: no card. The replay leaves the call
+# as written (refused), so it is counted here, where that call is the cell's first refusal.
+raised = served.csv.map(lambda c: isinstance(c, list) and any(x.get("served") == "raised" for x in c)) & served["class"].eq("unlisted leaf: pd.read_csv")
+served.loc[raised, ["inside", "outcome"]] = [True, "inside, raised (no card: the error is the result)"]
 
 print(f"{len(plain)} cells in {plain.run.nunique()} runs, {plain.model.nunique()} models")
 plain.outcome.value_counts().to_frame("cells").assign(share=lambda t: (t.cells / len(plain)).round(3))
@@ -164,10 +170,70 @@ moved
 """)
 
 md("""
+## The other counterfactual: `read_csv` served (ruling 71)
+
+ML_TABLE.md (ruling 71) serves `pd.read_csv(src)` inside when `src` is a URL in the run's fetch cache, a fetch result, a
+readable `/files/` path, or an `io.StringIO`/`BytesIO` the cell owns; a URL the run did not fetch asks. The recorded
+cells stop at their first `read_csv`, so this replay (`--read-csv-served`) serves the calls that rule serves and judges
+the rest of each cell. Each call is classed by its source: a URL a `fetch_url` earlier in the run fetched, compared after
+resolving both against the page as the fetch cache keys them (`by page path` when either named it as a path, which needs
+V2 to resolve a page path in `read_csv` as `tables` does); an owned buffer; a URL not fetched; anything else. The replay
+holds one table's bytes, so it serves only a fetched URL that resolves to the task's /sales.csv on the page's origin
+(`taskTable`, recorded with the resolved path for every URL call); a fetched URL naming another file, or an owned
+buffer, is left as written and still asks. A served
+call becomes a frame the cell builds itself from columns real pandas parsed outside, from the task's /sales.csv bytes,
+with the call's literal keywords from the allowed list. A frame read with `index_col` has its index reset to columns,
+and a call whose keywords make pandas raise is left as written (served, it would raise that error in the cell, with
+no card).
+
+Packages' scratch counterfactual over the same 58 exports (every `read_csv` rewritten to one frame, keywords dropped)
+gave 84 of 129 cells without a card, 46 as recorded. It ran on manifests from before #1993, which delisted
+`ndarray.round`; the cell-by-cell difference from this replay is below.
+""")
+
+code("""
+calls = served[served.csv.notna()].explode("csv")
+calls = pd.concat([calls[["run", "cell", "model"]].reset_index(drop=True), pd.json_normalize(calls.csv.tolist())], axis=1)
+print(f"{len(calls)} read_csv calls in {calls[['run', 'cell']].drop_duplicates().shape[0]} cells")
+assert not calls[calls.served.eq(True)].taskTable.ne(True).any(), "a served call that is not the task's table"
+display(calls.groupby(["form", calls.taskTable.astype(str).rename("taskTable"), calls.served.astype(str).rename("served")]).size().to_frame("calls"))
+print("cells with no card: as recorded", int(plain.inside.sum()), "| read_csv served", int(served.inside.sum()), "| of", len(served))
+""")
+
+md("""
+First refusals of the cells that call `read_csv`, as recorded and with it served.
+""")
+
+code("""
+rc = served[served.csv.notna()][["run", "cell", "model", "outcome"]].merge(plain[["run", "cell", "outcome"]], on=["run", "cell"], suffixes=("_served", ""))
+display(pd.crosstab(rc.outcome, rc.outcome_served, margins=True))
+sc = served[served.csv.notna()]
+first = sc.refused.str.replace(r"\\s*\\(line \\d+\\)", "", regex=True).str.replace("not in dialect: ", "").where(~sc.inside, sc.outcome)
+first.value_counts().to_frame("cells, first refusal with read_csv served")
+""")
+
+code("""
+other = served[served.csv.isna()].merge(plain[["run", "cell", "outcome"]], on=["run", "cell"], suffixes=("", "_plain"))
+print("cells without read_csv whose outcome changed:", int((other.outcome != other.outcome_plain).sum()))
+""")
+
+md("""
+Every recorded `read_csv` reads a URL the run had fetched: 38 by the URL the fetch used, 4 only once a page path is
+resolved against the page. None reads an owned buffer and none a URL the run did not fetch, so on this task the served
+rule serves every call, and the `tables`-or-buffer split decides nothing here. A task whose cells read a file the run
+did not fetch would differ.
+
+Against packages' 84: four cells finish there and are refused here at `attribute 'round' of numpy.ndarray`, which #1993
+delisted after their run (two of them call `read_csv`, two do not). One cell passes `header=False`: packages' rewrite
+dropped the keyword and the cell reached `attribute 'dtypes' of DataFrame`; served, pandas raises `TypeError` in the
+cell, with no card. Every other cell agrees.
+""")
+
+md("""
 ## Behind the first refusal: a syntactic count of the stores
 
 The bound above is on the mutation change ALONE. A refused cell stops at its first refusal, and nothing after that line
-was judged: 83 cells stop at a refusal of another class, 41 of them at `pd.read_csv`. If the vocabulary is widened first,
+was judged: 85 cells stop at a refusal of another class, 41 of them at `pd.read_csv`. If the vocabulary is widened first,
 which is what the counts above point to, those cells run further, and a mutation refusal can appear behind the first one.
 
 So this counts, from the recorded source by `ast` and without running it, the stores the gate would judge as a mutation

@@ -137,6 +137,8 @@ export function hostServices(store: ChatStore, platform: ClientPlatform, reading
         sheetTitle: async () => null,
         // The snapshots a call ran under live in a runtime's worker: only the extension's own page can ask one.
         priceCalls: readings.priceCalls ?? null,
+        // The page holds its own ChatStore over its host, so a view here never opens a second one.
+        connectSessions: null,
         findSetting: readings.findSetting ?? null,
         openAddress: readings.openAddress ?? null,
         savePref: (key, value) => platform.prefs.set(key, value),

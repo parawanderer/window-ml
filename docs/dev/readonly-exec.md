@@ -490,6 +490,21 @@ to grow a collection while iterating it — the halting argument the collection 
 than re-made. Both have tests; a new kind of value flowing through an existing surface gets the contract
 re-checked even when no construct was added.
 
+`ml.table(src, { raw, delimiter, header })` (`ml-table.ts`, docs/spec/ML_TABLE.md) reads a WHOLE table by source: a
+selector or `current`, a URL in the page's fetch cache, a fetch result (by its URL alone), `@tool:<id>` or a table
+value. The facade resolves the source ONCE through the host's `_tableSurvey` and reads that resolution, so the one
+source rule judges every caller and a source the page shapes (an accessor that answers differently on each read) is
+the same kind to the ask and the read: a page table, a pointer or a cached URL is free; a Sheet or an unfetched URL is refused and goes to the person (the run's
+approved-Sheets store is not readable from the facade yet, so a Sheet always asks here); a `/files/` path, a clipped
+fetch body and a preview are errors. The host gets a fresh copy of the three options, never the script's object. In
+the worker the member raises `NeedsPage`. Nothing is copied (ruling 89, ML_TABLE.md "Ownership"): a table something
+else still holds (a pointer's, the fetch cache's) is FROZEN at every level and marked in `table-brand.ts`, so `own()`
+never makes it script-owned and `refuseWrite` refuses a write to any part of it with "This table is read-only; call
+.copy() for one you can edit"; a table read for this call alone (a page table, a Sheet, a parse with options) and a
+`t.copy()` are branded editable and owned down to their rows. Any other facade is owned only at its top, because its
+rows may be shared (`head` shares its parent's). `copy` is a table method, sized by the rows in hand, never the stored
+file. Tests: `tests/readonly-ml-table.test.mjs`.
+
 ### The table facade: a receiver kind of its own
 
 Every table a caller receives is a FACADE (`asTable`, table-data.ts; the `Table` type in contract.ts): the data

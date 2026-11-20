@@ -96,6 +96,7 @@ export const INVENTORY: readonly InventoryEntry[] = [
     local("ml_bgrun_", "run-state", "a live run's resumable snapshot; a restored machine has no run to resume", "never", { prefix: true }),
     session("ml_answer:", "run-state", "a run's answer set, memory-lifetime", { prefix: true }),
     session("ml_tasks:", "run-state", "a run's detached tasks (ids, timings, parked result text), memory-lifetime", { prefix: true }),
+    session("ml_bench_stop_grace_ms", "run-state", "a TEST's lengthened bench Stop grace (offscreen.ts BENCH_GRACE_KEY): not a setting, written only by an e2e, so a backup must not carry it to another machine"),
     session("ml_task_chain:", "run-state", "how many turns finished tasks started in a row for a run, memory-lifetime", { prefix: true }),
     local("ml_run_models", "run-state", "the model a run was switched to"),
     local("ml_handed_to_worker", "run-state", "runs handed from a page to the worker"),

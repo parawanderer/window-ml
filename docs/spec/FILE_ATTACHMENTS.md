@@ -704,7 +704,9 @@ marked over it and refuses writes the same way until it is back under (ruling 48
 item `/files/x` is a host path, as today. Bytes cross only as `@file:` handles: `ml.sh.put` writes one out (ruling 3),
 and a read brings a workspace file in, into `/files/` with provenance "read from disk <path>" (the async
 lane's). The model's text says it in one line: `/files/ is the browser sandbox's, not the workspace's.` A proposal
-of 2026-11-13 reopens this for directories the person mounts ("Host directories in the sandbox", next).
+of 2026-11-13 reopens this for directories the person mounts ("Host directories in the sandbox", next). AMENDED
+2026-11-20 (ruling 91): this holds without a host, with a host older than H16, and before a session's first mount;
+once the session's own folder is mounted, `/files` is that folder ("One folder per session").
 
 ### `/files/` read by range, and `ml.fs` (ruled 2026-11-17)
 
@@ -800,6 +802,7 @@ true })` gives Dirent-shaped entries; errors are `Error`s with Node's `code`, `s
 | `mkdir(path, options?)`, `rmdir(path)` | write | `recursive` supported |
 | `rm(path, options?)`, `unlink(path)` | write | `ml.files.remove`'s rule, below |
 | `rename(from, to)`, `copyFile(from, to)` | write | within the session's files only |
+| `cp(src, dest, options?)` | write | AMENDED 2026-11-20 (rulings 36 and 60, as ML_TABLE.md uses it): `src` is a path in the session's files (a directory needs `recursive: true`, as Node's) or a `@tool:` pointer or fetch result, whose stored whole is written ("Dumping a `@tool:` value into `agent/`"); `dest` must be under `/files/agent/` |
 
 **The gate.** The READ members join the read-only dialect: a survey may call them on the session's own files without
 asking. The WRITE members follow the rule this spec already has for files a run makes: a write to a run-made file in
@@ -842,12 +845,15 @@ message naming the form that works, so a builder tests each:
 
 - every `*Sync` member (`readFileSync`, `writeFileSync`, `existsSync`, …): "use `await ml.fs.readFile`";
 - every callback form (a function as the last argument): "use the promise form";
-- `createReadStream`, `createWriteStream`: "use `open()` with `handle.read()` or `handle.readLines()`";
+- `createWriteStream`: "use `open()` with `handle.write()`". AMENDED 2026-11-20 (the coordinator's ruling):
+  `createReadStream` left this list; it is a member, as "`ml.fs`" under rulings 22 and 23 has it;
 - `watch`, `watchFile`, `unwatchFile`;
 - `chmod`, `chown`, `lchown`, `utimes`, `lutimes`, `fchmod`;
 - `symlink`, `link`, `readlink`, `realpath` (`realpath` of an existing path answers the path; of a missing one,
   `ENOENT`);
-- `cp` (use `copyFile`), `opendir` (use `readdir`), `mkdtemp`, `statfs`;
+- `mkdtemp`, `statfs`. AMENDED 2026-11-20: `cp` left this list; it is a member (the table above), since ruling 36's
+  dump and ML_TABLE.md's byte-exact copy are `ml.fs.cp`. `opendir` left it too (the coordinator's ruling): it is a
+  member, paging its entries, as "`ml.fs`" under rulings 22 and 23 has it;
 - encodings: `utf8`, `utf-8`, `latin1`, `base64`, `hex` and none; any other: "supported: …".
 
 **Parity with Node, tested side by side** (Shane, 2026-11-17). Node's `fs/promises` is the oracle. One corpus of
@@ -1217,12 +1223,14 @@ nothing is built. Where it disagrees with "Host directories in the sandbox" abov
 **The proposal: primary follows the host.** One `/files`, two copies, and which one is primary depends on whether a
 host is mounted (Shane):
 
-- With a host mounted, a folder in the workspace, `<workspace>/window-ml-files/`, is primary, with the same layout
-  (`attached/<handle>/<name>` read-only, the rest writable). A cell's `open()` and `ml.sh` see one set of bytes, so a
-  cell's write is there for the next `cp` with no sync between them. `cp`, `sed -i` and `open()` reach the uploads at
-  `/files/attached/3fa91c2/data.csv` (on disk at `~/git/proj/window-ml-files/attached/3fa91c2/data.csv`), with
-  no `ml.sh.put` or read-back to teach the model; those stay as mechanisms, not as advice. Finder is the truth for the
-  person; the panel is a view of the folder.
+- With a host mounted, the session's own folder in the workspace, `<workspace>/window-ml-files/<session folder>/`
+  (ruling 91, "One folder per session" below), is primary, with the same layout (`attached/<handle>/<name>` read-only,
+  `agent/` the run's, ruling 36). A cell's `open()` and `ml.sh` see one set of bytes, so a cell's write is there for
+  the next `cp` with no sync between them. `cp`, `sed -i` and `open()` reach the uploads at
+  `/files/attached/3fa91c2/data.csv` (on disk at
+  `~/git/proj/window-ml-files/2026-11-20-q3-sales-7c41e2/attached/3fa91c2/data.csv`), with no `ml.sh.put` or
+  read-back to teach the model; those stay as mechanisms, not as advice. Finder is the truth for the person; the panel
+  is a view of the folder.
 - The browser store (MEMFS over the shelf, as ruled above) is then a capped backup, synced when convenient. A file over
   the quota lives on disk and is not backed up; the panel shows it with its size.
 - With no host present, or when the host dies, the browser copy is the working store and the model works there, as
@@ -1235,14 +1243,15 @@ host is mounted (Shane):
   host is mounted, a cell's `/files` is backed by the folder (the same bytes `ml.sh` sees), and an `ml.sh` argv maps it
   (H9 below). The folder's real path also works, since it lies inside the workspace mount; the transcript, the diffs and
   the exports write it as `/files`, so one file has one name in the record. The model is told the real path in one line,
-  for a program that prints it, with the home directory written as `~` (`~/git/proj/window-ml-files`; Shane, 2026-11-13:
+  for a program that prints it, with the home directory written as `~`
+  (`~/git/proj/window-ml-files/2026-11-20-q3-sales-7c41e2`; Shane, 2026-11-13:
   model-facing text writes a path under the home as `~`, the run log keeps it raw). The rule for which form
   (coordinator, 2026-11-13): `~` is written only where its consumer expands it. `ml.sh`'s argv and cwd expand a leading
   `~` on a host with `hello.tilde`, so a path the model is to reuse in `ml.sh` (H9's refusal sentence, a mapped-path
   mention) is written as `~`. A path the model is to reuse in a cell (the mount list, a cell's own error or result
   naming a mounted path) stays raw, since nothing expands `~` in `open()`. Prose that names a path without expecting
   reuse writes `~`. Where the host cannot map an argv item (H9), it fails with `/files is on disk while the host is
-  connected: ~/git/proj/window-ml-files/x`.
+  connected: ~/git/proj/window-ml-files/2026-11-20-q3-sales-7c41e2/x`.
 - The folder is ignored by git by default, through `.git/info/exclude` (the clone's own list, never a committed
   `.gitignore`), so uploads never show in `git status` or a commit unless the person moves them out. The person can
   name another folder, inside a mount.
@@ -1278,12 +1287,63 @@ path, never as empty or gone. Uploads and writes made meanwhile sync forward whe
 run log keeps the raw paths a run used, so a later read without the host says where they were. A cell running when
 the host goes gets "Unmounted or disconnected during a cell" (above): the next read through the mount fails.
 
-**Sessions and mounts** (decided, Shane, 2026-11-13):
+**Sessions and mounts** (decided, Shane, 2026-11-13; the first bullet replaced by ruling 91, 2026-11-20):
 
-- Several sessions mounting one repository share one folder; each session's browser copy stays its own.
+- Each session mounting a repository has its own folder under `window-ml-files/`, and its browser copy stays its own
+  ("One folder per session", next). REPLACED 2026-11-20 (ruling 91): this said that several sessions mounting one
+  repository share one folder.
 - Archiving or deleting a session never deletes anything on disk.
 - With several mounts, one is the session's primary workspace, chosen at the first approval: cells start there and
   the uploads folder lives there.
+
+**One folder per session** (RULED 2026-11-20, Shane's ruling 91 in the coordinator's session: "I think you need to do
+the subfolder per session yeah"). Rulings 81 and 86 make each run's `/files` private and `/files/agent/` its home, so
+one folder shared by every session mounting the repository cannot hold. The folder's NAME below was ruled by the
+coordinator the same day.
+
+- **The layout on disk.** `<workspace>/window-ml-files/` holds one folder per session, and only those. A session's
+  folder holds ruling 36's layout: `attached/<handle>/<name>`, read-only to the model, and `agent/`, the run's. So
+  `~/git/proj/window-ml-files/2026-11-20-q3-sales-7c41e2/attached/3fa91c2/data.csv` is that session's
+  `/files/attached/3fa91c2/data.csv`. A session's folder is made when the session first mounts the workspace with a
+  host that has H16 (`attached/` and `agent/` inside it); a session that never mounts one has no folder.
+- **The model still sees `/files`.** Everything that names "the folder" in this section and in H9, H14 and H16 means
+  the session's own folder: H9 maps `/files/x` to `<session folder>/x`, the sync and the watch cover that folder only,
+  and the real path the model is told in one line is that folder's. Nothing that runs in a session ever sees
+  `window-ml-files/` as its `/files`.
+- **`.git/info/exclude`** holds one line, `/window-ml-files/`, written once for the workspace by the first session that
+  makes a folder there and left in place after. So a new session adds no line and no other file is written.
+- **The folder's name** (RULED 2026-11-20, the coordinator): `<date>-<slug>-<id6>`, as in
+  `2026-11-20-q3-sales-7c41e2`. `<date>` is the session's creation day, local time. `<slug>` is the session's title at the moment the folder is
+  made, lowercased, with every run of characters outside `a-z0-9` turned into one `-`, trimmed of `-` and cut to 32
+  characters at a `-` where one falls; it is omitted, with its `-`, when the title is empty or the default. `<id6>` is
+  the first six hex characters of the session id. Readable in Finder, sorted by date in a listing, and the id part
+  tells two sessions of one title apart.
+  - Stable under a rename: the name is fixed when the folder is made and recorded in the session's record (the folder
+    name, beside the workspace's root). Renaming the session changes the panel's label, never the folder, so a path in
+    a transcript, a diff or a script the person kept still names it. The panel shows the session's current title with
+    the folder's name beside it.
+  - A collision, a directory of that name that the session's record does not name (another session whose id shares six
+    characters, or one the person made): the new folder takes the next free suffix, `-2`, `-3`, and records it. An
+    existing directory is never adopted, never written into and never merged. The session's record, never the name,
+    says which folder is a session's.
+  - A folder the person renamed or moved in Finder is lost to its session: the next mount finds no folder by the
+    recorded name and makes a new one, and the panel says `This session's folder 2026-11-20-q3-sales-7c41e2 is gone from
+    ~/git/proj/window-ml-files; a new one was made.` The browser copy keeps working.
+- **Sibling folders are refused by default** (ruling 91, the coordinator's addition confirmed by Shane on 2026-11-20).
+  Every other folder under `window-ml-files/` lies inside the mounted workspace, so a cell or an `ml.sh` call could
+  reach it by its real path. The host refuses it for every reader, by H17 below: a cell's `open()` through the mount, a
+  path argument at `spawn`, a recursive reader's walk, and an interpreted script under the sandbox profile. The
+  script's refusal holds only under the sandbox: with the sandbox off for the workspace, a script reaching a sibling
+  is not bounded, H17's stated gap. The
+  refusal names nothing of the other session: `window-ml-files/ holds other sessions' files, which this session cannot
+  read; its own files are /files.` A listing of `window-ml-files/` shows this session's folder only.
+- **Sharing between sessions** stays deferred (ruling 81). Shane's direction for later: the person may write a policy
+  that lets a session read other sessions' folders, as a `show`-style entry in POLICIES.md's layers ("Hiding files",
+  "Other sessions' files, later"). Not built and not scheduled.
+- **What holds when.** With a host connected and the session's folder mounted (H16 on both sides), `/files` is backed by
+  that folder, and the statement in "A session's files as a directory" and in "`/files`: the layout" that the host's
+  disk never aliases `/files` does not hold for that session. Without a host, with a host older than H16, or before
+  the session's first mount, it holds: `/files` is the browser sandbox's, and an argv `/files/x` is a host path.
 
 **Three limits, kept apart:**
 
@@ -1355,11 +1415,18 @@ person's index, HEAD and stash list unchanged; a delete git cannot undo asks, by
 `ml.fs.rm`, an `ml.sh` `rm` judged by its manifest); an `ml.sh` program that runs code (`bash -c`, a manifest
 saying `runs-code` or `unknown`, no manifest) asks whatever its argv; the first commit in a session asks; a cell's
 `open()` of a file that looks like a secret asks, as an `ml.sh` read of it does; a page or a page-started run reaches
-neither the folder nor `ml.fs`.
+neither the folder nor `ml.fs`. AMENDED 2026-11-20 (ruling 91, for e3; H17 and H18): another session's folder under
+`window-ml-files/` is refused to a session by its real path, by a `..` from the session's own folder, through a
+symlink inside the workspace that points at it, by a recursive reader's walk from the workspace root, and by a script
+under `ml.sh` (`python3 tool.py` opening it), each read and write; a listing of `window-ml-files/` shows the session's
+own folder only; a script under `ml.sh` cannot write, create, delete or rename in `attached/` on disk; the refusal
+names no other session; two sessions whose ids share six characters get two folders, and a directory the record does
+not name is never written into.
 
 **Open.**
 
-- The folder's name (`window-ml-files/` is a proposal) and whether the person sets it per workspace.
+- The folder's name (`window-ml-files/` is a proposal) and whether the person sets it per workspace. A session's
+  folder inside it: ruled by the coordinator 2026-11-20 ("One folder per session").
 - Windows: how a `C:\Users\...` path appears in the sandbox's POSIX tree.
 - A workspace that is not a git repository: whether `ml.sh` calls get a diff by another snapshot.
 - The background sync's cadence (a value to pick).
@@ -1491,7 +1558,8 @@ refusal and gives a sentence for it:
   now.
 - While a host is connected, at `spawn` the host maps an argument the program's manifest marks as a PATH, when it
   equals `/files` or starts with `/files/`, to the same path under the folder's real path
-  (`~/git/proj/window-ml-files/data.csv` as the model sees it), and the call's `cwd` likewise. The mapped path then
+  (`~/git/proj/window-ml-files/2026-11-20-q3-sales-7c41e2/data.csv` as the model sees it; the session's own folder,
+  ruling 91), and the call's `cwd` likewise. The mapped path then
   carries the facts like any other path argument: the host refuses at `spawn` a call that WRITES a path in
   `attached/` (H6's rule, for a process), and an overwrite git cannot undo still asks.
 - Which operand is written comes from a manifest field naming it (the last operand for `cp` and `mv`, every operand
@@ -1509,7 +1577,8 @@ refusal and gives a sentence for it:
   the uploads folder would break use cases 2 to 4).
 - A `/files` argument the host cannot place, because the program has no manifest or the manifest does not describe
   that position, is refused with the sentence of "`/files` on the person's disk" naming the real path:
-  `/files is on disk while the host is connected: ~/git/proj/window-ml-files/data.csv`. Such a call asks
+  `/files is on disk while the host is connected: ~/git/proj/window-ml-files/2026-11-20-q3-sales-7c41e2/data.csv`.
+  Such a call asks
   anyway (no manifest), so the refusal costs one retry with the real path.
 - The call's record keeps both forms, the argv the model wrote and the argv the process got. The model sees a mapped
   path with the home written as `~`; the run log keeps both argvs raw, and the sidebar and both exports show both
@@ -1626,7 +1695,42 @@ depends on `hello.tilde`: a host without it gets the raw path in that sentence, 
 
 - H16. AMENDED 2026-11-13 (host lane): the step after H15, in the host lane. Creating the uploads folder, writing
   `.git/info/exclude` and the folder watch ("`/files` on the person's disk" names them), so the Owners line above and
-  this list agree.
+  this list agree. AMENDED 2026-11-20 (ruling 91): the uploads folder is the session's own folder,
+  `window-ml-files/<session folder>/`, which the worker names in `mount`'s `uploads` (H1), and the exclude line is
+  `/window-ml-files/`, written once ("One folder per session").
+- H17. PROPOSED 2026-11-20 (ruling 91; the mechanisms are the spec writer's guesses for the host lane to correct).
+  Other sessions' folders are refused, by default, for every reader. The host takes the parent of `mount`'s `uploads`
+  as the sessions folder and holds its device and inode beside the session's own folder's, as H6 holds `attached/`.
+  Every refusal is the code `OtherSession` with the one sentence of "One folder per session", which names no other
+  session's folder.
+  - A cell's request: the walk (H4) refuses a path that passes through the sessions folder into any child but the
+    session's own, matched by device and inode, so a `..`, another spelling or another case reaches the same check; a
+    symlink is refused by H4 already. A `list` of the sessions folder answers the session's own folder only.
+  - At `spawn`: a path argument or the `cwd`, read or written, whose realpath or an existing ancestor's device and
+    inode lies in the sessions folder outside the session's own folder. A symlink elsewhere in the workspace that
+    resolves into a sibling is caught by the realpath.
+  - A recursive reader (`rg pat .`, `find`, `tar`) whose directory argument holds the sessions folder beneath it is not
+    refused under the sandbox, which hides the siblings (next), so the walk passes them by. With the sandbox turned off
+    for the workspace, the host's bounded walk (the one behind `containsSecret`) gains `containsOtherSession`, and a
+    call where it is true is refused with the sentence plus `name a directory that does not hold window-ml-files/`;
+    past the walk's cap it is `unknown` and the call asks.
+  - The sandbox profile, for a script the argv does not describe (`python3 tool.py`, `node x.mjs`, `bash -c`): on
+    macOS, read and write denies on the sessions folder's subtree, then an allow of the session's own folder (SBPL's
+    later rule wins), with H18's `attached/` deny after both; on Linux, a tmpfs over the sessions folder with the
+    session's own folder bound back over it, since Landlock grants and cannot deny beneath a grant. Applied under
+    every envelope, an absent one's floor included; if the floor cannot carry it, the host lane says so and such a
+    call asks. With the sandbox off, a script reaching a sibling is not bounded: a stated gap, beside the sandbox-off
+    gaps `SHELL.md` already states.
+  - Lifted only by a policy, later (POLICIES.md, "Other sessions' files, later"), and then for reading only.
+- H18. PROPOSED 2026-11-20 (the coordinator's question under ruling 91, with e3). `attached/` under the sandbox profile.
+  H6 refuses a cell's write into `attached/` and H9 a process's write when its argv names a path there, but a program
+  that runs code (`python3 tool.py`) can write into `attached/` with no argv naming it: the profile confines writes to
+  the roots, `attached/` lies inside a root, and the protected names (`sandbox::protected_rels`) do not include it. The
+  `runs-code` ask does not close this, since the person approving `python3 tool.py` is not told it writes `attached/`.
+  So the profile denies write, create, unlink and rename under each `attached/` the host holds, by its realpath (on
+  macOS a `file-write*` deny on the subpath; on Linux a read-only re-bind, as the protected names get), under every
+  envelope, an absent one's floor included. With the sandbox off it is not bounded for a process, a stated gap; the
+  backstop is the browser copy, which keeps the frozen original whatever happens on disk ("The sync").
 
 **What runs free, what asks, what is refused.** AMENDED 2026-11-13 (host lane): the `EROFS` row is a cell's store; an
 `ml.sh` process is bounded by the roots until H9's written operand lands (H1). The default policy's rows, each with the
@@ -1658,6 +1762,8 @@ rows still compose with it.
 | a write to a protected name of the root, or under any `.git` (AMENDED 2026-11-13, host lane: H6b) | refused (`Protected`) | `protected` |
 | a write whose basis changed since it was judged | refused (`ChangedSinceJudged`) | `basis` |
 | a `/files` path argument | mapped to the real path, then judged as it | H9, the manifest |
+| any read or write in another session's folder under `window-ml-files/` (AMENDED 2026-11-20, ruling 91: H17) | refused (`OtherSession`) | H17 |
+| a write into `attached/` by a process its argv does not describe (AMENDED 2026-11-20: H18) | refused by the sandbox profile | H18 |
 | a `/files` argument the manifest does not place | refused | H9 |
 | `git status`, `git diff`, `git add` | free | the manifest, `repoConfigRunsCode` false |
 | the first commit in a session | asks | extension side |
@@ -1837,7 +1943,8 @@ calls under 22 to 25 (docs/plan/repl/README.md). Nothing below is built. This se
 session's files as a directory" above: its layout (`/files/` itself writable), its mount (an eager MEMFS that loads the
 whole directory into the worker) and its quota multiplier (the three times measured for that MEMFS). The rest of that
 section stands: the handle folders under `attached/`, provenance as a field, frozen when cited, the kernel-death
-message, the host's disk never aliasing `/files`.
+message, and the host's disk never aliasing `/files` while no session folder is mounted. AMENDED 2026-11-20 (ruling
+91): once a session's own folder is mounted, that folder backs `/files` for the session ("One folder per session").
 
 **The principle (ruling 22).** No part of `/files` ever holds all of a session's files in memory, and several sessions
 at once stay usable. Every read is ranged or streamed, every listing is lazy, one directory at a time, and a write is
@@ -1917,6 +2024,9 @@ declares `int64` or `bool` that holds a missing value is recorded in the sidecar
 value; dump then reload equals the stored table, its values and its declared dtypes, on both reload paths.
 
 ### Python's view: two mounts (ruling 36)
+
+BUILT, the mount only (2026-11-19, docs/dev/python-sandbox.md, "`/files` in Python"): route A's type over the ranged
+reader for both folders, as below; it is switched on when the reader lands (`setFilesReader`).
 
 Python sees `/files` through Emscripten mounts, never a mount that loads whole files. ONE store, the shelf, holds
 both folders (the coordinator's call, 2026-11-19): no OPFS copy of `agent/`, so the quota, the atomic commit, the

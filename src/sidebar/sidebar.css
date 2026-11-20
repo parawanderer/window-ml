@@ -1014,6 +1014,13 @@ textarea.cinput { resize: none; overflow-y: auto; line-height: 1.5; font: inheri
 .spend-warn svg { width: 12px; height: 12px; }
 /* One fact per line in the spend chip's tooltip */
 .spend-line { display: block; }
+/* THE FOOTER'S FIGURES ROLL (`Ticking`, ui-kit.tsx): the same `chat-tick-in` roll the chat page's live line uses, moved here from chat.css
+   so the panel and the DevTools panel draw it as well. `min-width` holds "100%" so the bar does not slide when 9% becomes 10%. */
+.usage-pct { display: inline-block; min-width: 4ch; text-align: right; }
+.usage-gauge .tick-d, .usage-sub .tick-d { display: inline-block; }
+.usage-gauge .tick-d.rolled, .usage-sub .tick-d.rolled { animation: chat-tick-in .22s cubic-bezier(.2, .8, .2, 1) backwards; }
+@keyframes chat-tick-in { from { transform: translateY(.45em); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .usage-gauge .tick-d.rolled, .usage-sub .tick-d.rolled { animation: none; } .usage-fill { transition: none; } }
 .usage-sub { margin-left: 6px; color: var(--fg-faint); font-size: 0.78em; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* --------------------------- shared bits -------------------------------- */
@@ -1796,11 +1803,10 @@ details.io[open] > summary .io-preview { display: none; }
 /* A header button + a small menu under it (the export-format picker). Anchored
    right so it can't spill past the panel's edge on a narrow sidebar. */
 .menuwrap { position: relative; display: inline-flex; align-items: center; }
-/* It ARRIVES the way the page's own menus do (`chat-pop`, chat.css) — the two sit a few pixels apart in a dock's
-   tab bar, and one popping in while the other snapped read as two different controls. Its own keyframes rather
-   than the page's: this menu is also drawn in the DevTools panel, where that stylesheet is not loaded. */
+/* It ARRIVES the way the page's own menus do (`chat-pop`, with `.chat-menu` below) — the two sit a few pixels apart
+   in a dock's tab bar, and one popping in while the other snapped read as two different controls. */
 @keyframes menu-pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
-/* And the way out — see the same pair in chat.css. The element is held for `DISMISS_MS` (use-dismiss.ts) to make
+/* And the way out — see the same pair with `.chat-menu` below. The element is held for `DISMISS_MS` (use-dismiss.ts) to make
    room for it; a menu that vanished between two frames read as a different surface from the one that arrived. */
 @keyframes menu-unpop { to { opacity: 0; transform: translateY(4px) scale(.985); } }
 .menu.leaving { animation: menu-unpop .11s ease-in both; pointer-events: none; }
@@ -4742,3 +4748,71 @@ pre.code.morphing:not(.numbered) > code, pre.code.morphing .lcode { visibility: 
 .setcard-val-lines { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .setcard-line { font-family: var(--mono, ui-monospace, monospace); font-size: .9em; overflow-wrap: anywhere; white-space: pre-wrap; }
 .setcard-why-text { overflow-wrap: anywhere; }
+
+/* ----------------------------- the one menu look ------------------------------
+   Here rather than in chat.css because the sidebar draws it too: the detail view's per-session menu holds the same
+   `SessionActions` as the chat page's rows (docs/spec/SESSION_SUMMARY.md). chat.css keeps its placement rules. */
+@keyframes chat-pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
+/* AND THE WAY OUT. A sheet that eased in and then ceased to exist between two frames read as two different
+   surfaces, and the vanish lands exactly where the eye is. Quicker than the entrance: arriving wants to be
+   noticed, leaving does not. The duration is `DISMISS_MS` (use-dismiss.ts), which is what keeps the element
+   mounted for exactly this long. */
+@keyframes chat-unpop { to { opacity: 0; transform: translateY(4px) scale(.985); } }
+.chat-menu.leaving { animation: chat-unpop .11s ease-in both; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .chat-menu, .chat-menu.leaving { animation: none; } }
+/* THE PAGE'S ONE MENU LOOK (menu.tsx): a rounded sheet, a glyph and a label per row, a tick on a toggle — Android's
+   list menu, which Gemini borrowed. The row menu and the gear's menu both use it, so they cannot drift apart. */
+.chat-menu {
+    display: flex; flex-direction: column; min-width: 190px; padding: 6px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: 0 12px 36px rgb(0 0 0 / .45); animation: chat-pop .16s cubic-bezier(.2, .7, .3, 1) both;
+    font-size: 13.5px;
+}
+.chat-menu-item {
+    display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px 10px; border: none; border-radius: 9px;
+    background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; white-space: nowrap;
+}
+.chat-menu-item:hover, .chat-menu-item:focus-visible { background: var(--panel-2); outline: none; }
+.chat-menu-ico { display: inline-flex; color: var(--fg-dim); }
+.chat-menu-ico svg { width: 18px; height: 18px; }
+.chat-menu-label { flex: 1 1 auto; }
+/* The reason a row cannot be used, under its own label. A SECOND LINE rather than a tooltip: a tooltip is
+   pointer-only, and a row that cannot be used is exactly the one a finger or a screen reader most needs told. */
+.chat-menu-note { display: block; color: var(--fg-faint); font-size: .84em; line-height: 1.3; margin-top: 1px; white-space: normal; }
+/* A ROW THAT CANNOT BE USED READS AS ONE. Opacity alone left near-black text still looking black — it dimmed the
+   row without greying it, so the only thing saying the row was unavailable was that clicking did nothing. */
+.chat-menu-item.off { cursor: default; color: var(--fg-faint); }
+.chat-menu-item.off .chat-menu-ico, .chat-menu-item.off .chat-menu-on { opacity: .5; }
+.chat-menu-item.off:hover { background: none; }
+.chat-menu-on { display: inline-flex; color: var(--fg); }
+/* A menu row's current value, dim at its right (the theme row: "Dark"), and its caret, turned down while open. */
+.chat-menu-val { margin-left: auto; color: var(--fg-faint); font-size: .92em; }
+.chat-menu-caret { display: inline-flex; color: var(--fg-faint); transition: transform .15s ease; }
+.chat-menu-caret svg { width: 12px; height: 12px; }
+.chat-menu-caret.open { transform: rotate(90deg); }
+
+/* `.sum-page`: the session summary page (session-summary.tsx, docs/spec/SESSION_SUMMARY.md): title, id, a tab strip and the
+   open tab, drawn in a dialog on every surface. A line is a label and its value; a field with no source has no line. */
+.sum-page { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+/* `.sum-title`: the session's title at the top of its summary page. */
+.sum-title { margin: 0; overflow-wrap: anywhere; }
+/* `.sum-hash`: the session's id under its title on the summary page, dim and monospace. */
+.sum-hash { color: var(--fg-faint); font-family: var(--mono, ui-monospace, monospace); font-size: .85em; }
+/* `.sum-tabs`: the summary page's tab strip (summary, resources, files, access). */
+.sum-tabs { display: flex; gap: 4px; margin: 8px 0 4px; border-bottom: 1px solid var(--border); }
+/* `.sum-tab`: one tab in the summary page's strip; `.on` marks the open one. */
+.sum-tab { padding: 6px 10px; border: none; border-bottom: 2px solid transparent; background: none; color: var(--fg-dim); font: inherit; cursor: pointer; }
+.sum-tab:hover, .sum-tab:focus-visible { color: var(--fg); outline: none; }
+.sum-tab.on { color: var(--fg); border-bottom-color: var(--fg); }
+/* `.sum-panel`: the open tab's body on the summary page, held at a height so switching tabs does not jump the card. */
+.sum-panel { min-height: 120px; }
+/* `.sum-lines`: the summary tab's label/value lines as a two-column grid. */
+.sum-lines { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 6px 0; }
+/* `.sum-line`: one summary-tab line, a `dt` label and its `dd` value, laid into the grid's two columns. */
+.sum-line { display: contents; }
+.sum-line dt { color: var(--fg-dim); }
+.sum-line dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+/* `.sum-empty`: the one line a summary-page tab with nothing drawn says: what it would hold, and why it is empty. */
+.sum-empty { color: var(--fg-faint); margin: 10px 0; }
+/* The detail header's per-session menu (session-menu.tsx): the one menu look, hung under its button like `.menu`. */
+.sb-session-menu { position: absolute; top: calc(100% + 5px); right: 0; z-index: 20; }

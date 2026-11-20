@@ -69,13 +69,31 @@ A source is judged exactly as a source in `python_exec`'s `tables` was:
 - **A cell's fetch** is judged as `fetch_url`'s is: `judgeCall(runId, "fetch", fetchFacts(url, mode))`, plus the run's
   origin grants and its consented set.
 
-## Ownership (ruling 57)
+## Ownership (ruling 57, amended by ruling 89)
 
-- The frame or `Table` that `ml.table` returns is fresh, and so is everything derived from it. An edit to it runs
-  inside, with no card.
-- The original is never in the namespace. That is the page's DOM, the fetched body in the run's frozen fetch cache,
-  the stored value, or the file.
-- A second `ml.table` of the same source parses the original again, so a re-read never returns the cell's edits.
+The JS `Table` that `ml.table` returns is read-only exactly when something else still holds the same arrays, and it is
+never copied: `.copy()` always returns an editable table the caller owns.
+
+| Source | Who else holds its arrays after the call | The answer |
+| --- | --- | --- |
+| A `@tool:` pointer's table, whole or stored | the run's value store (the page-side token store, or the stored preview) | read-only, no copy |
+| A fetched URL, or a fetch result by its URL | the fetch cache, and the `ml.fetch` result it was cached from | read-only, frozen at cache time |
+| A fetched URL read with `raw`, `delimiter` or `header` | nobody: a parse of the cached text for this call | editable, no copy |
+| A CSS selector or `current` page table | nobody: read from the DOM for this call | editable, no copy |
+| A Google Sheet | nobody: a parse of the CSV the worker answered for this call | editable, no copy |
+| A table value the caller passes | the caller | handed back over the caller's rows; read-only if they came from a read-only table |
+
+- Read-only means frozen at every level (`rows`, each row, `columns`, `shape`, `dtypes`), and every `select` or `head`
+  of it is read-only too, sharing rows where it can. A write throws in strict code, and in non-strict page code it does
+  nothing. In the dialect a write is refused with "This table is read-only; call .copy() for one you can edit".
+- `.copy()` of a stored table copies the rows in hand, not the whole stored file, and keeps its whole-table reads. A
+  copy's own `select` and `head` are editable.
+- In the dialect a read-only table is never script-owned. An editable one from a source nobody else holds, and a
+  copy, are owned down to their rows.
+- A second `ml.table` of the same source never returns an edit: a read-only table cannot be edited, and an editable
+  one is read again from its source.
+- The Python frame's default is not decided by ruling 89. Until its PR is specced it stays as ruling 57 put it: the
+  frame is fresh, and the original is never in the namespace.
 
 ## `pd.read_csv` (ruling 71)
 
@@ -165,7 +183,7 @@ where.
   - numpy: `save`, `savetxt` and `savez`.
   - Pillow: `Image.save`.
   - pyarrow's `parquet.write_table`, through the lazy table only.
-  - `ml.fs.writeFile`, `cp`, `mv` and `rm`.
+  - `ml.fs.writeFile`, `cp`, `rename` and `rm` (`ml.fs` has Node's `rename`, not `mv`; the coordinator, 2026-11-20).
   Every admitted writer is a row in the ENUMERATED path-and-buffer test, probed or given a reason.
 - **Not admitted:**
   - A restricted `open()`. The path is checked at `open`, but a handle kept under another name writes later, from a

@@ -21,11 +21,28 @@ const PY_START_TIMEOUT_MS = 120000;
 // bench rule as SH_LEASE_MS: a Python loop answers the interrupt in about 3 ms, a C call not until it returns, which
 // may be minutes, so no number between helps; 1 s is the fallback's honest latency (docs/dev/python-sandbox.md).
 export const BENCH_STOP_KILL_MS = 1000;
+
+/**
+ * The `chrome.storage.session` key a TEST sets to LENGTHEN the bench Stop's grace (`BENCH_STOP_KILL_MS`): a CI shard can
+ * starve the worker past a second, and the row that proves "the interrupt answers, nothing is restarted" would fail for
+ * the machine rather than the bench. Not a setting: it is in no config schema, no Settings surface and no page-reachable
+ * message, and `chrome.storage.session` is TRUSTED_CONTEXTS — the redteam row that pins that stays the guard. It can
+ * only lengthen (`py-lease.ts` `benchStopGraceMs`), so no value makes the bench give up sooner than the product does.
+ */
+export const BENCH_GRACE_KEY = "ml_bench_stop_grace_ms";
+let benchStopGrace = BENCH_STOP_KILL_MS;   // state: test — a test-only override, cached from session storage
+const noteBenchGrace = (v: unknown): void => { benchStopGrace = benchStopGraceMs(BENCH_STOP_KILL_MS, v); };
+try {
+    void chrome.storage.session.get(BENCH_GRACE_KEY).then((g) => noteBenchGrace(g?.[BENCH_GRACE_KEY]), () => { /* absent: the shipped bound */ });
+    chrome.storage.onChanged.addListener((c: Record<string, { newValue?: unknown }>, area: string) => {
+        if (area === "session" && c?.[BENCH_GRACE_KEY]) noteBenchGrace(c[BENCH_GRACE_KEY].newValue);
+    });
+} catch { /* no storage in this context: the shipped bound */ }
 /** A bench script's result when its Stop had to restart the sandbox: the cost is the point. */
 export const BENCH_STOP_KILLED = "Stopped by restarting the sandbox: it did not answer the interrupt, so its variables are gone.";
 
 import { ValueStore } from "./pointers/value-store";
-import { PY_DETACHED_MAX_MS, PY_INTERRUPT_KILL_MS, clampDetachedMs, ringAppend, type CellCancel } from "./python/py-lease";
+import { PY_DETACHED_MAX_MS, PY_INTERRUPT_KILL_MS, benchStopGraceMs, clampDetachedMs, ringAppend, type CellCancel } from "./python/py-lease";
 import { htmlToMarkdown } from "./dom/html-to-md";
 import { PNG_DATA_URL } from "./session/image-compact";
 import { defineState } from "./state-registry";
@@ -34,6 +51,7 @@ import { reapDelay, longTimeout, DEFAULT_REAP_BETWEEN_MS } from "./python/py-rea
 import { createPdfHost } from "./pdf/pdf-host";
 import { b64ToBytes, bytesToB64, type PdfMessage, type PdfReadReply, type PdfRenderReply } from "./pdf/pdf-wire";
 import { importTestCode } from "./python/pkg-install-test";
+import { attachFiles, detachFiles, filesMessage } from "./python/files-host";
 import { scanCode } from "./python/pkg-scan";
 import { readScan, type ScanResult } from "./python/pkg-scan-note";
 import { holdResult, takeResult } from "./python/py-held-results";
@@ -214,6 +232,7 @@ function killWorker(principal: string, reason: string): void {
     if (entry) {
         try { entry.w.terminate(); } catch { /* already gone */ }
         workers.delete(principal);
+        detachFiles(principal);
         libraryPrincipals.delete(principal);
         clearReap(principal);
         keptPrincipals.delete(principal);
@@ -318,12 +337,16 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
     // The interrupt buffer goes first, before any run is posted, so the worker holds it when the runtime boots.
     const flag = typeof SharedArrayBuffer === "function" ? new Int32Array(new SharedArrayBuffer(4)) : undefined;
     if (flag) w.postMessage({ interruptBuffer: flag });
+    // A worker-hosted run's worker also gets `/files` (files-host.ts), its channel's memory posted before any run.
+    attachFiles(principal, w);
     // A respawn after a kill: the old worker's kept bench namespace died with it, and this one starts empty.
     // The record is the log's account of the loss the bench's "sandbox restarted" banner shows the person.
     if (respawned.delete(principal)) {
         reportHousekeeping({ subsystem: "pyodide", kind: "respawn", key: principal, detail: { mode: readonly ? "readonly" : "full" } });
     }
     w.onmessage = (e: MessageEvent) => {
+        // A `/files` request from the mount: served by the run's channel, never a reply to a run.
+        if (filesMessage(principal, e.data)) return;
         // The runtime finished starting (not a reply to anything): what started it and how long it took.
         if (e.data?.booted) {
             reportHousekeeping({ subsystem: "pyodide", kind: "cold-start", reason: e.data.by === "prewarm" ? "prewarm" : "run", ms: e.data.ms, key: principal });
@@ -808,7 +831,7 @@ export function interruptBench(): { interrupted: true } | { running: false } {
     const flag = workers.get("own")?.flag;
     if (!found || !flag) return { running: false };
     const [id, entry] = found;
-    interruptEntry(id, entry, flag, BENCH_STOP_KILL_MS, BENCH_STOP_KILLED);
+    interruptEntry(id, entry, flag, benchStopGrace, BENCH_STOP_KILLED);   // the grace, lengthened by the test seam only
     return { interrupted: true };
 }
 

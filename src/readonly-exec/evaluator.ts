@@ -3,7 +3,7 @@
 
 import type { CurrentSnapshot } from "../agent/current-context";
 import { isEmbedding } from "../ml/embedding";   // by brand, as a table is; embedding.ts imports nothing
-import { isTable, isStoredTable } from "../table/table-brand";   // a table facade is recognised by BRAND, and the brand module is itself dependency-free
+import { isTable, isStoredTable, isFrozenTablePart, isEditableTable, READ_ONLY_TABLE } from "../table/table-brand";   // a table facade is recognised by BRAND, and the brand module is itself dependency-free
 import { NotInDialect, Stopped, MAX_STRING, MAX_COLLECTION, Denied, riskyRegex, MAX_STORED_CELLS, STEP_BUDGET, NeedsPage, MAX_CALL_DEPTH, HOST_CHARS_PER_STEP, HOST_SCAN_CHARS_PER_STEP, FIXED_SLICE_FREE_CHARS, HOST_SCAN_ELEMENTS_PER_STEP, HOST_COPY_ELEMENTS_PER_STEP, EXPANDED_PARTS_PER_STEP, MAX_EXPANDED, MAX_EXPANDED_CHARS } from "./limits";
 import { Node } from "./parser";
 import { regexSteps } from "./regex-cost";
@@ -491,10 +491,11 @@ export class Evaluator {
             const t = obj as { rows: unknown[]; columns: unknown[]; shape: [number, number] };
             const stored = isStoredTable(obj);
             const all = stored ? t.shape[0] : t.rows.length;
-            const width = key === "records" ? t.columns.length
+            const width = key === "records" || key === "copy" ? t.columns.length
                 : key === "select" ? (Array.isArray(args[0]) ? args[0].length : 0)
                     : key === "head" ? t.columns.length : 1;
-            const height = key === "head" ? Math.min(all, Math.max(0, Number(args[0] ?? 5)) || 0) : all;
+            // A copy is of the rows in hand, never the whole stored file.
+            const height = key === "head" ? Math.min(all, Math.max(0, Number(args[0] ?? 5)) || 0) : key === "copy" ? t.rows.length : all;
             if (height * width > MAX_COLLECTION) big();
             if (stored && (key === "col" || key === "select" || key === "records" || (key === "head" && height > t.rows.length))) {
                 this.storedCells += height * width;
@@ -533,7 +534,20 @@ export class Evaluator {
     // NOT here, so page state can't be written. Page arrays are never RETURNED by an allowlisted method (those
     // all build new ones), so marking method results owned can't launder a live page container.
     private owned = new WeakSet<object>();
-    private own<T>(v: T): T { if (v !== null && typeof v === "object" && isWritableTarget(v)) this.owned.add(v as object); return v; }
+    private own<T>(v: T): T {
+        if (v === null || typeof v !== "object" || isFrozenTablePart(v)) return v;   // a read-only table is never the script's
+        // A COPY (`t.copy()` and its own `select`/`head`) is the script's down to its rows, so `c.rows[0][1] = x` and
+        // `c.rows.push(r)` work on it as on an array it built. Any other table may share its rows with a store, a cache
+        // or the table it was cut from (`head` shares its parent's rows), so only the facade itself is marked.
+        if (isEditableTable(v)) {
+            const t = v as unknown as { rows: unknown[]; columns: unknown[] };
+            this.owned.add(t.rows); this.owned.add(t.columns);
+            for (const r of t.rows) if (Array.isArray(r)) this.owned.add(r);
+            return v;
+        }
+        if (isWritableTarget(v)) this.owned.add(v as object);
+        return v;
+    }
     /** Containers that are READ-ONLY with a message saying so: `ml.current.messages`, its rows, and everything inside
      *  them. A write there is not a refusal (the human gate would then run the script on the page, where there is no
      *  `ml.current`) but a TypeError the model reads. The write half will one day make these writes MEAN something
@@ -700,6 +714,7 @@ export class Evaluator {
     }
 
     private refuseWrite(obj: unknown): void {
+        if (isFrozenTablePart(obj)) throw new TypeError(READ_ONLY_TABLE);
         if (obj !== null && typeof obj === "object" && this.shared.has(obj))
             throw new TypeError("ml.current.debug is read-only: it is what the person shared with you. To work on it as data, copy what you need ([...ml.current.debug.userWatches]).");
         if (obj !== null && typeof obj === "object" && this.readOnly.has(obj))
