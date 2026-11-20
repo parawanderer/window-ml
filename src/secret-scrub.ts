@@ -20,10 +20,10 @@ const LOOPBACK = new Set(["localhost", "127.0.0.1", "0.0.0.0", "[::1]", "::1"]);
 /** A GitHub token by its documented shape (`ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_` and a fine-grained `github_pat_`): the
  *  credential the process host injects into a credentialed `gh` call, whose value the worker never holds, so it is
  *  matched by shape wherever a program printed it (`gh auth token`, `gh auth status -t`). */
-const GITHUB_TOKEN = /\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{22,255})\b/g;
+export const GITHUB_TOKEN = /\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{22,255})\b/g;
 
 /** What stands in for one. */
-const GITHUB_TOKEN_PUT = "[a GitHub token]";
+export const GITHUB_TOKEN_PUT = "[a GitHub token]";
 
 /** Shorter than this, an API key is a placeholder (`ollama`, `EMPTY`, `sk-1234`) and also an ordinary word. */
 const MIN_KEY = 12;

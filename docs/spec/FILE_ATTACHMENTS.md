@@ -985,6 +985,18 @@ are what the model reads.
 
 1. The ranged reader on the shelf, and chunked writes with the atomic commit. Must not break: an attachment's
    existing readers, the value store's budget and holders check.
+   AS BUILT (slice 1, ruling 54's first PR: the reader, its interface and the ranged scrub). `RangedReader`
+   (`src/session/ranged-reader.ts`) implements `FilesChannel` (`src/python/files-reader.ts`, the shape agreed with
+   the async lane) on the `files` volume; a volume is a tree resolved one path at a time, so `/history/` is a second
+   volume beside it. The shelf reaches it through a `FilesSource`: a session's attachments and a stored Blob by key,
+   neither of which loads bytes; a read slices one range of the Blob into the caller's buffer. The hide rule is a
+   function the reader asks at every open and every read, and lists nothing until the hide-list rule lands. Byte reads
+   are returned as stored, as an attachment's bytes are; the text window of "The scrub" is `scrubRange`
+   (`src/secret-scrub-range.ts`), which slice 2's text reads call. The write verbs check the transaction and the path
+   and then answer `EROFS` everywhere, `agent/` included, until slice 3 lands the write side; `begin`, `commitTx` and
+   `abortTx` of an empty transaction succeed, so a front end that opens one per cell works read-only. The offscreen
+   document's wiring (the source over the worker's shelf, and `setFilesReader`) lands once both this and the Python
+   mount's PR are on main.
 2. `ml.fs` read members in the isolated world, the routing, the dialect entry with its tests, the scrub window, the
    red-team pass, and the Node parity corpus for the read members. Must not break: `ml.current`'s and `ml.sh`'s routing rows.
 3. `ml.fs` write members, the quota setting, and the parity corpus extended to them.
