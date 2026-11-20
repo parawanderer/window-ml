@@ -15,7 +15,7 @@ import { CALL_TITLE } from "../../tools/tool-params";
 import katexCss from "katex/dist/katex.min.css";
 import { sessionMap, turnsRun, config } from "../store";
 import { renderMermaid } from "../../mermaid/mermaid-client";
-import { serializeSessionJson } from "./export-json";
+import { exportedAsks, serializeSessionJson } from "./export-json";
 import type { Session, AgentStep } from "../store";
 import { pretty, fullStamp, beautifyJs, escapeHtml, highlight, markdown, truncate } from "../format";
 import { promptLine, type PromptDisplay } from "../../contract/contract-run";
@@ -398,7 +398,7 @@ function writeAgent(s: Session, d: Sink): void {
         d.head(`Step ${st.step} · ${st.tool || "?"}${said ? ` — “${said}”` : ""}`);
         if (st.approval) d.note(approvalNote(st.approval));
         // Each nested ask: what was asked while the step ran, how it was answered, and the facts it was judged on.
-        for (const a of st.asks ?? []) {
+        for (const a of exportedAsks(st.asks ?? [])) {
             d.note(askNote(a));
             // Once an allowed call ran, what it reported: the same lines as the card under the step.
             for (const l of askOutcomeLines(a)) d.note(`${l.label}: ${l.value}`);

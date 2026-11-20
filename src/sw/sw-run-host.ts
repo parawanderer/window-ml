@@ -79,7 +79,7 @@ import { checkVerifyRequest, verifyAsked, verifyVerb, withoutPageVision, workerV
 import { topDocument } from "./worker-vision";
 import { capPageAnswer, capPageContext } from "./page-answer-caps";
 import { firstUserTurn } from "../agent/run-assembly";
-import { hostAsks, raiseAsk, stepAsks } from "./sw-asks";
+import { hostAsks, raiseAsk, stepAsks, type StepAsk } from "./sw-asks";
 import { ARRIVAL_ASK, ARRIVAL_DENIED } from "../contract";
 import { arrivalAnsweredText, arrivalDeniedText, clickDeniedText, arrivalWaitingText, arrivalHold, arrivalLine, arrivalSettled, arrivalVerdict, clearArrival, holdArrival, judgeTurnStart, watchArrivals, watchBetweenTurns } from "./nav-arrival";
 import { adoptOnTab } from "./adopt-run";
@@ -819,7 +819,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // The last event of each step that carried its tool, by RAW seq: a nested ask re-emits it with the step's asks, so
         // the ask rides the event every surface already renders (sw-asks.ts). A turn's own; gone with it.
         const lastStepEv = new Map<number, Record<string, unknown>>();   // state: plumbing — one turn's step events, for re-emitting a step with its asks
-        const emitStep = (ev: Record<string, unknown>): void => {
+        const emitStep = (ev: Record<string, unknown>, liveAsks?: StepAsk[]): void => {
             // Once the run is aborted (CANCEL_RUN), stop fanning steps: an in-flight tool's DONE resolves
             // AFTER the abort (the page tool round-trip isn't cancellable), and a straggler landing after the
             // page's cancelled result would wrongly re-show "running" in the panel. Drop it at the source.
@@ -836,7 +836,11 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             if (rawSeq != null && ev.tool != null) { const { asks: _asks, ...rest } = ev; lastStepEv.set(rawSeq, rest); }
             // A step that raised asks carries them on every later event too (its DONE included), so no surface, export
             // or saved session sees the step without what it asked.
-            const asks = seq != null && ev.asks === undefined && ev.tool != null ? stepAsks(runId, seq) : undefined;
+            const later = seq != null && ev.asks === undefined && ev.tool != null;
+            const asks = later ? stepAsks(runId, seq) : undefined;
+            // A waiting ask's raw facts, for the card the person answers from: only the live fans below get them. What is
+            // kept (the session server, the store, both buffers, so both exports) gets the scrubbed asks (sw-asks.ts).
+            const live = later ? stepAsks(runId, seq, true) : liveAsks;
             const event = {
                 kind: "agent-step", id: runId, ts: Date.now(), save: false,
                 session: { hash: runId, turn: step }, ...ev, ...(asks?.length ? { asks } : {}), step, localStep: rawStep, seq,
@@ -848,12 +852,13 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             // Always fan to the PAGE (overlay / off card). For devtools ALSO fan to the panel — and the
             // page fan lets the optional corner card coexist with the panel (agentHudInDevtools); the
             // shell drops the page copy when no card is mounted, and never loops it back to the panel.
-            toPageUi(tabId, { type: "ML_DEBUG_TO_PAGE", event });
+            const shown = live?.length ? { ...event, asks: live } : event;
+            toPageUi(tabId, { type: "ML_DEBUG_TO_PAGE", event: shown });
             // ALWAYS feed a connected DevTools panel (no-op if none). A background-hosted run is the SOLE source
             // of its events — the shell receives them over chrome.runtime and never re-forwards them as ML_DEBUG_EVENT, so
             // this can't double-relay. Gating on `surface === "devtools"` left an off/card run's panel (if the
             // user also has one open) stuck on the connect-time replay — the "panel stopped updating" bug.
-            relayDebugEvent(tabId, event);
+            relayDebugEvent(tabId, shown, event);
             ingestSessionEvent(event, { tabId, trusted: true, hosts: byWorker() });
             // Cross-page: remember this step so a fresh page after a nav can rebuild the card mid-run.
             if (p.crossPage !== false) bufferReplay(tabId, event);
@@ -883,8 +888,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         const openTaskTable = (): void => openTasks(runId, (text, task, end) => fanEvent({ kind: "agent-task-say", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, text, task, ...end }));
         // The run's steps may now raise nested asks: a call made from inside a running step that needs the person.
         unhostAsks = hostAsks({
-            runId, unattended: !!p.unattended, routing: p.approvalRouting || "ui", signal: abortCtl.signal,
-            emit: (seq, asks) => { const base = lastStepEv.get(seq - seqBase); if (base) emitStep({ ...base, asks }); },
+            runId, unattended: !!p.unattended, routing: p.approvalRouting || "ui", signal: abortCtl.signal, keep: forStored,
+            emit: (seq, asks, live) => { const base = lastStepEv.get(seq - seqBase); if (base) emitStep({ ...base, asks }, live); },
             stepOf: (seq) => stepBase + (Number(lastStepEv.get(seq - seqBase)?.step) || 0),
             running: (seq) => !!lastStepEv.get(seq - seqBase)?.pending,
         });

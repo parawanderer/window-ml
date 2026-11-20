@@ -173,6 +173,15 @@ on real captured output in its PR.
   - what the run keeps beside a tool result (`forStored`, the loop's `scrubStored`): the tool's Out render, which the
     sidebar and both exports draw, and so a pointer's fuller capture, which a later `@tool:` read hands a script or the
     model. Every string in it is scrubbed as the result is, without the count line; image data is not scanned;
+  - a nested ask as the step's event keeps it ([`sw-asks.ts`](../../src/sw/sw-asks.ts), `forStored` through
+    `AskRun.keep`, ruled 2026-11-19): its facts, why it asks, the person's note and the call's outcome, each failing
+    closed to withheld. The session server and so the chat page, the phone and a backfill, the store, the DevTools
+    ring, the cross-page replay and both exports hold that copy, a registered value as `[REDACTED:<NAME>]`. The raw
+    facts of an ask still waiting reach only the live card the person answers from (the page's card and overlay, a
+    DevTools panel already open) and are dropped when it settles; an export taken while it waits leaves its facts out.
+    A policy judges the raw facts, held in the worker's memory; `run.approvals` and the external approver read the kept
+    copy. A nested ask offers no "remember", and its run-log records carry only its kind and seq. A step an older build
+    stored with its ask's raw facts is scrubbed as it is read back from the store, which is not rewritten;
   - an error answered to a page (`forPage`): every string under an error key, at any depth beneath it, the config's
     secrets and then each registered value as a bare `[REDACTED]`, so a page never learns a name. It waits for the
     registry and fails closed to "The request failed."
@@ -223,7 +232,10 @@ on real captured output in its PR.
   `GET_CONFIG`'s answer to a page is not run through the registry, by design, since what keeps a secret out of it is
   `publicConfig`'s fixed key list (`redteam-lifetimes-config.test.mjs`, #1942, enumerates it, no secret key among them),
   and a public value equal to a registered one reaches the model only through a crossing that scrubs it (a page-started
-  request, or a tool result that read the page).
+  request, or a tool result that read the page); when the registered secrets cannot be read, the stored scrub
+  (`forStored`, which takes an object's keys as it takes its values) keeps a key only when it has a schema's shape
+  (letters only, lowercase first, at most 32: `type`, `byColumn`), so the record keeps its shape, and a registered value
+  of that shape used as a key survives that path.
 - **Deferred to the handles slice**: reading values from a listed `.env` (a new host message), the keychain, a handle's
   value, and the `echoes` refusal.
 

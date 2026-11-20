@@ -71,6 +71,7 @@ Declared today:
 | --- | --- | --- | --- |
 | Screenshot compaction | `sw-image-compact.ts` `compactionJob` | `sessions/compact-pass` → `compact-pass-done` / `compact-images-failed` | running, sessions waiting, the quiet timer's due time |
 | Saved-session cleanup | `sw-sessions.ts` | none: each `sessions/evict` is a run, `archive-failed` a failure | none |
+| Saved-session upgrade | `sw-sessions.ts` (`SessionStore.migrate`) | none: each `sessions/migrate` is one session moved to the version-2 form, `migrate-failed` and `write-failed` failures | none |
 | Stored-value sweep | `sw-values.ts` | none: each `value-store/evict` | its alarm's next time |
 | Archive folder sync | `sw-archive.ts` `syncFolder` | `archive/folder-sync` → `folder-sync-done` / `folder-sync-failed`, only while a folder is connected | running, month files waiting, the debounce's due time, `blocked` when the grant lapsed |
 | Price snapshot refresh | `sw-prices.ts` `startRefresh` | `prices/refresh` → `refresh-done` / `refresh-failed` | running |

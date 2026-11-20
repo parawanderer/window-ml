@@ -3,7 +3,7 @@
 // the whole history, so summing would double-count the shared prefix). Extracted from app.tsx.
 import type { TokenUsage } from "../../contract/contract-chat";
 import { fmtCtx } from "../../contract/contract-config";
-import { config, psError, loadedModels } from "../store";
+import { config, psError, loadedModels, rev } from "../store";
 import type { Session } from "../store";
 import { shownModel, normModel, seenContext } from "../model";
 import { IconUsage } from "../icons";
@@ -85,6 +85,7 @@ export function usageHue(frac: number): string {
 // (look/locate/verify). Distinct from the fill — it's separate SPEND, not context occupancy — so it
 // reads as "+N sub" with its own tooltip. Null → renders nothing (no delegated calls this turn).
 export function SubcallChip({ s }: { s: Session }) {
+    void rev.value;   // see UsageBar: `s` is mutated in place, so a props-memoized component never sees a new step
     const sub = sessionSubcall(s);
     if (!sub) return null;
     return (
@@ -102,6 +103,10 @@ export function SubcallChip({ s }: { s: Session }) {
 /** HOW FULL THE CONTEXT IS, and what this session has spent — the gauge beside the composer. Reads the
  *  model's own window when it is known, so the bar means tokens rather than a guess. */
 export function UsageBar({ s }: { s: Session }) {
+    // SUBSCRIBED TO `rev`. This reads signals (`psError`, `loadedModels`), which makes @preact/signals memoize it on its
+    // props, and `s` is the same mutated object for the whole session: without its own subscription the figure froze at
+    // the first sample it drew whenever the parent did not happen to re-render it (the chat page's open session).
+    void rev.value;
     const occupancy = sessionOccupancy(s);
     if (occupancy == null) return null;   // nothing to show until the server reports counts
     // Use the RESOLVED model (what the header shows), not s.model — a "default"

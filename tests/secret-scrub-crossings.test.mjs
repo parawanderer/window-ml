@@ -240,6 +240,46 @@ test("a @tool: read of that step's output hands back the marker, never the value
     assert.ok(!leaks(read) && read.includes(MARK), read.slice(0, 200));
 });
 
+test("text nested deeper than the stored scrub reads is withheld, never kept as it is; a deep subtree with no text is kept", async () => {
+    let deep = { note: `p ${VALUE}` }, counts = { n: 3 };
+    for (let i = 0; i < 12; i++) { deep = { d: deep }; counts = { d: counts }; }
+    const got = await forStored({ type: "python-out", deep, counts, list: [[[[[[[[[[[`x ${VALUE}`]]]]]]]]]]] });
+    assert.ok(!leaks(JSON.stringify(got)), JSON.stringify(got).slice(0, 300));
+    assert.ok(JSON.stringify(got).includes("nested deeper than the scrub reads"));
+    assert.equal(JSON.stringify(got.counts), JSON.stringify(counts), "numbers alone are kept");
+});
+
+test("a registered value used as a KEY is scrubbed like a value: no value is lost to a collision, and a deep one withholds its subtree", async () => {
+    const marker = `[REDACTED:${NAME}]`;
+    const got = await forStored({ byColumn: { [VALUE]: ["row"], [`x ${VALUE}`]: 1, [`${marker}`]: "kept", plain: 2 } });
+    const text = JSON.stringify(got);
+    assert.ok(!leaks(text), text);
+    // The key the scrub left alone keeps its name; the two that scrub to one text are numbered after it.
+    assert.deepEqual(Object.keys(got.byColumn), [`${marker} (2)`, `x ${marker}`, marker, "plain"]);
+    assert.deepEqual(got.byColumn[`${marker} (2)`], ["row"]);
+    assert.equal(got.byColumn[marker], "kept");
+    // A "__proto__" key stays a key, never the copy's prototype.
+    const proto = await forStored(JSON.parse(`{"__proto__": {"${VALUE}": 1}, "a": "${VALUE}"}`));
+    assert.equal(Object.getPrototypeOf(proto), Object.prototype);
+    assert.ok(Object.hasOwn(proto, "__proto__") && !leaks(JSON.stringify(proto)), JSON.stringify(proto));
+    // Past the depth, a key holding a registered value withholds the subtree; one with plain keys is kept.
+    let deep = { [VALUE]: 1 }, plain = { n: 3 };
+    for (let i = 0; i < 12; i++) { deep = { d: deep }; plain = { d: plain }; }
+    const far = await forStored({ deep, plain });
+    assert.ok(!leaks(JSON.stringify(far)) && JSON.stringify(far).includes("nested deeper than the scrub reads"), JSON.stringify(far).slice(0, 300));
+    assert.equal(JSON.stringify(far.plain), JSON.stringify(plain));
+    // Fail closed (the store throws): a schema-shaped key is kept so the record keeps its shape; any other is withheld.
+    const real = chrome.storage.local.get;
+    chrome.storage.local.get = async () => { throw new Error("gone"); };
+    _coldRegistryForTest();
+    try {
+        const shut = await forStored({ type: "ask", byColumn: { [VALUE]: ["row"], plain: 2 } });
+        assert.ok(!leaks(JSON.stringify(shut)), JSON.stringify(shut));
+        assert.deepEqual(Object.keys(shut), ["type", "byColumn"]);
+        assert.deepEqual(Object.keys(shut.byColumn), ["[withheld: the registered secrets could not be read]", "plain"]);
+    } finally { chrome.storage.local.get = real; _setRegistryForTest([{ name: NAME, value: VALUE }]); }
+});
+
 test("a render whose secrets cannot be read is withheld whole, and its image data is left alone", async () => {
     const r = { type: "python-out", stdout: `p ${VALUE}`, image: "data:image/png;base64,AAAA" };
     const real = chrome.storage.local.get;

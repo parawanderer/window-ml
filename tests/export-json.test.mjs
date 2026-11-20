@@ -389,6 +389,22 @@ test("a step's nested asks export with their facts, how each ended and when", ()
     assert.equal(doc.session.steps[0].asks, undefined, "a step that asked nothing carries no field");
 });
 
+test("a waiting ask exports without its facts, the one copy the sidebar holds raw; an answered one keeps the kept facts", () => {
+    // A waiting ask's facts are the live card's raw ones (sw-asks.ts): an export taken mid-ask must hold no registered value.
+    const raw = { argv: ["curl", "-H", "Authorization: Bearer tok-9f8e7d6c5b4a3210"] };
+    const asks = [
+        { id: "a0123456789abcdef01234567", kind: "sh", facts: raw, state: "pending", raisedAt: 1 },
+        { id: "a0123456789abcdef01234568", kind: "sh", facts: { argv: ["ls"] }, state: "denied", raisedAt: 1, answeredAt: 2 },
+    ];
+    const s = agentSession();
+    s.steps[1] = { ...s.steps[1], asks };
+    const out = sessionToJson(s).session.steps[1].asks;
+    assert.doesNotMatch(JSON.stringify(out), /tok-9f8e7d6c5b4a3210/);
+    assert.deepEqual(out[0], { ...asks[0], facts: { withheld: "the ask is waiting for the person; its facts are exported once it is answered" } });
+    assert.deepEqual(out[1], asks[1], "an answered ask is exported as it is");
+    assert.equal(asks[0].facts, raw, "the session itself is not changed");
+});
+
 test("an allowed ask's outcome exports verbatim: the sandbox the host applied and the protected names that changed", () => {
     const outcome = { ran: "host-sandbox", envelope: { write: "today", exec: "any" }, asked: { write: "roots", exec: "program-only" },
         protectedChanged: [{ root: "/w", name: ".envrc", change: "created" }], protectedChangedTruncated: true };

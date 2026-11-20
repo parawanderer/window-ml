@@ -5,6 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { runAgentLoop } from "../src/agent/agent-loop.ts";
+import { TokenStore } from "../src/pointers/token-pipe.ts";
 
 // Deps factory: scripted model turns + spies recording the ORDER of approve/runTool calls.
 function makeDeps({ turns = [], approve, autoApprove } = {}) {
@@ -199,6 +200,37 @@ test("tool tokens: the id is DETERMINISTIC and CONTIGUOUS across turns (a re-ren
     const twoInTurnOne = await tokenOfRun(0, 2);   // [seq1, seq2]
     const [turnTwoStepOne] = await tokenOfRun(1);  // seqBase 1 + seq 1
     assert.equal(turnTwoStepOne, twoInTurnOne[1], "turn 2 step 1 == turn 1 step 2 (contiguous global seq)");
+});
+
+// --- a CodeRevision names the revised step by its STORED seq (seqBase + the turn's own counter) ---------------
+test("revision.seq is the revised step's STORED seq, in a later turn and later in the same turn", async () => {
+    // The store spans turns, as the session's does. Turn 1 (seqBase 0) runs one python_exec; turn 2 (seqBase 7)
+    // runs two, the second revising the first of turn 2, and the first revising turn 1's.
+    const store = new TokenStore();
+    const mk = (turns) => {
+        const { deps, calls } = makeDeps({ turns });
+        deps.runTool = async (_n, args) => ({ result: "ok", renderIn: { type: "python-in", code: String(args.code) } });
+        return { deps, calls };
+    };
+    const opts = (seqBase) => ({ tools: [{ name: "python_exec" }], toolTokens: true, runHash: "abcd1234", seqBase, tokenStore: store });
+    const t1 = mk([toolCall("python_exec", { code: "a = 1" }), reply("done")]);
+    await runAgentLoop("t", opts(0), t1.deps);
+    const first = t1.calls.emits.find(e => e.tool === "python_exec" && !e.pending);
+    assert.equal(first.seq, 1);
+    const t2 = mk([]);
+    // the second call of turn 2 names the first call's token, known only once that call has run
+    let n = 0;
+    t2.deps.callModel = async () => {
+        if (n++ === 0) return toolCall("python_exec", { code: "a = 2", revises: first.token }, "c1");
+        if (n === 2) { const e = t2.calls.emits.find(x => x.tool === "python_exec" && !x.pending); return toolCall("python_exec", { code: "a = 3", revises: e.token }, "c2"); }
+        return reply("done");
+    };
+    await runAgentLoop("t", opts(7), t2.deps);
+    const done = t2.calls.emits.filter(e => e.tool === "python_exec" && !e.pending);
+    assert.equal(done.length, 2);
+    assert.equal(done[0].renderIn.revision.seq, first.seq, "turn 2 revises turn 1's step: its seq as turn 1 stored it");
+    assert.equal(done[0].seq, 1, "the emitted step's own seq stays turn-local; the caller offsets it");
+    assert.equal(done[1].renderIn.revision.seq, 7 + done[0].seq, "a later call in turn 2 names the earlier one with the offset");
 });
 
 test("token usage is emitted per step (so the background run's usage gauge isn't blank)", async () => {

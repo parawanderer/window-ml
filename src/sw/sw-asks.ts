@@ -11,6 +11,11 @@
 //
 // What the person is shown is the step's own event, re-emitted with its asks, so every surface that renders a step (the
 // sidebar, the DevTools panel, the chat page, the phone over the hub) renders the ask with no new message type.
+//
+// What the step's event KEEPS of an ask (its facts, the person's note, the outcome) has crossed the stored scrub
+// (sw-scrub.ts `forStored`): the session server, the store, both exports and every buffer hold that copy, a registered
+// value as `[REDACTED:<NAME>]`. The raw facts of an ask still waiting stay here, for the card the person answers from on
+// the live fans (sw-run-host.ts `emitStep`), and are dropped when it settles. A policy judges the raw facts.
 
 import type { EffectsData, Placement } from "../effects";
 import type { AskState, StepAsk } from "../contract";
@@ -18,6 +23,7 @@ export type { AskState, StepAsk };
 import { pendingApprovals, type PendingApprovalDescriptor } from "./sw-consent";
 import type { PolicyConsumer } from "./sw-policies";
 import { recordRunLog } from "./sw-run-log";
+import { forStored } from "./sw-scrub";
 export { ASK_ID, approvalKey } from "../approval-key";
 
 /** What the consumer gets back. `waitedMs` is the wall-clock time the call waited, which its result says: a reading
@@ -41,8 +47,9 @@ export interface AskRun {
     /** No person is attached (a scheduled or delegated run): every ask is refused at once. */
     unattended: boolean;
     routing: "ui" | "both" | "external";
-    /** Re-emit step `seq` (the OFFSET seq every surface sees) with its asks. */
-    emit: (seq: number, asks: StepAsk[]) => void;
+    /** Re-emit step `seq` (the OFFSET seq every surface sees) with its asks: `asks` as the event keeps them (scrubbed),
+     *  `live` with a waiting ask's raw facts, for the live fans' card only. */
+    emit: (seq: number, asks: StepAsk[], live: StepAsk[]) => void;
     /** Whether `seq` is a step of this turn that is running now, which a surface has drawn: an ask anywhere else would
      *  wait where nobody can see it. */
     running: (seq: number) => boolean;
@@ -52,11 +59,49 @@ export interface AskRun {
     signal: AbortSignal;
     /** Override {@link ASK_WAIT_MS}, for tests. */
     waitMs?: number;
+    /** The stored scrub (sw-scrub.ts `forStored`) every fact, note and outcome the step's event keeps crosses first;
+     *  the run host always passes it. Omitted → kept as given, synchronously. */
+    keep?<T>(value: T): Promise<T>;
 }
 
 const runs = new Map<string, AskRun>();   // state: plumbing — the runs a turn is hosting now; a consumer finds its run here, and an evicted worker has none, so an ask then cannot be raised (fails closed)
 const enders = new Map<string, (state: "ended", note: string) => void>();   // state: plumbing — how each pending ask is ended without the person, by its key
 const asksByStep = new Map<string, StepAsk[]>();   // state: plumbing — each running step's asks, history included, so a re-emit carries them all; pending ones are `run.approvals`, and the history is on the step event
+const rawFacts = new WeakMap<StepAsk, Record<string, unknown>>();   // state: plumbing — a waiting ask's facts before the stored scrub, for the live card; deleted when it settles
+
+/** What an ask keeps when the stored scrub itself failed: no fact at all. */
+const FACTS_WITHHELD = { withheld: "the registered secrets could not be read" };
+
+/**
+ * A value as the step's event keeps it: through the stored scrub, failing closed.
+ * @param keep the scrub
+ * @param v the value
+ * @param withheld what it becomes when the scrub throws
+ */
+async function scrubbed<T>(keep: (v: T) => Promise<T>, v: T, withheld: T): Promise<T> {
+    try { return await keep(v); } catch { return withheld; }
+}
+
+/**
+ * Do `then` with a value as the step's event keeps it: at once when the run keeps values as given, or once the scrub
+ * answers.
+ * @param run the run
+ * @param v the value
+ * @param withheld what it becomes when the scrub throws
+ * @param then what to do with it
+ */
+function withKept<T, R>(run: AskRun | undefined, v: T, withheld: T, then: (kept: T) => R): R | Promise<R> {
+    const keep = run?.keep;
+    return keep ? scrubbed((x: T) => keep(x), v, withheld).then(then) : then(v);
+}
+
+/**
+ * Asks as the live fans draw them: a waiting one with its raw facts.
+ * @param list the step's asks, as kept
+ */
+function liveCopies(list: readonly StepAsk[]): StepAsk[] {
+    return list.map((a) => { const raw = a.state === "pending" ? rawFacts.get(a) : undefined; return raw ? { ...a, facts: raw } : { ...a }; });
+}
 
 /**
  * Let a run's steps raise asks for the length of a turn.
@@ -76,9 +121,11 @@ export function hostAsks(run: AskRun): () => void {
  * A running step's asks so far, as plain copies, for every later event of that step.
  * @param runId the run
  * @param seq the step's OFFSET seq
+ * @param live a waiting ask with its raw facts, for the live fans' card; otherwise as the event keeps them (scrubbed)
  */
-export function stepAsks(runId: string, seq: number): StepAsk[] | undefined {
-    return asksByStep.get(`${runId}:${seq}`)?.map((a) => ({ ...a }));
+export function stepAsks(runId: string, seq: number, live = false): StepAsk[] | undefined {
+    const list = asksByStep.get(`${runId}:${seq}`);
+    return list && (live ? liveCopies(list) : list.map((a) => ({ ...a })));
 }
 
 /** Whether a run can raise asks now (it is hosted by this worker and its turn is running). */
@@ -99,6 +146,22 @@ export type AskRequest = { kind: string; placement?: Placement; why?: import("..
  * @returns the outcome
  */
 export function raiseAsk(runId: string, seq: number, ask: AskRequest): Promise<AskOutcome> {
+    const facts = plainCopy(ask.facts);
+    // First: what the step's event keeps of the facts and of why it asks. Synchronous when the run keeps them as given.
+    return withKept(runs.get(runId), { facts, why: ask.why ? { ...ask.why } : undefined }, { facts: FACTS_WITHHELD, why: undefined },
+        (k) => raiseKept(runId, seq, ask, facts, k.facts, k.why)) as Promise<AskOutcome>;
+}
+
+/**
+ * {@link raiseAsk}, once the facts are kept.
+ * @param runId the run
+ * @param seq the step's OFFSET seq
+ * @param ask the request
+ * @param facts the raw facts: the card's and the policy's
+ * @param kept the facts as the step's event keeps them
+ * @param why why it asks, as kept
+ */
+function raiseKept(runId: string, seq: number, ask: AskRequest, facts: Record<string, unknown>, kept: Record<string, unknown>, why: AskRequest["why"]): Promise<AskOutcome> {
     const raisedAt = Date.now();
     const run = runs.get(runId);
     const ended = (state: AskOutcome["state"], note: string): AskOutcome => ({ allowed: false, state, note, raisedAt, answeredAt: raisedAt, waitedMs: 0 });
@@ -108,14 +171,15 @@ export function raiseAsk(runId: string, seq: number, ask: AskRequest): Promise<A
     const list = asksByStep.get(stepKey) ?? [];
     asksByStep.set(stepKey, list);
     const id = `a${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`;
-    const entry: StepAsk = { id, kind: String(ask.kind), facts: plainCopy(ask.facts), state: "pending", ...(ask.why ? { why: { ...ask.why } } : {}), raisedAt, ...(run.routing === "external" ? { external: true as const } : {}) };
+    const entry: StepAsk = { id, kind: String(ask.kind), facts: kept, state: "pending", ...(why ? { why } : {}), raisedAt, ...(run.routing === "external" ? { external: true as const } : {}) };
     const settle = (e: StepAsk, state: AskOutcome["state"], note?: string, instant = false): AskOutcome => {
         e.state = state;
         // An instant refusal answers at the raise time, as `ended()` does: there was no wait to measure, and a
         // second `Date.now()` is not simultaneous with the first, so measuring one would report a phantom millisecond.
         e.answeredAt = instant ? raisedAt : Date.now();
         if (note) e.note = note.slice(0, 2000);
-        run.emit(seq, list.map((a) => ({ ...a })));
+        rawFacts.delete(e);
+        run.emit(seq, list.map((a) => ({ ...a })), liveCopies(list));
         recordRunLog(runId, { ...(state === "allowed" ? {} : { level: "warn" as const }), subsystem: "consent", kind: "ask", reason: state, ms: e.answeredAt - raisedAt, detail: { kind: e.kind, seq } });
         return { allowed: state === "allowed", state, ...(e.note ? { note: e.note } : {}), raisedAt, answeredAt: e.answeredAt, waitedMs: e.answeredAt - raisedAt, askId: e.id };
     };
@@ -126,6 +190,7 @@ export function raiseAsk(runId: string, seq: number, ask: AskRequest): Promise<A
     }
     list.push(entry);
     if (run.unattended) return Promise.resolve(settle(entry, "unattended", "this run has nobody to ask", true));
+    rawFacts.set(entry, facts);
     const key = `${stepKey}#${id}`;
     return new Promise<AskOutcome>((resolve) => {
         let done = false;
@@ -136,18 +201,22 @@ export function raiseAsk(runId: string, seq: number, ask: AskRequest): Promise<A
             run.signal.removeEventListener("abort", onAbort);
             enders.delete(key);
             if (pendingApprovals.get(key)?.descriptor === descriptor) pendingApprovals.delete(key);
-            resolve(settle(entry, state, note));
+            // The note is the person's words or ours; the event keeps it through the same scrub as the facts.
+            void withKept(run, note, note && "[withheld: the registered secrets could not be read]", (n) => resolve(settle(entry, state, n)));
         };
         const onAbort = (): void => finish("cancelled", "the run was cancelled");
         const timer = setTimeout(() => finish("timeout", "nobody answered in time"), run.waitMs ?? ASK_WAIT_MS);
         run.signal.addEventListener("abort", onAbort);
         enders.set(key, finish);
+        // `arguments` is what a reader of the pending gates gets (`run.approvals`, which the model may read, and the
+        // external approver, whose list puts it in `facts` too: externalApprovals): the kept copy. `facts` is what a
+        // policy judges: the raw copy, in this worker only.
         const base = { key, runId, seq, step: run.stepOf(seq), tool: entry.kind, arguments: entry.facts, ts: raisedAt, routing: run.routing, askId: id, ...(ask.placement ? { placement: ask.placement } : {}) };
         // The copy keeps `effects` (plainCopy is JSON, and EffectsData is plain data), so a judged consumer's card stays
         // judgeable; a copy that lost them (facts that would not serialise) is left to the person, never judged blind.
-        const descriptor: PendingApprovalDescriptor = ask.consumer && entry.facts.effects !== undefined
-            ? { ...base, consumer: ask.consumer, facts: entry.facts as Record<string, unknown> & { effects: EffectsData } }
-            : { ...base, facts: entry.facts };
+        const descriptor: PendingApprovalDescriptor = ask.consumer && facts.effects !== undefined
+            ? { ...base, consumer: ask.consumer, facts: facts as Record<string, unknown> & { effects: EffectsData } }
+            : { ...base, facts };
         pendingApprovals.set(key, {
             descriptor,
             resolve: (d) => {
@@ -158,7 +227,7 @@ export function raiseAsk(runId: string, seq: number, ask: AskRequest): Promise<A
         });
         // Shown only once it can be answered: an approver that answers at once (an external one, a surface on the same
         // turn of the event loop) must find the gate registered.
-        run.emit(seq, list.map((a) => ({ ...a })));
+        run.emit(seq, list.map((a) => ({ ...a })), liveCopies(list));
     });
 }
 
@@ -169,15 +238,18 @@ export function raiseAsk(runId: string, seq: number, ask: AskRequest): Promise<A
  * @param runId the run
  * @param seq the step's OFFSET seq
  * @param askId the ask's id, from its outcome
- * @param outcome plain data, which the consumer keeps small: it rides every later event of the step
+ * @param outcome plain data, which the consumer keeps small: it rides every later event of the step, scrubbed as the facts are
+ * @returns once it is recorded: await it before the step ends, or a step that ended first drops it
  */
-export function noteAskOutcome(runId: string, seq: number, askId: string, outcome: Record<string, unknown>): void {
-    const run = runs.get(runId);
-    const list = asksByStep.get(`${runId}:${seq}`);
-    const entry = list?.find((a) => a.id === askId);
-    if (!run || !list || !entry || entry.state !== "allowed" || !run.running(seq)) return;
-    entry.outcome = plainCopy(outcome);
-    run.emit(seq, list.map((a) => ({ ...a })));
+export function noteAskOutcome(runId: string, seq: number, askId: string, outcome: Record<string, unknown>): void | Promise<void> {
+    return withKept(runs.get(runId), plainCopy(outcome), FACTS_WITHHELD, (kept) => {
+        const run = runs.get(runId);
+        const list = asksByStep.get(`${runId}:${seq}`);
+        const entry = list?.find((a) => a.id === askId);
+        if (!run || !list || !entry || entry.state !== "allowed" || !run.running(seq)) return;
+        entry.outcome = kept;
+        run.emit(seq, list.map((a) => ({ ...a })), liveCopies(list));
+    });
 }
 
 /**
@@ -186,4 +258,20 @@ export function noteAskOutcome(runId: string, seq: number, askId: string, outcom
  */
 function plainCopy(v: Record<string, unknown>): Record<string, unknown> {
     try { return JSON.parse(JSON.stringify(v ?? {})) as Record<string, unknown>; } catch { return {}; }
+}
+
+/**
+ * A stored event as it is served again: its nested asks through the stored scrub. An ask the code before that scrub
+ * wrote (an upgrade) holds its facts as they were, and the store is read back, never rewritten, so this is where it is
+ * scrubbed. Fails closed: asks that cannot be scrubbed keep no facts, note or outcome.
+ * @param ev an event read from the session store
+ * @returns the event, copied where an ask changed
+ */
+export async function keptEvent<T>(ev: T): Promise<T> {
+    const asks = (ev as { asks?: unknown } | null)?.asks;
+    if (!Array.isArray(asks) || !asks.length) return ev;
+    const failed = asks.map((a) => (a && typeof a === "object" ? { ...(a as StepAsk), facts: FACTS_WITHHELD, note: undefined, outcome: undefined } : a));
+    let kept: unknown[];
+    try { kept = await forStored(asks); } catch { kept = failed; }
+    return kept === asks ? ev : { ...ev, asks: kept };
 }

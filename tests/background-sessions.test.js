@@ -220,7 +220,7 @@ async function storedRow(idb, hash, tries = 30) {
         // own open then runs no upgrade, and its object stores never exist. Tests passed only by winning that race.
         if (!(await idb.databases()).some((d) => d.name === "ml-saved-sessions")) { await new Promise((r) => setTimeout(r, 50)); continue; }
         const row = await new Promise((resolve, reject) => {
-            const open = idb.open("ml-saved-sessions", 1);
+            const open = idb.open("ml-saved-sessions");
             open.onerror = () => reject(open.error);
             open.onsuccess = () => {
                 const db = open.result;
@@ -236,8 +236,31 @@ async function storedRow(idb, hash, tries = 30) {
     return null;
 }
 
+/** A saved session's history as the worker stored it (version 2): `runmeta` and the `history` positions, read straight from IndexedDB. */
+async function storedHistory(idb, hash, tries = 30) {
+    for (let i = 0; i < tries; i++) {
+        const got = await readStoredHistory(idb, hash);
+        if (got.meta) return got;
+        await new Promise((r) => setTimeout(r, 50));
+    }
+    return readStoredHistory(idb, hash);
+}
+async function readStoredHistory(idb, hash) {
+    const { IDBKeyRange } = require("fake-indexeddb");   // the CommonJS build's, as the worker's (helpers.js)
+    const db = await new Promise((resolve, reject) => { const o = idb.open("ml-saved-sessions"); o.onerror = () => reject(o.error); o.onsuccess = () => resolve(o.result); });
+    try {
+        return await new Promise((resolve, reject) => {
+            const tx = db.transaction(["history", "runmeta"], "readonly");
+            const range = IDBKeyRange.bound([hash, 0], [hash, Number.MAX_SAFE_INTEGER]);
+            const messages = tx.objectStore("history").getAll(range), meta = tx.objectStore("runmeta").get(hash);
+            tx.oncomplete = () => resolve({ messages: messages.result, meta: meta.result ?? null });
+            tx.onerror = () => reject(tx.error);
+        });
+    } finally { db.close(); }
+}
+
 test("a page's { save: true } chat is written ONCE, to both the record resumeChat reads and the session's history", T, async () => {
-    const { IDBFactory } = await import("fake-indexeddb");
+    const { IDBFactory } = require("fake-indexeddb");   // the build whose key range the worker is given (helpers.js)
     const idb = new IDBFactory();
     const bg = loadBackground({ config, indexedDB: idb });
     const page = openPage(bg);
@@ -255,12 +278,15 @@ test("a page's { save: true } chat is written ONCE, to both the record resumeCha
     // A chat that persists itself is a session to KEEP, so the history has a row to live on.
     assert.equal(page.rows().get("dddd0001").saved, true);
     const row = await storedRow(idb, "dddd0001");
-    assert.equal(row?.history?.kind, "chat");
-    assert.deepEqual(row.history.session.messages, session.messages);
+    assert.equal(row?.form, 2);
+    assert.equal(row.history, undefined, "the row carries no history, the records do");
+    const stored = await storedHistory(idb, "dddd0001");
+    assert.equal(stored.meta?.kind, "chat");
+    assert.deepEqual(stored.messages, session.messages);
 });
 
 test("a run's history is kept for a session the store holds, and dropped for one it does not", T, async () => {
-    const { IDBFactory } = await import("fake-indexeddb");
+    const { IDBFactory } = require("fake-indexeddb");   // the build whose key range the worker is given (helpers.js)
     const idb = new IDBFactory();
     const bg = loadBackground({ config, indexedDB: idb, onFetch: () => jsonResponse({ choices: [{ message: { content: "done" } }] }) });
     const port = bg.connect("ml-sessions", PAGE);
@@ -275,15 +301,19 @@ test("a run's history is kept for a session the store holds, and dropped for one
     await run("run00010");
     await flush();
     const row = await storedRow(idb, "run00010");
-    assert.equal(row?.history?.kind, "agent");
-    assert.ok(row.history.messages.length > 0, "what the model would be continued from");
+    assert.equal(row?.form, 2);
+    assert.equal(row.history, undefined, "the row carries no history, the records do");
+    const stored = await storedHistory(idb, "run00010");
+    assert.equal(stored.meta?.kind, "agent");
+    assert.ok(stored.messages.length > 0, "what the model would be continued from");
+    assert.equal(row.historyCount, stored.messages.length);
     // The payload is what makes it continuable rather than merely readable: the system prompt, the tool
     // descriptors and the rebuild config, none of which can be reconstructed from the transcript.
-    assert.equal(row.history.payload.task, "look it up");
+    assert.equal(stored.meta.payload.task, "look it up");
     // The page's context is the worker's to write for a run a site started (SITE_ACCESS_SLICE3.md, B1).
-    assert.equal(row.history.payload.systemPrompt, "S", "the system prompt carries no page context");
-    assert.match(row.history.payload.pageContext, /^URL: /, "it is kept beside it, for the first user message");
-    assert.equal(row.history.payload.runId, "run00010");
+    assert.equal(stored.meta.payload.systemPrompt, "S", "the system prompt carries no page context");
+    assert.match(stored.meta.payload.pageContext, /^URL: /, "it is kept beside it, for the first user message");
+    assert.equal(stored.meta.payload.runId, "run00010");
 
     // Not kept: a one-off run stays one-off. Whether a run persists is `ephemeral`/`persistUiRuns`, and writing a
     // history must never be a second way to answer that.

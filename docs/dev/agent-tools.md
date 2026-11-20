@@ -417,6 +417,11 @@ facts })` instead, which:
   with `askId`, `consumer`, `facts` and `placement` on the descriptor;
 - re-emits the step's own last event with `asks[]`, so every surface that draws a step draws the ask (`ask-card.tsx`)
   with no new message type, and the step's later events keep the list.
+- keeps on that event only what crossed the stored scrub (`AskRun.keep`, `forStored`): facts, `why`, note and outcome.
+  A waiting ask's raw facts ride only the live fans (`emitStep`'s `shown`: the page's card, a connected DevTools
+  panel); the session server, the DevTools ring and the replay buffer get the kept copy, so the chat page and the
+  phone show `[REDACTED:<NAME>]` where the sidebar's card shows the value. The descriptor's `facts` (what a policy
+  judges) stay raw; its `arguments` are the kept copy. SECRET_HANDLES.md, "The scrub as built".
 
 Answers carry the ask id beside the seq:
 

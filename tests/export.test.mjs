@@ -273,6 +273,16 @@ test("a nested ask exports as a note naming what it would run and how it ended, 
     assert.match(md, /"sandboxed": true/, "the facts it was judged on are in the export");
 });
 
+test("a waiting ask's facts are left out of the Markdown export too: the note says it waits, and no registered value is written", () => {
+    const a = { id: "a1", kind: "sh", facts: { argv: ["curl", "-H", "Authorization: Bearer tok-9f8e7d6c5b4a3210"] }, state: "pending", raisedAt: 1000 };
+    const s = { hash: "abc", kind: "agent", model: "m", tag: "session", createdTs: 1, lastTs: 2, status: "running", turns: [], task: "t",
+        steps: [{ step: 1, seq: 1, ts: 1, tool: "exec", arguments: { js: "x" }, approval: "user", pending: true, asks: [a] }], answers: [] };
+    const { md } = serializeSession(s);
+    assert.match(md, /asked \(sh/, "positive control: the ask is in the export");
+    assert.doesNotMatch(md, /tok-9f8e7d6c5b4a3210/);
+    assert.match(md, /its facts are exported once it is answered/);
+});
+
 test("an allowed shell ask that ran exports the card's outcome lines: the sandbox applied and what changed during it", () => {
     const outcome = { ran: "host-sandbox", envelope: { write: "today", exec: "any" }, asked: { write: "roots", exec: "program-only" },
         protectedChanged: [{ root: "/w", name: ".git/hooks/pre-commit", change: "created" }] };
