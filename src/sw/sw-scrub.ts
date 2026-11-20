@@ -6,6 +6,7 @@ import type { MlConfig } from "../contract/contract-config";
 import type { NeutralMessage, ToolCall } from "../contract/contract-chat";
 import { findSpans, heldTail, redactedLine, scrubRegistry, TurnUnreadable, type RegistrySub } from "../secret-registry";
 import { registryIsReady, registryReady, registrySubsNow } from "./sw-secret-registry";
+import type { SecretForm } from "../secret-mask";
 import { rowForEgress, textForEgress } from "../session/session-row-scrub";
 import type { SessionSummary } from "../session/session-host";
 
@@ -33,6 +34,19 @@ if (typeof chrome !== "undefined") chrome.storage?.onChanged?.addListener((chang
  *  those of the settings it replaced. */
 async function configSecrets(): Promise<SecretSub[]> {
     return mergeSecrets([secretsOf(await getConfig()), ...retired.map(secretsOf)]);
+}
+
+/**
+ * Every secret's forms as the byte mask of Python's `/files` mount matches them (secret-mask.ts): the config's and
+ * every registered value's, after the registry is read. Plaintext: for the offscreen document only (FILES_SECRET_FORMS).
+ * @returns the forms, longest first
+ * @throws when the config or the registry cannot be read
+ */
+export async function secretFormsNow(): Promise<SecretForm[]> {
+    const config = await configSecrets();
+    await registryReady();
+    const seen = new Set<string>();
+    return [...config, ...registrySubsNow()].filter((s) => s.find && !seen.has(s.find) && !!seen.add(s.find)).sort((a, b) => b.find.length - a.find.length).map((s) => ({ find: s.find, ...(s.ci ? { ci: true } : {}) }));
 }
 
 /**

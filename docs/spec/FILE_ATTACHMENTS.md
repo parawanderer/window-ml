@@ -996,13 +996,16 @@ are what the model reads.
    the async lane) on the `files` volume; a volume is a tree resolved one path at a time, so `/history/` is a second
    volume beside it. The shelf reaches it through a `FilesSource`: a session's attachments and a stored Blob by key,
    neither of which loads bytes; a read slices one range of the Blob into the caller's buffer. The hide rule is a
-   function the reader asks at every open and every read, and lists nothing until the hide-list rule lands. Byte reads
-   are returned as stored, as an attachment's bytes are; the text window of "The scrub" is `scrubRange`
-   (`src/secret-scrub-range.ts`), which slice 2's text reads call. The write verbs check the transaction and the path
+   function the reader asks at every open and every read, and lists nothing until the hide-list rule lands. Every
+   byte read is masked by the length-preserving scrub of "Python's view: two mounts" (below), so slice 2's `ml.fs`
+   byte reads get it too, and a text read there sees `*` where a value was; whether slice 2 keeps that or reads
+   unmasked for its `[REDACTED:<NAME>]` text window is slice 2's call. The text window of "The scrub" is `scrubRange`
+   (`src/secret-scrub-range.ts`). The write verbs check the transaction and the path
    and then answer `EROFS` everywhere, `agent/` included, until slice 3 lands the write side; `begin`, `commitTx` and
    `abortTx` of an empty transaction succeed, so a front end that opens one per cell works read-only. The offscreen
-   document's wiring (the source over the worker's shelf, and `setFilesReader`) lands once both this and the Python
-   mount's PR are on main.
+   document's wiring has landed: `setFilesReader` over one `RangedReader` whose source (`src/python/files-source.ts`)
+   asks the service worker for a session's files with `FILES_ATTACHED`, answered from the offscreen document only,
+   and reads the bytes from the offscreen document's own value store, held rows of that session only.
 2. `ml.fs` read members in the isolated world, the routing, the dialect entry with its tests, the scrub window, the
    red-team pass, and the Node parity corpus for the read members. Must not break: `ml.current`'s and `ml.sh`'s routing rows.
 3. `ml.fs` write members, the quota setting, and the parity corpus extended to them.
@@ -2056,6 +2059,24 @@ backup and any commit-on-cell-success live in one place.
   `st_size`, and a replacement of another length would shift every later offset and corrupt a binary format (a zip,
   a Parquet file, a pickle). The filler shows the value's length, which the hash-only store gives anyway
   (SECRET_HANDLES.md, ruling 32). A write is not scrubbed: what the kernel writes it already held.
+  AS BUILT (#2058): in `RangedReader.read` in the offscreen document, the one path every read of both folders takes.
+  Each read asks the service worker for the forms (`FILES_SECRET_FORMS`: the config's `secretsOf` forms and every
+  registry form, plaintext). The worker answers through `isOffscreenSender`, the same check `FILES_ATTACHED` makes,
+  and anyone else gets `{forms: null}`; the type has no relay entry. Nothing caches the forms, on either side: they
+  are asked for at every read and held for that read only, so a secret added between two reads through one
+  descriptor is masked in the second. The read takes the range widened on each side by the longest form's UTF-8
+  length less one byte (at least the GitHub token pattern's), clamped to the file's start and end, masks every match
+  and the GitHub token pattern with 0x2A (`src/secret-mask.ts`), and copies out the range alone: a match that crosses
+  either edge is masked in the part inside the range, and a form longer than the range, covering it and straddling
+  both edges, masks the whole range. Forms that cannot be read fail the read with `EIO`; nothing unmasked is served. The
+  forms are never written to a log (the run log, the housekeeping log, the console) and never appear in an error's
+  text, the `EIO` path included: its message is fixed. The values never reach the Pyodide worker. Matching is on BYTES: a form is matched as its UTF-8 bytes, and the registry's
+  forms already list its JSON-escaped, percent-encoded, base64 and shell-escaped spellings; ASCII letters fold for a
+  form marked case-insensitive. The residual is named: a value written in another encoding (a UTF-16 file) or inside
+  a compressed or encoded container (a deflated zip member, a gzip stream) is not seen, as a script that decodes
+  bytes itself is not (`ml.fs`, "The scrub"). Ruling 32's hash-only matcher is a stated gap: it is not built, the
+  registry stores plaintext values, so the plaintext forms cover every registered value; when it lands, the forms'
+  source changes and this read does not.
 
 **To be measured by the packages notebook, before this is fixed** (ruling 36, no figure here is this section's):
 whether the restricted fork gates `open()` on a mount; whether worker memory stays flat reading ranges of a 1 GiB

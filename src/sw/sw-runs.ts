@@ -627,6 +627,17 @@ function workerFiles(runId: string): FilePointer[] {
     return p?.builtBy === "worker" && Array.isArray(p.files) ? p.files : [];
 }
 
+/**
+ * The files attached to a session, read without making a pointer store for it: its live store's shelf, else the run's
+ * payload (a worker evicted since). Empty for a session this worker does not know.
+ * @param runId the session's run id
+ * @returns its attached files
+ */
+export function attachedFilesOf(runId: string): FilePointer[] {
+    const live = tokensByRun.get(runId);
+    return live ? live.files.all() : workerFiles(runId);
+}
+
 /** This run's pointer store, created on the first turn and REUSED by every later turn of the same session. A store
  *  made after the worker was evicted puts the run's attached files back on its shelf. */
 export const sessionTokens = (runId: string): TokenStore => {
