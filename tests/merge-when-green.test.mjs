@@ -5,7 +5,7 @@ import assert from "node:assert";
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { judge, testLineCounts, deletedTests, diskOnly, keepBench, agentMarker, isOwnPost, postKey, pickUnread, postedByOthersAfter, awaitCount, unreadLine, localImports, pinPlan, PIN_SUPPORT, touchesTool, diffPaths, missingContexts } from "../scripts/merge-when-green.mjs";
+import { judge, blockedPlan, testLineCounts, deletedTests, diskOnly, keepBench, agentMarker, isOwnPost, postKey, pickUnread, postedByOthersAfter, awaitCount, unreadLine, localImports, pinPlan, PIN_SUPPORT, touchesTool, diffPaths, missingContexts } from "../scripts/merge-when-green.mjs";
 
 // --- the rule: green pipeline, no test removed, nothing unread ---
 
@@ -57,12 +57,24 @@ test("BLOCKED with every required context reported is not a rerun: approval or a
     assert.equal(v.ok, false);
     assert.equal(!!v.pending, false);
     assert.equal(!!v.rerun, false);
+    assert.equal(v.staleGate, true, "a merging arm may re-check it, then let GitHub judge the merge");
     assert.match(v.reason, /BLOCKED though the tests run is green and no required context is missing/);
     // With no ruleset read at all the tool still refuses, and still does not invent a missing name to rerun on.
     const blind = judge({ ...green, mergeStateStatus: "BLOCKED" });
     assert.equal(blind.ok, false);
     assert.equal(!!blind.pending, false);
     assert.equal(!!blind.rerun, false);
+});
+
+// 2026-11-19: #2018 sat BLOCKED with all six required contexts green and no review required; Shane merged it with the
+// ordinary button and no bypass, so the state was stale. A merging arm re-checks once and then lets GitHub judge the
+// merge; a one-shot check, or an arm that does not merge, still refuses.
+test("a stale BLOCKED is re-checked once, then the merge is attempted and GitHub decides; a one-shot check refuses", () => {
+    assert.equal(blockedPlan({ staleGate: false, wait: true, merge: true, rechecked: false }), "none");
+    assert.equal(blockedPlan({ staleGate: true, wait: true, merge: true, rechecked: false }), "recheck");
+    assert.equal(blockedPlan({ staleGate: true, wait: true, merge: true, rechecked: true }), "judge");
+    assert.equal(blockedPlan({ staleGate: true, wait: false, merge: true, rechecked: false }), "refuse");
+    assert.equal(blockedPlan({ staleGate: true, wait: true, merge: false, rechecked: false }), "refuse");
 });
 
 test("missingContexts is required minus what the head reported: a skipped job that never reported is the gap", () => {

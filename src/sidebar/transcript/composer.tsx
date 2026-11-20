@@ -14,6 +14,7 @@ import { FilePill } from "./user-text";
 import { PDF_ATTACH_MAX, readMaxBytes, tooLargeHeld, b64Bytes, PDF_FILE_ACCEPT, TEXT_FILE_ACCEPT, decodeTextFile, encodePdfFile, fileInfo, fileSummary, looksPdf, pendingRefusals, sizeLabel, tooLarge, tooLargePdf, type FileTarget } from "../../attached-files";
 import { TURN_IMAGES_MAX, imagesRefusal, type SentFile } from "../../contract/contract-run";
 import type { FileProgress } from "../../session/session-host";
+import { cssDurationMs } from "../use-close";
 import { UsageBar } from "./usage";
 import { SpendChip } from "./spend";
 import { RunStatsBar } from "./agent-detail";
@@ -335,11 +336,28 @@ export function Composer({ s, multiline, tools, keys }: { s: Session; multiline?
     // On a NARROW screen the long placeholders wrapped onto a second line of an empty one-line box; the short ones say the
     // same thing a phone can fit.
     const narrow = useNarrowScreen();
-    const placeholder = running
+    const wanted = running
         ? (agent ? (narrow ? "Steer, or queue a follow-up…" : "Steer this run, or send to queue a follow-up…") : (narrow ? "Sending…" : "Sending… or stop this turn"))
         : narrow ? "Send a message…" : "Send a message to continue…";
+    // THE PLACEHOLDER FADES between its sentences instead of cutting: it fades out (`.ph-out`), the words change while it is
+    // invisible, and it fades back in. How long is the surface's say (`--ph-fade-ms`); one that sets none changes it at once.
+    const box = useRef<HTMLDivElement>(null);
+    const [placeholder, setPlaceholder] = useState(wanted);
+    const [fadingOut, setFadingOut] = useState(false);
+    useEffect(() => {
+        if (wanted === placeholder) { setFadingOut(false); return; }
+        const ms = cssDurationMs(box.current, "--ph-fade-ms");
+        if (!ms) { setPlaceholder(wanted); return; }
+        setFadingOut(true);
+        // The fade starts at the style pass after `.ph-out` lands, not when it is set: the clock starts two frames on, with a
+        // margin, or a busy machine swapped the words with the old ones still a fifth visible.
+        let t: ReturnType<typeof setTimeout> | undefined, f = requestAnimationFrame(() => {
+            f = requestAnimationFrame(() => { t = setTimeout(() => { setPlaceholder(wanted); setFadingOut(false); }, ms + 40); });
+        });
+        return () => { cancelAnimationFrame(f); clearTimeout(t); };
+    }, [wanted, placeholder]);
     return (
-        <div class="composer" data-rev={r} onDragOver={att.onDragOver} onDrop={att.onDrop}>
+        <div class={`composer${fadingOut ? " ph-out" : ""}`} ref={box} data-rev={r} onDragOver={att.onDragOver} onDrop={att.onDrop}>
             <ThumbStrip imgs={att.imgs} loading={att.loading} onRemove={att.remove} />
             <FileStrip docs={att.docs} reasons={att.reasons} onRemove={att.removeDoc} />
             <UploadStrip uploads={uploads} />

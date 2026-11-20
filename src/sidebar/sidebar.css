@@ -2192,7 +2192,9 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
     .hbtn:hover:not(.on) { background: transparent; color: var(--fg-dim); }
     .icon-btn:active, .hbtn:active { background: var(--panel-2); color: var(--fg); }
 }
-.dot { width: 0.67em; height: 0.67em; border-radius: 50%; flex: 0 0 auto; }
+/* The status dot: a round mark whose colour says a step or session's state, and which eases to a new colour (pending to ok) rather than cutting. */
+.dot { width: 0.67em; height: 0.67em; border-radius: 50%; flex: 0 0 auto; transition: background-color .35s ease; }
+@media (prefers-reduced-motion: reduce) { .dot { transition: none; } }
 .dot.pending { background: var(--busy); animation: pulse 1s infinite; }
 .dot.ok { background: var(--ok); }
 .dot.err { background: var(--err); }
@@ -2317,6 +2319,10 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 /* Raw In args tree: a corner copy button (a tree isn't drag-selectable like the old text block). Small
    left inset so the flush-left braces don't hug the block edge; right room so text never runs under copy. */
 .jt-args { position: relative; padding: 1px 22px 1px 2px; }
+/* The arguments of a call still being written wear the box the written code does (`.code`), from their first frame, and the
+   caret rides at the end of the last value (live-call.tsx places it): below the tree it read as another line to come. */
+.live-call .jt-args { background: var(--code-bg, var(--bg)); border: 1px solid var(--border); border-radius: 5px; padding: 6px 22px 6px 8px; }
+.live-call .jt-args > .live-caret { position: absolute; margin: 0; }
 /* The copy control for an output cell's RAW view. On the cell, not inside it: it used to sit in the
    scrolling element and slid away with the text — on a wide line, right off the edge. Same reasoning as the
    find bar beside it, and it yields to the find bar when that is open, since only one of them can own the
