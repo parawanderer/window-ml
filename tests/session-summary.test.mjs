@@ -267,3 +267,66 @@ test("the resources tab: with a panel it mounts it for this session key; without
     render(null, host);
     sessionMap.delete("local:a1b2c3d4"); sessionMap.delete("a1b2c3d4");
 });
+
+// --- the usage chart's reading: the shared time readout's snapping, keys, and clean-up ---
+
+test("the usage chart reads one call: the pointer snaps to the nearest, arrows step, Escape and unmount clear the tip", async () => {
+    const { JSDOM } = await import("jsdom");
+    const { createRequire } = await import("node:module");
+    const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", { pretendToBeVisual: true, url: "https://chat.test/" });
+    for (const k of ["localStorage", "window", "document", "Node", "FileReader", "Event", "HTMLElement"]) {
+        Object.defineProperty(globalThis, k, { value: dom.window[k], configurable: true, writable: true });
+    }
+    const { h, render } = createRequire(import.meta.url)("preact");
+    const { UsageChartView } = await import("../src/chat/session-resources.tsx");
+    const { cursorTip } = await import("../src/sidebar/ui-kit.tsx");
+    const host = dom.window.document.getElementById("root");
+    const tick = () => new Promise((r) => setTimeout(r, 20));
+    // Times 0, 100, 1000 apart: x fractions 0, .1, 1 across the plot.
+    const points = [{ ts: 1000, prompt: 100, completion: 10, cached: 5 }, { ts: 1100, prompt: 200, completion: 20 }, { ts: 2000, prompt: 400, completion: 40 }];
+    render(h(UsageChartView, { points }), host);
+    await tick();
+    const plot = host.querySelector(".sum-plot");
+    assert.ok(plot, "the reading box is drawn");
+    assert.equal(plot.getAttribute("tabindex"), "0");
+    assert.equal(plot.getAttribute("role"), "img");
+    assert.match(plot.getAttribute("aria-label"), /3 calls/);
+    plot.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 100, right: 200, bottom: 100, x: 0, y: 0 });
+    const move = (x) => plot.dispatchEvent(new dom.window.MouseEvent("pointermove", { bubbles: true, clientX: x, clientY: 50 }));
+    const key = (k) => plot.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+    const tipText = () => { const n = cursorTip.value?.node; if (!n) return null; const d = dom.window.document.createElement("div"); render(n, d); return d.textContent; };
+
+    assert.equal(host.querySelector(".rc-cross"), null, "nothing until pointed at");
+    move(190);   // fraction .95: the last call
+    await tick();
+    assert.match(tipText(), /Prompt400Completion40Total440/);
+    assert.ok(host.querySelector(".rc-cross.snapped"), "the rule is up");
+    move(30);    // fraction .15: nearer the second (.1) than the first (0)
+    await tick();
+    assert.match(tipText(), /Prompt200/);
+    move(0);
+    await tick();
+    assert.match(tipText(), /Cached5/, "the call that reported its cache hits lists them, and only that one");
+    move(190); await tick();
+    assert.doesNotMatch(tipText(), /Cached/);
+
+    // Keys: from nothing ArrowRight picks the first; Escape hides and clears the tip.
+    key("Escape"); await tick();
+    assert.equal(cursorTip.value, null);
+    key("ArrowRight"); await tick();
+    assert.match(tipText(), /Prompt100/);
+    key("ArrowRight"); await tick();
+    assert.match(tipText(), /Prompt200/);
+    key("ArrowLeft"); key("ArrowLeft"); key("ArrowLeft"); await tick();
+    assert.match(tipText(), /Prompt100/, "stops at the first");
+    key("Escape"); await tick();
+    assert.equal(cursorTip.value, null);
+    assert.equal(host.querySelector(".rc-cross"), null);
+
+    // Unmounting with a tip up takes it down.
+    move(100); await tick();
+    assert.ok(cursorTip.value);
+    render(null, host);
+    await tick();
+    assert.equal(cursorTip.value, null);
+});
