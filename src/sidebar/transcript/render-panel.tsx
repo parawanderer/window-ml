@@ -32,6 +32,7 @@ import {
     highlightToken, highlightEl, clearHighlight, tokenHover, pickedHover,
 } from "../ui-kit";
 import { displaySource } from "../code-block";
+import { outputLinks, hasOutputLink, outputLinkTip } from "../output-links";
 import { DiffLines, SplitLines } from "../code-diff";
 import { Dialog } from "../dialog";
 import { copyText } from "../copy-hash";
@@ -820,13 +821,42 @@ export const judgeScroll = (el: { scrollHeight: number; scrollTop: number; clien
 // here because this module is where they were first published and the standalone tests import them from it.
 export { timeForOffset, alignedMarks, elideHour, fmtDelta } from "../timestamps";
 
+/** One line of output with its http(s) links drawn as anchors (see output-links.ts for which qualify). The click opens a
+ *  tab through `services().openLink` and never navigates the panel, as an approval's URL does; `href`, `target` and
+ *  `rel` stay for the platform's own context menu. The tip names the HOST first, from the URL parser, and is JSX
+ *  (a string would be rendered as Markdown, and the address is the program's to choose). A line with no link is the
+ *  bare string, so nothing about the text nodes (the find, a selection) differs from before. */
+export function LinkedLine({ line }: { line: string }) {
+    const segs = outputLinks(line);
+    if (segs.length === 1 && typeof segs[0] === "string") return <>{line}</>;
+    return <>{segs.map((seg, i) => typeof seg === "string" ? seg
+        : <a key={i} class="out-link" href={seg.url} target="_blank" rel="noopener noreferrer"
+            onClick={(e) => { e.preventDefault(); services().openLink(seg.url); }}
+            {...cursorTipOn(<>{outputLinkTip(seg)}</>)}>{seg.text}</a>)}</>;
+}
+
+/** Plain captured output (no timestamp gutter). With no http(s) link in it, the code block it always was; with one,
+ *  the same `pre.code > code.hljs` markup (numbered like a `Code` when the setting asks) with each link an anchor. */
+export function PlainOutput({ text }: { text: string }) {
+    if (!hasOutputLink(text)) return <Code text={text} lang="text" />;
+    const lines = text.split("\n");
+    if (!codeLineNumbers.value || !text.replace(/\n+$/, "").includes("\n"))
+        return <pre class="code"><code class="hljs">{lines.flatMap((l, i) => [i ? "\n" : "", <LinkedLine key={i} line={l} />])}</code></pre>;
+    return <pre class="code numbered"><code class="hljs">{lines.map((l, i) =>
+        <span class="cline" key={i}><span class="lno">{i + 1}</span><span class="lcode"><LinkedLine line={l} />{l ? "" : " "}</span></span>)}</code></pre>;
+}
+
 /** Streamed output with a TIMESTAMP GUTTER — when each line was produced, per the executor's marks. The time
  *  is repeated only when it CHANGES, so a burst of lines reads as one moment rather than a wall of identical
  *  clocks. The gutter is its own element with `user-select: none`, so it is never part of the text you copy
  *  (and it was never part of what the model read). Falls back to a plain block when there are no marks or the
- *  gutter is switched off in Settings — the same markup either way, so the toggle changes only the gutter. */
+ *  gutter is switched off in Settings — the same markup either way, so the toggle changes only the gutter.
+ *
+ *  An http(s) address in the output is a link (see {@link LinkedLine}).
+ *  @gallery links in output {"text":"fetched https://example.com/docs/api?page=2 (200)\nsee [https://en.wikipedia.org/wiki/Foo_(bar)].\nlook-alike https://good.com@evil.com/ stays text\nnot a link: javascript:alert(1)","marks":[[0,1700000000000],[60,1700000001000]]}
+ *  @gallery links, no gutter {"text":"docs at https://example.com/a and https://example.org/b, thanks\ndone"} */
 export function TimedOutput({ text, marks, groups, groupKeys, headWidth }: { text: string; marks?: [number, number][]; groups?: readonly string[]; groupKeys?: readonly string[]; headWidth?: number }) {
-    if (!showOutTimes.value || !marks || !marks.length) return <Code text={text} lang="text" />;
+    if (!showOutTimes.value || !marks || !marks.length) return <PlainOutput text={text} />;
     const lines = text.split("\n");
     // `hourNow` is a SIGNAL, not Date.now(): a single timer bumps it at each hour boundary, so every gutter on
     // screen widens from mm:ss to hh:mm:ss the moment eliding stops being true — a long session left open
@@ -870,8 +900,8 @@ export function TimedOutput({ text, marks, groups, groupKeys, headWidth }: { tex
             <div class="r-ts-row" key={i}>
                 <span class={`r-ts${tip ? " hoverable" : ""}`} {...(tip ? cursorTipOn(tip) : {})}>{repeat ? "" : label}</span>
                 {head == null
-                    ? <span class="r-ts-line">{line}</span>
-                    : <span class="r-ts-line"><span class="r-ts-g" style={{ "--g": colorOf.get(g!) }}>{head}</span>{line.slice(headWidth)}</span>}
+                    ? <span class="r-ts-line"><LinkedLine line={line} /></span>
+                    : <span class="r-ts-line"><span class="r-ts-g" style={{ "--g": colorOf.get(g!) }}>{head}</span><LinkedLine line={line.slice(headWidth)} /></span>}
             </div>,
         );
     });

@@ -49,7 +49,7 @@ import { HeldLive, HeldStep, foldPauseOwed, noteFold } from "./live-hold";
 import { liveCallView } from "./live-call-view";
 import { isRefusedPkgCard } from "../card/pkg-card-view";
 export { JsonNode, JtKey, jtPreview, type JsonSchemaNode } from "./json-tree";
-import { RenderPanel, OutputCell, SeenSplit, RanFor, RunningFor, inLineMap, type CodeCtx } from "./render-panel";
+import { RenderPanel, OutputCell, SeenSplit, PlainOutput, RanFor, RunningFor, inLineMap, type CodeCtx } from "./render-panel";
 import { ReplyBubble } from "./reply";
 import { noteLiveAnswer } from "./streaming-md";
 import { CodeExplain, IntentSentence, codeOf, intentFor } from "./summaries";
@@ -637,7 +637,7 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
                                 // LIVE tool output (ctx.stream — console.log / print) filling in Jupyter-style while it runs.
                                 ? <div class="astep-streaming"><SeenSplit text={st.streamOutput} seen={liveCutoff(st)} live marks={st.streamMarks} /></div>
                                 : <span class="dim">running…</span>)
-                            : (st.modelResult ?? st.result) ? <Code text={st.modelResult ?? st.result ?? ""} lang="text" /> : <span class="dim">(no output)</span>}
+                            : (st.modelResult ?? st.result) ? <PlainOutput text={st.modelResult ?? st.result ?? ""} /> : <span class="dim">(no output)</span>}
                         rawText={inFlight ? undefined : (st.modelResult ?? st.result ?? "") || undefined} />
                     {st.feedback ? <FeedbackBlock fb={st.feedback} /> : null}
                     {/* The step's POINTER, when the run minted one — a first-class handle the model reads its
