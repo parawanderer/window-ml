@@ -246,8 +246,9 @@ Today a stored table's `col`, `select`, `records` and a long `head` each re-pars
 - **The stored form does not change.** The value store keeps the bytes as they arrived (POINTER_VALUES slice 7), because
   `ml.fs.cp` copies them byte for byte and Python's `pd.read_csv` parses them (ruling 71). The stale line in
   `value-store.ts` ("Tables become Arrow IPC in a later slice") is corrected in slice A.
-- **The decode is a cache.** The worker decodes a stored table once into an Apache Arrow table (`apache-arrow`, already
-  in the worker bundle), with the delimiter and header decisions the preview made, and keeps it in memory.
+- **The decode is a cache.** The worker decodes a stored table once into an Apache Arrow table (`apache-arrow`,
+  already a dependency, loaded on demand by `table-data.ts`), with the delimiter and header decisions the preview
+  made, and keeps it in memory.
   - It is marked `// state: cache` beside its Map. It is derived from the store, so losing it loses nothing but time.
   - It is keyed by the blob's SHA-256 and the decode options, so a message's options change only its own read, never
     what another session sharing the blob reads.
@@ -265,10 +266,14 @@ Today a stored table's `col`, `select`, `records` and a long `head` each re-pars
 - **Authority.** A plan arrives from a page as data.
   - The worker checks every field against a closed shape: an unknown field, a wrong type or a size past the bounds below
     is refused. Nothing in the plan is code.
-  - The key is a name, not an entitlement. The worker reads it only under `VALUE_COLUMNS`'s three checks
-    (`background.ts`): the sender's site may use window.ml now; the value is held by the sender tab's page session or
-    by the run; and, for a run the worker hosts, the key was named by that run's in-flight approved call. A plan
-    cannot name another run's table, because no message field decides whose it is.
+  - The key is a name, not an entitlement. The worker reads it only through `VALUE_COLUMNS`'s four gates
+    (`background.ts`):
+    1. the sender's page is approved to use window.ml now;
+    2. the value was disclosed to the sender tab's page session, or the run is one of this tab's active runs;
+    3. for a run, the value's holders include it;
+    4. for a run, the key was named by that run's in-flight approved call (`execReads`).
+
+    A plan cannot name another run's table, because no message field decides whose it is.
   - The brand is not the check. It tells the dialect what an object is; the worker never sees it.
 - **Bounds.**
   - The source: at most `FETCH_TABLE_MAX` (64 MB) of bytes, inside `valueStoreBudgetMB` on disk.
@@ -276,7 +281,8 @@ Today a stored table's `col`, `select`, `records` and a long `head` each re-pars
     decode larger than the cache serves its one read and is not kept. **Provisional:** chosen, not measured. Slice A's PR
     measures the decode of the 64 MB CSV in the worker (Arrow buffer bytes and peak heap), commits the figure, and
     sets the constant from it.
-  - `MAX_TABLE_ROWS` (200,000) caps the preview a fetch keeps, not the stored table, which has no row cap of its own.
+  - `table-data.ts`'s `MAX_TABLE_ROWS` (200,000) caps the preview a fetch keeps, not the stored table, which has no
+    row cap of its own. `dom.ts` has its own `MAX_TABLE_ROWS` (5,000), for a page table, which is never stored.
   - A view's rows in hand are never more than its source's rows in hand. A whole read (`col`, `records`) answers at
     most `MAX_STORED_READ_CELLS`, and past it is refused with the count, as today. In the dialect, a script's stored
     reads also count against `MAX_STORED_CELLS`.
