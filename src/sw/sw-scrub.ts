@@ -202,8 +202,10 @@ export const OWN_KEY_NAME = "window-ml-api-key";
 /** The scrub of one turn's input, its substitutions read once: every text of the turn goes through the same one, and
  *  the note counts them all. */
 export interface TurnScrub {
-    /** a text of the turn, scrubbed */
+    /** a text of the turn, scrubbed, and what it took out counted for the note */
     text(s: string): string;
+    /** a second copy of a text already counted (the typed words beside the framed task), scrubbed without counting it */
+    again(s: string): string;
     /** every string in a value (a turn's `display`, its page context), scrubbed as {@link TurnScrub.text} does */
     deep<T>(v: T): T;
     /** the line the model reads after the turn (`redactedNote`), for what this scrub took out so far; empty for a page's */
@@ -211,7 +213,7 @@ export interface TurnScrub {
 }
 
 /** A scrub that changes nothing: the setting is off, or the person's call asked for its turn as it is. */
-const AS_IS: TurnScrub = { text: (s) => s, deep: (v) => v, note: () => "" };
+const AS_IS: TurnScrub = { text: (s) => s, again: (s) => s, deep: (v) => v, note: () => "" };
 
 /**
  * The scrub for what a person or a page SENDS, where it becomes a turn (ruling 39, SECRET_HANDLES.md, "What the person
@@ -243,7 +245,7 @@ export async function forTurn(opts: { site?: boolean; off?: boolean } = {}): Pro
         for (const [n, c] of Object.entries(r.counts)) counts[n] = (counts[n] ?? 0) + c;
         return r.text;
     };
-    return { text, deep: (v) => mapStrings(v, text, (k) => k, 8), note: () => (site ? "" : redactedNote(counts)) };
+    return { text, again: (s) => scrubRegistry(s, subs).text, deep: (v) => mapStrings(v, text, (k) => k, 8), note: () => (site ? "" : redactedNote(counts)) };
 }
 
 /**

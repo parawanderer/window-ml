@@ -29,7 +29,7 @@ import { type LlmResult, type NeutralMessage } from "../contract/contract-chat";
 import { type ChatHeldFile, type StoredSession } from "../contract/contract-messages";
 import { type MlDebugEvent } from "../contract/contract-debug";
 import { defineState } from "../state-registry";
-import { forTurn, type TurnScrub } from "./sw-scrub";
+import type { TurnScrub } from "./sw-scrub";
 
 /** Live background chats. Small on purpose: each holds a whole history, and the worker's memory is shared with
  *  every run. The oldest idle chat is dropped when a new one would exceed it; a SAVED chat is only dropped from
@@ -99,6 +99,9 @@ export interface ChatDeps {
     hold?(blob: Blob, format: "bytes" | "paged", source: string, session: string): Promise<{ key: string }>;
     /** release every value a chat's session holds (`releaseSessionValues`) */
     release?(session: string): void;
+    /** the scrub for what the person sends (`forTurn`, ruling 39), read once a message; throws `TurnUnreadable` when the
+     *  registered secrets cannot be read, and the message is then not sent (ruling 44) */
+    scrub(): Promise<TurnScrub>;
 }
 
 /** A message's files once its PDFs are read: a text file as sent, a PDF with its pages, what each page sends, and how
@@ -193,7 +196,7 @@ export async function startBackgroundChat(opts: {
     vision?: true;
 }): Promise<string> {
     const d = need();
-    const scrub = await forTurn();   // a store that cannot be read refuses the chat before anything starts (ruling 44)
+    const scrub = await d.scrub();   // a store that cannot be read refuses the chat before anything starts (ruling 44)
     const prep = await prepare(d, opts.model ?? null, opts.images, opts.files, opts.vision === true);
     evict();
     const hash = mintHash();
@@ -233,7 +236,7 @@ export async function sendBackgroundChat(hash: string, text: string, images?: st
     if (!chat) return "not-found";
     if (chat.running) return "busy";
     // Read before anything else: a store that cannot be read holds the message (ruling 44), with nothing sent.
-    const scrub = await forTurn();
+    const scrub = await need().scrub();
     const prep = await prepare(need(), chat.model, images, files, vision === true);
     if (chat.running) return "busy";   // another send took the turn while the files were read
     void turn(chat, text, images, prep, scrub);

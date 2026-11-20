@@ -102,7 +102,7 @@ async function startMinted(tabId: number, tab: chrome.tabs.Tab, url: string, ml:
     recipe.task = scrub.text(recipe.task);
     if (recipe.display) recipe.display = scrub.deep(recipe.display);
     if (!recipe.task && !(req.images && req.images.length)) throw new Error("Nothing to do: the run has no task and no image.");
-    const typed = scrub.text(String(req.task || "").trim());
+    const typed = scrub.again(String(req.task || "").trim());
     const paste = await attachPaste(runId, typed, 1, { store: storeHeld, shelf });
     if (paste) Object.assign(recipe, withPasteLine(recipe, typed, paste.line));
     // propose_policy and change_setting only here: a run the worker builds for the person may ask them for a policy or a
@@ -417,7 +417,7 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
             const deps = { read: readPdfOffscreen, store: storeHeld, shelf, scrub };
             const files = await attachFiles(hash, checked.files, turn, deps);
             added.push(...files.added);
-            const said = scrub.text(typed.trim());
+            const said = scrub.again(typed.trim());
             framed = framePrompt(scrub.text(typed), body.elementContext ? scrub.deep(body.elementContext) : undefined, files.files);
             framed = { text: scrub.text(framed.text), ...(framed.display ? { display: scrub.deep(framed.display) } : {}) };
             const paste = await attachPaste(hash, said, turn, deps);
