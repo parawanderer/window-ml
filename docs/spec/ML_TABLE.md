@@ -57,6 +57,18 @@ A source is judged exactly as a source in `python_exec`'s `tables` was:
 | a fetch result | as its `url` above: it is read by its URL alone, never by its `.text` or `.table` | as its URL |
 | a path under `/files/` | the path is readable to the model ([`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md)) | refused, with that spec's errno |
 
+- **Built today** (`src/ml/ml-table.ts`; the table above is the design, and these differ from it):
+  - A Sheet always asks in the read-only dialect: the run's approved store (`approvedSheets`) is not read there yet, so
+    the "Unasked when" cell for a Sheet is not built yet. Outside the dialect `ml.table` itself does not ask; it
+    fetches through `FETCH_SHEET_REQUEST` and parses the CSV.
+  - A `/files/` path is not readable yet: the dialect does not ask, and the read throws "ml.table(<path>): /files/ is
+    not readable from here yet". The errno refusal from `FILE_ATTACHMENTS.md` is not built yet.
+  - A URL never fetches: a URL not in the fetch cache asks in the dialect, and throws on a direct call. A URL that was
+    fetched with credentials or rendered is never cached, so it throws too. A body clipped at the fetch cap throws,
+    pointing at the fetch's `@tool:<id>`; only a CSV/TSV reads as a table.
+  - A pointer is live only inside an `ml.agent` run, and its output must be a table.
+  - A page table with merged or nested cells throws; `delimiter` and `header` apply only to delimited text (a fetched
+    CSV, a Sheet) and throw for a page table, a pointer or a table value.
 - **The rule runs at call time, on the resolved value,** whether the code named it as a literal or computed it.
 - **A literal scan only hoists.** It finds the `ml.table("…")` sources in the code, so the card can show them above
   the code and an approval can grant them up front. In JS this is the `fetchUrlLiterals` pattern; in Python it is an
