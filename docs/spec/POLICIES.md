@@ -885,6 +885,24 @@ hidden until the person picks it, and never all at once by default. The coordina
 - The upgrade: there was no earlier hide list, so the fixture is today's policy store, with no `files` rows, read by
   the new code. Its policies decide as before, and the view shows the four defaults only.
 
+**Other sessions' files, later** (ruling 91, 2026-11-20; NOT BUILT AND NOT SCHEDULED). Each session's folder on disk
+is private to it, and the host refuses every other session's folder under `window-ml-files/` by default
+([FILE_ATTACHMENTS.md](FILE_ATTACHMENTS.md), "One folder per session" and H17). Shane's direction for when sharing is
+taken up: the person writes a policy that lets a session read other sessions' folders, and it is an entry in these
+layers, not a store of its own.
+
+- **The entry.** Consumer `files`, effect `show-sessions`, `source` a session folder's recorded name or a glob over
+  those names within one workspace's `window-ml-files/`. It lifts H17's deny for what it matches and nothing else.
+- **Read-only, always.** Another session's files are outside data (ruling 57), so a lifted folder is readable and never
+  writable, whatever the entry says: the host keeps the write deny on it and refuses a write there as `EROFS`. The
+  editable version is a copy into the reader's own `agent/`.
+- **The layers.** It sits in the session and global layers as `show` does, and the most specific entry wins; a `hide`
+  over a path inside a shown folder still holds that path, and the folder's own hidden files stay hidden.
+- **Who writes it.** As for `show`: a card the model may propose, approved by the person, or the person's own edit; no
+  page, `change_setting` or `ml.settings`.
+- **Without a host** it is out of the first cut: the browser copies have no shared tree, and a session reads another's
+  files only once a host is connected.
+
 ## Open questions
 
 - **Measuring breadth.** A proposal, not decided: run a proposed policy over a corpus and show what it changes, namely
