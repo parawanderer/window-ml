@@ -1602,6 +1602,9 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   - #2030 (e3, the answer-bundle guard row over every top-level bundle) at ce8deba9: flaky-ci reviews.
 - **Merged 2026-11-19 (night), each verified.** #2028 (5a2eb664, the `ml.table` spec), #2029 (7ac7141d, the plan),
   #2005 (f25c57c2, the pinned-row long press test).
+- PARKED 2026-11-20 (Shane, in the coordinator's session): keeping personal details out of screenshots beyond the
+  exact text layer (three modes, a pixel layer through Apple's on-device recogniser, one measurement first).
+  Not scheduled, nobody assigned: [PARKED_SCREENSHOT_MASKING.md](PARKED_SCREENSHOT_MASKING.md).
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
