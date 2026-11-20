@@ -85,10 +85,10 @@ where TS described. The worker checks `isWellFormed()` on every argv entry, ever
 encoding. If any fails, the call is not described and asks (section 3). It must NOT call `toWellFormed()`: that
 would describe an argv that is not the one that runs.
 
-Open, for e3 and the coordinator: what the host does when the person approves such a call. The native port's
-encoding of a lone surrogate (Chrome's JSON writer for native messaging) is unverified. If it reaches the host,
-serde_json refuses the frame. A refusal in `parseShRun` (`BadRequest`, beside its NUL check) would be simpler and
-more honest than an ask for a call that cannot run. This spec follows the ruling (ask) until that is ruled.
+Ruled 2026-11-20 (the coordinator, on this PR): the call asks. e3 establishes what the native port does with a
+lone surrogate when the person approves (Chrome's JSON writer for native messaging is unverified here; if the frame
+reaches the host, serde_json refuses it). A refusal in `parseShRun` (`BadRequest`, beside its NUL check) is a later
+change, not part of this build.
 
 ## 5. The TS describer: deleted
 
@@ -106,13 +106,22 @@ properties: a refused word stays refused under any splice; a described call stay
 renamed; the resolved effects never contain an unresolved placeholder. The differential harness stays in
 `notebooks/shell/one-describer/` as history and is not run in CI.
 
+**Before `describeCall` is deleted: one more differential run, with resolution.** Once the host returns the
+description before resolution (section 1), the spike's differential fuzz runs once more with a fixed fake resolver.
+The resolver is deterministic per argv index: some arguments inside the roots, some outside, one secret, two that
+resolve to the same path. The run compares the TS describer with `resolve` against the wasm's pre-resolution
+description put through the TS resolution step, on the resolved effects. The bar is 0 disagreements on resolved
+effects, recorded in the notebook as a new section with the commits of both sides. A disagreement stops the
+deletion until it is understood.
+
 ## 6. Build, pin, and the row that fails on disagreement
 
 **In window-ml-host:**
 
 - A `describe-wasm` crate in the host repo (a workspace member, a `cdylib`), the spike's wrapper moved there,
-  `#[path]` no longer needed. It is built with the host's pinned toolchain (`rust-toolchain.toml`, 1.98.1; the spike
-  used 1.99.1, and 1.98.1 has not been tried).
+  `#[path]` no longer needed. It is built with the host's pinned toolchain (`rust-toolchain.toml`, 1.98.1; ruled
+  2026-11-20). The spike used 1.99.1 and 1.98.1 has not been tried; if it fails, the toolchain bump is its own host
+  PR, before this one.
 - `release.yml` (tag `v*`) gains a job: build at opt-level `z`, run the host's vectors against the built `.wasm` from
   Node (a small replay script in the host repo), and attach `describe.wasm` with its sha256 to the same release as
   `wmlhost`. If the replay fails, nothing is published.
@@ -127,8 +136,7 @@ renamed; the resolved effects never contain an unresolved placeholder. The diffe
 - **The bytes are committed** (`src/sw/describer/describe.wasm`, 219 kB), not fetched at build time. A fetched file
   is a seventh silent absence (AGENTS.md lists six), and its absence would turn every `ml.sh` call into an ask with no
   other sign. A committed file cannot be absent, CI needs no network for it, and a bump shows in review as a changed
-  hash. The cost is 219 kB of history per bump. The alternative, fetching with a build that refuses without the file,
-  is acceptable if the coordinator prefers it; the rows below are the same.
+  hash. The cost is 219 kB of history per bump. Ruled 2026-11-20: committed, with row 4 below.
 
 **The rows that fail when the pin and the host's describer disagree** (window-ml, `tests/program-manifest.test.mjs`
 or a new `describer-pin.test.mjs`):
@@ -138,6 +146,11 @@ or a new `describer-pin.test.mjs`):
    host release that carries it fails here, by name, before any replay.
 3. Every vector row, plain, flavoured and resolved (section 1), replays through the committed wasm, as it does
    against the TS describer today.
+4. The committed bytes equal the release asset at the pinned tag: `npm run fetch-host` (or a `--check` mode of it)
+   downloads `describe.wasm` from the tag in `host-dist.json`, and its sha256 must equal both the pin and the
+   committed file. The unit suite has no network, so this runs where `fetch-host` already runs against the network
+   (`tests/fetch-host-pin.test.mjs` keeps its mocked fetch for the logic); without the check, a committed file could
+   match its own pin and not the release.
 
 ## 7. The upgrade rows
 
@@ -163,10 +176,12 @@ tool, which is described today, would ask after the upgrade. So, before the swit
 - A stored manifest the wasm still refuses gets section 3's "could not read this manifest": the call asks, and
   nothing throws.
 
-**Remembered policies.** A policy matches on effects, not on `why`. The fuzz found the two describers' effects
-identical over 340,000 calls; the `why` text differs (quoting, an astral character in a cluster). **Row:** a policy
-remembered under the TS describer, from the policy corpus (`tests/fixtures/policy-corpus.json`), still matches the
-same call under the wasm.
+**Remembered policies.** A policy matches on effects, not on `why`. The fuzz found the two describers' unresolved
+effects identical over 340,000 calls; the `why` text differs (quoting, an astral character in a cluster). A remembered
+policy is judged on RESOLVED keys (section 1), which the spike did not compare. **Row:** a policy remembered under
+the TS describer, from the policy corpus (`tests/fixtures/policy-corpus.json`), still matches the same call under the
+wasm. This holds for both the unresolved keys and the resolved ones, through the same fake resolver as section 5's
+run, with a path inside the roots, one outside and a secret.
 
 ## 8. Handle ABI: no, for now
 
@@ -194,14 +209,18 @@ What a hostile page must not get, as tests that fail first:
 
 1. Host PR: the manifest shapes of section 7, the pre-resolution description of section 1, and the resolved vector
    rows. The TS side's resolved rows land in window-ml in the same round, against the TS describer.
-2. Host PR: the `describe-wasm` crate and the release job. Then a host tag.
-3. window-ml PR: the pin, `sw-describer.ts`, the wiring and resolution move, sections 3 and 4, deleting the TS
+2. Host PR: the `describe-wasm` crate and the release job. Host PRs merge by hand. The host tag is Shane's word,
+   given in host-setup's own session; no other session tags the host.
+3. The differential run with resolution (section 5), recorded in the notebook, as its own window-ml PR.
+4. window-ml PR: the pin, `sw-describer.ts`, the wiring and resolution move, sections 3 and 4, deleting the TS
    describer, every row above, and e3's red-team tests.
 
 There is no urgency against the `ml.table` work.
 
-## Open for the coordinator
+## Ruled on this PR (2026-11-20, the coordinator)
 
-- Committed bytes against fetch with a refusing build (section 6). This spec recommends committed bytes.
-- A lone surrogate asks (the ruling) or is refused in `parseShRun` (section 4).
-- The host toolchain: build the wasm at 1.98.1, or bump the host's pin first.
+- The bytes are committed, with a row comparing them to the release asset at the pinned tag (section 6, row 4).
+- A lone surrogate asks; e3 establishes what the native port does; a refusal in `parseShRun` is a later change
+  (section 4).
+- The wasm is built at the host's 1.98.1; a bump only if that fails, as its own host PR (section 6).
+- The path-resolution finding and section 1's ABI are accepted.
