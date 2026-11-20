@@ -163,6 +163,7 @@ export interface LaneContext { axis: Axis; samples: ResourceSample[]; runs: Reso
  *   stops there. Following the wall clock, "live" on a recording read later slid past its end and drew nothing.
  * @param owner whose each model was (`ownership`), for a surface that knows its own sessions: the memory tooltips tag
  *   each model they name with it. Absent, they tag nothing.
+ * @group charts
  */
 export function ResourceTracks({ samples, capacity, hidden, layout, events = [], lane, endAt, owner = null }: { samples: ResourceSample[]; capacity: Capacity | null; hidden: Set<string>; layout?: TrackDef[] | null; events?: ResourceEvent[]; lane?: (ctx: LaneContext) => ComponentChildren; endAt?: number; owner?: OwnerInfo | null }) {
     const clock = () => endAt ?? Date.now();

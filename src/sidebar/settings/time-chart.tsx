@@ -93,6 +93,7 @@ export function useTimeReadout({ count, fracOf, tip }: { count: number; fracOf: 
  * @param axis what goes under the chart, usually its first time, its peak and its last time
  * @param backdrop an area drawn from zero BEHIND the stack and not part of it, such as everything else in use
  * @param lines figures drawn over the stack as lines, not added to it, such as a limit or a count of something else
+ * @group charts
  */
 export function TimeChart({ points, series, format, formatTime = defaultTime, label, axis, height = 90, backdrop = null, lines = [] }: {
     points: TimePoint[]; series: TimeSeries[]; format: (v: number) => string; formatTime?: (t: number) => string;
