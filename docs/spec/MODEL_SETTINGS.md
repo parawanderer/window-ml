@@ -98,6 +98,8 @@ exec's `ml.config()` is open question 1, a later slice.
   guarded keys are read-write from the first commit, so a change can be declined at a guarded card from the start, and
   the fatigue refusal cannot wait for a later key. Built (#1952).
 - **`propose_policy` rows of consumer `setting`** (part (c)): "Proposing a `setting` policy", below. Built (#2001).
+- **`ml.settings()` in a read-only survey** (open question 9): "`ml.settings()` in a read-only survey", below.
+  Not built.
 
 ## Four classes of setting
 
@@ -544,6 +546,106 @@ is inert and the measure does not enumerate them), and the `change_setting` tool
 - a label claiming a narrower scope than the measure;
 - a mixed proposal hiding a setting row behind a fetch row.
 
+## `ml.settings()` in a read-only survey (open question 9, not built)
+
+Today `ml.settings()` exists only on the `ml` an isolated-world exec gets, so every read of a setting costs the person
+an exec card for a read that changes nothing. This slice makes it free in the survey's **worker realm** and on the `ml`
+wire a Pyodide cell calls, in a run the worker built, and nowhere else. It adds no new read: the survey returns what
+the isolated exec already returns, from the same function.
+
+**One function, two callers.** The survey's `ml.settings()` calls `settingEntries` (`src/sw/sw-change-setting.ts`),
+the function the isolated exec's member calls, so the two never differ. The slice changes that function from a deny
+list to an allow list over the class, so both callers change with it:
+
+| Class | Read in a survey and in an isolated exec | Entry |
+| --- | --- | --- |
+| **ordinary** | yes | `{ value, mode: "read-write", class: "ordinary" }` |
+| **guarded** | yes | `{ value, mode: "read-write", class: "guarded" }`, the shell keys' paths in full |
+| **gate** | yes | `{ value, mode: "read", class: "gate" }` |
+| **secret** | no | `{ mode: "hidden", class: "secret" }` |
+| any class not in this table | no | `{ mode: "hidden", class: <its class> }` |
+
+`READABLE_CLASSES` in code is exactly the three readable rows. A class added to the declaration later is hidden in
+both callers until someone adds it there, and the row that enumerates `SETTING_CLASSES` reds on a class it does not
+name. The gate keys are readable on purpose, as they are on the isolated exec today: three of them are in
+`ml.config()` already, free to any approved page, and `shellRevealsAllow` is what the model reads to say why a call
+asked. (Open question 9 as first written said "the secret and gate classes unreadable"; the build has read the gate
+keys since #1952, and this slice keeps it so, so the survey never contradicts the isolated exec or `ml.config()`.)
+
+**An unreadable key is present and hidden, never absent.** A hidden entry has no `value` field at all, never `null`,
+`""` or a length, so it says nothing about whether the key is set. It is told apart from "no such setting", where the
+key is absent from the result, and that leaks nothing: which keys exist is public. `agent_api_docs`' "Your settings"
+lists every setting by name, the secrets among them, and `DEFAULT_CONFIG` is in the source. What must not leak is a
+secret's value or whether it is set, and the hidden entry carries neither. A secret's `class` stays in its entry, so
+the model can say why it cannot read it and link to the row.
+
+**Only a run the worker built, decided from the worker's own records, never from the script or a message.**
+
+- *The survey*, evaluated in the worker (`evalReadonlyInWorker` in `tryReadonly`, `src/sw/sw-run-host.ts`): the run
+  host adds `settings` to the realm's `ml` only when `byWorker()` holds for the run it is hosting. That reads the run's
+  record (`builtBy`, which only `startUserRun`, the hand-over, adoption and the resume set; "Who reaches it"). The run
+  id is the one the host was started with, not one the script names. In a page-built run the worker realm has no
+  `settings`, the page's `window.ml` has none (`injected.ts`), and so no realm of that run has the member.
+- *The page leg stays shut.* A survey naming `ml.settings` that the worker cannot answer (it also reads the page)
+  is not sent to the page, as one naming `ml.current` or `ml.sh` is not: `surveyMayEnterPage` already refuses a
+  script whose route reason is `settings`. It goes to the person as an exec card and, when approved, runs in an
+  isolated world or is refused, as today. Never the main world.
+- *The wire* (`membersFor`, `src/sw/sw-ml-wire.ts`): a client's members gain `settings` only when the client is
+  bound to a run and `isWorkerRun(client.run)` holds. The run is the one on the handle the worker opened when it
+  started the cell. A call is answered only when that handle and the browser-set `sender` (the offscreen document,
+  `senderIs`) both match, so a run id in the message is never read as authority. A client with no run, or a
+  page-built run's client, has no `settings` member, and a call to it fails as one to any absent member does.
+- *The facade* adds `settings` to `ML_READONLY_METHODS`, so the dialect binds it by identity where the host's `ml`
+  has it and is a no-op where it does not (the page realm, a page-built run, a run-less client).
+  `agent_api_docs`' list of free methods ("Reading your own setup", `src/tools/api-docs-tool.ts`) prints every name
+  in the list today, for any run; it gains the condition, naming `ml.settings()` only in a run the worker built, so a
+  page-built run is not told about a member it lacks.
+
+**What a script reads is a copy.** Each call reads the stored config afresh (`getConfig()`, `chrome.storage.sync`)
+and returns a new object whose every `value` is a deep copy (`structuredClone`). So two calls never share an object,
+and nothing a script holds is the config's. The copy is what makes a write harmless: the evaluator marks an `ml.*`
+member's plain result as the script's own (`own`, `src/readonly-exec/evaluator.ts`), so a survey may write into it,
+and the write reaches only that copy, never the stored config or a later call's result. The person's next change in
+Settings is what the next call reads.
+
+**What it costs and bounds.** One storage read per call; an entry per classified key with a place (59 today). The
+survey's step budget and `MAX_STRING` bound what it does with them. A survey may hold both `ml.settings` and `ml.sh`.
+A setting's value passed to `ml.sh.run` is judged as that call, at the time it is made (`sw-shell-call.ts`), so
+reading a setting for free frees nothing it is then used for.
+
+**Tests** (rows that fail first):
+
+- the class table: enumerate `SETTING_CLASSES`; every key of a readable class has its `value` in both callers, every
+  secret's entry is exactly `{ mode: "hidden", class: "secret" }` with no `value` key; the allow list, called with a
+  class name it does not hold, hides it;
+- the survey: in a worker-built run `ml.settings()` answers free with the entries `settingEntries` returns; in a
+  page-built run it does not, in the worker realm or the page realm;
+- the page leg: a worker-built run's survey naming `ml.settings` and also `document` is never sent to the page;
+- the wire: a worker-built run's client has `settings`; a page-built run's client, a run-less client and a call
+  whose message names a worker-built run id through another run's handle do not;
+- copies: two calls return distinct objects, and a survey that pushes to a returned list changes only its copy: the
+  next call and the stored value are unchanged;
+- the dialect's own contract (`docs/dev/readonly-exec.md`, "The rule for extending the dialect"): `ml.settings` passed
+  as a value, called with `.call`/`.apply`/`bind`, read as `ml["settings"]`, destructured, and its result's
+  methods; each is `NotInDialect`, `Denied` or the inert `METHOD_REF`, never a call the facade did not mediate;
+  halting and the doc re-checked.
+
+**Rows this slice inverts.** Two committed rows assert today that the dialect has no `ml.settings`, and both become
+false by design: `tests/redteam-change-setting.test.mjs`, "RED TEAM: the read-only dialect exposes no ml.settings,
+even over an ml that has one" (e3's), and the wire's member list in `tests/ml-wire.test.mjs` ("the read-only realm's
+members are ML_READONLY_METHODS minus what reads the page"). The red-team row is e3's to rewrite, through the
+coordinator, to what still holds: no `ml.settings` in the page realm, in a page-built run, or on a run-less wire
+client. The builder does not edit it. The wire row gains the worker-built condition.
+
+**Red-team pass** (e3, through the coordinator), what a hostile page or an injected model must not get:
+
+- a secret's value, length, prefix or whether it is set, by the survey, the wire or a Python cell;
+- `ml.settings()` in a page-built run by any realm, any caller of `makeWorkerRun`/`markWorkerRun` included;
+- the member on a wire client by a forged run id, by a tab's sender, or by a client the worker did not open;
+- a survey naming `ml.settings` answered in the page's main world;
+- a write through a returned entry reaching the stored config or a later call's result;
+- a setting read for free used to free a gated call (`ml.sh`, a fetch).
+
 ## Threat model
 
 The attacker is a page the run reads (prompt injection into the model) or the model itself mistaken. The page cannot
@@ -651,10 +753,8 @@ call this surface (above); what it can do is ask the model, in text, to call it.
    of `ml.config()` marked readable regardless, and given a section id there so the model can link to it. It could
    only narrow ruling 2's set, never widen it past the secrets and the gate keys. Out of this spec.
 9. **`ml.settings()` in a read-only survey** (a follow-up PR of its own, after the surface). As built, `ml.settings()`
-   exists only on an isolated exec's `ml`, so every read of the settings costs the person an exec card. Bringing it
-   to the survey needs: an `ML_READONLY_METHODS` entry; the member on the wire only for a client of a run the worker
-   built; the secret and gate classes unreadable there as they are on the isolated exec; the dialect's adversarial
-   tests (`docs/dev/readonly-exec.md`, "The rule for extending the dialect"); and a red-team pass.
+   exists only on an isolated exec's `ml`, so every read of the settings costs the person an exec card. Lane granted
+   by the coordinator (2026-11-20); spec'd: "`ml.settings()` in a read-only survey", above.
 10. **`propose_policy` rows of consumer `setting`** (part (c), its breadth measure spec'd to the coordinator before any
     code). RULED by the coordinator (2026-11-17): it may, since the card is the person's; the card must name the keys
     or the key pattern the allow covers, measured over every read-write key with sample values from each key's domain
