@@ -898,13 +898,15 @@ layers, not a store of its own.
   editable version is a copy into the reader's own `agent/`.
 - **The layers.** It sits in the session and global layers as `show` does, and the most specific entry wins; a `hide`
   over a path inside a shown folder still holds that path, and the folder's own hidden files stay hidden.
-- **Who writes it.** As for `show`: a card the model may propose, approved by the person, or the person's own edit; no
-  page, `change_setting` or `ml.settings`.
+- **Who writes it.** The person, by their own edit (Shane's direction covers that); no page, `change_setting` or
+  `ml.settings`. Whether the model may propose one on a card, as for `show`, is open (Open questions).
 - **Without a host** it is out of the first cut: the browser copies have no shared tree, and a session reads another's
   files only once a host is connected.
 
 ## Open questions
 
+- **A model's card for `show-sessions`** (ruling 91, "Other sessions' files, later"). Shane's direction covers the
+  person writing the entry. Whether the model may also propose one, approved on a card as a `show` is, is not ruled.
 - **Measuring breadth.** A proposal, not decided: run a proposed policy over a corpus and show what it changes, namely
   every call in the run log, from all sessions, that today asks or is refused, plus calls generated from each consumer's
   descriptions (for a shell, one per effect class of each installed manifest). "Would have allowed 14 past calls

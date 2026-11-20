@@ -165,7 +165,7 @@ where.
   - numpy: `save`, `savetxt` and `savez`.
   - Pillow: `Image.save`.
   - pyarrow's `parquet.write_table`, through the lazy table only.
-  - `ml.fs.writeFile`, `cp`, `mv` and `rm`.
+  - `ml.fs.writeFile`, `cp`, `rename` and `rm` (`ml.fs` has Node's `rename`, not `mv`; the coordinator, 2026-11-20).
   Every admitted writer is a row in the ENUMERATED path-and-buffer test, probed or given a reason.
 - **Not admitted:**
   - A restricted `open()`. The path is checked at `open`, but a handle kept under another name writes later, from a

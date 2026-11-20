@@ -845,13 +845,15 @@ message naming the form that works, so a builder tests each:
 
 - every `*Sync` member (`readFileSync`, `writeFileSync`, `existsSync`, …): "use `await ml.fs.readFile`";
 - every callback form (a function as the last argument): "use the promise form";
-- `createReadStream`, `createWriteStream`: "use `open()` with `handle.read()` or `handle.readLines()`";
+- `createWriteStream`: "use `open()` with `handle.write()`". AMENDED 2026-11-20 (the coordinator's ruling):
+  `createReadStream` left this list; it is a member, as "`ml.fs`" under rulings 22 and 23 has it;
 - `watch`, `watchFile`, `unwatchFile`;
 - `chmod`, `chown`, `lchown`, `utimes`, `lutimes`, `fchmod`;
 - `symlink`, `link`, `readlink`, `realpath` (`realpath` of an existing path answers the path; of a missing one,
   `ENOENT`);
-- `opendir` (use `readdir`), `mkdtemp`, `statfs`. AMENDED 2026-11-20: `cp` left this list; it is a member (the table
-  above), since ruling 36's dump and ML_TABLE.md's byte-exact copy are `ml.fs.cp`;
+- `mkdtemp`, `statfs`. AMENDED 2026-11-20: `cp` left this list; it is a member (the table above), since ruling 36's
+  dump and ML_TABLE.md's byte-exact copy are `ml.fs.cp`. `opendir` left it too (the coordinator's ruling): it is a
+  member, paging its entries, as "`ml.fs`" under rulings 22 and 23 has it;
 - encodings: `utf8`, `utf-8`, `latin1`, `base64`, `hex` and none; any other: "supported: …".
 
 **Parity with Node, tested side by side** (Shane, 2026-11-17). Node's `fs/promises` is the oracle. One corpus of
@@ -1296,8 +1298,8 @@ the host goes gets "Unmounted or disconnected during a cell" (above): the next r
 
 **One folder per session** (RULED 2026-11-20, Shane's ruling 91 in the coordinator's session: "I think you need to do
 the subfolder per session yeah"). Rulings 81 and 86 make each run's `/files` private and `/files/agent/` its home, so
-one folder shared by every session mounting the repository cannot hold. The folder's NAME below is a proposal, not
-ruled.
+one folder shared by every session mounting the repository cannot hold. The folder's NAME below was ruled by the
+coordinator the same day.
 
 - **The layout on disk.** `<workspace>/window-ml-files/` holds one folder per session, and only those. A session's
   folder holds ruling 36's layout: `attached/<handle>/<name>`, read-only to the model, and `agent/`, the run's. So
@@ -1310,7 +1312,7 @@ ruled.
   `window-ml-files/` as its `/files`.
 - **`.git/info/exclude`** holds one line, `/window-ml-files/`, written once for the workspace by the first session that
   makes a folder there and left in place after. So a new session adds no line and no other file is written.
-- **The folder's name** (proposed; the coordinator's to name): `<date>-<slug>-<id6>`, as in
+- **The folder's name** (RULED 2026-11-20, the coordinator): `<date>-<slug>-<id6>`, as in
   `2026-11-20-q3-sales-7c41e2`. `<date>` is the session's creation day, local time. `<slug>` is the session's title at the moment the folder is
   made, lowercased, with every run of characters outside `a-z0-9` turned into one `-`, trimmed of `-` and cut to 32
   characters at a `-` where one falls; it is omitted, with its `-`, when the title is empty or the default. `<id6>` is
@@ -1331,6 +1333,8 @@ ruled.
   Every other folder under `window-ml-files/` lies inside the mounted workspace, so a cell or an `ml.sh` call could
   reach it by its real path. The host refuses it for every reader, by H17 below: a cell's `open()` through the mount, a
   path argument at `spawn`, a recursive reader's walk, and an interpreted script under the sandbox profile. The
+  script's refusal holds only under the sandbox: with the sandbox off for the workspace, a script reaching a sibling
+  is not bounded, H17's stated gap. The
   refusal names nothing of the other session: `window-ml-files/ holds other sessions' files, which this session cannot
   read; its own files are /files.` A listing of `window-ml-files/` shows this session's folder only.
 - **Sharing between sessions** stays deferred (ruling 81). Shane's direction for later: the person may write a policy
@@ -1422,7 +1426,7 @@ not name is never written into.
 **Open.**
 
 - The folder's name (`window-ml-files/` is a proposal) and whether the person sets it per workspace. A session's
-  folder inside it: proposed in "One folder per session", for the coordinator to name.
+  folder inside it: ruled by the coordinator 2026-11-20 ("One folder per session").
 - Windows: how a `C:\Users\...` path appears in the sandbox's POSIX tree.
 - A workspace that is not a git repository: whether `ml.sh` calls get a diff by another snapshot.
 - The background sync's cadence (a value to pick).
