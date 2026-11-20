@@ -75,14 +75,26 @@ test("RED TEAM: a backslash, a tab, a line separator or a newline never becomes 
             assert.ok(!l.url.includes("\\") && !/[\t\n\u2028\u2029]/.test(l.url), `a control or backslash reached the destination: ${JSON.stringify(l)}`);
         }
     }
-    // Measured, and not a finding: a C0 control in the PATH (U+0000 here) is linked. The host check refuses one in the
-    // HOST (outside printable ASCII), and in the path the parser percent-encodes it, so the shown path and the requested
-    // path are the same path; what remains is a raw control in a DOM text node, which draws nothing.
-    const nul = "https://a.example/x\u0000y";
-    const [l] = links(nul);
-    assert.ok(l, "a NUL in the path was refused, which would also be safe — this row records the behaviour measured at a58b4af4");
-    assert.equal(l.url, "https://a.example/x%00y", "the destination is the parser's own encoding of the shown path");
-    assert.equal(l.host, "a.example");
+});
+
+test("RED TEAM: a C0 control or DEL anywhere in the URL keeps it text", () => {
+    // The coordinator's ruling on #2067: a C0 control or DEL is a character a reader cannot see, in a place the parser
+    // normalises, so the printed text and the destination are two different strings by construction. Refused as a class
+    // beside the backslash check. TAB, LF and CR are excluded from the refusal because the scanner ALREADY ends the
+    // address at them (they are whitespace), which the boundary row holds; they are asserted below to never enter a link.
+    const REFUSED = ["\u0000", "\u0001", "\u0007", "\u001b", "\u001f", "\u007f"];
+    for (const c of REFUSED) {
+        for (const where of [`https://a.example/x${c}y`, `https://a.example/x?q=${c}y`, `https://a.example/x#${c}y`, `https://a.example/x/${c}`]) {
+            assert.deepEqual(outputLinks(where), [where], `a C0 control (U+${c.charCodeAt(0).toString(16).padStart(4, "0")}) was linked in ${JSON.stringify(where)}`);
+        }
+    }
+    for (const c of ["\u0009", "\u000a", "\u000d"]) {
+        for (const where of [`https://a.example/x${c}y`, `https://a.example/x?q=${c}y`]) {
+            for (const l of links(where)) {
+                assert.ok(!l.text.includes(c) && !l.url.includes(c), `whitespace control U+${c.charCodeAt(0).toString(16)} entered a link: ${JSON.stringify(l)}`);
+            }
+        }
+    }
 });
 
 // --- the cap, on both sides ---
