@@ -1,0 +1,1922 @@
+{
+  "commit": "981099eb4bb416cfc41f7f05ac828c7050cad106",
+  "extracted_at": "2026-11-19T11:05:48+00:00",
+  "rows": [
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "97fb7053d967e121cd9681881c580440",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "97fb7053d967e121cd9681881c580440",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "be30cb07c776f3ce6ef6ba96181d4cab",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "addef6bb6c21c39192c38ef306dc68c9",
+      "stores": null
+    },
+    {
+      "cell": 1,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "addef6bb6c21c39192c38ef306dc68c9",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 2,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "addef6bb6c21c39192c38ef306dc68c9",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "29135d104167cf89c594de781020d346",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "29135d104167cf89c594de781020d346",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "0e50d876651789db531cd3d6ee1c3ac6",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "0e50d876651789db531cd3d6ee1c3ac6",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "da5ecceba5856e3222d5e44cf3100866",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "da5ecceba5856e3222d5e44cf3100866",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "800388c568223835722d6281db90f592",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "1a1edf057a65ca8a516f323df07a3b61",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "1a1edf057a65ca8a516f323df07a3b61",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "89302ad63c79fd6bdf121ed2004a4f82",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "89302ad63c79fd6bdf121ed2004a4f82",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "0ec7d4f4f0796f3f638d9995e356ad9b",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "qwen3.6:35b",
+      "recorded_none": true,
+      "run": "0ec7d4f4f0796f3f638d9995e356ad9b",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 2,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "0ec7d4f4f0796f3f638d9995e356ad9b",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "d16714506b07cc9f21210b823d420d43",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "c0fdea44b5229b7f46e890dd4e7414dc",
+      "stores": null
+    },
+    {
+      "cell": 1,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "c0fdea44b5229b7f46e890dd4e7414dc",
+      "stores": null
+    },
+    {
+      "cell": 2,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "c0fdea44b5229b7f46e890dd4e7414dc",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 3,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "c0fdea44b5229b7f46e890dd4e7414dc",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "96754b028718dd836fec6983fd6c032f",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "2dab4d91ca549838477db2f940a4af1e",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "2dab4d91ca549838477db2f940a4af1e",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 2,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "2dab4d91ca549838477db2f940a4af1e",
+      "stores": {
+        "attr": 1,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": true,
+      "run": "4f5bcd120f169e352a3ccf1fd855a7de",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "4f5bcd120f169e352a3ccf1fd855a7de",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 2,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "4f5bcd120f169e352a3ccf1fd855a7de",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "9e35f8ac7a235cc6551734a3fdf9d16e",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "7f45bc6da74b3562444cd7b05d750a1c",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "7f45bc6da74b3562444cd7b05d750a1c",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "640452f7898fcd6dc13442e423dea0ee",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "640452f7898fcd6dc13442e423dea0ee",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "33315b179090a59f5cb49196f94685a1",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "157a09d2cb3310b64dc81072ae117fb7",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "c5bf5ae40ba569529e01b08e380e92e6",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "qwen3.6:35b",
+      "recorded_none": true,
+      "run": "c5bf5ae40ba569529e01b08e380e92e6",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 2,
+      "model": "qwen3.6:35b",
+      "recorded_none": true,
+      "run": "c5bf5ae40ba569529e01b08e380e92e6",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 3,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "c5bf5ae40ba569529e01b08e380e92e6",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 4,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "c5bf5ae40ba569529e01b08e380e92e6",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 5,
+      "model": "qwen3.6:35b",
+      "recorded_none": true,
+      "run": "c5bf5ae40ba569529e01b08e380e92e6",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 6,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "c5bf5ae40ba569529e01b08e380e92e6",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "103533fc8438a10a829e2df50f49b659",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "103533fc8438a10a829e2df50f49b659",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "litellm.google/gemini-flash-latest",
+      "recorded_none": false,
+      "run": "08b8e7640a9f8562451cf07659e2ff24",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "litellm.google/gemini-flash-latest",
+      "recorded_none": false,
+      "run": "08b8e7640a9f8562451cf07659e2ff24",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": true,
+      "run": "a5a2ab563f3a6fa42be5a2e28985113b",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "a5a2ab563f3a6fa42be5a2e28985113b",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 2,
+      "model": "qwen3.6:35b",
+      "recorded_none": true,
+      "run": "a5a2ab563f3a6fa42be5a2e28985113b",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 3,
+      "model": "qwen3.6:35b",
+      "recorded_none": true,
+      "run": "a5a2ab563f3a6fa42be5a2e28985113b",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "7fec7c79ecc068c5de722a4becc3be09",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "cedc0ac58ba2011bc5f2158ecf6c6921",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "cedc0ac58ba2011bc5f2158ecf6c6921",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "fdb0bd7b8b1f342f4eb53c75483bedbe",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "fdb0bd7b8b1f342f4eb53c75483bedbe",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "78544884b2edfadd4bfbf105971fee7c",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "af8a9d0cd2e5d58f408fbb2c453c0ede",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "qwen3.6:35b",
+      "recorded_none": false,
+      "run": "af8a9d0cd2e5d58f408fbb2c453c0ede",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "openrouter.minimax/minimax-m3",
+      "recorded_none": false,
+      "run": "bc39339c6dbea8a6ebb3d9669f839997",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "openrouter.minimax/minimax-m3",
+      "recorded_none": false,
+      "run": "bc39339c6dbea8a6ebb3d9669f839997",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "openrouter.minimax/minimax-m3",
+      "recorded_none": false,
+      "run": "dd4878ad41bfb006efd0561f12ee44fd",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "openrouter.minimax/minimax-m3",
+      "recorded_none": false,
+      "run": "dd4878ad41bfb006efd0561f12ee44fd",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "openrouter.minimax/minimax-m3",
+      "recorded_none": false,
+      "run": "a5bb96a1728acffe81045a12a1a66db0",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "openrouter.minimax/minimax-m3",
+      "recorded_none": true,
+      "run": "a5bb96a1728acffe81045a12a1a66db0",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 2,
+      "model": "openrouter.minimax/minimax-m3",
+      "recorded_none": false,
+      "run": "a5bb96a1728acffe81045a12a1a66db0",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "litellm.google/gemini-flash-latest",
+      "recorded_none": false,
+      "run": "b416f0e5efe43755410f31c1a1f56c78",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "litellm.google/gemini-flash-latest",
+      "recorded_none": false,
+      "run": "b416f0e5efe43755410f31c1a1f56c78",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 2,
+      "model": "litellm.google/gemini-flash-latest",
+      "recorded_none": false,
+      "run": "b416f0e5efe43755410f31c1a1f56c78",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 3,
+      "model": "litellm.google/gemini-flash-latest",
+      "recorded_none": false,
+      "run": "b416f0e5efe43755410f31c1a1f56c78",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "litellm.google/gemini-flash-latest",
+      "recorded_none": false,
+      "run": "5547329c28230a2ea5c2125f544d7e36",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "litellm.google/gemini-flash-latest",
+      "recorded_none": false,
+      "run": "5547329c28230a2ea5c2125f544d7e36",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "glm-4.7-flash:latest",
+      "recorded_none": false,
+      "run": "88e9ba4e5284d9ed1b8504129bc54f4a",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "glm-4.7-flash:latest",
+      "recorded_none": false,
+      "run": "65face10419f09031f3e719aadd3a69e",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "glm-4.7-flash:latest",
+      "recorded_none": false,
+      "run": "540299695743945d6946e6f0a978efa6",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "litellm.google/gemini-flash-latest",
+      "recorded_none": false,
+      "run": "1dbf3f6a3fac5db3e262e7b92a2365ea",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "litellm.google/gemini-flash-latest",
+      "recorded_none": false,
+      "run": "1dbf3f6a3fac5db3e262e7b92a2365ea",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 2,
+      "model": "litellm.google/gemini-flash-latest",
+      "recorded_none": false,
+      "run": "1dbf3f6a3fac5db3e262e7b92a2365ea",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "litellm.google/gemini-flash-latest",
+      "recorded_none": false,
+      "run": "7ebed513b8ac1e506e429c96d319d511",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "litellm.google/gemini-flash-latest",
+      "recorded_none": false,
+      "run": "7ebed513b8ac1e506e429c96d319d511",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 2,
+      "model": "litellm.google/gemini-flash-latest",
+      "recorded_none": false,
+      "run": "7ebed513b8ac1e506e429c96d319d511",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 3,
+      "model": "litellm.google/gemini-flash-latest",
+      "recorded_none": false,
+      "run": "7ebed513b8ac1e506e429c96d319d511",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "litellm.google/gemini-flash-latest",
+      "recorded_none": false,
+      "run": "0eb5cefbc04694f3ffa9eff545cc4335",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "litellm.google/gemini-flash-latest",
+      "recorded_none": false,
+      "run": "0eb5cefbc04694f3ffa9eff545cc4335",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "deepseek.deepseek-v4-pro",
+      "recorded_none": false,
+      "run": "be673fd01d166e0b7f9c6cc2b82fecaf",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "deepseek.deepseek-v4-pro",
+      "recorded_none": false,
+      "run": "be673fd01d166e0b7f9c6cc2b82fecaf",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "deepseek.deepseek-v4-pro",
+      "recorded_none": false,
+      "run": "7846f89817dad232c5c91dd538e03ce8",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "deepseek.deepseek-v4-pro",
+      "recorded_none": false,
+      "run": "7846f89817dad232c5c91dd538e03ce8",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "deepseek.deepseek-v4-pro",
+      "recorded_none": false,
+      "run": "9655897ad9f1eb10d560bccb93694c57",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "glm-4.7-flash:latest",
+      "recorded_none": false,
+      "run": "d13f4d30e8e37ec033b212681862f74d",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "glm-4.7-flash:latest",
+      "recorded_none": false,
+      "run": "d13f4d30e8e37ec033b212681862f74d",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 2,
+      "model": "glm-4.7-flash:latest",
+      "recorded_none": false,
+      "run": "d13f4d30e8e37ec033b212681862f74d",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "glm-4.7-flash:latest",
+      "recorded_none": false,
+      "run": "44164568760138eaf7168784a1559294",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "glm-4.7-flash:latest",
+      "recorded_none": false,
+      "run": "44164568760138eaf7168784a1559294",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 2,
+      "model": "glm-4.7-flash:latest",
+      "recorded_none": false,
+      "run": "44164568760138eaf7168784a1559294",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 3,
+      "model": "glm-4.7-flash:latest",
+      "recorded_none": false,
+      "run": "44164568760138eaf7168784a1559294",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 4,
+      "model": "glm-4.7-flash:latest",
+      "recorded_none": false,
+      "run": "44164568760138eaf7168784a1559294",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 5,
+      "model": "glm-4.7-flash:latest",
+      "recorded_none": false,
+      "run": "44164568760138eaf7168784a1559294",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 6,
+      "model": "glm-4.7-flash:latest",
+      "recorded_none": false,
+      "run": "44164568760138eaf7168784a1559294",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 7,
+      "model": "glm-4.7-flash:latest",
+      "recorded_none": false,
+      "run": "44164568760138eaf7168784a1559294",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "glm-4.7-flash:latest",
+      "recorded_none": false,
+      "run": "3806af2f860eb55f68ec79470a27b15c",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "openrouter.minimax/minimax-m3",
+      "recorded_none": false,
+      "run": "f6db0cbd6f816936d5f9bb3b57afdaf9",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "openrouter.minimax/minimax-m3",
+      "recorded_none": false,
+      "run": "f6db0cbd6f816936d5f9bb3b57afdaf9",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 2,
+      "model": "openrouter.minimax/minimax-m3",
+      "recorded_none": false,
+      "run": "f6db0cbd6f816936d5f9bb3b57afdaf9",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 3,
+      "model": "openrouter.minimax/minimax-m3",
+      "recorded_none": false,
+      "run": "f6db0cbd6f816936d5f9bb3b57afdaf9",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 4,
+      "model": "openrouter.minimax/minimax-m3",
+      "recorded_none": false,
+      "run": "f6db0cbd6f816936d5f9bb3b57afdaf9",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "openrouter.minimax/minimax-m3",
+      "recorded_none": false,
+      "run": "bd0a34e2c29d1d401010fe7aef07df0b",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "openrouter.minimax/minimax-m3",
+      "recorded_none": false,
+      "run": "bd0a34e2c29d1d401010fe7aef07df0b",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 2,
+      "model": "openrouter.minimax/minimax-m3",
+      "recorded_none": false,
+      "run": "bd0a34e2c29d1d401010fe7aef07df0b",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 3,
+      "model": "openrouter.minimax/minimax-m3",
+      "recorded_none": false,
+      "run": "bd0a34e2c29d1d401010fe7aef07df0b",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 4,
+      "model": "openrouter.minimax/minimax-m3",
+      "recorded_none": false,
+      "run": "bd0a34e2c29d1d401010fe7aef07df0b",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "openrouter.minimax/minimax-m3",
+      "recorded_none": false,
+      "run": "730ec778c812e75d25a171c79762eb6c",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "deepseek.deepseek-v4-pro",
+      "recorded_none": false,
+      "run": "6ad62069e13119c555f59a673d539fd2",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "deepseek.deepseek-v4-pro",
+      "recorded_none": false,
+      "run": "d5cf05e59cae38c72781c935b6beb4ba",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "deepseek.deepseek-v4-pro",
+      "recorded_none": false,
+      "run": "f092096dc759a8c6c77ddbfab9c705c3",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "deepseek.deepseek-v4-pro",
+      "recorded_none": false,
+      "run": "f092096dc759a8c6c77ddbfab9c705c3",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "deepseek.deepseek-flash",
+      "recorded_none": false,
+      "run": "4bf2819c33791e3c391a2ed25eb58368",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "deepseek.deepseek-flash",
+      "recorded_none": false,
+      "run": "bf5cf6cf8ee76044b6bf7bfddd6ca846",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "deepseek.deepseek-flash",
+      "recorded_none": false,
+      "run": "bf5cf6cf8ee76044b6bf7bfddd6ca846",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 2,
+      "model": "deepseek.deepseek-flash",
+      "recorded_none": false,
+      "run": "bf5cf6cf8ee76044b6bf7bfddd6ca846",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "deepseek.deepseek-flash",
+      "recorded_none": false,
+      "run": "0f7631c70f7803a84de39ee8d75c7a51",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "deepseek.deepseek-flash",
+      "recorded_none": false,
+      "run": "f864d73bfdbad93e9360e187164b62ec",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "deepseek.deepseek-flash",
+      "recorded_none": false,
+      "run": "c5e4f8e00d3270db69e3dcdb6c4ff737",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "deepseek.deepseek-flash",
+      "recorded_none": false,
+      "run": "c5e4f8e00d3270db69e3dcdb6c4ff737",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 0,
+      "model": "deepseek.deepseek-flash",
+      "recorded_none": false,
+      "run": "5dbb7254590b2b0aed52c72035b929d2",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    },
+    {
+      "cell": 1,
+      "model": "deepseek.deepseek-flash",
+      "recorded_none": false,
+      "run": "5dbb7254590b2b0aed52c72035b929d2",
+      "stores": {
+        "attr": 0,
+        "aug": 0,
+        "aug_name": 0,
+        "del": 0,
+        "inplace": 0,
+        "item": 0,
+        "method": 0
+      }
+    }
+  ],
+  "source": {
+    "driver": "notebooks/python-dialect/cell-replay/stores.py",
+    "read": "syntactic, ast only, never run",
+    "runs": "the same 58 run.json exports as replay.json"
+  }
+}
