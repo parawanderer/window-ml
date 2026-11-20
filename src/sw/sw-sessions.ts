@@ -339,7 +339,7 @@ export function configureSessionCommands(run: RunDeps): void {
             const r = await fetchLLM(ocrRequest(image, { model: reader }), signal);
             return String((r as { content?: string | null }).content || "").trim();
         },
-        scrub: () => forTurn(),
+        scrub: (asIs) => forTurn(asIs ? { asIs } : {}),
     });
     handler = createCommandHandler({
         runtime: localRuntimeId(),
@@ -382,7 +382,9 @@ export function configureSessionCommands(run: RunDeps): void {
             if (pdf) throw new FilesRefused(pdfToPageRun(pdf.name));
             const files = textFiles(sent);
             const reqId = Math.random().toString(36).slice(2, 12);
-            const reply = await askPage(tabId, { type: "ML_SESSION_TO_PAGE", action, ...body, ...(files ? { files } : { files: undefined }), reqId }) as { outcome?: PageOutcome } | undefined;
+            // A page frames its own run's turn, as the site's: the person's exemption tokens are never handed to it.
+            const { asIs: _asIs, ...toSend } = body as Record<string, unknown>;
+            const reply = await askPage(tabId, { type: "ML_SESSION_TO_PAGE", action, ...toSend, ...(files ? { files } : { files: undefined }), reqId }) as { outcome?: PageOutcome } | undefined;
             return reply?.outcome ?? "no-answer";
         },
         highlight: (tabId, ref) => { chrome.tabs.sendMessage(tabId, { type: "ML_HL_REMOTE", ref, anyMode: true }).catch(() => { /* tab gone */ }); },
@@ -513,7 +515,7 @@ export function configureSessionCommands(run: RunDeps): void {
             }
         },
         startPage: () => agentStartPage,
-        sendChat: (hash, text, images, files, vision) => sendBackgroundChat(hash, text, images, files, vision),
+        sendChat: (hash, text, images, files, vision, asIs) => (asIs ? sendBackgroundChat(hash, text, images, files, vision, asIs) : sendBackgroundChat(hash, text, images, files, vision)),
         setChatModel: (hash, model) => setBackgroundChatModel(hash, model),
         checkModel: async (model) => {
             // The same two checks `setModel` makes, without making it the default: the server offers it, and the

@@ -10,6 +10,7 @@
 import { showLightbox, relayAppToWorker } from "./app-host";
 import { cleanImages } from "../contract/contract-run";
 import { cleanFiles } from "../attached-files";
+import { cleanAsIs } from "./transcript/turn-scan";
 
 const frame = document.getElementById("app") as HTMLIFrameElement;
 const tabId = Number(new URLSearchParams(location.search).get("tabId"));
@@ -72,6 +73,7 @@ window.addEventListener("message", (e: MessageEvent) => {
             stream: d.stream === true ? true : undefined,
             images: cleanImages(d.images),
             files: cleanFiles(d.files),
+            asIs: cleanAsIs(d.asIs),
             elementContext: (d.elementContext && typeof d.elementContext.selector === "string") ? d.elementContext : undefined,
             surface: "hud",
         };

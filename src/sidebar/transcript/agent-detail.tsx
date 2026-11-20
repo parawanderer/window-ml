@@ -3,7 +3,7 @@
 // approval / grant / host-access chrome, the JSON-tree tool-def viewer, the agent-options block, nav
 // dividers, and the run container (AgentRunView / LiveStream / PendingNote). Extracted from app.tsx; it
 // sits above ./reply (uses ReplyBubble) and the ui-kit / answer-render / render-panel / debug-reducer layers.
-import { ArrivingMsg, PROMPT_RAW_TIPS, RawToggle, SentContext, SentImages, UserActions, UserText } from "./user-text";
+import { ArrivingMsg, PROMPT_RAW_TIPS, RawToggle, SentAsIs, SentContext, SentImages, UserActions, UserText } from "./user-text";
 import type { ComponentChildren } from "preact";
 import { services } from "../services";
 import { useState, useEffect, useRef, useContext } from "preact/hooks";
@@ -886,10 +886,11 @@ export function UserBubble({ text, ts, images, steer, display, site, task, pin }
             <div class={`msg user${shown || display ? "" : " no-text"}${site ? " from-site" : ""}${task ? " from-task" : ""}`} data-prompt={pin}>
                 {/* A message a SITE sent carries its name, never "you" (docs/spec/SITE_ACCESS_SLICE3.md, Q2a). */}
                 <div class="mrow"><span class="who">{task ? `task ${task}` : site ? hostOf(site) : "you"}</span>{steer ? <SteerSeen seen={!!steer.seen} /> : null}{display ? <RawToggle raw={raw} onRaw={setRaw} tips={PROMPT_RAW_TIPS} /> : null}<span class="sp" />{shown ? <UserActions text={shown} editable={!task} /> : null}<Stamp ts={ts} /></div>
-                {shown ? <UserText text={shown} /> : null}
+                {shown ? <UserText text={shown} marks={!raw} /> : null}
             </div>
             <SentImages images={images} />
             {display && !raw ? <SentContext context={display.context} /> : null}
+            <SentAsIs names={display?.asIs} />
         </ArrivingMsg>
     );
 }

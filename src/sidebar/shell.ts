@@ -15,6 +15,7 @@
 import { SB_ROOT, SB_HOST, SB_TAB, SB_FRAME, SB_LIGHTBOX, SB_LIGHTBOX_X, SB_HIGHLIGHT, SB_CARD, SB_STYLE, anonymousTag } from "../ids";
 import { cleanImages } from "../contract/contract-run";
 import { cleanFiles, textFiles } from "../attached-files";
+import { cleanAsIs } from "./transcript/turn-scan";
 import { onSessionDone, relaySessionToPage } from "./shell-session-relay";
 import { stepBudget } from "../agent/step-budget";
 import { resolveContextContainer, domToContext, queryAll, viewportRect, setClosedRootReader } from "../dom/dom";   // the content script sees the page DOM
@@ -1091,6 +1092,8 @@ function fromApp(d: any): void {
             images: cleanImages(d.images),
             // Checked again by the worker (`startUserRun`, as an "agent" run): this only drops what is not a file.
             files: cleanFiles(d.files),
+            // The values the person chose to send as is: tokens the worker checks again, and honours from this frame only.
+            asIs: cleanAsIs(d.asIs),
             elementContext: (d.elementContext && typeof d.elementContext.selector === "string") ? d.elementContext : undefined,
             hud: agentHud,
             surface: promptSurface(),
@@ -1117,7 +1120,9 @@ function fromApp(d: any): void {
             // The worker drives a run it built; anything else (a run or chat this page built) is the page's, which gets
             // text files only: the worker refuses a PDF for a run it does not hold before this falls back.
             const pageFiles = textFiles(files);
-            workerFirst({ ...body, ...(files ? { files } : {}), action: "send" }, () => whenOpen(() => toPage({ __mlSessionSend: { ...body, ...(pageFiles ? { files: pageFiles } : {}) } })));
+            const asIs = cleanAsIs(d.asIs);
+            // `asIs` goes to the worker only: the page fallback builds a turn the worker never scrubbed, so it gets no exemption.
+            workerFirst({ ...body, ...(files ? { files } : {}), ...(asIs ? { asIs } : {}), action: "send" }, () => whenOpen(() => toPage({ __mlSessionSend: { ...body, ...(pageFiles ? { files: pageFiles } : {}) } })));
         }
         return;
     }

@@ -4,7 +4,7 @@ import { getConfig } from "./sw-llm";
 import { mapErrorStrings, mergeSecrets, scrubSecrets, secretsOf, type SecretSub } from "../secret-scrub";
 import type { MlConfig } from "../contract/contract-config";
 import type { NeutralMessage, ToolCall } from "../contract/contract-chat";
-import { heldTail, redactedLine, scrubRegistry, TurnUnreadable, type RegistrySub } from "../secret-registry";
+import { findSpans, heldTail, redactedLine, scrubRegistry, TurnUnreadable, type RegistrySub } from "../secret-registry";
 import { registryIsReady, registryReady, registrySubsNow } from "./sw-secret-registry";
 import { rowForEgress, textForEgress } from "../session/session-row-scrub";
 import type { SessionSummary } from "../session/session-host";
@@ -206,14 +206,103 @@ export interface TurnScrub {
     text(s: string): string;
     /** a second copy of a text already counted (the typed words beside the framed task), scrubbed without counting it */
     again(s: string): string;
+    /** an EARLIER turn's text crossing again (a stored chat's turn from before the input scrub): scrubbed and counted,
+     *  with none of this turn's exemptions, which are for what the person sends now */
+    prior(s: string): string;
     /** every string in a value (a turn's `display`, its page context), scrubbed as {@link TurnScrub.text} does */
     deep<T>(v: T): T;
     /** the line the model reads after the turn (`redactedNote`), for what this scrub took out so far; empty for a page's */
     note(): string;
+    /** the names of the values this turn sent as is ("send as is" on the composer's chip), for the turn's display: names
+     *  only, never a token */
+    sentAsIs(): string[];
 }
 
 /** A scrub that changes nothing: the setting is off, or the person's call asked for its turn as it is. */
-const AS_IS: TurnScrub = { text: (s) => s, again: (s) => s, deep: (v) => v, note: () => "" };
+const AS_IS: TurnScrub = { text: (s) => s, again: (s) => s, prior: (s) => s, deep: (v) => v, note: () => "", sentAsIs: () => [] };
+
+/**
+ * The person's substitutions for a turn: every registered value under its name, and the extension's own saved API key
+ * (and those replaced since the worker started) as {@link OWN_KEY_NAME}, from 12 characters.
+ * @param cfg the config, for the saved key
+ * @param put the marker for a name
+ * @returns the substitutions, longest first within each source
+ */
+function turnSubs(cfg: MlConfig, put: (name: string) => string): RegistrySub[] {
+    const own = mergeSecrets([cfg, ...retired].map((c) => secretsOf({ apiKey: c.apiKey }).filter((s) => s.put === "[API key]")));
+    return [
+        ...registrySubsNow().map((s) => ({ ...s, put: put(s.name) })),
+        ...own.map((s) => ({ find: s.find, put: put(OWN_KEY_NAME), name: OWN_KEY_NAME })),
+    ];
+}
+
+/** Where the key the exemption tokens are made with lives: the worker's session storage, which no content script or
+ *  page reads (nothing here widens its access level) and the browser clears when it restarts. */
+export const EXEMPT_KEY = "ml_turn_exempt_key";
+
+// state: cache (the key read once a worker life; a cleared store mints a new one, and every token made before it
+// stops matching, so a send exempts nothing: it fails closed)
+let exemptKey: Promise<CryptoKey> | null = null;
+
+/** The HMAC key exemption tokens are made with, minted on first use. */
+function tokenKey(): Promise<CryptoKey> {
+    exemptKey ??= (async () => {
+        const got = await chrome.storage.session.get(EXEMPT_KEY);
+        let raw = typeof got?.[EXEMPT_KEY] === "string" ? got[EXEMPT_KEY] as string : "";
+        if (!/^[0-9a-f]{64}$/.test(raw)) {
+            raw = [...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, "0")).join("");
+            await chrome.storage.session.set({ [EXEMPT_KEY]: raw });
+        }
+        const bytes = new Uint8Array(raw.match(/../g)!.map((h) => parseInt(h, 16)));
+        return crypto.subtle.importKey("raw", bytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    })().catch((e) => { exemptKey = null; throw e; });
+    return exemptKey;
+}
+
+/** Forget the key read this worker life, as a restarted worker would (tests: a cleared session store). */
+export function _forgetExemptKeyForTest(): void { exemptKey = null; }
+
+/**
+ * The exemption token for one matched span's content: HMAC-SHA256 under {@link tokenKey}, so a token read from a
+ * draft's scan is no guessing oracle for the value without the key, which never leaves the worker's session storage.
+ * @param content the span's content, the registered form it matched
+ * @returns the token, 32 hex characters
+ */
+async function exemptToken(content: string): Promise<string> {
+    const mac = await crypto.subtle.sign("HMAC", await tokenKey(), new TextEncoder().encode(content));
+    return [...new Uint8Array(mac).slice(0, 16)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** One registered value in a draft, as the composer's chip is told of it: where, whose, and the token "send as is"
+ *  sends back. Never the value or its length beyond the offsets into the composer's own text. */
+export interface ScanSpan { start: number; end: number; name: string; token: string }
+
+/**
+ * A composer's draft, scanned for what {@link forTurn} would take out of a person's turn (the `SCAN_TURN` message, from
+ * an extension sender only): for each text, the spans with names and tokens.
+ * @param texts the draft's words and its text files' contents
+ * @returns the spans of each text; `off` when the person's turns are not scrubbed (`scrubPersonInput` off)
+ * @throws {TurnUnreadable} the config or the registry could not be read, as the send would be refused
+ */
+export async function scanTurn(texts: readonly string[]): Promise<{ spans: ScanSpan[][]; off?: true }> {
+    let cfg: MlConfig;
+    try { cfg = await getConfig(); } catch { throw new TurnUnreadable(true); }
+    if (cfg.scrubPersonInput === false) return { spans: texts.map(() => []), off: true };
+    try { await registryReady(); } catch { throw new TurnUnreadable(true); }
+    const subs = turnSubs(cfg, (n) => `[REDACTED:${n}]`);
+    const tokens = new Map<string, string>();
+    const spans: ScanSpan[][] = [];
+    for (const t of texts) {
+        const out: ScanSpan[] = [];
+        for (const h of findSpans(t, subs)) {
+            let token = tokens.get(h.find);
+            if (!token) { token = await exemptToken(h.find); tokens.set(h.find, token); }
+            out.push({ start: h.start, end: h.end, name: h.name, token });
+        }
+        spans.push(out);
+    }
+    return { spans };
+}
 
 /**
  * The scrub for what a person or a page SENDS, where it becomes a turn (ruling 39, SECRET_HANDLES.md, "What the person
@@ -222,30 +311,73 @@ const AS_IS: TurnScrub = { text: (s) => s, again: (s) => s, deep: (v) => v, note
  * `[REDACTED:window-ml-api-key]`) and its note names them; a page's gets the bare `[REDACTED]` and no note, since the page
  * reads the reply. A person's turn is left as it is when `scrubPersonInput` is off or the call asked (`off`); a page's
  * never is, as a page's `scrubInput: false` turns off only the shape detector, which is not built yet.
- * @param opts `site`: the turn is a page's. `off`: the person's call passed `scrubInput: false`
+ * A person's `asIs` tokens ("send as is" on the composer's chip, {@link scanTurn}) leave the values whose content each
+ * names, matched again here, and nothing else; a page's are ignored.
+ * @param opts `site`: the turn is a page's. `off`: the person's call passed `scrubInput: false`. `asIs`: the person's
+ *  exemption tokens
  * @returns the turn's scrub
  * @throws {TurnUnreadable} the config or the registry could not be read: the turn is held, never sent unchecked (ruling 44)
  */
-export async function forTurn(opts: { site?: boolean; off?: boolean } = {}): Promise<TurnScrub> {
+export async function forTurn(opts: { site?: boolean; off?: boolean; asIs?: readonly string[] } = {}): Promise<TurnScrub> {
     const site = !!opts.site;
     let cfg: MlConfig;
     try { cfg = await getConfig(); } catch { throw new TurnUnreadable(!site); }
     if (!site && (opts.off || cfg.scrubPersonInput === false)) return AS_IS;
     try { await registryReady(); } catch { throw new TurnUnreadable(!site); }
-    const own = mergeSecrets([cfg, ...retired].map((c) => secretsOf({ apiKey: c.apiKey }).filter((s) => s.put === "[API key]")));
-    const put = (name: string): string => (site ? "[REDACTED]" : `[REDACTED:${name}]`);
-    const subs: RegistrySub[] = [
-        ...registrySubsNow().map((s) => ({ ...s, put: put(s.name) })),
-        ...own.map((s) => ({ find: s.find, put: put(OWN_KEY_NAME), name: OWN_KEY_NAME })),
-    ];
-    if (!subs.length) return AS_IS;
+    const all = turnSubs(cfg, (name) => (site ? "[REDACTED]" : `[REDACTED:${name}]`));
+    if (!all.length) return AS_IS;
+    // A token exempts the form whose content it was made from. A key that cannot be read exempts nothing.
+    const asked = new Set(site ? [] : (opts.asIs ?? []).filter((t) => typeof t === "string"));
+    const exempt: RegistrySub[] = [];
+    if (asked.size) {
+        for (const s of all) {
+            const token = await exemptToken(s.find).catch(() => "");
+            if (token && asked.has(token)) exempt.push(s);
+        }
+    }
+    const subs = exempt.length ? all.filter((s) => !exempt.includes(s)) : all;
     const counts: Record<string, number> = {};
-    const text = (s: string): string => {
-        const r = scrubRegistry(s, subs);
+    const kept = new Set<string>();
+    const counted = (s: string, by: RegistrySub[]): string => {
+        const r = scrubRegistry(s, by);
         for (const [n, c] of Object.entries(r.counts)) counts[n] = (counts[n] ?? 0) + c;
         return r.text;
     };
-    return { text, again: (s) => scrubRegistry(s, subs).text, deep: (v) => mapStrings(v, text, (k) => k, 8), note: () => (site ? "" : redactedNote(counts)) };
+    const text = (s: string): string => {
+        const out = counted(s, subs);
+        if (exempt.length) for (const h of findSpans(out, exempt)) kept.add(h.name);
+        return out;
+    };
+    return {
+        text, again: (s) => scrubRegistry(s, subs).text, prior: (s) => counted(s, all), deep: (v) => mapStrings(v, text, (k) => k, 8),
+        note: () => (site ? "" : redactedNote(counts)), sentAsIs: () => [...kept].sort(),
+    };
+}
+
+/**
+ * The exemption tokens a person's message carries (`asIs`), read as the scrub takes them: strings only, at most 64.
+ * @param v the field as it arrived
+ * @returns the tokens, or undefined when there are none
+ */
+export function asIsTokens(v: unknown): string[] | undefined {
+    if (!Array.isArray(v)) return undefined;
+    const out = v.filter((t): t is string => typeof t === "string" && t.length <= 64).slice(0, 64);
+    return out.length ? out : undefined;
+}
+
+/**
+ * A turn's display with the names it sent as is ({@link TurnScrub.sentAsIs}), so the transcript and both exports mark
+ * the value by name: the value itself is in the message, as the model read it.
+ * @param display the turn's display, scrubbed
+ * @param sc the turn's scrub, after every text of the turn went through it
+ * @param typed the words to show when the turn had no display and one is needed to carry the names
+ * @returns the display, unchanged when nothing was sent as is
+ */
+export function withAsIs<T extends { typed: string; context: unknown[] }>(display: T | undefined, sc: TurnScrub, typed?: string): T | { typed: string; context: unknown[]; asIs: string[] } | undefined {
+    const names = sc.sentAsIs();
+    if (!names.length) return display;
+    if (display) return { ...display, asIs: names };
+    return typed === undefined ? undefined : { typed, context: [], asIs: names };
 }
 
 /**

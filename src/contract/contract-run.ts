@@ -157,6 +157,9 @@ export interface PromptDisplay {
     /** what the person typed; may be "" (an element sent with no words) */
     typed: string;
     context: PromptContext[];
+    /** the names of the registered values the person sent as is ("send as is" on the composer's chip): the value is in
+     *  the message, as the model read it, and this marks it by name */
+    asIs?: string[];
 }
 
 /**

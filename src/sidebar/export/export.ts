@@ -19,6 +19,7 @@ import { exportedAsks, serializeSessionJson } from "./export-json";
 import type { Session, AgentStep } from "../store";
 import { pretty, fullStamp, beautifyJs, escapeHtml, highlight, markdown, truncate } from "../format";
 import { promptLine, type PromptDisplay } from "../../contract/contract-run";
+import { sentAsIsNames } from "../transcript/turn-scan";
 import { fileSummary } from "../../attached-files";
 import { splitAnswer, hasTokens, resolveTokenStep } from "../../pointers/answer-tokens";
 import { runStats, fmtTokPerSec } from "../../contract/contract-chat";
@@ -263,11 +264,15 @@ function htmlSink() {
 /** The meta rows naming what a person ATTACHED to a message as context: a right-clicked element's role, selector and
  *  first line, which is how they would recognise it; a text file's name and size. */
 function attachedRows(display?: PromptDisplay): [string, string][] {
-    return (display?.context || []).map((c): [string, string] => {
+    const rows = (display?.context || []).map((c): [string, string] => {
         if (c.kind === "file") return ["File", `${fileSummary(c.file)}, ${c.file.bytes} bytes`];
         const first = (c.element.text || "").split("\n").find((l) => l.trim())?.trim() || "";
         return ["Element", `${c.element.role || "element"} \`${c.element.selector}\`${first ? ` · "${truncate(first, 80)}"` : ""}`];
     });
+    // The registered values the person sent as they were (SECRET_HANDLES.md): names only, never a token.
+    const asIs = sentAsIsNames(display?.asIs);
+    if (asIs.length) rows.push(["Sent as is", asIs.join(", ")]);
+    return rows;
 }
 
 // --- the walk (one per session kind), written through a Sink ---------------

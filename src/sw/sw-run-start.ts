@@ -25,7 +25,7 @@ import { pyMediaFor } from "./worker-media";
 import { hostRun } from "./sw-run-host";
 import { bgRuns, bufferReplay, isWorkerRun, makeWorkerRun, runControllers, runInboxes, runModelFor, runRebuilds, startingControllers, tabPageUrl, workerRunsStarting, beginStart, endStart, sessionTokens, releaseSessionTokens, turnByRun } from "./sw-runs";
 import { attachFiles, attachPaste, readPdfOffscreen } from "./sw-attach";
-import { forTurn, type TurnScrub } from "./sw-scrub";
+import { asIsTokens, forTurn, withAsIs, type TurnScrub } from "./sw-scrub";
 import type { FilePointer } from "../pointers/file-pointer";
 import { storeHeld } from "./sw-values";
 import { originOf } from "../site-access";
@@ -96,11 +96,12 @@ async function startMinted(tabId: number, tab: chrome.tabs.Tab, url: string, ml:
     // What the person sends is scrubbed by registered value where it becomes the turn (ruling 39): the task as framed, its
     // files at rest, a long paste's pointer and the page context. Read first, so a store that cannot be read refuses the
     // run before anything is held (ruling 44).
-    const scrub = await forTurn();
+    const scrub = await forTurn({ asIs: asIsTokens(req.asIs) });
     const attached = await attachFiles(runId, files, 1, { read: readPdfOffscreen, store: storeHeld, shelf, scrub });
     const recipe = userRunOptions(ml, { ...req, files: attached.files }, opts.sender);
     recipe.task = scrub.text(recipe.task);
     if (recipe.display) recipe.display = scrub.deep(recipe.display);
+    recipe.display = withAsIs(recipe.display, scrub, recipe.task) as PromptDisplay | undefined;
     if (!recipe.task && !(req.images && req.images.length)) throw new Error("Nothing to do: the run has no task and no image.");
     const typed = scrub.again(String(req.task || "").trim());
     const paste = await attachPaste(runId, typed, 1, { store: storeHeld, shelf });
@@ -336,7 +337,7 @@ function turnVision(hash: string): { driverSees: boolean; runModel: string | nul
  * @throws {ImagesRefused} the images may not be sent
  * @throws {PageGone} no page may frame the message here and the worker may not drive it from this tab
  */
-export async function userRunAction(hash: string, action: "send" | "continue", body: { text?: string; images?: string[]; files?: SentFile[]; elementContext?: ElementContext; maxSteps?: number; surface?: string }, fromTabId?: number, sentFrom?: PromptOrigin, startedBy?: { line: string; ready: () => Promise<boolean> }): Promise<"steer" | "turn" | "continued" | "busy" | "none" | null> {
+export async function userRunAction(hash: string, action: "send" | "continue", body: { text?: string; images?: string[]; files?: SentFile[]; elementContext?: ElementContext; maxSteps?: number; surface?: string; asIs?: unknown }, fromTabId?: number, sentFrom?: PromptOrigin, startedBy?: { line: string; ready: () => Promise<boolean> }): Promise<"steer" | "turn" | "continued" | "busy" | "none" | null> {
     const stored = bgRuns.get(hash);
     const live = runInboxes.get(hash);
     const tabId = stored?.tabId ?? live?.tabId;
@@ -412,8 +413,9 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
         // The message is scrubbed by registered value where it becomes a turn (ruling 39): its words, a right-clicked
         // element, its files at rest and a long paste. The note goes to the model after it; the bubble never shows it.
         let note = "";
+        let asIs: string[] = [];
         if (action === "send") {
-            const scrub = await forTurn();
+            const scrub = await forTurn({ asIs: asIsTokens(body.asIs) });
             const deps = { read: readPdfOffscreen, store: storeHeld, shelf, scrub };
             const files = await attachFiles(hash, checked.files, turn, deps);
             added.push(...files.added);
@@ -427,10 +429,12 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
                 framed = { text: lined.task, display: lined.display };
             }
             note = scrub.note();
+            asIs = scrub.sentAsIs();
         }
         if (action === "send" && !framed.text && !attached.length) return takeBack("none");
         // With a note, the bubble shows the words without it, as a display does.
-        const display = note && !framed.display ? { typed: framed.text, context: [] } : framed.display;
+        const plain = (note || asIs.length) && !framed.display ? { typed: framed.text, context: [] } : framed.display;
+        const display = plain && asIs.length ? { ...plain, asIs } : plain;
         const text = routed.notes ? (framed.text ? `${framed.text}\n\n${routed.notes}` : routed.notes) : framed.text;
         const steered = `${text}${note}`;
         const shown = attached.length ? { images: attached } : {};
