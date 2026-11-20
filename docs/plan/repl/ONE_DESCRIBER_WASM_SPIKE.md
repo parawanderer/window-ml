@@ -93,7 +93,7 @@ describer's PRs in both repos, one, borderline, was caught by comparing the port
 could not have had. Every describer defect was found on one side and the other port followed.
 
 **The size.** At `z`, about 15 times the TS describer (219 kB raw, 89 kB gzip; 16 times at gzip), against a Pyodide core the extension
-already ships at 9.6 MB (`pyodide.asm.wasm`). Per call it is 19 to 24 times slower at the median, and about 0.4 ms at p95 for
+already ships at 9.6 MB (`pyodide.asm.wasm`). Per call it is 18 to 23 times slower at the median, and about 0.4 ms at p95 for
 the largest manifests, on a call that then spawns a process; a handle ABI should close most of that. Size and time are not
 the deciding cost.
 
@@ -118,7 +118,9 @@ regex semantics. There is no second port to collapse.
    `describeCall`, and with one reader the gap could not exist. **B** (one copy would have caught it: a vector, the red
    team, a review of one side): 15, the awk splice among them. **C** (a cost of two: a port lagging, an order
    mismatch, a pin bump, message text): 14. Unclear: 1 (#882 with host #19, a gap in both ports that the red team found
-   while reading the host's side). The shared vectors never passed in one repo and failed in the other.
+   while reading the host's side). The shared vectors never passed in one repo and failed in the other. One reader
+   classed the 31 findings, and B against C is a judgment per row; `history.json` keeps each row's quote and
+   reasoning.
 2. Compile time and memory in Chrome's service worker, cold after an eviction.
 3. A handle ABI, to measure the describer's own time.
 4. The build and release pipeline in the host's CI, and its review cost in window-ml.
