@@ -2031,6 +2031,12 @@ html[data-calm] .tt-layer { --notice: var(--accent); --notice-fg: var(--accent-f
    and an answer ends up looking annotated rather than written. The accent says the same thing in the page's own
    voice. Green stays outside calm. */
 .chat.calm { --cite: var(--accent); }
+/* …except the RAIL down an embedded output, which goes to the text's own colour: a quote's bar is a wider grey one
+   (`.md blockquote`), so a thinner, brighter line already says "this came from a tool" without adding a colour to the
+   page. Dimmer at rest and full under the pointer, the same step the accent rail took, since brightening is the only
+   way a rail says it is a control. */
+.chat.calm .fold-rail-cite::before { background: color-mix(in srgb, var(--fg) 55%, transparent); }
+.chat.calm .fold-rail-cite:hover::before { background: var(--fg); }
 /* …and the DOT beside such a row with it, or a session reads as two states at once: an amber dot against blue words
    saying the same thing. `pending` is a run working or a run waiting on you — activity, which is not a warning
    either. The dots that mean something WENT wrong (`err`, `warn`) keep their own colours. */
