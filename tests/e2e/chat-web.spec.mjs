@@ -320,7 +320,7 @@ test("phone: starting a chat from the list, and the start page asks only what it
     await kind.click();
     const kinds = page.getByRole("listbox", { name: "Kind" });
     await expect(kinds.getByRole("option")).toHaveCount(2);
-    await expect(kinds.getByRole("option", { name: /^Chat/ })).toContainText("Just the conversation");
+    await expect(kinds.getByRole("option", { name: /^Chat/ })).toHaveText(/^\s*Chat\s*$/);   // the label alone, no hint line under it
     await kinds.getByRole("option", { name: /^Chat/ }).click();
     await expect(page.getByRole("button", { name: "Kind: Chat" })).toBeVisible();
 
