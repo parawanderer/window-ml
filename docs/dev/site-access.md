@@ -638,7 +638,7 @@ so only that world has it, checked against the world's context id. The route is 
 before its URL, so a navigation in between fails the send rather than redirecting it) and every send is pinned to it. Every decision is in the execution log
 (`subsystem: routing`, `kind: exec-main|exec-isolated|exec-refused`, `detail.how`).
 
-A value's `.pipe()` and a stored table's `col`/`select`/`records`/long `head` need the worker while the script runs (part
+A value's `.pipe()` and a stored table's `col`/`records` (a view's included) need the worker while the script runs (part
 4b). The world asks over a channel only it holds, and the worker answers through `isoServer` (`src/sw/iso-channel.ts`):
 
 - The channel is the one the live lines already use. A user-script world sends `ISO_EXEC_ASK` with

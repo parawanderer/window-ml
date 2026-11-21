@@ -191,6 +191,10 @@ it, so a survey is unchanged. In a full `exec` it is a promise, which is the one
 the same shape `ml.dereference` already has for a computed reference — `await` is safe on both, and the
 facade's error for a missed `await` should say so.
 
+Built so, and narrowed since (`ML_TABLE.md`, "Views of a stored table in JS", slice A): only `col` and `records` are
+requests now. `select`, and a `head` past the preview, are synchronous views over the rows in hand, whose own `col` and
+`records` read just their columns and rows, and the worker decodes the stored bytes once rather than per read.
+
 ### From Python back — the same kind of pointer
 
 A DataFrame a `python_exec` returns is written to the store as IPC by the worker, with a preview derived from
