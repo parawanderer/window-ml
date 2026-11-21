@@ -163,3 +163,30 @@ test("uninstalling the anchored layer removes its window blur listener", () => {
         assert.deepEqual(removed, added, "the same function, so it is really gone");
     } finally { win.addEventListener = add; win.removeEventListener = rem; }
 });
+
+// --- no tooltip of its own: every tip is drawn by one of the shared surfaces ---
+
+test("a role=\"tooltip\" element in src is a shared surface's, never a bespoke absolutely-positioned span", async () => {
+    const { readdirSync, readFileSync, statSync } = await import("node:fs");
+    const { join, relative } = await import("node:path");
+    const root = new URL("../src", import.meta.url).pathname;
+    const files = [];
+    const walk = (d) => { for (const n of readdirSync(d)) { const p = join(d, n); if (statSync(p).isDirectory()) walk(p); else if (/\.(tsx|ts)$/.test(n) && !/\.gen\.ts$/.test(n)) files.push(p); } };
+    walk(root);
+    // The surfaces themselves: the anchored layer and the cursor layer, the shell chrome's own bubble (it lives
+    // outside the app's stylesheet) and the hover card (a card, not a tip).
+    const OWNERS = new Set(["sidebar/ui-kit.tsx", "sidebar/tooltip-layer.ts", "sidebar/shell.ts", "sidebar/hover-card.tsx"]);
+    const bad = [];
+    for (const f of files) {
+        const rel = relative(root, f);
+        if (OWNERS.has(rel)) continue;
+        const src = readFileSync(f, "utf8");
+        for (const m of src.matchAll(/<[a-z]+\b[^<>]*?role="tooltip"[^<>]*>/g)) {
+            // `.tt-pop` is the SOURCE the anchored layer copies from (never rendered itself); `.rc-tip` is the
+            // shared surface's class (sidebar.css), which the resource panel's own positioned layers wear.
+            if (/\b(?:tt-pop|rc-tip)\b/.test(m[0])) continue;
+            bad.push(`${rel}: ${m[0].slice(0, 90)}`);
+        }
+    }
+    assert.deepEqual(bad, [], "a tooltip is `cursorTipOn(...)` or a `.tt` trigger with a `.tt-pop` child; do not draw one by hand");
+});
