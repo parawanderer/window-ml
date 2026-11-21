@@ -336,6 +336,26 @@ would for anyone.
 10. An answers table fires only as shown on the card. No rule fires past its `times`, a masked prompt never matches a
     plain-text reply, and a program cannot add, widen or re-arm a rule.
 
+## The person's own terminal (IDEA, Shane, 2026-11-21; nothing assigned)
+
+Everything above is the MODEL driving a program. This is the person's: an ordinary terminal, as in VSCode, opened in a
+side tab of the same UI, so a person already talking to the model can unblock it (a `sudo` step, a sign-in, an install
+the model may not do) without switching to a separate terminal app. A separate terminal works today; this is for
+convenience. The frame is [`COMMAND_MODE.md`](COMMAND_MODE.md), "A console that stays out of the model's context".
+
+- **Not from scratch.** The panel side is xterm.js, the terminal component VSCode uses. The host side is the pty this
+  file's slices need anyway (the host has none today), so one pty mechanism serves the model's handles and the
+  person's tab.
+- **`sudo` needs nothing of ours.** The tab runs the person's login shell with the person's own rights; `sudo` asks
+  for the password in that terminal as it would anywhere.
+- **The model never has it.** The model reads nothing of the tab and types nothing into it: no `ml.*` member, tool or
+  pointer reaches it, and it is in neither the model's context, `ml.current` nor an export, unless the person sends a
+  selection, which arrives as the person's turn. Only the person opens it, from the panel; a page, the model and a
+  command-mode cell cannot.
+- **A cached `sudo` password does not carry over.** A password typed in the person's tab must not let a later `sudo`
+  in a model's pty or an `ml.sh` call run without asking. `sudo` caches per terminal by default on macOS (a guess, not
+  checked; Linux varies by distribution), so this is a red-team row when it is built, not an assumption.
+
 ## Open
 
 - Whether a write's policy pattern is per program (`psql`'s lines) or per handle (this session's `psql`).

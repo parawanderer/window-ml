@@ -1360,6 +1360,25 @@ coordinator the same day.
   disk never aliases `/files` does not hold for that session. Without a host, with a host older than H16, or before
   the session's first mount, it holds: `/files` is the browser sandbox's, and an argv `/files/x` is a host path.
 
+**The folder must stay usable** (IDEA, Shane, 2026-11-21, in the coordinator's session; nothing assigned, nothing
+built). Nothing above checks that the host can in fact read and write the session's folder; the one failure handled is
+a folder renamed or moved away. Shane: the host should check that the permissions stay usable, repair what it can, and
+tell the person what it cannot, for example in the inbox. The shape, for whoever builds it:
+
+- **When it checks.** At each mount, the host creates, writes, reads back and deletes a probe file in the session's
+  folder, in `agent/` and in `attached/`. It checks again when a real read or write in the folder fails with a
+  permission error mid-run, so a change made while the session is open is caught at the call that meets it.
+- **What it repairs.** Only the modes of the directories the host made itself (`window-ml-files/`, the session's
+  folder, `attached/`, `agent/`), back to what it created them with. Never a file or folder the person made, never an
+  owner, never anything outside `window-ml-files/`.
+- **What it reports.** Anything else becomes one item in the person's attention inbox (`src/chat/attention.ts`) naming
+  the folder, what failed (read, write or delete) and the step that fixes it. The causes to tell apart: a mode or
+  owner the host may not change; macOS privacy permissions (the host binary not allowed into Documents, Desktop or
+  iCloud Drive, a permission error no mode change repairs; which error each cause gives is a guess, not measured); a
+  read-only volume; a full disk, which is the disk's limit below and gets its own wording.
+- **What the model sees meanwhile.** The call that met the failure gets its error as today (`EACCES`, `EROFS`), and
+  the session's next turn names the problem in one line. The browser copy keeps working, as for a folder that is gone.
+
 **Three limits, kept apart:**
 
 | Limit | Applies to | Set by |
