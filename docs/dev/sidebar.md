@@ -410,6 +410,12 @@ never picks up the explanation of it.
   `aria-label` already carries, and raising a popup on every icon button a finger lands on turns ordinary use into
   a flicker. The tap is never stolen — whatever it was pressing still happens.
 
+  **A KEYBOARD CAN READ ONE TOO.** The layer also listens for `focusin`/`focusout`: a `.tt` trigger (or anything
+  inside it) that takes `:focus-visible` focus raises the same tip through the same `show`, and focus leaving it
+  takes it down unless focus only moved to another element inside the trigger. A click that focuses a button is
+  not `:focus-visible`, so it raises nothing a second way; an engine whose `matches(":focus-visible")` throws keeps
+  hover tips only. Esc dismisses it like a hovered one. A hover and a focus on different triggers: the last event wins.
+
   **The exception is an accessible NAME.** A `title` on an icon-only control is what a screen reader and a
   keyboard user get, and `cursorTip` is pointer-only — so those keep a name (prefer `aria-label`) and gain
   the custom tip for the pointer. The split is: naming a control → `aria-label` (+ a tip); explaining

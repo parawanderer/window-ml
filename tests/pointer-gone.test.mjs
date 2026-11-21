@@ -164,6 +164,74 @@ test("uninstalling the anchored layer removes its window blur listener", () => {
     } finally { win.addEventListener = add; win.removeEventListener = rem; }
 });
 
+// --- the anchored layer's tip also shows on KEYBOARD focus ---
+
+const focusFixture = (visible = true) => {
+    doc.body.insertAdjacentHTML("beforeend", `<span class="tt" id="kb"><button id="kbb">?</button><button id="kbc">!</button><span class="tt-pop">prose</span></span><button id="elsewhere">o</button>`);
+    const t = doc.getElementById("kb"), b = doc.getElementById("kbb");
+    t.getBoundingClientRect = () => ({ left: 100, top: 200, width: 40, height: 16, right: 140, bottom: 216 });
+    // jsdom answers `:focus-visible` true for any focused element; a real mouse click answers false, so say which.
+    b.matches = (sel) => sel === ":focus-visible" ? visible : win.Element.prototype.matches.call(b, sel);
+    const stopLayer = layer.installTooltipLayer(doc, doc);
+    const tip = () => doc.querySelector(".tt-layer");
+    const fin = (el, rel = null) => el.dispatchEvent(new win.FocusEvent("focusin", { bubbles: true, relatedTarget: rel }));
+    const fout = (el, rel = null) => el.dispatchEvent(new win.FocusEvent("focusout", { bubbles: true, relatedTarget: rel }));
+    const done = () => { stopLayer(); t.remove(); doc.getElementById("elsewhere")?.remove(); };
+    return { t, b, tip, fin, fout, done };
+};
+
+test("keyboard focus on a trigger shows its tip, and focus leaving hides it", () => {
+    const f = focusFixture();
+    f.fin(f.b);
+    assert.equal(f.tip().hidden, false, "shown");
+    assert.equal(f.tip().textContent, "prose");
+    f.fout(f.b, doc.getElementById("elsewhere"));
+    assert.equal(f.tip().hidden, true, "hidden");
+    f.done();
+});
+
+test("focus moving to another element inside the same trigger keeps the tip", () => {
+    const f = focusFixture();
+    f.fin(f.b);
+    f.fout(f.b, doc.getElementById("kbc"));
+    assert.equal(f.tip().hidden, false, "still up");
+    f.done();
+});
+
+test("a focus that is not :focus-visible (a mouse click on a button) shows nothing", () => {
+    const f = focusFixture(false);
+    f.fin(f.b);
+    assert.equal(f.tip().hidden, true);
+    f.done();
+});
+
+test("a matches() that throws counts as not focus-visible", () => {
+    const f = focusFixture();
+    f.b.matches = () => { throw new Error("unsupported selector"); };
+    f.fin(f.b);
+    assert.equal(f.tip().hidden, true);
+    f.done();
+});
+
+test("Esc dismisses a tip raised by focus", () => {
+    const f = focusFixture();
+    f.fin(f.b);
+    assert.equal(f.tip().hidden, false);
+    f.b.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert.equal(f.tip().hidden, true);
+    f.done();
+});
+
+test("uninstalling the layer removes its focus listeners", () => {
+    const f = focusFixture();
+    f.done();
+    doc.body.insertAdjacentHTML("beforeend", `<span class="tt" id="kb2"><button id="kbb2">?</button><span class="tt-pop">p</span></span>`);
+    const b2 = doc.getElementById("kbb2");
+    b2.dispatchEvent(new win.FocusEvent("focusin", { bubbles: true }));
+    assert.equal(doc.querySelector(".tt-layer"), null, "no layer, nothing raised");
+    doc.getElementById("kb2").remove();
+});
+
 // --- no tooltip of its own: every tip is drawn by one of the shared surfaces ---
 
 test("a role=\"tooltip\" element in src is a shared surface's, never a bespoke absolutely-positioned span", async () => {
