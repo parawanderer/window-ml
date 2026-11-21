@@ -208,13 +208,17 @@ test("scopedHash() answers the override first, and releasing it gives back the v
         assert.equal(scopedHash(), "sumA");
         const b = holdScope("sumB");
         assert.equal(scopedHash(), "sumB");
-        a();   // a stale release leaves the newer holder alone
+        a();   // a release out of order leaves the newer holder alone
         assert.equal(scopedHash(), "sumB");
         b();
-        assert.equal(scopedHash(), "sumA", "restores the previous holder");
+        assert.equal(scopedHash(), "open1", "a released holder never comes back");
+        b();   // a second release is a no-op
+        const c = holdScope("sumC"), d = holdScope("sumD");
+        d();
+        assert.equal(scopedHash(), "sumC", "releasing the newest gives back the one under it");
         view.value = { name: "list" };
-        assert.equal(scopedHash(), "sumA", "the override holds over a list view");
-        scopeOverride.value = null;
+        assert.equal(scopedHash(), "sumC", "the override holds over a list view");
+        c();
         assert.equal(scopedHash(), null);
     } finally { view.value = was; scopeOverride.value = null; }
 });

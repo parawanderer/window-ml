@@ -248,12 +248,20 @@ export const snapDot = signal(false);
  *  that is not the view (the summary page's resources tab). Null is "follow the view". Take it with `holdScope`. */
 export const scopeOverride = signal<string | null>(null);   // state: ui — the session a mounted resource panel is about, over the open view's
 
-/** Make `scopedHash()` answer `hash` until the returned function is called, which puts back what was there before (so two
- *  holders nest, and a stale release never clobbers a newer holder). */
+const scopeHolders: { hash: string }[] = [];   // state: ui — the live holds behind `scopeOverride`, newest last
+
+/** Make `scopedHash()` answer `hash` until the returned function is called. Holders stack: the newest live one wins,
+ *  and a release in any order leaves exactly the holds still live (a released holder never comes back). */
 export function holdScope(hash: string): () => void {
-    const prev = scopeOverride.value;
+    const h = { hash };
+    scopeHolders.push(h);
     scopeOverride.value = hash;
-    return () => { if (scopeOverride.value === hash) scopeOverride.value = prev; };
+    return () => {
+        const i = scopeHolders.indexOf(h);
+        if (i < 0) return;
+        scopeHolders.splice(i, 1);
+        scopeOverride.value = scopeHolders.at(-1)?.hash ?? null;
+    };
 }
 
 /** The session the lane scopes to when scoping is on: `scopeOverride` if a panel holds one, else whichever one is open. Null in the list view, where
