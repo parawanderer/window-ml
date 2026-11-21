@@ -23,11 +23,17 @@ import { Ticking } from "../ui-kit";
  *  steps-then-turns would put a turn last even when a step is newer. The index is the tie-break, so records
  *  with no timestamp keep the order they arrived in. */
 export function usageSamples(s: Session): TokenUsage[] {
+    return timedUsage(s).map((x) => x.usage);
+}
+
+/** {@link usageSamples} with each call's stamp: `ts` is its step's or turn's, 0 when the record has none (an axis must not
+ *  draw a 0 as 1970; see `usageChart`). Same order, same set. */
+export function timedUsage(s: Session): { usage: TokenUsage; ts: number }[] {
     const all: { u: TokenUsage; ts: number; i: number }[] = [];
     let i = 0;
     for (const st of s.steps || []) { if (st.usage) all.push({ u: st.usage, ts: st.ts ?? 0, i: i++ }); }
     for (const t of s.turns || []) { if (t.usage) all.push({ u: t.usage, ts: t.ts ?? 0, i: i++ }); }
-    return all.sort((a, b) => (a.ts - b.ts) || (a.i - b.i)).map((x) => x.u);
+    return all.sort((a, b) => (a.ts - b.ts) || (a.i - b.i)).map((x) => ({ usage: x.u, ts: x.ts }));
 }
 
 /** OUTPUT TOKENS OF THE MODEL CALL STILL STREAMING — the engine's running count on `liveStream`, which no usage sample

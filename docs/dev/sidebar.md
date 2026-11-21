@@ -315,6 +315,9 @@ only after that; the worker refuses a widening removal without it. Nothing in th
 
 ## Traps
 
+- **`scopedHash()` is not only the open view.** It answers `scopeOverride` first (`holdScope(hash)` in `store.ts`), which a
+  mounted resource panel sets for a session that is not the view's (the summary page's resources tab, via `BoxPanel`).
+  Release it on unmount; code that wants "the open session" reads `view`, not `scopedHash()`.
 - **A web-accessible file has two URLs (`use_dynamic_url`).** `getURL("sidebar.html")` (or `mermaid.html`) names a
   per-session URL, which is the only one a web page may load it by; the document it loads still reports the
   extension's own id (`location`, `sender.url`, `getURL("")`). So a frame inside a page is LOADED by `getURL(file)`
