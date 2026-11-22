@@ -1,7 +1,7 @@
 // redteam-exec-page-leg.test.mjs — a read-only survey's PAGE leg (src/sw/sw-run-host.ts `tryReadonly`, `pageLegOk`): a
-// script policy keeps out of the page's main world — one naming `ml.current`, `ml.settings`, `ml.sh` or a pointer — is never handed to
+// script policy keeps out of the page's main world — one naming `ml.current`, `ml.settings`, `ml.sh`, `ml.fs` or a pointer — is never handed to
 // the page to evaluate, even when the worker's own survey comes back `needs-page` (docs/spec/SITE_ACCESS.md, part 4;
-// docs/spec/SHELL.md). The page leg is decided on the SCRIPT alone, so only a script that names none of them has one.
+// docs/spec/SHELL.md; docs/spec/FILE_ATTACHMENTS.md, "`ml.fs`"). The page leg is decided on the SCRIPT alone, so only a script that names none of them has one.
 // A page the person has not approved is decided by the SITE, not the script: a survey their own run makes there keeps
 // its page leg (the site-access invariant), which is the positive row below.
 //
@@ -21,6 +21,8 @@ const SCRIPT_NAMED = {
     pointer: "return @tool:probe.length",
     current: "return ml.current.messages.length",
     settings: "return Object.keys(ml.settings()).length",
+    // A path the run does not even hold: the leg is decided before the read is resolved, as for the pointer.
+    fs: "return (await ml.fs.readFile('/files/attached/h1/env.txt', 'utf8')).length",
 };
 /** Each reason's duty for the page leg. A reason not named here reds the last row: place it, do not sample it. */
 const DUTY = {
@@ -29,6 +31,7 @@ const DUTY = {
     current: "never",
     settings: "never",          // the person's settings, read only in a world of the run's own (change-setting-2)
     pointer: "never",
+    fs: "never",                // the session's files, read only in a world of the run's own (FILE_ATTACHMENTS.md, "`ml.fs`")
     requested: "call",          // the call's `world`, decided by the call not the script (exec-world.test.mjs)
     default: "setting",         // the stored default world (exec-world.test.mjs)
     "unapproved-page": "site",  // the page's approval: a user-started run's survey keeps its leg there
@@ -38,10 +41,17 @@ const PLAIN = "return document.title.length";
 // `settings`: #2050 made the member free in the worker realm of a run the worker built, so the worker's own survey now
 // ANSWERS a script naming it and never needs the page — the record moves from `script-isolated` to `no-page-reads`. The
 // property this file holds is unchanged and still measured: the page is asked nothing (0 tries, asserted above).
-const RECORD = { sh: "no-page-reads", pointer: "no-page-reads", current: "no-page-reads", settings: "no-page-reads" };
+// `fs`: the worker's survey has no `ml.fs` at all (the files live in the offscreen document behind an isolated exec's
+// own channel), so it comes back `needs-page` and the leg is closed by the SCRIPT, not answered: `script-isolated`.
+const RECORD = { sh: "no-page-reads", pointer: "no-page-reads", current: "no-page-reads", settings: "no-page-reads", fs: "script-isolated" };
 /** What the model read for each, where the survey answered it. Only the sh gate can answer an `ml.sh` call, so the
- *  settings-off sentence (`src/sw/sw-shell.ts`) is how this row sees the call was JUDGED, not skipped. */
-const ANSWERED = { sh: /Running programs \(ml\.sh\) is turned off in Settings/ };
+ *  settings-off sentence (`src/sw/sw-shell.ts`) is how this row sees the call was JUDGED, not skipped. `fs` is refused
+ *  by the exec's own route (`src/sw/exec-routing.ts`), whose sentence names the remedy: the same script through
+ *  `python_exec`, at `/files`. */
+const ANSWERED = {
+    sh: /Running programs \(ml\.sh\) is turned off in Settings/,
+    fs: /reads the session's files through ml\.fs, which only an isolated world is given.*python_exec reads them at \/files/,
+};
 
 /** Run one survey: what the page was asked to evaluate, and what routing recorded. */
 async function survey(js, { approved = true } = {}) {
@@ -96,8 +106,8 @@ test("RED TEAM: every reason the routing module exports is placed, and each scri
     assert.ok(Array.isArray(reasons) && reasons.length, "exec-routing.ts does not export EXEC_REASONS as a runtime list");
     assert.deepEqual([...reasons].sort(), Object.keys(DUTY).sort(), `a reason has no duty here: ${JSON.stringify(reasons.filter((r) => !(r in DUTY)))}`);
     // What `routeExec` reads off a script is what the page leg is decided on: a name there is a `never` above.
-    const names = Object.keys(route.execNames('return (await ml.sh.run(["ls"])).code + ml.current.messages.length + @tool:x.length + Object.keys(ml.settings()).length')).sort();
-    const byName = { current: "current", pointers: "pointer", sh: "sh", settings: "settings" };
+    const names = Object.keys(route.execNames('return (await ml.sh.run(["ls"])).code + ml.current.messages.length + @tool:x.length + Object.keys(ml.settings()).length + (await ml.fs.readFile("/files/x")).length')).sort();
+    const byName = { current: "current", pointers: "pointer", sh: "sh", settings: "settings", fs: "fs" };
     assert.deepEqual(names, Object.keys(byName).sort(), "execNames gained a name whose reason is not placed");
     for (const n of names) assert.equal(DUTY[byName[n]], "never", `execNames reads ${JSON.stringify(n)}, whose reason is not a never`);
     for (const [reason, duty] of Object.entries(DUTY)) if (duty === "never") assert.ok(reason in SCRIPT_NAMED, `${reason} is a never with no script above`);
