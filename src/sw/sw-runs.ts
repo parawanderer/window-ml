@@ -31,6 +31,7 @@ import { type CurrentSnapshot } from "../agent/current-context";
 import { contextTextOf, messageRow, pointerRow } from "../agent/state-rows";
 import { releaseShOutputs } from "./sw-shell-call";
 import { forgetArrivalRun } from "./nav-arrival";
+import { isNoTab, NO_TAB } from "./no-tab";
 
 // Design A: the AbortController for each live background run, keyed by runId, so a CANCEL_RUN message
 // (the HUD's "Cancel agent run") stops the loop at the next boundary AND kills a slow in-flight model
@@ -423,6 +424,9 @@ export const runRebuilds = new Map<string, import("../contract").RebuildConfig>(
 // history) instead of only catching the tail. Kept separate from the DevTools debugBuffer (further below) so
 // the two surfaces' replay don't entangle. Bounded ring; cleared when the tab's runs end (untrackRun).
 export const runReplayBuffer = new Map<number, unknown[]>();
+// The same ring for a run with NO tab (no-tab.ts), by RUN: one ring under the sentinel would mix every such run. Filled by
+// `bufferReplay` and by a tab's ring when it closes (`detachTabRuns`), taken whole by a move onto a tab (move-run.ts).
+export const noTabReplay = new Map<string, unknown[]>();   // state: cache — a card rebuilt late loses its history, nothing else
 
 const REPLAY_CAP = 400;   // drop-oldest (screenshots are big)
 
@@ -437,6 +441,14 @@ export const readoptPageInfo = new Map<number, { info: string; doc?: string }>()
 
 /** Keep one event in a tab's replay ring, so a page that loads LATE can rebuild the run's corner card. */
 export const bufferReplay = (tabId: number, event: unknown): void => {
+    if (isNoTab(tabId)) {
+        const runId = (event as { id?: unknown })?.id;
+        if (typeof runId !== "string") return;
+        let ring = noTabReplay.get(runId);
+        if (!ring) { ring = []; noTabReplay.set(runId, ring); }
+        pushReplay(ring, event, REPLAY_CAP);
+        return;
+    }
     let buf = runReplayBuffer.get(tabId);
     if (!buf) { buf = []; runReplayBuffer.set(tabId, buf); }
     pushReplay(buf, event, REPLAY_CAP);
@@ -462,7 +474,7 @@ const setPinned = async (tabId: number, on: boolean): Promise<void> => {
 };
 
 /** Ask the browser not to discard a tab while we are hosting a run in it (and to stop asking once we are not). */
-export const keepTabAwake = (tabId: number, on: boolean): void => { void setPinned(tabId, on); };
+export const keepTabAwake = (tabId: number, on: boolean): void => { if (!isNoTab(tabId)) void setPinned(tabId, on); };
 
 /** Release every tab this worker's PREDECESSOR pinned and did not get to release — an eviction mid-run leaves the
  *  flag set with nobody left who knows why. Run after the rehydrate, so a run that came back keeps its tab. */
@@ -478,6 +490,8 @@ export const reconcileTabPins = async (): Promise<void> => {
 /** Register a run against its tab so the navigation sensor watches it, and decide what that tab's replay buffer
  *  keeps: a fresh run wipes it, a RESUME of the same run must not (a resume never re-emits the `agent` start). */
 export const trackRun = (tabId: number, runId: string, rebuild?: import("../contract").RebuildConfig): void => {
+    // A run with no tab keeps its rebuild (a move onto a tab adopts from it) and registers on no tab: nothing to watch or pin.
+    if (isNoTab(tabId)) { if (rebuild) runRebuilds.set(runId, rebuild); return; }
     const s = activeRuns.get(tabId) ?? new Set<string>();
     // A fresh run on an IDLE tab starts a clean replay buffer — drop a prior COMPLETED run's retained history
     // (see untrackRun) so a new run's replay isn't polluted by the last one's. But a RESUME of a run still in
@@ -667,7 +681,7 @@ export function onSessionRelease(hook: (runId: string) => void): void { (session
 /** Release a SESSION's pointers — only when the session itself is gone (its bgRuns entry dropped, or its store pushed
  *  out by newer sessions), never at the end of a turn. Paired with every `bgRuns.delete` so the two lifetimes cannot
  *  drift apart again. The stored values those pointers named go with them: nothing can address them any more. */
-export function releaseSessionTokens(runId: string): void { for (const hook of sessionReleaseHooks ?? []) hook(runId); tokensByRun.delete(runId); releaseSessionValues(runId); dropLocalTools(runId); releaseShOutputs(runId); forgetArrivalRun(runId); }
+export function releaseSessionTokens(runId: string): void { for (const hook of sessionReleaseHooks ?? []) hook(runId); tokensByRun.delete(runId); noTabReplay.delete(runId); releaseSessionValues(runId); dropLocalTools(runId); releaseShOutputs(runId); forgetArrivalRun(runId); }
 
 // The navigation SENSOR: a committed MAIN-frame navigation on a tab that hosts a live run means its document
 // (and registered toolset) is going away → engage the barrier so the next delegated tool waits for re-adopt.
@@ -731,6 +745,38 @@ export const retabRuns = (from: number, to: number): number => {
     navBarrier.forget(from);
     return moved;
 };
+
+/**
+ * A tab CLOSED: every run the worker drives on it goes on with no tab (TABLESS_RUN.md, "When a detached run ends"),
+ * filed under {@link NO_TAB}, rather than ending with the tab or pointing at an id the browser may hand to another. A
+ * live turn moves through its tab cell (`rekeyRunInbox`), so its next page tool is answered with how it gets a page;
+ * a settled one's next turn starts with no tab. A run a page built is not moved: its loop died with the page.
+ * @param tabId the tab that closed
+ * @returns the runs now with no tab
+ */
+export const detachTabRuns = (tabId: number): string[] => {
+    if (isNoTab(tabId)) return [];
+    const moved = new Set<string>();
+    for (const [runId, snap] of bgRuns) if (snap.tabId === tabId && isWorkerRun(runId)) { snap.tabId = NO_TAB; moved.add(runId); }
+    for (const [runId, inbox] of runInboxes) if (inbox.tabId === tabId && isWorkerRun(runId)) { rekeyRunInbox(runId, NO_TAB); moved.add(runId); }
+    // Its card's history, out of the closed tab's ring (dropped with the tab), so a move onto a tab rebuilds the card.
+    const ring = runReplayBuffer.get(tabId) ?? [];
+    for (const runId of moved) {
+        const mine = ring.filter((e) => (e as { id?: unknown })?.id === runId);
+        if (mine.length) noTabReplay.set(runId, [...(noTabReplay.get(runId) ?? []), ...mine].slice(-REPLAY_CAP));
+    }
+    for (const runId of moved) recordRunLog(runId, { subsystem: "tab", kind: "no-tab", reason: "tab-closed", detail: { wasTab: tabId } });
+    return [...moved];
+};
+
+/**
+ * Whether a run is still HELD with no tab: the worker keeps it (settled and resumable, or a turn running) and it is
+ * filed under {@link NO_TAB}. False for a finished session whose tab closed and that this worker no longer holds, so
+ * the session list never marks those (`background.noTab`, sw-task-rows.ts's reader).
+ * @param runId the run
+ * @returns true for a held run with no tab
+ */
+export const runHasNoTab = (runId: string): boolean => isNoTab(runInboxes.get(runId)?.tabId ?? bgRuns.get(runId)?.tabId);
 
 /** The key a state read for one run needs: the run, and the tab it is on (the grants are filed by tab). */
 export const stateKeyFor = (runId: string): { runId: string; tabId?: number } => {

@@ -1,6 +1,6 @@
 // move-run.ts — move a run between its turns to another tab the person chose (docs/spec/MOVE_RUN.md, shape (a)).
 
-import { activeRuns, bgRuns, releaseRunTab, isWorkerRun, makeWorkerRun, runControllers, runInboxes, runReplayBuffer, startingControllers, tabHasBgRun } from "./sw-runs";
+import { activeRuns, bgRuns, noTabReplay, releaseRunTab, isWorkerRun, makeWorkerRun, runControllers, runInboxes, runReplayBuffer, startingControllers, tabHasBgRun } from "./sw-runs";
 import { pushReplay } from "../contract/contract-run";
 import { clearArrival, watchBetweenTurns } from "./nav-arrival";
 import { grantRunOrigin } from "./worker-tools";
@@ -8,6 +8,8 @@ import { recordRunLog } from "./sw-run-log";
 import { toPageUi } from "./sw-side-panel";
 import { relayDebugEvent } from "./sw-debug";
 import { defineState } from "../state-registry";
+import { isNoTab } from "./no-tab";
+import { refreshTaskRow } from "./sw-task-rows";
 
 /** The replay ring's cap, as `bufferReplay` keeps it (sw-runs.ts). */
 const REPLAY_CAP = 400;
@@ -82,7 +84,8 @@ export async function moveRun(runId: string, toTabId: number): Promise<MoveOutco
     grantRunOrigin(runId, origin);
     snap.moved = movedNote(left, { title: tab.title || url, url });
     // Brought back to a tab it left, that tab is its own again.
-    snap.leftTabs = [...(snap.leftTabs ?? []).filter((t) => t !== toTabId), from];
+    // From no tab there is no tab it left (no-tab.ts).
+    snap.leftTabs = [...(snap.leftTabs ?? []).filter((t) => t !== toTabId), ...(isNoTab(from) ? [] : [from])];
     // The destination's card shows the session now, from its history, as a re-adopting page's does.
     for (const event of moveReplay(runId, from, toTabId)) toPageUi(toTabId, { type: "ML_DEBUG_TO_PAGE", event }, { frameId: 0 });
     // A run resumed onto a tab with no turn since (`adoptSession` tracks it there) is registered on the old tab: let it go.
@@ -95,19 +98,25 @@ export async function moveRun(runId: string, toTabId: number): Promise<MoveOutco
     clearArrival(runId);
     watchBetweenTurns(toTabId, runId);
     recordRunLog(runId, { subsystem: "tab", kind: "moved", detail: { from, to: toTabId } });
+    // A run that had no tab has one now: its session row stops saying so.
+    if (isNoTab(from)) void refreshTaskRow(runId);
     return { moved: true };
 }
 
 /** Take a run's events out of one tab's replay ring into another's, so the destination page rebuilds its card; returns
  *  the events taken. */
 function moveReplay(runId: string, from: number, to: number): unknown[] {
-    const old = runReplayBuffer.get(from);
+    // From no tab, the run's own ring (sw-runs.ts `noTabReplay`) is taken whole.
+    const own = isNoTab(from) ? noTabReplay.get(runId) : undefined;
+    if (own) noTabReplay.delete(runId);
+    const old = own ?? runReplayBuffer.get(from);
     if (!old) return [];
     const mine = (e: unknown): boolean => (e as { id?: unknown })?.id === runId;
     const taken = old.filter(mine);
     if (!taken.length) return [];
     const kept = old.filter((e) => !mine(e));
-    if (kept.length || activeRuns.has(from) || tabHasBgRun(from)) runReplayBuffer.set(from, kept);
+    if (own) { /* the run's own ring: nothing of another run's to keep */ }
+    else if (kept.length || activeRuns.has(from) || tabHasBgRun(from)) runReplayBuffer.set(from, kept);
     else runReplayBuffer.delete(from);
     const dest = runReplayBuffer.get(to) ?? [];
     for (const e of taken) pushReplay(dest, e, REPLAY_CAP);

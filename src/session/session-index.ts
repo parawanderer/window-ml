@@ -690,8 +690,9 @@ export class SessionIndex {
     }
 
     /** The tab's document went away (closed, or replaced by a new page). A run hosted by that document cannot finish,
-     *  so it reads as interrupted; a background-hosted run carries on and reports its own end. Returns changed rows. */
-    pageGone(tabId: number, opts: { closed: boolean }): SessionSummary[] {
+     *  so it reads as interrupted; a background-hosted run carries on and reports its own end. A closed tab interrupts a
+     *  background run too, unless it is in `noTab`: one the worker carries on with no tab. Returns changed rows. */
+    pageGone(tabId: number, opts: { closed: boolean; noTab?: readonly string[] }): SessionSummary[] {
         const changed: SessionSummary[] = [];
         for (const s of this.sessions.values()) {
             if (s.owner !== tabId) continue;
@@ -706,7 +707,10 @@ export class SessionIndex {
             // switches, and the press that would have cleared it was refused. A NAVIGATION stays excluded, because
             // a background run surviving one is the whole of cross-page. Self-correcting either way: any later
             // event from the run clears `interrupted` again, and marking it is also what offers the resume.
-            if ((s.hostedBy === "page" || opts.closed) && !s.interrupted && (s.kind === "agent" ? !s.ended : s.openTurns.size > 0)) {
+            // Except a run the worker carries on with NO tab (`noTab`, TABLESS_RUN.md): its loop is driving, and only its
+            // page tools stop, so it reports its own end as any background run does.
+            const goesOn = opts.closed && s.hostedBy === "background" && !!opts.noTab?.includes(s.id.hash);
+            if ((s.hostedBy === "page" || opts.closed) && !goesOn && !s.interrupted && (s.kind === "agent" ? !s.ended : s.openTurns.size > 0)) {
                 s.interrupted = true;
                 s.gates.clear();
                 s.openTurns.clear();

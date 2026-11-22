@@ -255,8 +255,8 @@ export class SessionServer {
         for (const client of this.clients) this.post(client, { type: "runtime", runtime: this.opts.runtime() });
     }
 
-    /** A tab's document went away; send the rows that changed. */
-    pageGone(tabId: number, opts: { closed: boolean }): void {
+    /** A tab's document went away; send the rows that changed. `noTab`: the runs the worker carries on with no tab. */
+    pageGone(tabId: number, opts: { closed: boolean; noTab?: readonly string[] }): void {
         const rows = this.index.pageGone(tabId, opts);
         for (const session of rows) this.broadcastIndex({ type: "upsert", session });
     }
