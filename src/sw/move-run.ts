@@ -4,6 +4,7 @@ import { activeRuns, bgRuns, releaseRunTab, isWorkerRun, makeWorkerRun, runContr
 import { pushReplay } from "../contract/contract-run";
 import { clearArrival, watchBetweenTurns } from "./nav-arrival";
 import { grantRunOrigin } from "./worker-tools";
+import { cancelRelease } from "./sw-release";
 import { recordRunLog } from "./sw-run-log";
 import { toPageUi } from "./sw-side-panel";
 import { relayDebugEvent } from "./sw-debug";
@@ -95,6 +96,8 @@ export async function moveRun(runId: string, toTabId: number): Promise<MoveOutco
     clearArrival(runId);
     watchBetweenTurns(toTabId, runId);
     recordRunLog(runId, { subsystem: "tab", kind: "moved", detail: { from, to: toTabId } });
+    // On a tab again: a release deadline its old tab's closing set is void.
+    void cancelRelease(runId);
     return { moved: true };
 }
 
