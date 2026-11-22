@@ -472,12 +472,12 @@ would set it to a stand-in that prints the URL to stdout, where piece 1 picks it
 6. A page cannot cause a tail, read a snapshot, or make a call detach. None of `task`'s paths is in `HANDLE_MAP` or a
    page-started type.
 
-## A run whose tab closed: the release (proposed 2026-11-22; not built)
+## A run whose tab closed: the release (ruled 2026-11-22; not built)
 
-**Status: proposal, the async lane's, for the coordinator to rule.** The release itself is decided in
+**Status: ruled by the coordinator 2026-11-22 (#2085); not built.** The release itself is decided in
 [`TABLESS_RUN.md`](TABLESS_RUN.md) ("It ships FIRST", Shane, 2026-11-14), and so is the boundary with the move-run lane
 ("The overlap with the async lane's closed-tab release", the coordinator, 2026-11-17). This section is how it is built,
-read against main 69a73569. Anything not quoted from those two places is the lane's proposal.
+read against main 69a73569. The rest was the lane's proposal, now ruled.
 
 ### What main has (read 2026-11-22)
 
@@ -518,7 +518,10 @@ read against main 69a73569. Anything not quoted from those two places is the lan
 5. **A waiting result is kept.** `endTasks` as it stands removes the whole table, including an ended row whose result no
    turn has read: the result a person reopens the run for. The release keeps such rows and removes the rest (`endTasks`
    gains `keepUndelivered`). Each row is small and the table is per run, and archive and delete still remove
-   everything. OPEN for the coordinator: keep them, or drop them with the namespace and record that they were dropped.
+   everything (RULED 2026-11-22). A kept row keeps its result `text`, the scrubbed output the model reads, and the
+   stored whole it was cut from: both live in the row, not in the value store. Its `result` pointer names a value the
+   release dropped, so the release clears it and stamps the row `releasedAt`. The inbox item then reads the text, then
+   "its value was released at <time>", and the row is kept and delivered as any other.
 6. **The one writer of the namespace-drop record** (TABLESS_RUN.md: time, reason, the names capped at 50, the total; on
    the session, in the session store). It lives in the offscreen document because every drop does. `dropNamespace(run,
    reason)` reads `runNsVars` first, deletes it, and posts a fresh `PY_NS_DROPPED { run, at, reason, names?, total? }`
@@ -529,7 +532,9 @@ read against main 69a73569. Anything not quoted from those two places is the lan
    `PAGE_STARTED_TYPES`, and answered only for this extension's sender with no tab. The reasons are the kill and reap
    reasons above plus `tab-closed` and `person`. Two paths cannot write: a browser restart, and the offscreen document
    closing (`runNsVars` dies with it). Their sessions take the "what is known" form TABLESS_RUN.md describes. Archive
-   and delete write none.
+   and delete also go through `dropNamespace`, with reasons `archived` and `deleted`. For those two it deletes
+   `runNsVars`, clears `nsLoss` and posts nothing: the session leaves the list, so there is no session to hold a
+   record.
 7. **The session list.** TABLESS_RUN.md's "alive marker" and "stop-the-kernel button" reuse #2082's row field instead of
    a second one. `background` widens to `{ running, waiting, noTab?, releaseAt? }`, with `releaseAt` while a deadline
    is set, and may then be present with both counts at 0 (the widening the move-run lane proposed on 2026-11-22 for a
@@ -538,15 +543,18 @@ read against main 69a73569. Anything not quoted from those two places is the lan
    turn runs. The chat-page lane draws the marker and the button.
 8. **The model.** The release adds no model line: the move-run lane's reader says "namespace reset at <time>:
    <reason>" from the record, as ruled. Until that reader lands, the run's next cell prints the line that `nsLoss`
-   already prints for a reap, because `dropNamespace` sets `nsLoss` for every reason except archive and delete.
+   already prints for a reap, because `dropNamespace` sets `nsLoss` for every reason except `archived` and `deleted`
+   (point 6).
 
-### Open, for the coordinator
+### Rulings (the coordinator, 2026-11-22, on #2085)
 
-- Point 5: keep a waiting result through the release, or drop it with a record.
-- The record's field name and shape in the session store, which the session-store lane owns. Proposed:
-  `nsDropped: { at, reason, names?, total? }` on the stored session's metadata.
-- Whether `kernel-death`'s record is written by `dropNamespace` in `killWorker` (proposed, since it is one more kill
-  reason), rather than by the packages lane's listener calling a writer of its own.
+1. A waiting result is kept through the release (point 5), its text in the row and its pointer marked released.
+2. The record's field is `nsDropped: { at, reason, names?, total? }` on the stored session's metadata. The session-store
+   lane confirms the name and where it sits before the build.
+3. `kernel-death`'s record is written by `dropNamespace` inside `killWorker`: one writer. The packages lane's listener
+   writes no record of its own.
+
+The build starts after this section and #2082 merge.
 
 ### What a hostile page or program must not get (e3's rows, when built)
 
