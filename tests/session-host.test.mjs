@@ -25,8 +25,10 @@ test("a string that is not a key parses to null", () => {
 
 test("approving is its own scope, never drive", () => {
     assert.equal(COMMAND_SCOPE["approval.answer"], "approve");
-    const approving = Object.entries(COMMAND_SCOPE).filter(([, s]) => s === "approve").map(([t]) => t);
-    assert.deepEqual(approving, ["approval.answer"]);
+    // A policy set over the hub is set by a principal holding `approve` (POLICIES.md), so `policy.files` is the one
+    // other command at this scope.
+    const approving = Object.entries(COMMAND_SCOPE).filter(([, s]) => s === "approve").map(([t]) => t).sort();
+    assert.deepEqual(approving, ["approval.answer", "policy.files"]);
 });
 
 // --- the scope each command needs, and which of them are about the ACCOUNT rather than a session ---
