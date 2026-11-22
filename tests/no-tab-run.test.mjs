@@ -30,11 +30,12 @@ const shellOn = (tabId) => ({ tab: { id: tabId, url: SITE_URL }, url: SITE_URL, 
  * @returns the worker, the run id, `script`, `turns()`, `pageCalls()` (every RUN_TOOL_IN_PAGE call that is not a
  *  preview), `bodies()` (every model request), `rows()` (the session list as a chat page sees it)
  */
-async function run({ first = [exec], onExec } = {}) {
+async function run({ first = [exec], onExec, indexedDB, keep = false } = {}) {
     const script = [...first];
     let bg;
     bg = loadBackground({
         config: { chatUrl: "http://host/api/chat/completions", apiKey: "k", model: "m", apiFormat: "openai", debugMode: "off" },
+        ...(indexedDB ? { indexedDB } : {}),
         openTabs: [
             { id: 7, windowId: 3, active: false, url: SITE_URL, title: "Site" },
             { id: 8, windowId: 3, active: true, url: OTHER_URL, title: "Other" },
@@ -69,7 +70,7 @@ async function run({ first = [exec], onExec } = {}) {
         }
         return map;
     };
-    const { hash } = await bg.context.__mlStartUserRunForTest(7, { task: "probe", surface: "hud", maxSteps: 6 });
+    const { hash } = await bg.context.__mlStartUserRunForTest(7, { task: "probe", surface: "hud", maxSteps: 6 }, keep ? { keep: true } : undefined);
     const turns = () => bg.tabMessages.map((a) => a[1]).filter((m) => m?.type === "ML_DEBUG_TO_PAGE" && m.event?.kind === "agent-result" && m.event.id === hash).length
         + port.messages.filter((m) => m.type === "event" && m.event?.kind === "agent-result" && m.event.id === hash).length;
     const pageCalls = () => bg.tabMessages.filter(([, m]) => m?.type === "RUN_TOOL_IN_PAGE" && m.payload?.name && !m.payload.precheck && !m.payload.readonlyTry && !m.payload.renderOnly && !m.payload.finish);
@@ -161,6 +162,22 @@ test("bring a session here onto a run with no tab: the next turn runs on that ta
     assert.ok(!toolResults(r.bodies().at(-1)).some((t) => /needs a page/.test(t)), "and was not answered as having no page");
     const state = await r.bg.context.__mlRunLog.all();
     assert.ok(state.some((e) => e.run === r.hash && e.subsystem === "tab" && e.kind === "moved" && e.detail?.from === -1 && e.detail?.to === 8));
+});
+
+test("session.resume with a tab target gives a run with no tab that tab: the chat page's way, the same move", T, async () => {
+    // A resume is of a SAVED session, so this one is kept.
+    const { IDBFactory } = require("fake-indexeddb");
+    const r = await run({ indexedDB: new IDBFactory(), keep: true });
+    assert.ok(await until(() => r.turns() >= 1 && !r.live()));
+    r.bg.closeTab(7);
+    assert.ok(await until(() => r.rows().get(r.hash)?.background?.noTab === true));
+    r.port.send({ type: "cmd", id: 5, command: { type: "session.resume", session: { runtime: "local", hash: r.hash }, target: { kind: "tab", tabId: 8 } } });
+    assert.ok(await until(() => r.port.messages.some((m) => m.type === "result" && m.id === 5)));
+    const answer = r.port.messages.find((m) => m.type === "result" && m.id === 5).result;
+    assert.equal(answer.ok, true, JSON.stringify(answer));
+    assert.ok(await until(() => r.rows().get(r.hash)?.background === undefined), "the row no longer says no tab");
+    const moved = (await r.bg.context.__mlRunLog.all()).filter((e) => e.run === r.hash && e.subsystem === "tab" && e.kind === "moved");
+    assert.deepEqual(moved.map((e) => [e.detail.from, e.detail.to]), [[-1, 8]], "moved from no tab, not hosted a second time");
 });
 
 // --- a run with no tab across a worker eviction ---

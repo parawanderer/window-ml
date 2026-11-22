@@ -106,6 +106,8 @@ test("after an eviction the row is rebuilt from the stored table, whatever memor
 
 test("with no reader set, a run that never had tasks and whose tab closed carries no field", T, async () => {
     const r = await settled();
+    // background.ts plugs in the move-run lane's reader (runHasNoTab): unplugged here, this is the hook's own default.
+    r.bg.context.__mlTaskRowReadersForTest.setNoTabReader(null);
     r.openTabs.length = 0;
     r.bg.closeTab(7);
     await r.bg.context.__mlTaskRowReadersForTest.refreshTaskRow(r.hash);
