@@ -2,7 +2,7 @@
 
 How a call that outlives its turn is built today. What each mode SHOULD do, the open questions and the rulings live in
 [`docs/spec/ASYNC_CALLS.md`](../spec/ASYNC_CALLS.md); this file holds only what the code does, and grows with each
-slice. Built so far: mode 1 (the escalation lease) on `ml.sh`. Not built: mode 1 on `python_exec` and `exec`, modes 2
+slice. Built so far: mode 1 (the escalation lease) on `ml.sh` and on `python_exec`. Not built: mode 1 on `exec`, modes 2
 and 3.
 
 ## Two tiers, two kinds of executor
@@ -74,8 +74,10 @@ result reaches the model through the run inbox at the next step boundary, or thr
   now: at session release (`onSessionRelease`, reason `session-release`) and at archive or delete (`sw-sessions.ts`,
   reason `archived`/`deleted`). It cancels each running task through its executor (a cancel that cannot reach it is
   logged `task`/`orphaned`), drops the table and its stored key, so a later result is dropped. Slice B made the table
-  durable across a worker eviction and added the cap setting (`detachedTaskMaxMin`, below). Not built yet: a result
-  starting a turn, notify-only, the lifetimes list and the no-tab state.
+  durable across a worker eviction and added the cap setting (`detachedTaskMaxMin`, below). Slice C made a finished
+  result start the next turn, with notify-only and the chain cap (below). Slice D added the lifetimes list to the default
+  system prompt (`lifetimesClause`, `prompts.ts`). The HUD's per-run task mark is `task-mark.tsx`. Not built yet: the
+  no-tab state on the chat page.
 - **The `task` tool** (`task-tool.ts`, a worker builtin offered with `ml.sh` or `python_exec`, not gated, not citable): `await` (with
   its own `timeout_ms`, capped at `TASK_AWAIT_MAX_MS`), `cancel`, `tail`. It is keyed by the loop's run id, so another
   run's id and an invented one read the same `UnknownTask`. `ml.current.tasks` is computed at the snapshot's instant by

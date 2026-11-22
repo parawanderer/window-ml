@@ -11,7 +11,8 @@ own clone. Read this file, then your lane file, then the specs it names, before 
 One row per live session: the thread it belongs to, where that thread came from, and what it holds today. The records
 paragraph at the end of this file has the detail; this table is the map.
 
-Every lane was resumed on 2026-11-22; the "Pauses and resumes" record lists what each one holds since then.
+Every lane was resumed on 2026-11-22, paused again that day for a token limit, and resumed again; the "Pauses and
+resumes" record and the records of 2026-11-22 list what each one holds since then.
 
 | Session | Thread and origin | Holds today |
 | --- | --- | --- |
@@ -1766,6 +1767,110 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   - In progress: an Opus agent of the coordinator's aligns every doc that describes `/files` with the rulings and with
     main, as one docs PR (Shane's word); files-host and session-store fact-check it. Packages has not answered the
     resume; #2062 is unmoved at 7813d148.
+- **Shane's rulings 99 to 101 (2026-11-22, each given in the coordinator's session).**
+  - **99.** The names and types manifest is NOT added to every Python result; the model asks for it when it needs it.
+    (Relayed first from packages' session, then confirmed.) It closes the coordinator's question about measuring a
+    per-result manifest on the bench.
+  - **100.** A `[REDACTED:NAME]` marker in a write to a path P expands back to the real value only if P currently
+    holds that value, checked at write time with nothing stored between calls. A marker written anywhere else stays
+    literal. No gate and no ask. The run-log record at the crossing stays.
+  - **101.** The length-preserving `*` mask (Python's `/files` mount and the ranged reader) becomes a per-secret FAKE
+    VALUE of the same length: derived from an HMAC under a per-session random key over the secret's NAME, never over
+    its value; tagged as a placeholder (`RDCT`); kept by the worker beside the value's spellings. A write to P that
+    contains a fake is spliced like a marker; a fake written anywhere else stays a fake.
+  - The coordinator's calls for ruling 99's build (packages; the dir() result is the lane's account, on the real
+    restricted core): a bare `dir()` is refused in a hardened cell, so a member is built. `ml.names()` answers
+    `[{name, type}]` from the names the bench already keeps, capped at 50 plus a total. Order: the small text PR first
+    (the model-facing line that still names the removed `full` mode, the stale `autoApprovePython` tip, and
+    PERSISTENT_RUNTIME_SPEC's correction that the per-result manifest is not built), then `ml.names()`. e4 red-teams
+    it (a hostile `__name__`, `__repr__`, a metaclass); a test pins that bare `dir()` is refused; the PR says why it
+    is not the retired `ml.current.env`; janitor-3 reviews. The `autoApprovePython` default stays `false`: changing it
+    is Shane's decision, no lane's.
+  - The coordinator's calls for ruling 100's spec text (flaky-ci holds the secrets ledger and raised the facts; Shane
+    was told and did not object). The expansion is a SPLICE ON THE HOST, so that no registered value crosses from the
+    worker to the host, a direction none crosses today. At write time the worker reads P, finds each occurrence (name,
+    offset, length) over the scrub's form list, and sends the write with the markers left in, plus one instruction per
+    marker ("marker k takes bytes [offset, length) of the current P") and a precondition. The host copies those bytes
+    from the file it replaces, by descriptor, and refuses when the precondition fails; the worker retries once.
+    Offsets are in P's raw bytes. The precondition is a hash of the whole file. A marker-carrying write to a file over
+    the read cap is refused with a reason, never written with a literal marker. Markers of one name map to its
+    occurrences in order; a name with no occurrence in P stays literal. The file's own spelling of the value (an
+    escaped form) is restored exactly, and the run log and the export keep only the marker. It needs a window-ml-host
+    PR behind a `hello` capability, under the `@host-compat` label (which exists).
+  - The coordinator's calls for ruling 101's spec text. The registry's shortest value is 8 characters
+    (`REGISTRY_MIN_VALUE`), so every fake carries the 4-character tag and at least 4 derived characters. The alphabet
+    is `[A-Za-z0-9]`, so a fake is inert inside any quoted context. Each spelling of a value gets its own fake at that
+    spelling's length (the HMAC input is the name, the form's index and the length). At L = 8 the derived part has
+    about 23 bits: two fakes of one session are compared when derived and a clash is resolved by a counter in the HMAC
+    input, so the fakes of a session are distinct by construction and the bound is not relied on. The key lives where
+    ruling 39's scan key lives and never reaches a turn, an export, a log or model text. A fake tells the model which
+    occurrences are the same secret and nothing about the value; the name stays hidden on that path, as before.
+  - Not ruled, open with Shane, none blocking: a marker used more often than P has occurrences (the coordinator's
+    default: reuse the bytes, since the file already holds the value; flaky-ci would refuse); `ml.sh.put`'s
+    secret-shaped refusal and its overwrite ask as overridable default policy rows; hex, base32 and case-insensitive
+    forms always matched, each with the entropy floor, with no per-secret checkbox; an unregistered token in an
+    ordinarily named file, left to the shape detectors (ruling 39, PR 2). No lane is assigned to rulings 100 and 101
+    yet: the spec text comes first.
+- **2026-11-22, the rest of the day, each verified with gh.**
+  - Docs merged: #2080 (69a73569; every doc that describes `/files` aligned with the rulings and main, written by an
+    Opus agent of the coordinator's and fact-checked by files-host and session-store), #2086 (6c22c67e;
+    PYTHON_DIALECT's status line), #2085 (ec1a1929; the closed-tab release, how it is built), #2090 (76cd6f29; the
+    status lines of 26 specs aligned with main, a second Opus agent), #2094 (a839c92b; the detached target for
+    `agent.start` and `session.resume`, and ruling 28's chip-only tab pick).
+  - Code merged: #2081 (e35d8053; one tooltip surface), #2089 (03caa4de; the test queue's locale repair), #2098
+    (0133bf1d; the phone-tap instrument), #2062 (91421f0a; lazy-table slice A, merged by janitor-3 under ruling 98),
+    #2082 (6c3c83fc; async slice E), #2084 (50b41a16; `python_exec` tells a worker-hosted run where its attached files
+    are), #2093 (9c31f729; the start page's tab prefill), #2097 (2222803c; the energy attribution moves to
+    `src/spend/energy.ts`), host#56 (9f995018; the one-describer build's step 1 in the host, merged by its builder).
+    Small-fixes' Shane-directed UI work, merged by the lane with no reviewer assigned by the coordinator: #2099
+    (8fab9996), #2095 (ebc7ea01), #2096 (a0760d41), #2100 (caf360b1).
+  - #2080's two resolutions (the coordinator's calls). With a workspace mounted a cell starts in the workspace's real
+    path (Shane, 2026-11-13, stands); otherwise in `/files/agent/`; a relative `ml.fs` path is always under
+    `/files/agent/`. A file from the host has a whole-file ceiling of 64 MiB today, for fetch and for store (the
+    host's `hello.put.max`; over it is EFBIG); 256 MB is the ceiling the worker will ask for and is not built. The
+    coordinator's first reading of the 64 MiB figure was wrong and files-host corrected it.
+  - #2085's calls. A waiting result is kept through the release. The record is `nsDropped` in the session's run
+    metadata, and the session store owns the write (`noteNsDropped`, carried forward by the history write): a small PR
+    of session-store's before the release build. The kernel-death record is written by `dropNamespace` in the kill
+    path; packages' listener writes none. The release build adds one spec line to point 3 (a turn that ends with no
+    tab and no running task sets a fresh deadline of now plus `closedRunGraceMin`), with a failing-first test and an
+    e3 row.
+  - Other calls of the coordinator's. `ml.fs` has a minimal `createReadStream` (an async iterable; no event emitter,
+    no pipe). #2093 is not `@hub-compat` (the hub relays the row sealed and reads none of it); it carries `@mobile`
+    and `run:android-flows`. #2094's shape is accepted and the coordinator is the reader of the contract diff.
+    Move-run's detached-host PR carries `@hub-compat` and `@mobile`, and the final wording of ASYNC_CALLS.md's banner
+    sentence, agreed with async. Chat Page builds the session-list mark and the no-tab banner before its `read_pages`
+    design note: the banner says "read at its next turn", keeps bring-here, and gates composer-led wording on
+    `capabilities.detached`. The one-describer host check covers the pre-resolution form only; the resolved effects
+    are window-ml's (the lane's call, accepted).
+  - The hide rule, PR A (#2088, open at db538f06; the coordinator's docs read is comment 7083471692). Accepted under
+    ruling 34: a `hide` that matches a directory holds everything under it, and a `show` releases only what it
+    matches; `ml.current.policies` carries no `files` row; the generic policy page refuses to edit or remove a `files`
+    row. Stated gap: the four defaults are absent from the view of a session with no `files` rule; it is closed before
+    PR C merges. `policy.files` stays in the `approve` scope, since POLICIES.md says a policy reached over the hub is
+    set by a principal holding `approve`; the pinned scope test in `tests/session-host.test.mjs` widens to name it,
+    with a sentence that approve is still not drive. PR B corrects one sentence of POLICIES.md that points below at a
+    follow-up which is above.
+  - The test queue lost runs (three lanes reported it). Cause, flaky-ci's account: `ps` prints a start time in a field
+    order that depends on the locale, so sessions with different `LANG` reaped each other's live tickets. #2089 is the
+    repair; until a lane pulled it the workaround was `LANG=C LC_ALL=C`.
+  - A pause and a resume. Shane paused every session except small-fixes (finish what is open, pick up nothing new) for
+    a token limit on the builders' model; later the same day Shane resumed the eight builders, then the five review
+    sessions, which the limit never bound. Under the pause janitor-3 read "hold" as "post nothing" and was corrected:
+    finishing open work includes posting reviews and merging under ruling 98. Settings specs is idle with nothing
+    unmerged (its account, checked against gh); only Shane closes it.
+  - Open PRs at this writing: #2083 (`ml.fs` reads, cf2e9f2d; e4's rows in, janitor-2 found no defect at the head
+    before main was merged and names the new one), #2088 (above; waits for janitor-2 and e3), #2087 (move-run slice 2,
+    7124cc30), #2092 (a restored session row drops a dead tab id, de812682; janitor-2 asked three changes at the head
+    before), #2091 (stale wording, cc40a50f; janitor-3), #2101 (backfill's window-ml side of the one-describer step 1,
+    8ea5b1a3; janitor-3, and e3 checks its rows hold). When #2083 merges, the `/files` write side is session-store's;
+    when #2088 merges, the `ml.fs` reads may enter the read-only dialect.
+  - The second Opus agent's open questions, with owners. Stale wording in async-calls.md, shell.md and code comments:
+    small-fixes, #2091. Whether a per-result scope manifest is built: it is not (packages), and ruling 99 settles that
+    it will not be. The `df` and `tables` injection of rulings 79 and 87 is unbuilt and no spec says so: the
+    `ml.table` owner, unassigned. CHAT_PAGE.md's slice 7 delegation: Chat Page. EXEC_STRICT_CSP.md's slices 3 and 4
+    are unchecked: no owner. Nine specs keep body text that later rulings superseded: the coordinator recommends a
+    second pass and Shane has not answered.
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
