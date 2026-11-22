@@ -22,6 +22,7 @@ import { AGENT_START_PAGE, DEFAULT_CONFIG, modelFilterAllows } from "../contract
 import type { NeutralMessage } from "../contract/contract-chat";
 import { cleanTitle, titleMessages } from "../session/session-title";
 import { defineState } from "../state-registry";
+import { bindTaskRows, refreshTaskRow, syncTaskRows } from "./sw-task-rows";
 import { bgRuns, hydrationDone, keptOnRebuild, makeWorkerRun, pageValueSession, runControllers, runRebuilds, startingControllers, trackRun, untrackRun, workerRunsStarting } from "./sw-runs";
 import { moveRun } from "./move-run";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
@@ -258,6 +259,8 @@ const tabInfo = (t: chrome.tabs.Tab): TabInfo | null =>
         ...(typeof t.index === "number" ? { index: t.index } : {}),
         // -1 is Chrome's "in no group".
         ...(typeof t.groupId === "number" && t.groupId >= 0 ? { groupId: t.groupId } : {}),
+        // Absent is unknown, never 0.
+        ...(typeof t.lastAccessed === "number" && t.lastAccessed > 0 ? { lastAccessed: t.lastAccessed } : {}),
     };
 
 /** The tab picker's icons, fetched here and handed over as data URLs (tab-favicons.ts). */
@@ -447,6 +450,7 @@ export function configureSessionCommands(run: RunDeps): void {
                 if (reply.error) { untrackRun(tabId, hash); return "unanswered" in reply && reply.unanswered ? "no-answer" : "none"; }
                 const moved = await moveRun(hash, tabId);
                 if ("refused" in moved) { untrackRun(tabId, hash); return "none"; }
+                void refreshTaskRow(hash);
                 // The budget a resume names rides on the payload, as for a saved session below.
                 if (history.payload.maxSteps !== held.p.maxSteps) held.p = { ...held.p, maxSteps: history.payload.maxSteps };
                 return "adopted";
@@ -465,6 +469,7 @@ export function configureSessionCommands(run: RunDeps): void {
             // A page that did not take it must not leave a run hydrated against a tab that is not holding it: the
             // next thing to read `bgRuns` would believe that tab owns this session.
             if (outcome !== "adopted") { bgRuns.delete(hash); untrackRun(tabId, hash); }
+            else void refreshTaskRow(hash);
             return outcome;
         },
         runPolicyLabels: (hash) => runPolicies(hash).map((p) => p.label),
@@ -671,6 +676,7 @@ export const sessionServer = new SessionServer(new SessionIndex({ runtime: local
     } : {}),
 });
 
+bindTaskRows(sessionServer);
 // A row withheld before the registry's first read, or sent before a value was registered, is sent again scrubbed.
 onRegistryChanged(() => sessionServer.reshow());
 
@@ -716,6 +722,7 @@ if (sessionStore) {
             // A dropped id is written back, or the next start in this browser restores it again, onto whatever tab holds it then.
             const stale = new Set(rows.filter((r) => r.summary.page?.tabId != null).map((r) => r.summary.id?.hash));
             for (const row of restored) if (stale.has(row.id.hash) && row.page?.tabId == null) store.putSummary(row);
+            void syncTaskRows().catch(() => undefined);
             void recordStorageSnapshot().catch(() => { /* storage unavailable */ });
             // Whatever a previous worker saved and never compacted, sessions from before compaction existed included.
             imageCompaction?.kick();

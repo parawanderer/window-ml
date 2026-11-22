@@ -497,8 +497,9 @@ It is also asked when the page is shown again or its window takes focus back (`v
 tab means leaving this page, so coming back is when the list has to be current, with nothing opened.
 All of these are refreshes, keeping the old list on screen until the new one lands: tabs open and close while the page sits,
 and an icon still on its way the first time is there the second. A refresh never moves the choice. The FIRST list of a
-runtime offers the last tab picked on it from this device again (`view.target`, `lastTargets` in view-mode.tsx), or a
-new tab if that was the pick, while `rememberedTab` (new-session.tsx) still finds it: the same id on the same site, or a
+runtime offers whichever is MORE RECENT, the last tab picked on it from this device (`view.target`, `lastTargets` in
+view-mode.tsx, with `pickedAt`) or the tab last visited (the newest `TabInfo.lastAccessed`; `firstTab` in new-session.tsx;
+a pick stored without `pickedAt` is older than any visit), or a new tab if that was the newer pick, while `rememberedTab` (new-session.tsx) still finds the pick: the same id on the same site, or a
 tab at the exact address (a browser restart renumbers tabs, and an old id on another site is some other tab). Only a pick
 from the list is remembered, never the first guess, and only on the start page: a resume is a question about one run. Tab group names and colours need the optional `tabGroups` permission; where groups arrive unnamed,
 the list's foot offers "Show them" on this browser's own runtime (`ChatExtras.tabGroupsGrant`), which calls
@@ -1132,6 +1133,7 @@ resume and reset already are the reconciliation.
 
 ## Traps
 
+- **An open animation must not change what its box contains.** `chat-step-open` clips with `overflow: hidden`, which makes the body a block formatting context: it holds a float (the `@tool:` chip) and keeps its last child's bottom margin, and when the animation ends `overflow` reverts and both fall out in one frame (a step lost 22px, a group 29px). The bodies are `display: flow-root` so both states agree, and the room under a group is padding, not a margin. A row title (`.astep-said`) inside a group does not fade in: its rows mount with the group. Guarded by `tests/e2e/chat-expand-snap.spec.mjs`.
 - **One design language across the surfaces.** The phone app and the chat page's CALM view are the same product on two
   screens: same palette, same glyphs, same order, unless a device fact (a thumb, a sheet, a back gesture) makes one
   wrong. A change to the page's colours or icons is a change to `mobile/` in the same breath. The rule and how the two

@@ -149,16 +149,24 @@ test("copy() is editable and independent: an edit reaches neither the source, th
     assert.equal(sel.rows[0][0], -1, "a copy's select is editable");
 });
 
-test("copy() of a stored table copies only the rows in hand and still reads every row from the store", async () => {
+// The copy drops the plan (docs/spec/ML_TABLE.md, "Views of a stored table in JS"). Built by #2043, it kept the store
+// reader, so after an edit `await c.records()` read the source and answered the unedited cell.
+test("copy() of a stored table copies only the rows in hand, never reads, and refuses a whole read past them", async () => {
     const { t, reads } = stored();
     const c = (await table.call(pointerHost(t), "@tool:abc")).copy();
-    assert.ok(isStoredTable(c), "the copy keeps the store reader");
+    assert.equal(isStoredTable(c), false, "the copy keeps no store reader");
     assert.equal(c.rows.length, 2, "only the preview is copied");
+    assert.deepEqual([c.shape, c.truncated], [[4, 2], true], "it keeps shape and truncated");
     assert.notEqual(c.rows, t.rows);
     c.rows[0][1] = 999;
     assert.equal(t.rows[0][1], 10, "the store's preview is untouched");
-    assert.deepEqual(await c.col("amount"), [10, 20, 30, 40], "col() reads every row");
-    assert.deepEqual(reads, [["amount"]]);
+    // The defect #2043 left: the edited cell came back from the source unedited. Now there is no read to answer it.
+    assert.throws(() => c.records(), (e) => /copy never reads the rest/.test(e.message) && /`await t\.records\(\)`/.test(e.message));
+    assert.throws(() => c.col("amount"), (e) => /`await t\.col\("amount"\)`/.test(e.message));
+    assert.throws(() => c.select(["amount"]).col("amount"), /copy never reads the rest/, "a copy's select is cut too");
+    assert.throws(() => c.copy().records(), /copy never reads the rest/, "and a copy of the copy");
+    assert.deepEqual(c.head(2).records(), [{ region: "north", amount: 999 }, { region: "south", amount: 20 }], "a head within the rows in hand is whole, edit kept");
+    assert.deepEqual(reads, [], "nothing was read");
 });
 
 test("in the dialect: a write to a read-only table is refused with the way out, and a copy is the script's to edit", async () => {
@@ -173,6 +181,35 @@ test("in the dialect: a write to a read-only table is refused with the way out, 
     const r = await run(`const c = (await ml.table(${u})).copy(); c.rows[0][1] = 999; c.rows.push(["east", 30]); return [c.rows[0][1], c.rows.length];`);
     assert.deepEqual(r.value, [999, 3]);
     assert.deepEqual(mlFetchCache.get(CSV_URL).table.rows[0], ["north", 10], "the cache is untouched by the copy's edit");
+});
+
+// --- UPGRADE: scripts written for #2043's stored table, run on slice A's views (ML_TABLE.md, "Views of a stored table") ---
+
+// Each script was written when `select`, a long `head` and a copy's `records` read every row. On slice A it runs over a
+// stored table of 4 rows with 2 in hand, and what the model reads back is asserted.
+test("UPGRADE: (await t.select([...])).rows is the rows in hand now, with truncated set and shape[0] the whole count", async () => {
+    const { t, reads } = stored();
+    const r = await run(`const t = await ml.table("@tool:abc"); const v = await t.select(["amount"]); return [v.rows, v.truncated, v.shape[0], v.rows.length];`, pointerHost(t));
+    assert.deepEqual(r.value, [[[10], [20]], true, 4, 2]);
+    assert.deepEqual(reads, [], "the select read nothing");
+    const all = await run(`const t = await ml.table("@tool:abc"); return await t.select(["amount"]).col("amount");`, pointerHost(t));
+    assert.deepEqual(all.value, [10, 20, 30, 40], "every row is the view's col()");
+});
+
+test("UPGRADE: (await t.head(n)).rows for n past the rows in hand is the rows in hand, truncated, shape[0] n", async () => {
+    const { t, reads } = stored();
+    const r = await run(`const t = await ml.table("@tool:abc"); const h = await t.head(3); return [h.rows, h.truncated, h.shape[0], h.rows.length];`, pointerHost(t));
+    assert.deepEqual(r.value, [[["north", 10], ["south", 20]], true, 3, 2]);
+    assert.deepEqual(reads, [], "the head read nothing");
+});
+
+test("UPGRADE: await t.copy().records() past the rows in hand is refused, naming t.records()", async () => {
+    const { t, reads } = stored();
+    const err = await run(`const t = await ml.table("@tool:abc"); const c = t.copy(); c.rows[0][1] = 99; return await c.records();`, pointerHost(t)).then(() => null, (e) => e);
+    assert.ok(err, "the copy answered a whole read");
+    assert.match(err.message, /copy never reads the rest/);
+    assert.match(err.message, /`await t\.records\(\)`/);
+    assert.deepEqual(reads, [], "nothing was read from the source");
 });
 
 // --- the caller's own where nothing else holds it: editable, with no copy (ruling 89) ---

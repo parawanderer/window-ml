@@ -20,7 +20,9 @@
 // orphans. Each eviction is reported (the housekeeping log), and an evicted key leaves a TOMBSTONE so a later read can
 // say what happened to it instead of "not found".
 
-/** How the bytes are encoded. Tables become Arrow IPC in a later slice; until then a value keeps the format it arrived in. */
+/** How the bytes are encoded: a value keeps the format it arrived in, because `ml.fs.cp` copies it byte for byte and
+ *  Python parses it. The service worker's decode of a stored table is a cache beside the store (`table-decode-cache.ts`),
+ *  never what is stored. */
 export type ValueFormat = "arrow-file" | "arrow-stream" | "parquet" | "csv" | "tsv" | "text"
     /** A paged document: a list of pages, each with its text and an optional render recipe. Nothing produces one yet. */
     | "paged"

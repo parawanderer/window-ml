@@ -13,7 +13,7 @@ const KINDS = [...new Set([...readFileSync(new URL("../src/contract/contract-deb
 const LIFECYCLE = new Set(["agent", "agent-result"]);
 /** The kinds only the worker writes about a site's agent (the start card, its outcome, the site's turns, its wait), and a
  *  detached call's result (`agent-task-say`, ASYNC_CALLS.md mode 1), which a page that could write would put words in. */
-const WORKER_ONLY = new Set(["agent-start-ask", "agent-start-decided", "agent-site", "agent-person", "agent-wait", "agent-site-say", "agent-task-say", "agent-note"]);
+const WORKER_ONLY = new Set(["agent-start-ask", "agent-start-decided", "agent-site", "agent-person", "agent-wait", "agent-site-say", "agent-task-say", "agent-tasks", "agent-note"]);
 
 // --- what a page may add ---
 

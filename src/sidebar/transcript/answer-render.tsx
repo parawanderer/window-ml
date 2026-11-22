@@ -14,7 +14,7 @@ import { focusMode } from "../store";
 import { pretty, markdown, inlineMarkdown } from "../format";
 import { linkTipFor, onAddressClick } from "../links";
 import { reveal } from "./transcript-window";
-import { IconChevron, IconEye, IconCheck } from "../icons";
+import { IconChevron, IconEye, IconCheck, IconJumpUp } from "../icons";
 import { ClickableImg, SheetChip, cursorTipOn } from "../ui-kit";
 import { RenderPanel, PyDfTable, CodeRender, ValueOut, LinkedLine } from "./render-panel";
 import type { CodeCtx } from "./render-panel";
@@ -209,10 +209,12 @@ function TokenRef({ seg, run, scope, standalone }: { seg: Extract<AnswerSegment,
     const tip = (label && !block ? `${label} · ` : "") + provenance;   // inline → prepend the label to the tooltip
     const onKey = (e: KeyboardEvent) => { if (e.key === "Enter") jump(); };
     if (block) return <TokBlock node={node} label={label} tip={tip} name={`${step.tool || "tool"} · step ${step.localStep ?? step.step}`} onJump={jump} />;
-    return <span class="tok-ref tok-inline" role="button" tabIndex={0}
+    // `tt` + `.tt-pop` is the shared anchored tooltip (tooltip-layer.ts). The tip comes FIRST: the layer copies the
+    // trigger's first `.tt-pop`, and the rendered value may hold tips of its own.
+    return <span class="tok-ref tok-inline tt" role="button" tabIndex={0}
         onClick={onEmbedClick} onKeyDown={onKey}>
+        <span class="tt-pop wrap" role="tooltip">{tip}</span>
         {node}
-        <span class="tok-tip" role="tooltip">{tip}</span>
     </span>;
 }
 
@@ -249,18 +251,19 @@ function TokBlock({ node, label, tip, name, onJump }: { node: ComponentChildren;
         <span class={`tok-body${closing ? " closing" : ""}${opening ? " opening" : ""}`} onAnimationEnd={() => setOpening(false)}>{node}</span>
         {/* The rail is no tap target on a touch screen (sidebar.css), and an embed has no header row to fold from, so
             there the caption's line carries the fold as a chevron: the same mark, in the same place, as the folded row
-            that opens it again. Drawn only for a coarse pointer; before the caption, so `.tok-anno ~ .tok-tip` holds. */}
+            that opens it again. Drawn only for a coarse pointer. */}
         {railed ? <button class="tok-fold-btn" aria-label="Collapse this output" aria-expanded="true"
             onClick={(e) => { e.stopPropagation(); fold(); }}><span class="tri" aria-hidden="true"><IconChevron /></span></button> : null}
         {/* The caption is model-authored prose — render it as markdown+math (a lone wrapping <p> stripped) so a
             model that writes inline `$…$`/`\(…\)` in the label typesets it. markdown() escapes HTML, so this is
             as safe as the answer prose. It is the one part of the embed that goes to the source step, so an embed the
             model gave no caption gets its tool and step as one: without it, nothing would lead to the source. */}
-        {label
-            ? <div class="tok-anno" role="button" tabIndex={0} onClick={onJump} onKeyDown={(e) => { if (e.key === "Enter") onJump(); }}
-                dangerouslySetInnerHTML={{ __html: inlineMarkdown(label) }} />
-            : <div class="tok-anno" role="button" tabIndex={0} onClick={onJump} onKeyDown={(e) => { if (e.key === "Enter") onJump(); }}>{name}</div>}
-        <span class="tok-tip" role="tooltip">{tip}</span>
+        {/* The tip belongs to the CAPTION (`tt` on it, not on the block): hovering the table raises nothing. */}
+        <div class="tok-anno tt" role="button" tabIndex={0} onClick={onJump} onKeyDown={(e) => { if (e.key === "Enter") onJump(); }}>
+            <span class="tt-pop wrap" role="tooltip">{tip}</span>
+            {label ? <span dangerouslySetInnerHTML={{ __html: inlineMarkdown(label) }} /> : name}
+            <span class="tok-anno-jump" aria-hidden="true"><IconJumpUp /></span>
+        </div>
     </span>;
 }
 

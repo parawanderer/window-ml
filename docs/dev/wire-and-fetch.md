@@ -225,7 +225,8 @@ or `cleanup` option anymore; the reply `content` is stored verbatim.
   full of semicolons parses as a clean two-column table otherwise. A caller gets the `Table` FACADE, which is
   read-only and throws on unknown keys: finish editing the plain `TableLike` BEFORE `asTable`, and never probe
   a value's shape in the dialect without checking `isTable` first. A STORED table's facade (`isStoredTable`) reads the
-  value store, so its `col`/`select`/`records` return promises and its size is `shape`, never `rows.length`.
+  value store, so its `col`/`records` return promises and its size is `shape`, never `rows.length`; its `select` and
+  long `head` are synchronous views whose `rows` is the rows in hand.
 - **Wire formats.** The protobuf path is chosen from the RESPONSE's content type, never sniffed; no `TextDecoder`
   anywhere near binary — a fetched body is checked with `binaryKind` on its BYTES first, and a binary one is
   described, never decoded; the protobuf `Accept` carries `events=1` (OpenWebUI's own route serves it only then, and its `Event` frame is what carries `sources`). A strict backend refusing an optional request key is

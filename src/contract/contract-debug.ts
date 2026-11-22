@@ -437,6 +437,35 @@ export interface DebugAgentTaskSay extends DebugBase {
     status: "running" | "done" | "failed" | "cancelled" | "orphaned"; ms: number; code: number | null;
 }
 
+/** A run's background tasks as a list or a card marks them: `running` are detached calls still running, `waiting` are
+ *  ended ones whose result no turn has read yet. `noTab` is set when the run has no open tab to start a turn on, so a
+ *  result waits until the person brings the session to one; it may stand alone, with both counts 0, for a run that never
+ *  had a task. `releaseAt` is set only while a release deadline is set. Present when `backgroundOf` says so, else absent. */
+export type TaskBackground = {
+    running: number; waiting: number; noTab?: true;
+    /** When the run's release deadline falls (epoch ms); absent while none is set. */
+    releaseAt?: number;
+};
+
+/**
+ * THE one presence rule for `TaskBackground`: what a row, a setter or a card holds is this function's answer. Undefined when
+ * nothing is true (both counts 0, no `noTab`, no `releaseAt`); otherwise a normalised copy with only the true fields.
+ * @param b a candidate marker, or null or undefined for none
+ * @returns the marker to carry, or undefined for no field
+ */
+export function backgroundOf(b: TaskBackground | null | undefined): TaskBackground | undefined {
+    if (!b) return undefined;
+    const count = (n: unknown) => (typeof n === "number" && n > 0 ? Math.floor(n) : 0);
+    const running = count(b.running), waiting = count(b.waiting);
+    const releaseAt = typeof b.releaseAt === "number" && Number.isFinite(b.releaseAt) ? b.releaseAt : undefined;
+    if (running + waiting === 0 && !b.noTab && releaseAt === undefined) return undefined;
+    return { running, waiting, ...(b.noTab ? { noTab: true as const } : {}), ...(releaseAt !== undefined ? { releaseAt } : {}) };
+}
+
+/** A run's background-task counts changed (`null`: it has none now), for the card's mark. Worker-only: a page that could
+ *  write one would put a task on a run that has none. A live notice: not kept in the session index or the exports. */
+export interface DebugAgentTasks extends DebugBase { kind: "agent-tasks"; background: TaskBackground | null; }
+
 /** One quiet line in a run's step list, written by the worker: a start a page this run opened asked for (Q17). */
 export interface DebugAgentNote extends DebugBase { kind: "agent-note"; text: string; site?: string; }
 
@@ -444,7 +473,7 @@ export interface DebugAgentNote extends DebugBase { kind: "agent-note"; text: st
  *  and a detached call's result. Kept out of `MlDebugEvent`, since a page may never write one (event-admission.ts). The
  *  session index keeps `agent-site`, `agent-site-say` and `agent-task-say`, and the exports carry the two says; the
  *  rest are live notices for the surfaces that show the run. */
-export type SiteRunEvent = DebugStartAsk | DebugStartDecided | DebugAgentSite | DebugAgentPerson | DebugAgentWait | DebugAgentSiteSay | DebugAgentTaskSay | DebugAgentNote;
+export type SiteRunEvent = DebugStartAsk | DebugStartDecided | DebugAgentSite | DebugAgentPerson | DebugAgentWait | DebugAgentSiteSay | DebugAgentTaskSay | DebugAgentTasks | DebugAgentNote;
 
 /** Window-bus envelopes between the core (main world) and the sidebar. */
 export interface MlDebugMessage { __mlDebug: MlDebugEvent; }
