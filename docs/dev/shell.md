@@ -212,7 +212,9 @@ In an isolated exec, `iso-channel.ts` names `put` with its own arity of exactly 
 A chat session's host folders (FILE_ATTACHMENTS.md, "What window-ml-host must do for mounts", H1 to H8; the host's
 `mount`, `stat`, `list`, `fetch`, `store`, `remove` and `rename` in window-ml-host's PROTOCOL.md, "Mounts"). Built so
 far: the wire (`HostClient` in `host-protocol.ts`) and the worker's half of the judgement (`mount-judge.ts`). Nothing
-calls them yet: the `/files` bridge a cell's `open()` goes through is the next step.
+calls them yet. The `/files` a cell's `open()` reaches today is the browser's own (route A over the ranged reader,
+#2026; `docs/dev/python-sandbox.md`, "`/files` in Python"), not a host mount; backing it by the session's folder on
+disk (ruling 91, H16) is not built.
 
 - Offered only when `hello.mounts` is exactly `true` (`hostOffersMounts`); over the hub it is `false` and the host
   refuses every mount call. The worker never probes by calling.

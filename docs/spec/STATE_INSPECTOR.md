@@ -1,8 +1,8 @@
 # Spec: the state inspector (the run's "kernel variables")
 
 **Status: items 1 to 3 of the Order built** as the chat page's Run state panel (agreed by Shane 2026-10-08; the
-Session group #406, watches #426, #433 and #439, the read-only console #444); item 4 (Python per-run state) and the
-slots of item 5 are not. It extends two proposals that were written before it:
+Session group #406, watches #426, #433 and #439, the read-only console #444); item 4 (Python per-run state) is half built: the
+namespace persists per run (#757, #1777), the panel's Python group does not exist; the slots of item 5 are not. It extends two proposals that were written before it:
 [`CHAT_PAGE.md`](CHAT_PAGE.md) §The state inspector (the pane, the `session.context` call, the pointer join) and
 [`CURRENT_CONTEXT.md`](CURRENT_CONTEXT.md) (`ml.current`, the model's own read of its context). Where this document and
 those disagree, this one is newer. Each says so and points here.

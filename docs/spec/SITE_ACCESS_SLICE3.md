@@ -1,7 +1,9 @@
 # Site access slice 3: implementation reference (decided 2026-10-13)
 
 Written 2026-10-13 against origin/main `163f78c5`, with #626 open; the owner's decisions of the same day are folded in.
-This is the reference the slice-3 PRs are built from. Nothing here is built yet. It covers the slice-3 items in
+This is the reference the slice-3 PRs are built from. All of it is built since (2026-10-13 to 10-27: PR 0 #630, PR 1 #640,
+PR 1b #632, PR 2 #647, PR 3 #1127, PR 4 #1132, PR 4b #1189); where the build differs, the "As built" notes below and
+SITE_ACCESS.md, "Where the build differs from this spec". It covers the slice-3 items in
 [SITE_ACCESS.md](SITE_ACCESS.md): `requestAccess`, the toolbar badge, the popup, moving the self-approval whitelist
 (`pageApprovalDomains`) to origins, and the "may start agents" level with its start-approval card. When a PR lands, its
 deviations from this file go into "Where the build differs from this spec" in SITE_ACCESS.md.
