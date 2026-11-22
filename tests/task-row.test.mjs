@@ -116,3 +116,15 @@ test("the run's tab receives agent-tasks with running: 1 after a detach, and nul
     assert.ok(await until(r.idle(2)), "the task's turn ran");
     assert.ok(await until(() => notices().at(-1)?.background === null), JSON.stringify(notices()));
 });
+
+test("a card a navigation reloads gets the mark again from the tab's replay", T, async () => {
+    const r = await settled();
+    const notices = () => r.bg.tabMessages.filter(([t, m]) => t === 7 && m?.type === "ML_DEBUG_TO_PAGE" && m.event?.kind === "agent-tasks" && m.event.id === r.hash).map(([, m]) => m.event);
+    r.detach();
+    assert.ok(await until(() => notices().some((e) => e.background?.running === 1)));
+    const before = notices().length;
+    r.bg.commit?.(7, { documentId: "doc-8", url: SITE_URL });
+    void r.bg.send({ type: "SHELL_LISTENING" }, { tab: { id: 7, url: SITE_URL }, url: SITE_URL, origin: new URL(SITE_URL).origin, frameId: 0, documentId: "doc-8" });
+    assert.ok(await until(() => notices().length > before), "the new document was sent the mark");
+    assert.deepEqual(notices().at(-1).background, { running: 1, waiting: 0 });
+});

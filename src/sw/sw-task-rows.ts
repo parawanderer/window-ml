@@ -2,7 +2,7 @@
 
 import type { SessionServer } from "../session/session-server";
 import { hydrateTasks, onTaskCounts, taskCounts } from "./sw-tasks";
-import { bgRuns } from "./sw-runs";
+import { bgRuns, bufferReplay } from "./sw-runs";
 import { relayDebugEvent } from "./sw-debug";
 import { toPageUi } from "./sw-side-panel";
 import type { TaskBackground } from "../contract";
@@ -18,16 +18,19 @@ async function hasTab(hash: string): Promise<boolean> {
 
 /**
  * Tell the run's own tab its counts changed (`agent-tasks`), for the card's mark: a live notice, never kept in the session
- * index or an export. A run with no tab the worker knows has no card to tell.
+ * index or an export, but kept in the tab's replay ring, so the card a navigation reloads shows the mark again (the
+ * reducer keeps the last one it reads). A run with no tab the worker knows has no card to tell.
  * @param hash the run's session hash
  * @param bg what the run has now, or null for no tasks
  */
 function announceTasks(hash: string, bg: TaskBackground | null): void {
-    const tabId = bgRuns.get(hash)?.tabId;
+    const run = bgRuns.get(hash);
+    const tabId = run?.tabId;
     if (typeof tabId !== "number") return;
     const event = { kind: "agent-tasks", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, background: bg ? { running: bg.running, waiting: bg.waiting } : null };
     toPageUi(tabId, { type: "ML_DEBUG_TO_PAGE", event });
     relayDebugEvent(tabId, event);
+    if (run?.p.crossPage !== false) bufferReplay(tabId, event);
 }
 
 /**
