@@ -732,8 +732,8 @@ Seven things the code or an e2e run showed that this file did not say. (1) WHICH
 ### Measuring an `act` rule on the page it is for (IDEA, Shane, 2026-11-22; nothing assigned, nothing built)
 
 Shane's case: the agent is on Google's account chooser, and the person asks it to write a policy for this page that
-always lets it pick `shane@wander.dev`, but no other account. The rule is expressible today (`c.host ===
-"accounts.google.com" && c.action === "click" && c.element.name.includes("shane@wander.dev")`). What is missing is
+always lets it pick `person@example.com`, but no other account. The rule is expressible today (`c.host ===
+"accounts.google.com" && c.action === "click" && c.element.name.includes("person@example.com")`). What is missing is
 knowing that it targets anything. A proposal's breadth for an `act` row is measured over the clicks and types the
 worker resolved THIS run (`noteAct`, docs/dev/policies.md), so on the chooser, before the first click, it is measured
 over nothing, and the card cannot say whether the row names the right button. Writing a rule is one thing; checking
@@ -742,10 +742,10 @@ that it resolves on the page is another.
 - **Measure over the page.** For an `act` row, the worker also lists the clickable elements of the page the run is on
   (buttons, links, options, menu items, inputs a click or a type reaches), resolves each one's `{ tag, href, name }`
   the way `actElement` resolves a click, and evaluates the row over each with that page's `url` and `host`. The card
-  leads with it: "matches 1 of 14 clickable elements on this page: Shane B · shane@wander.dev. Does not match: Other
+  leads with it: "matches 1 of 14 clickable elements on this page: Pat Doe · person@example.com. Does not match: Other
   account, Use another account, …", capped, each name cut to a fixed length.
 - **The model can check before it proposes.** The same measurement, returned to the model with no card (a `check`
-  flag on `propose_policy`, the coordinator's recommendation, rather than a new tool), so a row that matches nothing,
+  flag on `propose_policy`, the small-fixes session's recommendation, rather than a new tool), so a row that matches nothing,
   or every account, is fixed before the person sees it.
 - **What it does not prove.** It is this page at this moment. A page can add a matching element later, so the row
   still scopes itself to the host and the path; the click is judged at the click, on the element it lands on, as now.
@@ -753,7 +753,7 @@ that it resolves on the page is another.
 - **Which runs.** Runs the worker hosts, the ones `propose_policy` is offered to; a page's own run is out of scope.
 - **What the model keeps beside the policy** (why it exists, what to do next, such as "pause and ask the person if a
   2FA prompt appears after the account is picked") is a note, not a policy: [`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md),
-  "`/files/notes/`". A note grants nothing; the policy is what the gate enforces.
+  "`/files/notes/` and `/shared/notes/`". A note grants nothing; the policy is what the gate enforces.
 - **Open.** Whether the accessible name of Google's account rows is the display name, the address and a status
   together (a guess, unchecked); which elements count as clickable when a page uses `div`s with handlers and no role;
   whether the page measurement replaces the random-site probe for `act` rows or sits beside it.
