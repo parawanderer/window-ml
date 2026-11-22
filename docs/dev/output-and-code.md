@@ -293,6 +293,37 @@ composition question that raises is whether the JSON tree inside can hide text f
 away from a search. That is load-bearing rather than incidental — a find reporting "No results" over data
 that is visibly right there reads as the find being broken — so it has its own test.
 
+**An http(s) address in output is a link (`src/sidebar/output-links.ts`, `LinkedLine`/`PlainOutput` in render-panel.tsx).**
+RENDERING ONLY: the text the model read, the raw text the copy button copies and both exports are the bytes they
+always were, because the link is an anchor drawn over the same characters and no export reads the DOM. One pure
+function, `outputLinks(line)`, splits a line into text and links; `TimedOutput` calls it per line (gutter on) and
+`PlainOutput` for the no-gutter path and a finished step's raw Out. Text with no link still draws `<Code lang="text">`,
+so nothing else changes; with one, the same `pre.code > code.hljs` markup is drawn, numbered like `Code` when the
+setting asks. The click goes to `services().openLink` with `preventDefault`, as an approval's URL does, so the panel
+(and the phone's WebView) never navigates; `href`, `target="_blank"` and `rel="noopener noreferrer"` stay for the
+context menu. The in-cell find walks text nodes and a link is one, so a match may cross a link's edge.
+- **Only `http://` and `https://`.** `javascript:`, `data:`, `file:`, `chrome-extension:`, `window-ml:` and the rest stay
+  text, as does a scheme glued to a word (`xhttps://`).
+- **The tip names the HOST first**, taken from `new URL(raw).hostname`, never from the printed text: a program can
+  print any text. It is JSX, because a string tip is rendered as Markdown and the address is the program's to choose.
+- **Left as text, because the shown text and the destination could disagree:** userinfo (`https://good.com@evil.com/`),
+  a backslash, a non-ASCII character in the host (so the host field is only ever ASCII or `xn--`), any bidi control,
+  zero-width or other format character (`\p{Cf}`) or C0 control or DEL anywhere in the address, a URL that does not parse, and one past
+  `MAX_LINK_CHARS` (2048). A U+FEFF is whitespace to the scanner, so a URL ends before it.
+- **Boundaries:** a URL stops at whitespace, quotes, a backtick and angle brackets; trailing `.,;:!?)]}'"` is not part of
+  it, except a closer that a bracket inside the URL opened (`…/Foo_(bar)`).
+- **An output embedded in a reply** (`![…](@tool:…:out)`) is linked too: a non-JSON value holding a link draws as plain
+  output (`ValueOut`), a short inline value goes through `LinkedLine`, and the embed's jump-to-step ignores a click on an
+  anchor. A JSON value keeps its highlighting and its addresses stay text, in the text view and the tree.
+- **`ml.sh` output is linked where a person reads it.** `ShCalls` (sh-calls.tsx) draws a call's command and facts, never
+  its output; the output is the calling step's console or stdout (`TimedOutput`), or, for a detached call, a `task`
+  tail step (no render descriptor: its raw Out is `PlainOutput`). Embedded by pointer, as the sign-in flow does
+  (docs/spec/ASYNC_CALLS.md, "Sign-in prompts"), a `task` tail and a `dereference` view of it (`{ type: "exec-out" }`,
+  `derefRender`) both reach `ValueOut` or the inline value, so the link is an anchor; `tests/sidebar-answer.test.js`
+  checks both with a `gh auth login` tail.
+- **Not covered:** output drawn by another path (`ExecError`, a retry's diff, a live call's code being written, the
+  locate step's prompt and output) is still inert text.
+
 **A retry's DIFF against the call it revises (`src/diff.ts`, `CodeDiff`).** The commonest loop in a run is:
 a code tool fails, the model retries with a tweak, and the reader diffs two twenty-line blocks BY EYE to
 find the one line that moved. `exec` and `python_exec` take **`revises`** (an `@tool:` pointer to the

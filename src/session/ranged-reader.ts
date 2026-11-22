@@ -1,6 +1,7 @@
 // ranged-reader.ts — the ONE ranged reader under `/files` (FILE_ATTACHMENTS.md, "`/files/` read by range, and
 // `ml.fs`", slice 1): a session's files read by range through channels, nothing loaded whole, for every front end.
 
+import { maskOverlap, maskSecretBytes, type SecretForm } from "../secret-mask";
 import { FILES_CHUNK, type DirPage, type FileStat, type FilesChannel, type FsError, type FsErrorCode, type Txn, type WriteFlags } from "../python/files-reader";
 
 /** One file the person attached to a session, as the shelf holds it: what the reader lists under `attached/<handle>/<name>`. */
@@ -25,6 +26,9 @@ export interface FilesSource {
     attached(session: string): Promise<readonly AttachedFile[]>;
     /** The stored bytes under `key`, for a session that holds them; throws when they are gone or not the session's. */
     blob(key: string, session: string): Promise<Blob>;
+    /** The secrets' forms now, asked at every read so a value registered mid-session masks the next one; throws when
+     *  they cannot be read, and the read then fails rather than serve unmasked bytes. */
+    secretForms(): Promise<readonly SecretForm[]>;
 }
 
 /** Whether a path of a session's files is hidden (POLICIES.md, "Hiding files", ruling 34): asked at every open and
@@ -140,6 +144,7 @@ export interface RangedReaderDeps {
 export class RangedReader {
     private readonly volumes: Record<VolumeName, Volume>;
     private readonly hidden: HideRule;
+    private readonly source: FilesSource;
     /** Descriptor and transaction numbers, shared by every channel, so a number from one channel is never valid in another. */
     private nextId = 3; // state: plumbing
 
@@ -147,6 +152,7 @@ export class RangedReader {
         const startedMs = (deps.now ?? Date.now)();
         this.volumes = { files: filesVolume(deps.source, startedMs) };
         this.hidden = deps.hidden ?? (() => false);
+        this.source = deps.source;
     }
 
     /**
@@ -259,7 +265,17 @@ export class RangedReader {
                 if (reader.hidden(s, f.path)) throw hiddenRefusal("read", f.path);
                 const n = Math.min(length, f.blob.size - position, dest.length);
                 if (n <= 0) return 0;
-                const bytes = new Uint8Array(await f.blob.slice(position, position + n).arrayBuffer());
+                // The scrub inside the mount's read (FILE_ATTACHMENTS.md, "Python's view: two mounts"): the range is
+                // read widened on each side by the longest form less one byte, clamped to the file, so a match that
+                // overlaps it is seen whole; its bytes become `*`, and only the range is copied out. The forms are held
+                // for this read only.
+                const forms = await reader.source.secretForms();
+                if (!Array.isArray(forms) || forms.some((x) => !x || typeof x.find !== "string")) throw new Error("malformed forms");
+                const lap = maskOverlap(forms);
+                const from = Math.max(0, position - lap);
+                const window = new Uint8Array(await f.blob.slice(from, Math.min(f.blob.size, position + n + lap)).arrayBuffer());
+                maskSecretBytes(window, forms);
+                const bytes = window.subarray(position - from, position - from + n);
                 // A descriptor closed, or a channel ended, while the range was read writes nothing into `dest`: the
                 // window may already be another request's.
                 if (fds.get(fd) !== f || disposed || session !== s) throw fsError("EBADF", "read", undefined, `bad descriptor ${fd}`);

@@ -147,21 +147,23 @@ if (typeof document !== "undefined") document.addEventListener("pointerdown", (e
     if (offReadout(e.target as Element | null)) closeReadout(true);
 }, { passive: true, capture: true });
 
-/** THE CHART itself: one track per memory pool on a shared segmented axis, the scrub strip above and the
- *  event lane below. Drawing only — placement, packing, bands and windows are the pure functions in
- *  resource-model.ts, which is what makes the picture testable without a browser. */
 /** What a surface drawing its OWN lane under the chart is handed: the axis the tracks were drawn on this render (zoom,
  *  scrub, the rolling window and the hold all applied), the readings in it, and their runs between gaps, which a drag
  *  to select (`startBrush`) snaps against. */
 export interface LaneContext { axis: Axis; samples: ResourceSample[]; runs: ResourceSample[][] }
 
 /**
+ * THE CHART itself: one track per memory pool on a shared segmented axis, the scrub strip above and the event lane below.
+ * Drawing only — placement, packing, bands and windows are the pure functions in resource-model.ts, which is what makes the
+ * picture testable without a browser. The resource panel's chart and the bench's sweep timeline; a small chart over time
+ * takes `TimeChart` (settings/time-chart.tsx) instead.
  * @param lane draws the lane in place of the panel's `EventLane`, on the chart's axis: a page with no panel (the bench's
  *   sweep, one lane per run) keeps its own rows and still moves with every zoom, scrub and selection made on the chart
  * @param endAt where a RECORDING that no longer grows ends (a finished bench sweep): the clock the live view follows
  *   stops there. Following the wall clock, "live" on a recording read later slid past its end and drew nothing.
  * @param owner whose each model was (`ownership`), for a surface that knows its own sessions: the memory tooltips tag
  *   each model they name with it. Absent, they tag nothing.
+ * @group charts
  */
 export function ResourceTracks({ samples, capacity, hidden, layout, events = [], lane, endAt, owner = null }: { samples: ResourceSample[]; capacity: Capacity | null; hidden: Set<string>; layout?: TrackDef[] | null; events?: ResourceEvent[]; lane?: (ctx: LaneContext) => ComponentChildren; endAt?: number; owner?: OwnerInfo | null }) {
     const clock = () => endAt ?? Date.now();

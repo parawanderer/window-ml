@@ -74,6 +74,27 @@ gets a red-team pass):
 - **The seam** is one message from the composer to the worker naming `{ mode, code, runId }`, answered with the same
   streamed output a tool cell gets. The red-team pass (e3) covers that message and the marking.
 
+## A console that stays out of the model's context (IDEA, Shane, 2026-11-21; nothing assigned)
+
+Shane's note, 2026-11-21, in the coordinator's session. The frame it comes from: window.ml is a notebook with two
+authors, the person and the model, sharing kernels and a working directory. JupyterLab puts a kernel console, a
+variable inspector, a file browser and a terminal beside its notebook. This section is the console and the inspector;
+the terminal is [`SHELL_INTERACTIVE.md`](SHELL_INTERACTIVE.md), "The person's own terminal", and the working directory
+is [`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md), "The folder must stay usable".
+
+- **The console.** A top-to-bottom log of the expressions the person typed and their outputs, a browser's JS console
+  crossed with a notebook: an output renders as our rendered cell by default, with a switch back to plain text per
+  cell. Python runs against the run's namespace; the Python bench is the start, and Shane may restyle it with the
+  small-fixes lane. JS sees what the model's exec sees: `ml.current`, `@tool:` and `@file:` pointers, the page's DOM.
+  Its purpose is debugging what the model has.
+- **Kept or sent, per cell.** A console cell stays out of the model's context unless the person sends it; a sent cell
+  is a command-mode cell as above, the person's turn. One console with that choice, not a second console beside
+  command mode (the coordinator's recommendation, not ruled).
+- **The variables tab.** Stops expanding `ml.current`'s members by default: it shows one `ml.current` entry, as a
+  debugger pins a few variables, and the person pins anything else by typing it.
+- **What stays as above.** Typing is the approval; a page cannot start or answer a console cell; the security property
+  above holds for a kept cell and a sent one alike.
+
 ## Open
 
 - Which key runs, and which runs-then-asks (ruling 3).

@@ -996,13 +996,16 @@ are what the model reads.
    the async lane) on the `files` volume; a volume is a tree resolved one path at a time, so `/history/` is a second
    volume beside it. The shelf reaches it through a `FilesSource`: a session's attachments and a stored Blob by key,
    neither of which loads bytes; a read slices one range of the Blob into the caller's buffer. The hide rule is a
-   function the reader asks at every open and every read, and lists nothing until the hide-list rule lands. Byte reads
-   are returned as stored, as an attachment's bytes are; the text window of "The scrub" is `scrubRange`
-   (`src/secret-scrub-range.ts`), which slice 2's text reads call. The write verbs check the transaction and the path
+   function the reader asks at every open and every read, and lists nothing until the hide-list rule lands. Every
+   byte read is masked by the length-preserving scrub of "Python's view: two mounts" (below), so slice 2's `ml.fs`
+   byte reads get it too, and a text read there sees `*` where a value was; whether slice 2 keeps that or reads
+   unmasked for its `[REDACTED:<NAME>]` text window is slice 2's call. The text window of "The scrub" is `scrubRange`
+   (`src/secret-scrub-range.ts`). The write verbs check the transaction and the path
    and then answer `EROFS` everywhere, `agent/` included, until slice 3 lands the write side; `begin`, `commitTx` and
    `abortTx` of an empty transaction succeed, so a front end that opens one per cell works read-only. The offscreen
-   document's wiring (the source over the worker's shelf, and `setFilesReader`) lands once both this and the Python
-   mount's PR are on main.
+   document's wiring has landed: `setFilesReader` over one `RangedReader` whose source (`src/python/files-source.ts`)
+   asks the service worker for a session's files with `FILES_ATTACHED`, answered from the offscreen document only,
+   and reads the bytes from the offscreen document's own value store, held rows of that session only.
 2. `ml.fs` read members in the isolated world, the routing, the dialect entry with its tests, the scrub window, the
    red-team pass, and the Node parity corpus for the read members. Must not break: `ml.current`'s and `ml.sh`'s routing rows.
 3. `ml.fs` write members, the quota setting, and the parity corpus extended to them.
@@ -1356,6 +1359,25 @@ coordinator the same day.
   that folder, and the statement in "A session's files as a directory" and in "`/files`: the layout" that the host's
   disk never aliases `/files` does not hold for that session. Without a host, with a host older than H16, or before
   the session's first mount, it holds: `/files` is the browser sandbox's, and an argv `/files/x` is a host path.
+
+**The folder must stay usable** (IDEA, Shane, 2026-11-21, in the coordinator's session; nothing assigned, nothing
+built). Nothing above checks that the host can in fact read and write the session's folder; the one failure handled is
+a folder renamed or moved away. Shane: the host should check that the permissions stay usable, repair what it can, and
+tell the person what it cannot, for example in the inbox. The shape, for whoever builds it:
+
+- **When it checks.** At each mount, the host creates, writes, reads back and deletes a probe file in the session's
+  folder, in `agent/` and in `attached/`. It checks again when a real read or write in the folder fails with a
+  permission error mid-run, so a change made while the session is open is caught at the call that meets it.
+- **What it repairs.** Only the modes of the directories the host made itself (`window-ml-files/`, the session's
+  folder, `attached/`, `agent/`), back to what it created them with. Never a file or folder the person made, never an
+  owner, never anything outside `window-ml-files/`.
+- **What it reports.** Anything else becomes one item in the person's attention inbox (`src/chat/attention.ts`) naming
+  the folder, what failed (read, write or delete) and the step that fixes it. The causes to tell apart: a mode or
+  owner the host may not change; macOS privacy permissions (the host binary not allowed into Documents, Desktop or
+  iCloud Drive, a permission error no mode change repairs; which error each cause gives is a guess, not measured); a
+  read-only volume; a full disk, which is the disk's limit below and gets its own wording.
+- **What the model sees meanwhile.** The call that met the failure gets its error as today (`EACCES`, `EROFS`), and
+  the session's next turn names the problem in one line. The browser copy keeps working, as for a folder that is gone.
 
 **Three limits, kept apart:**
 
@@ -1974,6 +1996,86 @@ JavaScript gets Node's `fs`, as `ml.fs`.
   write, a `mkdir` or a rename at the root fails with EROFS in Python and an `EROFS` error from `ml.fs`.
 - Provenance follows from the folder: a file under `attached/` is the person's, one under `agent/` was made by a run.
 
+### `/files/notes/` and `/shared/notes/`: the agent's notes (IDEA, Shane, 2026-11-22; nothing assigned, nothing built)
+
+A folder of plain text files the model keeps for its own use, the way a coding agent keeps `CLAUDE.md` or a memory
+folder: what the person told it, what it learned about a site, what to do next time. It is files on the same disk as
+everything else, not an API: the person reviews and edits them in the files panel, and the model reads, writes and
+runs analysis scripts over them with the file tools it already has.
+
+Two folders, because sharing between sessions is deferred (ruling 81) and the notes must not wait for it:
+
+- **`/files/notes/`, this session's.** Created empty beside `attached/` and `agent/` (an exception to "nothing new at
+  the root", made by the system, not by a run), and kept, backed up and deleted with the session like the rest of
+  `/files`. It is buildable now. What it is for within one session: what the person said, kept outside the context,
+  so it survives a compaction or a fork ([`AGENT_COMPACTION.md`](AGENT_COMPACTION.md)); `agent/` stays the working
+  data, `notes/` is the part the model reads as its own instructions.
+- **`/shared/notes/`, every session's.** The same format in a root outside `/files`, mounted into every session; it is
+  the first piece of the deferred shared file system, `/shared/`, and comes with it. A note there outlives the session
+  that wrote it, so this is the memory across sessions (the Google login note below lives here). It is a different
+  shape from ruling 91's direction (a policy lets one session read other sessions' folders, POLICIES.md, "Other
+  sessions' files, later"): a common folder every session writes, rather than a window into another session's own.
+  Both can exist.
+
+Shared by both:
+
+- **Text files only** (`.md`, `.txt`); a write of anything else is refused.
+- **One standard format.** One note per file, opening with a frontmatter `description:` line that says what it is for
+  (and optionally `site:` naming the host it is about). The index the model reads at the start of a run is GENERATED
+  from those lines over both folders, never a hand-kept file, so it cannot drift; a body is read on demand. The index
+  is in the prompt budget ([`PROMPT_BUDGET.md`](PROMPT_BUDGET.md)), and the run log and both exports carry the index
+  the model saw.
+- **It grants nothing.** A note steers what the model tries; whether a call needs the person stays the policies' and
+  the gate's decision ([`AGENT_FILES.md`](AGENT_FILES.md), "Trust"). The gate reads only facts the host resolved
+  about the call, never the context, so no file the model read can be mistaken for permission, as it can by a
+  classifier that judges a call from the conversation: the permission is the policy. The worst case is a wrong or
+  planted note steering the model to anything the policies already allow; past that, the person is asked. In
+  `/shared/notes/` that worst case reaches every later session that reads the note, not one.
+- **Worked example.** On Google's account chooser the person says the agent may always pick `person@example.com` and
+  should stop and ask if a 2FA prompt follows. The first half is a policy, proposed and checked on the page
+  ([`POLICIES.md`](POLICIES.md), "Measuring an `act` rule on the page it is for"); the note
+  `/shared/notes/google-login.md` records why the policy exists and the 2FA instruction, which no policy can say.
+  Until `/shared/` exists, the same note in `/files/notes/` holds for that session only.
+- **Open.** Who writes `/shared/notes/`: every session freely (the small-fixes session's recommendation, since a note
+  grants nothing), or by policy, given that a planted note there steers every later session within what the policies
+  allow. The scope of `/shared/` (the runtime, the person across
+  runtimes, a workspace); how backup and the archive folder carry it; where it lives on disk once a host backs
+  `/files` (ruling 91); whether a note the model wrote is marked apart from one the person wrote, or provenance stays
+  the files panel's history.
+
+### `lib/`: modules the model writes and a later cell imports (IDEA, Shane, 2026-11-22; nothing assigned, nothing built)
+
+The same split for code: the model writes a helper in `/files/lib/`, uses it from later cells, and moves it to
+`/shared/lib/` (with `/shared/`, deferred above) when it is worth keeping. It may copy and move between the two
+freely. JavaScript modules are run by the read-only `exec` dialect, Python modules by `python_exec`. The question is a
+cell whose code lives partly in a file it does not contain. The rule: **a decision about a cell is a decision about all
+the code the cell runs.**
+
+- **Inside a dialect, the evaluator decides, so an import changes nothing.** The JS dialect's interpreter is the
+  whitelist and never compiles a string ([`../dev/readonly-exec.md`](../dev/readonly-exec.md)); Python's membership is
+  decided by running the cell under the fork's gate, never by its source ([`PYTHON_DIALECT.md`](PYTHON_DIALECT.md),
+  "Membership replaces `mode`"). An imported module is more code through the same evaluator: inside the dialect the
+  cell stays free, outside it the cell asks, as if the code were inline. The module's steps count against the cell's
+  halting bound. A planted module in `/shared/lib/` runs in every later cell that imports it, within what the
+  dialect allows; it cannot do what the dialect does not.
+- **A cell that asks is approved with its imports.** The card shows each imported module beside the cell, with its
+  path and a content hash: EXPANDED when the person has not approved that hash before, collapsed only when they have,
+  so no code is approved unseen. The approval is pinned to those hashes: a module that changed between the card and
+  the run is refused and asked again, so a file edited after the approval never runs unseen.
+- **Imports are static, with literal paths** (`import { f } from "/shared/lib/x.js"`, `from mylib import f` with
+  `/files/lib/` and `/shared/lib/` on `sys.path`), so what a cell loads is known before it runs: the card lists it,
+  the hashes cover it, the log names it. A computed path is known only at run time, too late for a card. Inside the
+  Python dialect a computed load is refused by the gate: `__import__`, `exec`, `compile` and `open` are not in
+  `builtins`' table, and `importlib` has no table, so importing it is refused as `import os` is
+  ([`PYTHON_DIALECT.md`](PYTHON_DIALECT.md), the kind tables). A cell OUTSIDE the dialect is approved as arbitrary
+  code and can load any file by any means; the pin covers its static imports only, and the card says so. On the JS
+  side `import` is new dialect syntax, so it comes with the adversarial tests AGENTS.md requires (path tricks, a cycle,
+  a module importing itself, a depth bound, a module rewritten while it loads).
+- **The log carries what ran.** Every module a cell loads is recorded by path and hash in the run log, and both
+  exports carry each module's text once, by hash (the "log carries what the model saw" rule).
+- **Open.** A module in `/shared/lib/` other sessions depend on can be broken by an edit: accepted at first, since
+  every load is logged with its hash, with immutable versions on a move to `/shared/` if breakage shows up.
+
 ### `ml.fs` (rulings 22 and 23)
 
 `ml.fs` is Node's `fs.promises` surface, the subset that keeps the principle, over the one ranged reader the
@@ -2056,6 +2158,24 @@ backup and any commit-on-cell-success live in one place.
   `st_size`, and a replacement of another length would shift every later offset and corrupt a binary format (a zip,
   a Parquet file, a pickle). The filler shows the value's length, which the hash-only store gives anyway
   (SECRET_HANDLES.md, ruling 32). A write is not scrubbed: what the kernel writes it already held.
+  AS BUILT (#2058): in `RangedReader.read` in the offscreen document, the one path every read of both folders takes.
+  Each read asks the service worker for the forms (`FILES_SECRET_FORMS`: the config's `secretsOf` forms and every
+  registry form, plaintext). The worker answers through `isOffscreenSender`, the same check `FILES_ATTACHED` makes,
+  and anyone else gets `{forms: null}`; the type has no relay entry. Nothing caches the forms, on either side: they
+  are asked for at every read and held for that read only, so a secret added between two reads through one
+  descriptor is masked in the second. The read takes the range widened on each side by the longest form's UTF-8
+  length less one byte (at least the GitHub token pattern's), clamped to the file's start and end, masks every match
+  and the GitHub token pattern with 0x2A (`src/secret-mask.ts`), and copies out the range alone: a match that crosses
+  either edge is masked in the part inside the range, and a form longer than the range, covering it and straddling
+  both edges, masks the whole range. Forms that cannot be read fail the read with `EIO`; nothing unmasked is served. The
+  forms are never written to a log (the run log, the housekeeping log, the console) and never appear in an error's
+  text, the `EIO` path included: its message is fixed. The values never reach the Pyodide worker. Matching is on BYTES: a form is matched as its UTF-8 bytes, and the registry's
+  forms already list its JSON-escaped, percent-encoded, base64 and shell-escaped spellings; ASCII letters fold for a
+  form marked case-insensitive. The residual is named: a value written in another encoding (a UTF-16 file) or inside
+  a compressed or encoded container (a deflated zip member, a gzip stream) is not seen, as a script that decodes
+  bytes itself is not (`ml.fs`, "The scrub"). Ruling 32's hash-only matcher is a stated gap: it is not built, the
+  registry stores plaintext values, so the plaintext forms cover every registered value; when it lands, the forms'
+  source changes and this read does not.
 
 **To be measured by the packages notebook, before this is fixed** (ruling 36, no figure here is this section's):
 whether the restricted fork gates `open()` on a mount; whether worker memory stays flat reading ranges of a 1 GiB

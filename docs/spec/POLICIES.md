@@ -729,6 +729,35 @@ normalised URL before the rows see it. Still nothing built; same place in the or
 
 Seven things the code or an e2e run showed that this file did not say. (1) WHICH RUNS REACH THE JUDGE (measured): a page's own `ml.agent` runs on the page's loop and no policy governs it unless the worker hosts the run, which happens when a debug surface (DevTools or the overlay) is on or the page is not on the self-approval list; the worked example's page-built navigate met the policy only under `debugMode: "devtools"`. A spec row about a policy says which runs it reaches. (2) THE PERSON'S WORD under `crossOrigin: false` (ruling of 2026-10-29, built in #1358) is judged per navigate at the send and travels as a field of the message (`crossOriginWord`), never of the tool args; a `deny` or `ask` still wins in `autoApprove`; the arrival gate still judges the arrival; the `builtin` exclusion in `personAllowsNav` is defence in depth (the red team's negative result in #1389; `by` is already empty for a navigate nothing decides). A navigate card is never the word. (3) POINT CLICKS (#1360): `actElement` hit-tests a `@pt` token with the same closure as `clickAt`, and the precheck's `href` falls back to `element.href`, which closed a hole where a point click skipped `clickLinkRefusal`; a `@box` token resolves no element, the click and type prechecks refusing it before anything runs; a page predating the `element` field reads as unknown and fails closed. (4) OPEN, the security lane's: a CDP click dispatches at the raw coordinate with nothing hidden, so it can land inside our own sidebar or card shadow roots while the judge saw the page element; the synthetic-click scope of the point hit-test is in policies.md, the CDP path is not covered by it (this is gap (8)'s territory). (5) THE STORE LOADS ONCE: a direct `chrome.storage.local.set` of policies after the worker has loaded is not seen; a spec row that seeds a policy goes through the POLICIES message (`op: add|remove`) from an extension page. (6) THE NULL-FACT RULE in the facade: an `allow` that read a null fact never fires, a `deny` or `ask` does, a strict facade refuses a missing-field read as `broken`; for `act`, `element.href` is null when absent and `element.name` is always a string. (7) THE CARD (#1423): a several-rule proposal's descriptor carries `rules: {effect, source, note}[]` beside `text` and `note`, which still hold the whole proposal with the `// Rule i of n: <effect>` and `Rule i of n.` markers the red team's pin reads, so the markers are a contract, not decoration; a single-rule proposal has no `rules` and draws as before.
 
+### Measuring an `act` rule on the page it is for (IDEA, Shane, 2026-11-22; nothing assigned, nothing built)
+
+Shane's case: the agent is on Google's account chooser, and the person asks it to write a policy for this page that
+always lets it pick `person@example.com`, but no other account. The rule is expressible today (`c.host ===
+"accounts.google.com" && c.action === "click" && c.element.name.includes("person@example.com")`). What is missing is
+knowing that it targets anything. A proposal's breadth for an `act` row is measured over the clicks and types the
+worker resolved THIS run (`noteAct`, docs/dev/policies.md), so on the chooser, before the first click, it is measured
+over nothing, and the card cannot say whether the row names the right button. Writing a rule is one thing; checking
+that it resolves on the page is another.
+
+- **Measure over the page.** For an `act` row, the worker also lists the clickable elements of the page the run is on
+  (buttons, links, options, menu items, inputs a click or a type reaches), resolves each one's `{ tag, href, name }`
+  the way `actElement` resolves a click, and evaluates the row over each with that page's `url` and `host`. The card
+  leads with it: "matches 1 of 14 clickable elements on this page: Pat Doe · person@example.com. Does not match: Other
+  account, Use another account, …", capped, each name cut to a fixed length.
+- **The model can check before it proposes.** The same measurement, returned to the model with no card (a `check`
+  flag on `propose_policy`, the small-fixes session's recommendation, rather than a new tool), so a row that matches nothing,
+  or every account, is fixed before the person sees it.
+- **What it does not prove.** It is this page at this moment. A page can add a matching element later, so the row
+  still scopes itself to the host and the path; the click is judged at the click, on the element it lands on, as now.
+  The names are the page's own text: shown as data, never as an instruction, and never an input to the decision.
+- **Which runs.** Runs the worker hosts, the ones `propose_policy` is offered to; a page's own run is out of scope.
+- **What the model keeps beside the policy** (why it exists, what to do next, such as "pause and ask the person if a
+  2FA prompt appears after the account is picked") is a note, not a policy: [`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md),
+  "`/files/notes/` and `/shared/notes/`". A note grants nothing; the policy is what the gate enforces.
+- **Open.** Whether the accessible name of Google's account rows is the display name, the address and a status
+  together (a guess, unchecked); which elements count as clickable when a page uses `div`s with handlers and no role;
+  whether the page measurement replaces the random-site probe for `act` rows or sits beside it.
+
 ## Hiding files: the sandbox's defaults, and `hide` and `show` policies (ruling 34)
 
 Shane's ruling 34 (2026-11-17): the files the host's sandbox holds unreadable are DEFAULTS, and a policy overrides

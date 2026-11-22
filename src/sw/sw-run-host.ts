@@ -13,7 +13,7 @@ import { endPythonTurn, markPythonBridged, pythonRunBridged } from "./sw-python"
 import { workerReadonlyMl, derefWhole } from "./worker-readonly-ml";
 import { pipeStages } from "../pointers/token-pipe";
 import { recordRunLog, runLog } from "./sw-run-log";
-import { forModel, forModelHistory, forPage, forLive, forPerson, forStored, forTurn, redactedNote } from "./sw-scrub";
+import { forModel, forModelHistory, forPage, forLive, forPerson, forStored, forTurn, redactedNote, withAsIs } from "./sw-scrub";
 import { eventsForRun, type RunLogEvent } from "../log/run-log";
 import { execCodeIn, expandPointers } from "../pointers/pointer-macro";
 import { namedReads, type PreRead } from "../pointers/named-reads";
@@ -400,7 +400,7 @@ export function pageStartPayload(payload: unknown, sender: chrome.runtime.Messag
  * A START_RUN or RESUME_RUN's input, scrubbed where it becomes a turn (ruling 39, SECRET_HANDLES.md): the task, and a
  * start's page context and display. A site's turn gets the bare `[REDACTED]`; a page's text folded ahead of the
  * person's (`pagePrefix`) is scrubbed apart from the person's words, so `hostTurn` still finds where the person's begin.
- * An extension page's `scrubInput: false` sends it as it is; a page's does not.
+ * An extension page's `scrubInput: false` sends it as it is, and its `asIs` tokens the values they name; a page's do not.
  * @param message the message as the start path would host it
  * @param site the site's turn, when a page sent it
  * @returns the message and the site's turn to host, and the note the model reads after the task
@@ -409,7 +409,7 @@ export function pageStartPayload(payload: unknown, sender: chrome.runtime.Messag
 async function scrubTurnInput(message: any, site?: SiteTurn): Promise<{ message: any; site?: SiteTurn; note: string }> {
     const payload = message?.payload;
     if (!payload || typeof payload !== "object" || typeof payload.task !== "string") return { message, site, note: "" };
-    const sc = await forTurn({ site: !!site, off: !site && payload.scrubInput === false });
+    const sc = await forTurn({ site: !!site, off: !site && payload.scrubInput === false, ...(!site && Array.isArray(payload.asIs) ? { asIs: payload.asIs } : {}) });
     const prefix = site?.pagePrefix;
     let task: string, pagePrefix = prefix;
     if (prefix && payload.task.startsWith(`${prefix}\n\n`)) {
@@ -418,7 +418,8 @@ async function scrubTurnInput(message: any, site?: SiteTurn): Promise<{ message:
     } else task = sc.text(payload.task);
     const next = { ...payload, task,
         ...(typeof payload.pageContext === "string" ? { pageContext: sc.text(payload.pageContext) } : {}),
-        ...(payload.display && typeof payload.display === "object" ? { display: sc.deep(payload.display) } : {}) };
+        ...(payload.display && typeof payload.display === "object" ? { display: withAsIs(sc.deep(payload.display), sc) } : {}) };
+    delete next.asIs;
     return { message: { ...message, payload: next }, site: site && pagePrefix !== prefix ? { ...site, pagePrefix } : site, note: sc.note() };
 }
 

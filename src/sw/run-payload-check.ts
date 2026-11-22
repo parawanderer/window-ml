@@ -4,7 +4,7 @@ import { LEXICAL_METRICS } from "../contract/contract-config";
 
 /** The bounds a run-control payload is held to. Each is well past what `startPayload` (run-assembly.ts) builds. */
 export const RUN_PAYLOAD_LIMITS = {
-    runId: 128, toolName: 128, tools: 256, capabilities: 16, images: 64, resumeMessages: 20_000, toolNames: 256, depth: 64,
+    runId: 128, toolName: 128, tools: 256, capabilities: 16, images: 64, resumeMessages: 20_000, toolNames: 256, depth: 64, asIs: 64,
 } as const;
 
 /** Keys that would reach an object's prototype if a later copy used assignment rather than definition. */
@@ -93,7 +93,7 @@ const START_FIELDS: Record<string, Check> = {
     // Retired (a same-origin as-you fetch is free, docs/spec/POLICIES.md "One free tier"): still accepted, and dropped, so a
     // run persisted before the upgrade resumes.
     autoApproveSameOriginAuth: optional(bool),
-    autoApproveSelfSource: optional(bool), selfIntrospection: optional(bool), scrubInput: optional(bool), inputScrubbed: optional(bool), toolTokens: optional(bool), unattended: optional(bool), silent: optional(bool),
+    autoApproveSelfSource: optional(bool), selfIntrospection: optional(bool), scrubInput: optional(bool), asIs: optional(listOf(RUN_PAYLOAD_LIMITS.asIs, str)), inputScrubbed: optional(bool), toolTokens: optional(bool), unattended: optional(bool), silent: optional(bool),
     resumeMessages: optional(listOf(RUN_PAYLOAD_LIMITS.resumeMessages, message)), images: optional(listOf(RUN_PAYLOAD_LIMITS.images, str)),
     stepBase: optional(count), seqBase: optional(count), forkOf: optional((v, at) => runIdError(v, at)), labelMatch: optional(oneOf(LEXICAL_METRICS)), surface: optional(oneOf(["overlay", "devtools", "off"])),
     pageOrigin: optional(str), pageUrl: optional(str), pageTitle: optional(str),
@@ -101,8 +101,8 @@ const START_FIELDS: Record<string, Check> = {
 };
 const START_REQUIRED = ["runId", "task", "systemPrompt", "tools"] as const;
 
-const RESUME_FIELDS: Record<string, Check> = { runId: (v, at) => runIdError(v, at), task: str, scrubInput: optional(bool) };
-const INJECT_FIELDS: Record<string, Check> = { runId: (v, at) => runIdError(v, at), text: str, sayId: optional(str), origin: optional(obj), waitForPerson: optional(str), scrubInput: optional(bool) };
+const RESUME_FIELDS: Record<string, Check> = { runId: (v, at) => runIdError(v, at), task: str, scrubInput: optional(bool), asIs: optional(listOf(RUN_PAYLOAD_LIMITS.asIs, str)) };
+const INJECT_FIELDS: Record<string, Check> = { runId: (v, at) => runIdError(v, at), text: str, sayId: optional(str), origin: optional(obj), waitForPerson: optional(str), scrubInput: optional(bool), asIs: optional(listOf(RUN_PAYLOAD_LIMITS.asIs, str)) };
 const CANCEL_FIELDS: Record<string, Check> = { runId: (v, at) => runIdError(v, at) };
 
 const FIELDS: Record<string, [Record<string, Check>, readonly string[]]> = {

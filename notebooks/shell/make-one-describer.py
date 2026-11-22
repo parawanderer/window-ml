@@ -196,6 +196,96 @@ display(h["class"].value_counts().rename("findings").to_frame())
 h[h["class"] == "A"]
 """)
 
+md("""
+## 6. A cold wake in Chrome's service worker (ruling 90)
+
+Ruling 90 asked for this before anything is built: in the real built extension, in a real Chromium, after the worker
+is stopped, how long from the wake to a first described call. Ruling 90's bar is a median of at most 10 ms and a p95
+of at most 50 ms for the chosen shape.
+
+`one-describer/sw-cold.mjs` builds the extension once and makes five copies with a probe prepended to `background.js`:
+`control` (the probe, no wasm), shape (a) at `z` and `s` (`describe.wasm` in the folder, `compileStreaming` started at
+the top of the script, the message handler awaits it), and shape (b) at `z` and `s` (the bytes as a base64 literal,
+`new WebAssembly.Module` and `Instance` run synchronously at the top). Each copy runs in two fresh profiles. Each
+profile has 35 wakes: CDP `ServiceWorker.stopAllWorkers` (DevTools' Stop), wait until the target is gone, then
+`chrome.runtime.sendMessage` from the extension's popup page. Each wake makes one call, alternating `rmdir` (the smallest
+manifest) and `gh` (the largest). The install-time start is kept apart: it is the profile's first compile.
+
+Three figures per wake, in ms:
+- **init**: script start to the module being ready (shape (b): instantiated; shape (a): the promise resolved).
+- **in worker**: script start to the first call's answer. This leaves out parsing the script before its first line,
+  which is what shape (b)'s 330 kB literal adds.
+- **round trip**: the page's send to the answer, the whole cold wake.
+
+Each wasm variant's figure minus the control's median is what the describer adds.
+""")
+
+code("""
+def read_sw_cold():
+    d = json.loads((OUT / "sw-cold.json").read_text())
+    keep = ("variant", "launch", "wake", "initial", "cold", "program", "loadavg1", "goneMs", "error", "describedField", "i", "ii", "iii")
+    rows = [{"kind": "meta", **d["meta"]}]
+    for r in d["records"]:
+        rows.append({"kind": "wake", **{k: r.get(k) for k in keep}, "T": r.get("T"),
+                     "heapUsed": (r.get("heap") or {}).get("usedSize"), "embedderHeapUsed": (r.get("heap") or {}).get("embedderHeapUsedSize"),
+                     "wasmMemoryBytes": (r.get("mem") or {}).get("wasmBytes")})
+    return rows
+
+sw = wmlnb.extract(DATA / "sw-cold.json", read_sw_cold, source={"harness": "notebooks/shell/one-describer/sw-cold.mjs", "out": "notebooks/shell/one-describer/out/sw-cold.json"})
+swmeta = next(r for r in sw if r["kind"] == "meta")
+w = pd.DataFrame([r for r in sw if r["kind"] == "wake"])
+print(swmeta["chrome"], swmeta["platform"], "| load average at start", [round(x, 1) for x in swmeta["loadavgStart"]], "at end", [round(x, 1) for x in swmeta["loadavgEnd"]])
+print("wasm sha256:", {o: v["sha256"][:12] for o, v in swmeta["wasm"].items()}, "| background.js growth, bytes:", {k: v["backgroundGrowth"] for k, v in swmeta["variants"].items()})
+cold = w[~w.initial]
+assert (cold.cold.all() and cold.error.isna().all() and (cold[cold.variant != "control"].describedField == True).all()), "a wake that did not cold-start, errored or did not describe"
+print(f"{len(cold)} stopped wakes, every one a new worker, no errors, every call described")
+""")
+
+code("""
+VARIANTS = ["control", "a-z", "a-s", "b-z", "b-s"]
+p95 = lambda s: s.quantile(0.95)
+ctl = cold[cold.variant == "control"][["ii", "iii"]].median()
+summ = []
+for v in VARIANTS:
+    c = cold[cold.variant == v]
+    row = {"variant": v, "n": len(c)}
+    for col, name in (("i", "init"), ("ii", "in worker"), ("iii", "round trip")):
+        if c[col].notna().any(): row |= {f"{name} med": c[col].median(), f"{name} p95": p95(c[col]), f"{name} max": c[col].max()}
+    if v != "control":
+        for col, name in (("ii", "in worker"), ("iii", "round trip")):
+            d = c[col] - ctl[col]
+            row |= {f"{name} added med": d.median(), f"{name} added p95": p95(d)}
+    summ.append(row)
+summ = pd.DataFrame(summ).set_index("variant").round(1)
+display(summ)
+""")
+
+md("""
+The same by program, by launch and by wake 0 (the first stopped wake in each profile). If one of these split the
+figures, the medians above would hide it.
+""")
+
+code("""
+display(cold.pivot_table(index="variant", columns="program", values="ii", aggfunc="median").reindex(VARIANTS).round(1).add_prefix("in worker med, "))
+display(cold.pivot_table(index="variant", columns="launch", values="iii", aggfunc="median").reindex(VARIANTS).round(1).add_prefix("round trip med, launch "))
+display(cold[cold.wake == 0].groupby("variant")[["i", "ii", "iii"]].median().reindex(VARIANTS).round(1).add_prefix("wake 0 med, "))
+""")
+
+md("""
+The install-time start (not stopped, the profile's first compile, before any code cache) for init only: its message
+arrives about a second after the start, so its other figures mean nothing. Then the worker's heap after the answer
+(`Runtime.getHeapUsage` on the worker target; `performance.memory` is undefined in a service worker).
+""")
+
+code("""
+init = w[w.initial & (w.variant != "control")]
+display(init.groupby("variant")["i"].agg(["count", "min", "median", "max"]).round(1).rename(columns=lambda c: f"install-time init {c}"))
+heap = cold.groupby("variant")[["heapUsed", "embedderHeapUsed", "wasmMemoryBytes"]].median().reindex(VARIANTS)
+heap["heap added, kB"] = ((heap.heapUsed - heap.loc["control", "heapUsed"]) / 1e3).round(0)
+heap["embedder heap added, kB"] = ((heap.embedderHeapUsed - heap.loc["control", "embedderHeapUsed"]) / 1e3).round(0)
+heap.round(0)
+""")
+
 nb = nbf.v4.new_notebook()
 nb.cells = cells
 nb.metadata["kernelspec"] = {"name": "python3", "display_name": "Python 3", "language": "python"}

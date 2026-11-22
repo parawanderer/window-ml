@@ -14,6 +14,8 @@ import { HoverCard } from "../sidebar/hover-card";
 import { fmtAge } from "../sidebar/timestamps";
 import { truncate } from "../sidebar/format";
 import { approvalsPending, STATUS_LABEL } from "./status-words";
+import type { ChatExtras } from "./extras";
+import { ResourcesTab } from "./session-resources";
 
 /** The session whose summary is open, by key, or null. One at a time, drawn by `SessionSummaryDialog`, which reads the
  *  row and the runtime LIVE from the store so the page follows the session while it is open. */
@@ -95,8 +97,7 @@ export type SummaryTab = typeof SUMMARY_TABS[number];
 const TAB_NAME: Record<SummaryTab, string> = { summary: "Summary", resources: "Resources", files: "Files", access: "Access" };
 
 /** What a tab with nothing drawn yet says, in one line: what it would hold, and why it is empty. */
-const EMPTY_TAB: Record<Exclude<SummaryTab, "summary">, string> = {
-    resources: "This session's share of the machine, and its usage over time. Not drawn here yet.",
+const EMPTY_TAB: Record<Exclude<SummaryTab, "summary" | "resources">, string> = {
     files: "This session's files. There is no file store yet.",
     access: "What this session may reach: its policies, the shell host, the page's origin. Not drawn here yet.",
 };
@@ -107,7 +108,7 @@ const EMPTY_TAB: Record<Exclude<SummaryTab, "summary">, string> = {
  * @gallery {"s":{"id":{"runtime":"local","hash":"a1b2c3d4"},"kind":"agent","status":"waiting","title":"Plot the fare prices","model":"qwen3:32b","createdTs":1795100000000,"lastTs":1795103000000,"pendingApprovals":2,"saved":true,"page":{"url":"https://flights.example/search","title":"Flights AMS → LIS"},"startedBy":{"id":"local","kind":"local","name":"This browser"}},"rt":{"id":"local","name":"This browser","kind":"browser","online":true,"contractVersion":1,"capabilities":{},"grants":[]},"title":"Plot the fare prices","now":1795103120000}
  * @group chat
  */
-export function SessionSummaryPage({ s, rt, title, now = Date.now() }: { s: SessionSummary; rt: RuntimeInfo; title: string; now?: number }) {
+export function SessionSummaryPage({ s, rt, title, now = Date.now(), extras, sidebar, bareKeys }: { s: SessionSummary; rt: RuntimeInfo; title: string; now?: number; extras?: ChatExtras; sidebar?: boolean; bareKeys?: boolean }) {
     const [tab, setTab] = useState<SummaryTab>("summary");
     return (
         <div class="sum-page">
@@ -122,6 +123,7 @@ export function SessionSummaryPage({ s, rt, title, now = Date.now() }: { s: Sess
             <div id="sum-panel" role="tabpanel" aria-labelledby={`sum-tab-${tab}`} class="sum-panel">
                 {tab === "summary"
                     ? <dl class="sum-lines">{summaryLines(s, rt, now).map((l) => <div class="sum-line" key={l.key} data-field={l.key}><dt>{l.label}</dt><dd>{l.value}</dd></div>)}</dl>
+                    : tab === "resources" ? <ResourcesTab s={s} rt={rt} extras={extras} sidebar={sidebar} bareKeys={bareKeys} />
                     : <p class="sum-empty">{EMPTY_TAB[tab]}</p>}
             </div>
         </div>
@@ -132,7 +134,7 @@ export function SessionSummaryPage({ s, rt, title, now = Date.now() }: { s: Sess
  *  dismissable overlay the spec asks for: closing it leaves the transcript where it was. A session that leaves the
  *  index while open (deleted, its runtime gone) closes it.
  *  @gallery none draws only while `summaryFor` names a session; the page it frames is `SessionSummaryPage` */
-export function SessionSummaryDialog({ store }: { store: ChatStore }) {
+export function SessionSummaryDialog({ store, extras, sidebar }: { store: ChatStore; extras?: ChatExtras; sidebar?: boolean }) {
     const key = summaryFor.value;
     const s = key ? store.index.value.get(key) : undefined;
     const rt = s ? store.runtimes.value.find((r) => r.id === s.id.runtime) : undefined;
@@ -142,7 +144,7 @@ export function SessionSummaryDialog({ store }: { store: ChatStore }) {
     const close = () => (summaryFor.value = null);
     return (
         <Dialog onClose={close} labelledBy="sum-h" wide>
-            <SessionSummaryPage s={s} rt={rt} title={s.title || s.task || "Session"} />
+            <SessionSummaryPage s={s} rt={rt} title={s.title || s.task || "Session"} extras={extras} sidebar={sidebar} bareKeys={sidebar} />
             <div class="chat-dialog-actions">
                 <button type="button" class="btn" onClick={close}>Close</button>
             </div>
