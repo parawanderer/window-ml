@@ -131,7 +131,7 @@ const workers = new Map<string, PyWorkerEntry>();   // state: plumbing — one P
 const respawned = new Set<string>();   // state: plumbing — principals awaiting a respawn housekeeping record
 // ROOT C (docs/spec/PYTHON_DIALECT.md, "The namespace"): a run's kept namespace and what it holds, from the
 // last cell's scope manifest (`bench.vars`, PERSISTENT_RUNTIME_SPEC.md). The live dict is the worker's; this is
-// the copy the state inspector and `ml.current.env` read. Dropped with the run's session (`PY_DELETE_RUN`), its worker, or the idle reap; a turn's end (`PY_END_TURN`) leaves it.
+// the copy the state inspector reads (no `ml.current` path reaches it). Dropped with the run's session (`PY_DELETE_RUN`), its worker, or the idle reap; a turn's end (`PY_END_TURN`) leaves it.
 const runNsVars = new Map<string, { id: string; vars: { name: string; type: string }[] }>();   // state: python.run-namespace
 // Which workers hold a dict for a run: `run:<id>` for its readonly cells, and the SHARED `full` worker for its full
 // ones. A delete must reach every one of them, and a kill of one (the `full` worker included) is a loss for every run it
