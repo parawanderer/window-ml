@@ -50,6 +50,12 @@ it needs orientation rather than paying for it every turn — arguably better th
 always-append. Python's persist result should append it automatically (the model can't
 `dir()` cheaply mid-turn without another call).
 
+**Decided, and what is built.** Shane, 2026-11-22: the names and types are given on request, never appended to
+every result. Built: the names and types are kept as the scope manifest (state `python.run-namespace`,
+`src/offscreen.ts`), read by the state inspector; no `ml.current` path reaches it. Appending it to each
+`python_exec` result is NOT built, and the decision above means it will not be; the on-request read, a Python
+`ml.names()` ([`ML_WIRE.md`](ML_WIRE.md)), is planned.
+
 ### 2. The approval gate — the tension Voyager/Code-as-Policies never had
 
 Those systems have **no human in the loop**. We do: `exec`/`python_exec` are
@@ -93,8 +99,9 @@ superseded 2026-10-15) and `python_exec`'s `mode` (removed 2026-10-19, #820 c715
 As built, a worker-hosted run's cells always share one namespace, by run id; a page's
 `ml.pythonExec` and a page-hosted agent's `python_exec` stay stateless. A lost namespace
 is told (`namespace reset at <time>: <reason>`), and the names and types are kept as the
-scope manifest (`src/offscreen.ts`, state `python.run-namespace`). The tool's parameters on
-main are `code`, `image`, `cast`, `verify`, `margin`, `tables`, `tableRaw`, the output-cap
+scope manifest (`src/offscreen.ts`, state `python.run-namespace`), read by the state inspector only; the
+manifest is NOT appended to each result (decided 2026-11-22, section 1), and the on-request read is planned.
+The tool's parameters on main are `code`, `image`, `cast`, `verify`, `margin`, `tables`, `tableRaw`, the output-cap
 and retry parameters, and in a worker-hosted run `keep` and `expect_ms`
 (`src/python/python-tool.ts`). How it works: [`docs/dev/python-sandbox.md`](../dev/python-sandbox.md),
 "A run's namespace (root C)".
@@ -103,7 +110,9 @@ and retry parameters, and in a worker-hosted run `keep` and `expect_ms`
 
 1. **JS `state`** — shipped (4e0173d).
 2. **Python per-run namespace** + the scope manifest, built without `env` (above). The manifest
-   is not optional; it's what makes persist match the model's priors.
+   is not optional; it's what makes persist match the model's priors. Built: the namespace, and the manifest
+   as state `python.run-namespace`; not built, and decided against: appending it to every result (the
+   manifest is given on request, section 1).
 3. **Auto-approve pure-`state`/compute mutations** — the friction unlock; extends
    `readonly-exec.ts`'s mediation. Separate, larger.
 

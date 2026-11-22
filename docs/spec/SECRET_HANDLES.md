@@ -956,3 +956,127 @@ inside an image, and a value shorter than 8 characters (6 for a personal detail)
 The three lines replace the form's two-type text in ruling 33 ("The form"), and the form's type choice lists the three
 in this order with "Never read" (`mask`) preselected. The kinds' names in the code (`use`, `mask`, `detail`) are not
 shown to the person.
+
+### A redacted value written back to its own file is restored (rulings 100 and 101)
+
+**The rulings** (Shane, 2026-11-22, in the coordinator's session). 100: a `[REDACTED:<NAME>]` marker in a write to a
+path P expands back to the real value only if P currently holds that value, checked at write time with nothing stored
+between calls. A marker written anywhere else stays literal. No gate and no ask. 101: the `*` mask of the file reader
+(`RangedReader.read`, so Python's `/files` mount and `ml.fs`) becomes a per-secret FAKE VALUE of the same length,
+derived from a keyed hash over the secret's NAME and never over its value, tagged as a placeholder; a write to P that
+contains a fake is spliced like a marker, and a fake written anywhere else stays a fake. The rest of this section is
+the coordinator's calls under the two rulings, each surfaced to Shane. Nothing here is built.
+
+**The defect they rule out.** A model reads a file that holds a secret, edits another line and writes the file back.
+What it read was the marker or the mask, so what it writes destroys the secret in the file. After the rulings the
+round trip leaves the secret's bytes as they were, and the model has still never read them.
+
+**Why this opens nothing.** The restored bytes come out of P and go into P, in one write. The value reaches no path
+that did not hold it, and every read of P is scrubbed after the write as before. What the model gains is the power to
+MOVE a value inside its own file. That is the residual: a file that a program runs or reads can be rewritten so the
+program prints the value changed (reversed, split), which the scrub does not match. A model with an approved write to
+that file could already write a program that reads the file and does the same, so the residual is the scrub's existing
+one ("a value changed before it is shown"), with no new reader.
+
+**An occurrence.** The rule is stated over P's RAW BYTES as they are when the write lands. The form list is the
+reader's (`secretFormsNow`: every registered value's forms and the config's secrets, longest first). P is scanned left
+to right for each form in that order; a match whose bytes are all unclaimed claims them and is an occurrence (form,
+offset, length); a match that touches a claimed byte is not an occurrence. The GitHub token pattern of
+`secret-mask.ts` has no name and is never an occurrence. A form shorter than 8 bytes is never an occurrence.
+
+**The fake (ruling 101).**
+
+- *Shape.* For a form of `L` bytes (UTF-8), the fake is `L` ASCII bytes: the tag `RDCT`, then `L - 4` characters of
+  `[A-Za-z0-9]`. The registry's shortest value is 8 characters (`REGISTRY_MIN_VALUE`), so a fake has at least 4
+  derived characters. The alphabet makes a fake inert inside any quoted context (JSON, a shell word, a `.env` line, a
+  URL).
+- *Derivation.* HMAC-SHA256 under the session's fake key over (the secret's name, the form's index among that name's
+  forms, `L`, a counter starting at 0), the output extended by a block index while more characters are needed, each
+  byte below 248 taken modulo 62 and the rest skipped, so the characters are uniform. The value is not an input: a
+  fake says which occurrences are the same secret and nothing else. A config secret, which has no registry name, uses
+  its marker's slug (`window-ml-api-key`) as the name.
+- *Distinct by construction.* At `L` = 8 the derived part has about 23.8 bits, so the birthday bound is not relied on:
+  the worker derives a session's fakes in the form list's order, and a fake equal to an earlier one, or one that
+  contains or is contained in an earlier one, is derived again with the counter raised. A fake that equals a
+  registered value's form is derived again the same way.
+- *The key.* 32 random bytes per SESSION, derived as HMAC-SHA256 of the session's hash under one master key the worker
+  makes once and keeps in `chrome.storage.local` (`ml_fake_key`). This AMENDS the plan's first call (the key beside
+  ruling 39's scan key in `chrome.storage.session`): that key dies with the browser, and a model that read P before a
+  restart and writes its remembered text after it would then write a dead fake and destroy the secret, the defect this
+  section exists for. The master key never reaches a turn, an export, a backup, the run log, an error's text or
+  anything the model reads; it does not sync. Without it (a new profile, a restore) a session's older fakes are dead:
+  one written to a file stays as written. That is stated to nobody, since nothing can tell a dead fake from text.
+- *What the reader shows.* An occurrence's bytes are replaced by its form's fake; a read that cuts through an
+  occurrence gets the matching slice of the fake, so two reads of one range agree and a file's size and offsets stay
+  true, as under the mask. Every other match (one that touches a claimed byte, a GitHub token, a form under 8 bytes)
+  is `*` at the same length, as today. A case-insensitive form has one fake, whatever case the file holds.
+- *Who knows what.* The worker answers `FILES_SECRET_FORMS` for one session with each form's `find`, `ci`, `fake` and
+  `marker` (the marker text of its name), for the offscreen document only, as today. The model is not told the name on
+  this path, as before: a tool result that carries a fake carries no marker for it, since the fake is not the value.
+
+**The splice.** A MEDIATED write is one whose bytes the extension hands to the holder of P as P's new content: an
+`ml.fs` write member and a Python file's close (the holder is the offscreen document's store), and the host's `put`,
+`write` and `commit` (the holder is the process host). A program's own write is not mediated: what it writes is what
+lands.
+
+- *What is spliced.* In the new content, each fake of the session, and each `[REDACTED:<NAME>]` marker of a registered
+  name, is a SLOT. The k-th slot of a fake, counted from the start of the content, takes the bytes of the k-th
+  occurrence of that fake's form in the current P. The k-th marker of a name takes the bytes of the k-th occurrence of
+  any of that name's forms, by offset. So the file's own spelling (an escaped or encoded form) is restored exactly. A
+  fake keeps the content's length; a marker changes it.
+- *No occurrence.* A slot whose form, or name, has no occurrence in the current P stays literal: P does not hold the
+  value, which is ruling 100's condition. A P that does not exist holds nothing.
+- *More slots than occurrences.* NOT RULED, open with Shane. The coordinator's default, written here so a build is not
+  blocked: a slot past the last occurrence takes the FIRST occurrence's bytes, since the file already holds the value.
+  The other reading (the ledger's holder, flaky-ci) refuses the write.
+- *The offscreen document as holder.* The splice is made at the commit point, over the whole pending part, against the
+  stored file the commit replaces, inside the store's own commit, so no precondition is needed and a slot that spans
+  two written chunks is seen whole. The pending part keeps the slots until then.
+- *The host as holder.* No registered value crosses from the worker to the host; none does today. The worker reads P
+  through the host, finds the occurrences, and sends the content with its slots left in, and beside it `splice: {
+  sha256, parts }`: the SHA-256 of the whole current P, and one part per slot, `{ at, drop, from, take }` ("the `drop`
+  bytes at `at` of the sent content are replaced by the `take` bytes at `from` of the current P"), in raw-byte
+  offsets. The host opens P once, hashes it, refuses with `changed` when the hash differs, and otherwise copies the
+  bytes from that descriptor into the file it writes and replaces P with it. On `changed` the worker reads again and
+  retries once, then answers the refusal. The host declares the capability in `hello` (`splice`); the host PR carries
+  `@host-compat`.
+- *A host that cannot.* When a write to a host P has a slot with an occurrence and the host lacks `splice`, or the
+  current P is over the worker's read cap for a host file, the write is REFUSED with a reason that names the cause
+  ("this file holds a redacted value; update the process host to write it back" or "the file is too large to check").
+  It is never written with the slot literal, which would be the defect. A write with no slot, or whose slots have no
+  occurrence, is unchanged on every host.
+
+**What is recorded.** The run log's record at the crossing stays as it is. A splice adds one record (`secret` /
+`write-restored`) with the path and, per name, the count of slots restored; a refusal adds `secret` / `write-refused`
+with the cause. Neither carries an offset, a length, a fake or a value, and the config's secrets are counted under
+their slug. The tool's result to the model and both exports keep the content as the model wrote it, with the marker or
+the fake.
+
+**Not caught, stated.** A fake or a marker the model changed (cut, re-cased, re-encoded) is text and stays as written.
+A marker of a `mask` entry (ruling 32, hash-only) is restored like any other, since the bytes come from P and no
+stored value is needed. A value that only a shape detector matched (the GitHub token pattern, ruling 39's detectors)
+has no name: it reads as `*`, and writing the `*` back destroys it in the file, as today. Giving such a match a fake
+keyed on its position is not designed.
+
+**Rows, for whoever builds it.** Each is a test that fails first.
+
+1. Round trip in the store: a file with a registered value is read through the mount, one other line is changed, the
+   file is written and closed; the stored bytes hold the value at its old spelling, and a read shows the fake.
+2. The same through `ml.fs`, and with a `[REDACTED:<NAME>]` marker in place of the fake.
+3. A fake, and a marker, written to a file that does not hold the value stay literal, in the store and on the host.
+4. The same fake at every read of one session; a different fake in another session; no fake equal to, inside or around
+   another or a registered form (enumerated over a registry of 200 values at `L` = 8, not sampled).
+5. A read that cuts an occurrence at every offset returns the fake's slice.
+6. Two forms that overlap in P: the first claims, the other's remaining bytes read `*`, and only the claimed one is a
+   slot's source.
+7. The host: P changed between the read and the write answers `changed`, the retry succeeds, a second change refuses;
+   no message from the worker to the host carries a registered value (asserted on the wire).
+8. A host without `splice`, and a P over the read cap, refuse with the reason; the file is unchanged.
+9. Upgrade: a file written under the `*` mask, read by the new reader, shows `*` runs as text and nothing is spliced
+   into them.
+10. Nothing of the master key, a fake's derivation input or a value in the run log, the export, the backup or an
+    error's text.
+
+The red team's properties are the wire assertion of row 7, the "only into P" property (no slot ever takes bytes from a
+file other than the one it is written to, a renamed or symlinked P included, resolved by the holder), and that a
+page-started caller reaches none of it.
