@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { RuntimeInfo, SessionKey } from "../session/session-host";
 import { IconBench, IconBrain, IconCompose, IconDock, IconFold, IconGear, IconLog, IconMenu, IconRows, IconSearch, IconVram } from "../sidebar/icons";
-import { MenuGroup, MenuItem, closeFlyout, flyoutIsOpen } from "./menu";
+import { MenuGroup, MenuItem, MenuSection, closeFlyout, flyoutIsOpen, sectionsByRuntime } from "./menu";
 import { benchOpen, openBench, view } from "../sidebar/store";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
@@ -87,11 +87,11 @@ export function Rail({ store, onStart, gear }: { store: ChatStore; onStart: (kin
  * first that does. Settings is always offered, because the page's own display settings need no runtime.
  *
  * "Panels" and "Theme for this page" are groups: on a wide layout each opens a flyout beside the menu, on a phone it
- * expands in place (`MenuGroup`).
+ * slides over the menu (`MenuGroup`). Panels are listed under the name of the runtime each opens on.
  *
  * @group chat, menus
- * @gallery-flow theme flyout tests/gallery-flows/GearMenu.mjs {"labelled": true, "graphsRt": {"name": "mlbox"}, "benchRt": {"name": "mlbox"}, "logRt": {"name": "mlbox"}, "stateRt": {"name": "this browser"}}
- * @gallery-flow panels flyout tests/gallery-flows/GearMenuPanels.mjs {"labelled": true, "graphsRt": {"name": "mlbox"}, "benchRt": {"name": "mlbox"}, "logRt": {"name": "mlbox"}, "stateRt": {"name": "this browser"}}
+ * @gallery-flow theme flyout tests/gallery-flows/GearMenu.mjs {"labelled": true, "graphsRt": {"id": "mlbox", "name": "mlbox"}, "benchRt": {"id": "browser", "name": "This browser"}, "logRt": {"id": "browser", "name": "This browser"}, "stateRt": {"id": "browser", "name": "This browser"}}
+ * @gallery-flow panels flyout tests/gallery-flows/GearMenuPanels.mjs {"labelled": true, "graphsRt": {"id": "mlbox", "name": "mlbox"}, "benchRt": {"id": "browser", "name": "This browser"}, "logRt": {"id": "browser", "name": "This browser"}, "stateRt": {"id": "browser", "name": "This browser"}}
  */
 export function GearMenu({ graphsRt, benchRt, logRt, stateRt, labelled }: {
     graphsRt?: RuntimeInfo; benchRt?: RuntimeInfo; logRt?: RuntimeInfo; stateRt?: RuntimeInfo; labelled?: boolean;
@@ -124,20 +124,31 @@ export function GearMenu({ graphsRt, benchRt, logRt, stateRt, labelled }: {
                     {/* THE PANELS TOGETHER, under one row. These two are a different kind of thing from the rows
                         around them: not how the page reads or what it is set to, but an extra surface opened ONTO a
                         runtime — so each needs to say which device it would open on, and neither belongs beside
-                        "Calm view". Grouped, the device is said once by the rows themselves and the menu's top level
+                        "Calm view". Grouped, the device is said once, as each section's header, and the menu's top level
                         stays four plain choices. Drawn with the same opening row as the theme choices, because a
                         second disclosure that animated differently is how a menu ends up with two of them. */}
                     {graphsRt || benchRt || logRt || stateRt ? (
                         <MenuGroup icon={<IconDock side="right" />} label="Panels">
-                            {(sub, fly) => <>
-                                {graphsRt ? <MenuItem sub={{ i: 0, open: sub }} icon={fly ? <IconVram /> : null} label="Models and memory" detail={graphsRt.name} on={pane.value === "resource"} onPick={pick(() => setPane(pane.value === "resource" ? null : "resource"))} /> : null}
-                                {benchRt ? <MenuItem sub={{ i: 1, open: sub }} icon={fly ? <IconBench /> : null} label="Python bench" detail={benchRt.name} on={benchOpen.value} onPick={pick(() => (benchOpen.value ? (benchOpen.value = false) : openBench()))} /> : null}
-                                {/* Named for what it is rather than for the run it happens to be showing: it
-                                    follows whatever session is open, so a title naming one would go stale the
-                                    moment someone clicked another. */}
-                                {logRt ? <MenuItem sub={{ i: 2, open: sub }} icon={fly ? <IconLog /> : null} label="Execution log" detail={logRt.name} on={logOpen.value} onPick={pick(() => setLogOpen(!logOpen.value))} /> : null}
-                                {stateRt ? <MenuItem sub={{ i: 3, open: sub }} icon={fly ? <IconRows /> : null} label="Run state" detail={stateRt.name} on={stateOpen.value} onPick={pick(() => setStateOpen(!stateOpen.value))} /> : null}
-                            </>}
+                            {(sub) => {
+                                // One section per device, its name said once as the header: a panel is opened ONTO a
+                                // runtime, and the same name on every row said it four times. The rows keep their
+                                // device for a screen reader through their section's label.
+                                const rows = [
+                                    graphsRt && { rt: graphsRt, label: "Models and memory", icon: <IconVram />, on: pane.value === "resource", run: () => setPane(pane.value === "resource" ? null : "resource") },
+                                    benchRt && { rt: benchRt, label: "Python bench", icon: <IconBench />, on: benchOpen.value, run: () => (benchOpen.value ? (benchOpen.value = false) : openBench()) },
+                                    // Named for what it is rather than for the run it happens to be showing: it
+                                    // follows whatever session is open, so a title naming one would go stale the
+                                    // moment someone clicked another.
+                                    logRt && { rt: logRt, label: "Execution log", icon: <IconLog />, on: logOpen.value, run: () => setLogOpen(!logOpen.value) },
+                                    stateRt && { rt: stateRt, label: "Run state", icon: <IconRows />, on: stateOpen.value, run: () => setStateOpen(!stateOpen.value) },
+                                ].filter((r): r is NonNullable<typeof r> => !!r);
+                                let i = 0;
+                                return sectionsByRuntime(rows).map((sec) => (
+                                    <MenuSection key={sec.rt.id ?? sec.rt.name} name={sec.rt.name}>
+                                        {sec.rows.map((r) => <MenuItem key={r.label} sub={{ i: i++, open: sub }} icon={r.icon} label={r.label} on={r.on} onPick={pick(r.run)} />)}
+                                    </MenuSection>
+                                ));
+                            }}
                         </MenuGroup>
                     ) : null}
                     <ThemeMenu />

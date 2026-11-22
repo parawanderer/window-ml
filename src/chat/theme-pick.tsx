@@ -33,9 +33,8 @@ export function ThemeMenu() {
     const now = choices.find((c) => c.id === chosen)?.label.replace(/^Like the extension.*/, "Extension") ?? "";
     return (
         <MenuGroup icon={<IconTheme />} label="Theme for this page" detail={now}>
-            {(open, fly) => choices.map((c, i) => (
-                // In a flyout a choice has the room for its glyph; expanded in place under the row it has not.
-                <MenuItem key={c.id} sub={{ i, open }} icon={fly ? THEME_ICON[c.id] : null} label={c.label}
+            {(open) => choices.map((c, i) => (
+                                <MenuItem key={c.id} sub={{ i, open }} icon={THEME_ICON[c.id]} label={c.label}
                     radio={{ on: c.id === chosen }} onPick={() => setPageThemeMode(c.id)} />
             ))}
         </MenuGroup>

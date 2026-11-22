@@ -1416,30 +1416,27 @@ html[data-calm]:not([data-theme="light"]), html[data-calm]:not([data-theme="ligh
 .chat-list-foot .chat-gear-wide { flex: 1 1 auto; width: 100%; }
 .chat-list-foot .chat-att-n { margin-left: auto; }
 
-/* The choices under an opening row: the list slides open on a cubic ease (grid rows 0fr→1fr, so closing animates
-   too), hung off a thin guide under the parent's icon so they read as its children. */
-.chat-menu-subs {
-    display: grid; grid-template-rows: 0fr; margin-left: 19px; border-left: 1px solid transparent;
-    transition: grid-template-rows .26s cubic-bezier(.4, 0, .2, 1), border-color .26s cubic-bezier(.4, 0, .2, 1);
-}
-.chat-menu-subs.open { grid-template-rows: 1fr; border-left-color: var(--border); }
-.chat-menu-subs-in { min-height: 0; overflow: hidden; display: flex; flex-direction: column; padding-left: 6px; }
-/* One choice: fades in and slides left to right, each a beat after the one above; closing runs them back at once. */
-/* A CHILD'S TEXT LINES UP WITH ITS PARENT'S LABEL (10px padding + an 18px glyph + the 12px gap = 40px), which the
-   guide line's own 19px + 6px leaves 15px short. It was 30px, putting a child's words further right than anything
-   else in the menu — and once the panel rows gained glyphs, further right again than the theme rows beside them. */
-.chat-menu-item.chat-menu-sub {
-    padding-left: 15px; opacity: 0; transform: translateX(-10px);
-    transition: opacity .16s cubic-bezier(.4, 0, .2, 1), transform .16s cubic-bezier(.4, 0, .2, 1), background-color .1s;
-}
-.chat-menu-subs.open .chat-menu-sub {
-    opacity: 1; transform: none;
-    transition: opacity .22s cubic-bezier(.2, .7, .3, 1) calc(60ms + var(--i, 0) * 35ms),
-        transform .22s cubic-bezier(.2, .7, .3, 1) calc(60ms + var(--i, 0) * 35ms), background-color .1s;
-}
+/* THE SLIDE-OVER (menu.tsx `MenuGroup`, phones): choosing a group row replaces the sheet's contents with the group's
+   rows under a back row, sliding in from the right. The page is a child of the sheet, so while one is open the sheet's
+   other rows are hidden (`:has`) and the sheet is exactly as tall as the page. Going back, the page turns absolute and
+   slides out over the rows that have come back, for as long as `useDismiss` keeps it mounted. */
+@keyframes chat-page-in { from { opacity: 0; transform: translateX(100%); } }
+@keyframes chat-page-out { to { opacity: 0; transform: translateX(100%); } }
+.chat-menu:has(> .chat-menu-page) { position: relative; overflow: hidden; }
+.chat-menu:has(> .chat-menu-page:not(.closing)) > :not(.chat-menu-page) { display: none; }
+.chat-menu-page { display: flex; flex-direction: column; animation: chat-page-in .2s cubic-bezier(.2, .7, .3, 1) both; }
+.chat-menu-page.closing { position: absolute; inset: 6px; animation: chat-page-out .16s cubic-bezier(.4, 0, 1, 1) both; pointer-events: none; }
+/* The back row is a row like any other, set apart from the choices by a hairline. */
+.chat-menu-back { margin-bottom: 4px; border-bottom: 1px solid var(--border); border-radius: 9px 9px 0 0; font-weight: 600; }
+/* The page's rows are the group's `MenuItem`s, which carry the `--i` the flyout's stagger reads; here the page's
+   own slide is the motion, so they sit at normal padding. */
+.chat-menu-page .chat-menu-item.chat-menu-sub { padding-left: 10px; opacity: 1; transform: none; transition: background-color .1s; }
+/* A device's rows under its name (menu.tsx `MenuSection`): the name is a small quiet header, not a row. */
+.chat-menu-section-head { padding: 8px 10px 3px; font-size: .82em; color: var(--fg-faint); cursor: default; user-select: none; }
+.chat-menu-section + .chat-menu-section { margin-top: 4px; border-top: 1px solid var(--border); }
 @media (prefers-reduced-motion: reduce) {
     .chat-menu { animation: none; }
-    .chat-menu-subs, .chat-menu-item.chat-menu-sub, .chat-menu-subs.open .chat-menu-sub { transition: none; }
+    .chat-menu-page, .chat-menu-page.closing { animation: none; }
 }
 
 /* THE FLYOUT (menu.tsx `MenuGroup`, wide layouts): a second `.chat-menu` sheet beside the first, `fixed` and placed by
@@ -1451,14 +1448,13 @@ html[data-calm]:not([data-theme="light"]), html[data-calm]:not([data-theme="ligh
 @keyframes chat-fly-item { from { opacity: 0; transform: translateX(-8px); } }
 .chat-menu.chat-menu-flyout { position: fixed; z-index: 60; min-width: 200px; animation: chat-fly .16s cubic-bezier(.2, .7, .3, 1) both; }
 .chat-menu.chat-menu-flyout.leaving { animation: chat-fly-out .11s ease-in both; }
-/* Its rows are the same ones the in-place group uses, so they arrive the same way (a beat apart) but draw at their
-   normal padding: there is no guide line to hang them off, and their glyphs sit where any menu row's do. */
+/* Its rows are the group's own `MenuItem`s, arriving a beat apart at their normal padding; their glyphs sit where any menu row's do. */
 .chat-menu-flyout .chat-menu-item.chat-menu-sub {
     padding-left: 10px; opacity: 1; transform: none; transition: background-color .1s;
     animation: chat-fly-item .22s cubic-bezier(.2, .7, .3, 1) calc(40ms + var(--i, 0) * 35ms) both;
 }
-/* The parent row stays lit while its flyout is open, and its caret stays a right-pointing chevron (the in-place
-   group's turns down, which would say "expands below"). */
+/* The parent row stays lit while its flyout is open, and its caret stays a right-pointing chevron (a caret that turned
+   down would say "expands below"). */
 .chat-menu-item.fly-open { background: var(--panel-2); }
 .chat-menu-caret.fly, .chat-menu-caret.fly.open { transform: none; }
 @media (prefers-reduced-motion: reduce) {

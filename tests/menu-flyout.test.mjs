@@ -1,6 +1,6 @@
 // menu-flyout.test.mjs — the chat page's menu groups (src/chat/menu.tsx `MenuGroup`): on a wide layout a row with
 // children opens a SECOND sheet beside the first (hover after an intent delay, click, ArrowRight/Enter), one at a time,
-// placed from the row's rectangle and kept inside the viewport; on a phone the same row expands in place. jsdom has no
+// placed from the row's rectangle and kept inside the viewport; on a phone the same row slides over. jsdom has no
 // layout, so the rectangles are stubbed; what is asserted is the rules, not pixels (the gallery's GearMenu flow shows those).
 import { test, before, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -45,8 +45,8 @@ beforeEach(() => {
 });
 afterEach(() => { render(null, root); closeFlyout(); });
 
-const group = (label) => h(MenuGroup, { icon: null, label }, (open, fly) => [0, 1].map((i) =>
-    h(MenuItem, { key: i, sub: { i, open }, icon: fly ? h("i", null) : null, label: `${label}-${i}`, onPick: () => picked.push(`${label}-${i}`) })));
+const group = (label) => h(MenuGroup, { icon: null, label }, (open) => [0, 1].map((i) =>
+    h(MenuItem, { key: i, sub: { i, open }, icon: h("i", null), label: `${label}-${i}`, onPick: () => picked.push(`${label}-${i}`) })));
 const mount = async () => {
     render(h("div", { class: "chat-menu" }, group("Alpha"), group("Beta")), root);
     await flush();
@@ -213,21 +213,95 @@ test("the ARIA roles hold: the row is a menuitem with aria-haspopup, radio rows 
     assert.equal(d.querySelectorAll(".chat-menu-on").length, 1, "the chosen one is ticked");
 });
 
-// --- the phone keeps the in-place expansion ---
+// --- the phone: the group slides over the menu ---
 
-test("on a narrow layout the group expands in place and never draws a flyout", async () => {
+const rowsIn = (el) => [...el.querySelectorAll("button")].map((b) => b.textContent);
+
+test("on a narrow layout choosing a group row slides its rows over the menu under a back row, and never draws a flyout", async () => {
     setNarrow(true);
     await mount();
     const r = row("Alpha");
-    assert.ok(root.querySelector(".chat-menu-subs"), "the in-place container is there");
     assert.equal(r.getAttribute("aria-expanded"), "false");
+    assert.equal(root.querySelector(".chat-menu-page"), null, "nothing is drawn until it is chosen");
     fire(r, "pointerenter"); await sleep(FLYOUT_OPEN_MS + 40);
-    assert.equal(flyouts().length, 0, "hover does nothing");
+    assert.equal(root.querySelector(".chat-menu-page"), null, "hover does nothing");
     fire(r, "click", { detail: 1 }); await flush();
     assert.equal(r.getAttribute("aria-expanded"), "true");
-    assert.ok(root.querySelector(".chat-menu-subs.open"));
+    const page = root.querySelector(".chat-menu-page");
+    assert.equal(page.parentElement, root.querySelector(".chat-menu"), "a child of the sheet, so the sheet's contents are replaced");
+    assert.equal(page.getAttribute("aria-label"), "Alpha");
+    assert.deepEqual(rowsIn(page), ["Alpha", "Alpha-0", "Alpha-1"], "a back row named for the group, then its rows");
+    assert.equal(page.querySelector(".chat-menu-back .chat-menu-ico svg") !== null, true, "the back row has the arrow");
     assert.equal(flyouts().length, 0);
-    assert.equal(root.querySelectorAll(".chat-menu-ico i").length, 0, "children carry no glyph in place");
-    fire(r, "click", { detail: 1 }); await flush();
-    assert.equal(r.getAttribute("aria-expanded"), "false", "a second click collapses it");
+    assert.equal(document.activeElement, page.querySelector(".chat-menu-sub"), "focus goes to the first child");
+});
+
+test("the back row slides it out and returns focus to the group row", async () => {
+    setNarrow(true);
+    await mount();
+    fire(row("Alpha"), "click", { detail: 1 }); await flush();
+    fire(root.querySelector(".chat-menu-back"), "click", { detail: 1 }); await flush();
+    assert.ok(root.querySelector(".chat-menu-page.closing"), "it is on its way out, still mounted for the slide");
+    assert.equal(row("Alpha").getAttribute("aria-expanded"), "false");
+    assert.equal(document.activeElement, row("Alpha"));
+    await sleep(250);
+    assert.equal(root.querySelector(".chat-menu-page"), null);
+});
+
+test("only one page at a time: choosing Beta's replaces Alpha's", async () => {
+    setNarrow(true);
+    await mount();
+    fire(row("Alpha"), "click", { detail: 1 }); await flush();
+    fire(row("Beta"), "click", { detail: 1 }); await sleep(250);
+    assert.deepEqual([...root.querySelectorAll(".chat-menu-page:not(.closing)")].map((p) => p.getAttribute("aria-label")), ["Beta"]);
+});
+
+test("Escape on the phone goes back first and closes the menu on the second press (the gear's rule, on the real GearMenu)", async () => {
+    setNarrow(true);
+    const { GearMenu } = await import("../src/chat/nav.tsx");
+    render(h(GearMenu, { graphsRt: { id: "a", name: "mlbox" }, benchRt: { id: "b", name: "This browser" } }), root);
+    await flush();
+    fire(root.querySelector(".chat-gear-btn"), "click"); await flush();
+    const menu = () => root.querySelector(".chat-gear-menu:not(.leaving)");
+    const panels = [...menu().querySelectorAll(":scope > .chat-menu-item")].find((b) => b.textContent.startsWith("Panels"));
+    fire(panels, "click", { detail: 1 }); await flush();
+    assert.ok(menu().querySelector(".chat-menu-page:not(.closing)"), "Panels is open");
+    assert.deepEqual([...menu().querySelectorAll(".chat-menu-section-head")].map((e) => e.textContent), ["mlbox", "This browser"]);
+    key(document.activeElement, "Escape"); await sleep(250);
+    assert.ok(menu(), "the first Escape leaves the menu open");
+    assert.equal(menu().querySelector(".chat-menu-page"), null, "and goes back");
+    assert.equal(document.activeElement, panels, "to the Panels row");
+    key(document.activeElement, "Escape"); await sleep(250);
+    assert.equal(root.querySelector(".chat-gear-menu"), null, "the second closes the menu");
+});
+
+// --- Panels under their runtimes ---
+
+test("rows group by runtime, one section each, in the order the first row of each appears", async () => {
+    const { sectionsByRuntime } = await import("../src/chat/menu.tsx");
+    const a = { id: "a", name: "mlbox" }, b = { id: "b", name: "This browser" };
+    const rows = [{ rt: a, l: "models" }, { rt: b, l: "bench" }, { rt: { id: "a", name: "mlbox" }, l: "log" }, { rt: b, l: "state" }];
+    const secs = sectionsByRuntime(rows);
+    assert.deepEqual(secs.map((s) => [s.rt.name, s.rows.map((r) => r.l)]), [["mlbox", ["models", "log"]], ["This browser", ["bench", "state"]]],
+        "the same id is the same section even when the objects differ");
+    assert.equal(sectionsByRuntime(rows.filter((r) => r.rt.id === "b")).length, 1, "one runtime: one section, so one header");
+    assert.deepEqual(sectionsByRuntime([{ rt: { name: "x" }, l: 1 }, { rt: { name: "x" }, l: 2 }, { rt: { name: "y" }, l: 3 }]).map((s) => s.rows.length), [2, 1], "no id: told by name");
+    assert.deepEqual(sectionsByRuntime([]), []);
+});
+
+test("a section is a labelled group whose header is not a row: not a menuitem, not a button", async () => {
+    const { MenuSection } = await import("../src/chat/menu.tsx");
+    render(h("div", { class: "chat-menu" },
+        h(MenuSection, { name: "mlbox" }, h(MenuItem, { icon: null, label: "Models and memory", onPick() {} })),
+        h(MenuSection, { name: "This browser" }, h(MenuItem, { icon: null, label: "Run state", onPick() {} }))), root);
+    await flush();
+    const groups = [...root.querySelectorAll('[role="group"]')];
+    assert.deepEqual(groups.map((g) => g.getAttribute("aria-label")), ["mlbox", "This browser"]);
+    for (const g of groups) {
+        const head = g.querySelector(".chat-menu-section-head");
+        assert.equal(head.getAttribute("role"), "presentation");
+        assert.equal(head.closest("button"), null);
+        assert.equal(head.tabIndex, -1, "not focusable");
+        assert.equal(g.querySelectorAll('[role="menuitem"]').length, 1, "only the row is an item");
+    }
 });
