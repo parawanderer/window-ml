@@ -200,7 +200,7 @@ export default {
 ## Examples: Python
 
 **A Python read-only dialect is decided and not yet built** ([`PYTHON_DIALECT.md`](PYTHON_DIALECT.md), 2026-10-15); until
-it exists everything built is JavaScript. (`python_exec`'s `mode: "readonly"` shares only the name: it cuts the
+it exists everything built is JavaScript. (`python_exec`'s former `mode: "readonly"`, removed 2026-10-19, shared only the name: it cut the
 sandbox's network and JS bridges ([`docs/dev/python-sandbox.md`](../dev/python-sandbox.md)), does not bound work, and
 tracks no ownership; the dialect replaces it.) **The Python dialect is this spec's main consumer**: in JS the dialect has
 few native libraries to worry about, while in Python every useful cell is numpy or pandas, so these examples are the

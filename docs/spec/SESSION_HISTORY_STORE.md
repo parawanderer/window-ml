@@ -281,7 +281,7 @@ store, `/history/` beside `/files/`, served by the same ranged reader as §4. It
 places:
 
 1. **Not every run has file tools.** The read-only `exec` dialect, the path that runs with no prompt, has no file API;
-   files exist only in `python_exec` and `ml.sh`, and `full` Python always asks. So `/history/` cannot replace §4's
+   files exist only in `python_exec` and `ml.sh`, and a Python cell outside the dialect always asks. So `/history/` cannot replace §4's
    `dereference` path; it is a second front end over one reader.
 2. **Byte offsets against a whole-string scrub.** A file promises an exact `st_size` and stable offsets. The model must
    see the scrubbed text, and a scrub changes lengths, so the file's size is only known after scrubbing every
