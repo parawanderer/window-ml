@@ -145,7 +145,7 @@ const workers = new Map<string, PyWorkerEntry>();   // state: plumbing — one P
 const respawned = new Set<string>();   // state: plumbing — principals awaiting a respawn housekeeping record
 // ROOT C (docs/spec/PYTHON_DIALECT.md, "The namespace"): a run's kept namespace and what it holds, from the
 // last cell's scope manifest (`bench.vars`, PERSISTENT_RUNTIME_SPEC.md). The live dict is the worker's; this is
-// the copy the state inspector and `ml.current.env` read. Dropped with the run's session (`PY_DELETE_RUN`), its worker, or the idle reap; a turn's end (`PY_END_TURN`) leaves it.
+// the copy the state inspector reads (no `ml.current` path reaches it). Dropped with the run's session (`PY_DELETE_RUN`), its worker, or the idle reap; a turn's end (`PY_END_TURN`) leaves it.
 const runNsVars = new Map<string, { id: string; vars: { name: string; type: string }[] }>();   // state: python.run-namespace
 // THE OUTSIDE MARK (py-mark.ts; PYTHON_DIALECT.md, "What an inside run may leave behind is data, never code"): a worker
 // that was posted a cell outside the dialect, set BEFORE the post, here and never from anything the worker says. Every
