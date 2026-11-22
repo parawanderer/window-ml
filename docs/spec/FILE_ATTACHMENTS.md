@@ -1072,12 +1072,12 @@ argv item unless the host had such a path.
 - B: JSPI-suspending file syscalls, a rebuild (`docs/dev/pyodide-build.md`). DROPPED 2026-11-13 ("What follows"):
   A's Stop and latency held.
 
-A host-backed file is read in chunks and stored through a staged open, write and commit (H1, as amended 2026-11-13; this
-said fetched whole on open and pushed on close), with the listing cached per cell: a change the host makes during a cell
-is seen at the next open. A host that is not connected fails the open with EIO. Every request carries an id, and a reply
-to a request whose wait was interrupted (Stop, a timeout) is discarded by that id. A push never leaves a half-written
-file on the person's disk: the host writes beside the file and renames it into place, so a Stop or a dropped connection
-mid-transfer leaves the old file whole.
+A host-backed file is read by `fetch`, one chunk of at most 512 KiB a call, and written by `store`, then `write` in
+512 KiB chunks, then `commit` (H1, as amended 2026-11-13; this said fetched whole on open and pushed on close), with the
+listing cached per cell: a change the host makes during a cell is seen at the next open. A host that is not connected
+fails the open with EIO. Every request carries an id, and a reply to a request whose wait was interrupted (Stop, a
+timeout) is discarded by that id. A push never leaves a half-written file on the person's disk: the host writes beside
+the file and renames it into place, so a Stop or a dropped connection mid-transfer leaves the old file whole.
 
 **Security** (each mount is a new surface the model reaches: e3's pass, Shane's ruling). The approval is per mount,
 not per call, so a mounted directory is read and written with no card per `open()`. The host enforces the scope
@@ -1178,7 +1178,8 @@ the coordinator's value, Shane may override).
   the cell: without both, a walk of a real workspace costs sixteen times the requests. A host-lane requirement
   ("What window-ml-host must do").
 - The size cap for an open, proposed 256 MB: about 2.5 s to fetch, an eighth of the 2 GiB where one `f.read()` fails.
-  Shane's or the coordinator's value; the measurement only rules out anything at or past 2 GiB. H1 clamps it today.
+  Shane's or the coordinator's value; the measurement only rules out anything at or past 2 GiB. H1's 64 MiB whole-file
+  ceiling binds today.
 - Bytecode on a read-write mount: set `sys.pycache_prefix` to a MEMFS path so an import never writes into the person's
   directory, and so the per-cell diff does not list `.pyc` files. Not measured; `dont_write_bytecode` was, and costs
   nothing on the first import.
@@ -1508,11 +1509,13 @@ configured roots (`configure`), one list, not a second one beside it.
   - `stat {mount, path}` returns H7's facts and the `basis` with no bytes. `fetch`, `store`, `remove` and `rename` carry
     the basis the worker judged on, so a judged call costs two round trips, accepted.
   - `fetch` is chunked by offset and length, 512 KiB a chunk, each chunk carrying the basis. `store` is staged as open,
-    write and commit through the held descriptor, and the commit does the compare and swap (H8) and the rename. The
-    cap is per call, from the worker, and the host clamps it to 64 MiB (provisional). RESOLVED 2026-11-22 (the
-    coordinator; both figures were the coordinator's): 256 MB is the ceiling the worker asks for an open and its before
-    copy; the host's clamp, 64 MiB and provisional, is what binds today. The host raises its clamp only with a
-    measurement.
+    write and commit through the held descriptor, and the commit does the compare and swap (H8) and the rename. The cap
+    is per call, from the worker, and the host clamps it to 64 MiB (provisional). RESOLVED 2026-11-22 (the coordinator;
+    both figures were the coordinator's; files-host's reading of the host): 64 MiB is the most bytes a whole mounted
+    file may have, for `fetch` and for `store` (the host's default and ceiling, `hello.put.max`), provisional; a larger
+    file answers EFBIG (H5) before a byte moves. It is not a per-chunk clamp. 256 MB is the ceiling the worker will ask
+    for an open and its before copy, not built: no caller passes a cap yet. So 64 MiB binds today, and the host raises
+    it only with a measurement.
   - `mount` takes an optional `uploads` path, relative to the mount, which must exist with `attached/` inside it.
   - Path rule, on every platform: a mount-relative path refuses `\`, a leading drive letter (`C:`) and a leading `//`.
     Named cost: a unix file whose name contains a backslash cannot be reached through a mount.
