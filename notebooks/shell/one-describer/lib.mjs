@@ -72,3 +72,38 @@ export function diffFields(a, b) {
     return out.sort();
 }
 export const WASM = (o) => path.join(DIR, "build", `describe-${o}.wasm`);
+
+/** The spike's mutation generator, seeded: mutate(argv, program), VERS(version), FLV, and the random helpers R, ri, pick. fuzz.mjs and fuzz-resolved.mjs both draw from it, so one seed makes the same calls in both. */
+export function makeFuzzer(SEED) {
+    function rng(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+    const R = rng(SEED);
+    const ri = (n) => Math.floor(R() * n), pick = (a) => a[ri(a.length)];
+    const flagsOf = (cmd, out = []) => { out.push(...Object.keys(cmd.flags ?? {}), ...Object.keys(cmd.primaries ?? {})); for (const s of Object.values(cmd.subcommands ?? {})) flagsOf(s, out); out.push(...Object.keys(cmd.subcommands ?? {})); return out; };
+    const FLAGS = Object.fromEntries(PROGRAMS.map((p) => [p, [...new Set(flagsOf(manifests[p].command)), "-x", "--wml-x"]]));
+    const WEIRD = ["", "--", "-", "=", "-=", "--=", "\\\n", "a\\\nb", "\r\n", "x\r\ny", "\n", "\t", " ", "é", "日本語", "🙂", "\u0000", "‮", "-é", "--é", "-\\\n", "p;w /etc/passwd", "s/a/b/w x", "{print}", "BEGIN{system(\"x\")}", "x=1", "a=b", "$(x)", "*", "~", "../x", "/", "-n", "-i", "-e", "-f", "--help", "-V", "'", "\"", "\\", "\\\\", "\\n", "a\\", "}", "{", "/", "s", "y/a/b/", "r f", "e", "w", "W f", "-1", "-0", "--version", "-- --", "-\r\n", "\\\r\n"];
+    const mutate = (argv, p) => {
+        let a = [...argv]; const k = 1 + ri(3);
+        for (let i = 0; i < k; i++) {
+            const t = ri(14); if (a.some((x) => typeof x !== 'string')) throw new Error('pre t='+t+' '+JSON.stringify(a));
+            if (t === 0 && a.length > 1) { const x = 1 + ri(a.length - 1), y = 1 + ri(a.length - 1); [a[x], a[y]] = [a[y], a[x]]; }
+            else if (t === 1 && a.length > 1) { const x = 1 + ri(a.length - 1); a.splice(x, 0, a[x]); }
+            else if (t === 2 && a.length > 1) a.splice(1 + ri(a.length - 1), 1);
+            else if (t === 3) a.splice(1 + ri(a.length), 0, pick(FLAGS[p] ?? ["-x"]));
+            else if (t === 4) a.splice(1 + ri(a.length), 0, "--");
+            else if (t === 5) a.splice(1 + ri(a.length), 0, "-");
+            else if (t === 6 && a.length > 1) { const x = 1 + ri(a.length - 1); a[x] = a[x] + "="; }
+            else if (t === 7 && a.length > 1) { const x = 1 + ri(a.length - 1); const s = a[x]; const c = ri(s.length + 1); a[x] = s.slice(0, c) + pick(["\\\n", "\r\n", "\n", "\\\r\n"]) + s.slice(c); }
+            else if (t === 8) a.splice(1 + ri(a.length), 0, pick(WEIRD));
+            else if (t === 9 && a.length > 1) a[1 + ri(a.length - 1)] = pick(WEIRD);
+            else if (t === 10 && a.length > 1) { const x = 1 + ri(a.length - 1); a[x] = a[x].repeat(1 + ri(50)) + "x".repeat(ri(5000)); }
+            else if (t === 11 && a.length > 1) { const x = 1 + ri(a.length - 1); const f = pick(FLAGS[p] ?? ["-x"]); a[x] = f + (R() < .5 ? "=" + a[x] : ""); }
+            else if (t === 12 && a.length > 1) { const x = 1 + ri(a.length - 1); const s = [...a[x]]; if (s.length) { s.splice(ri(s.length), 1); a[x] = s.join(""); } }
+            else if (t === 13 && a.length > 1) { const x = 1 + ri(a.length - 1); a[x] = a[x] + pick(["é", "日", "🙂", "́", "\\", "\n"]); }
+        }
+        if (a.length > 40) a.length = 40; return a;
+    };
+    const VERS = (v) => R() < .85 ? v : pick([undefined, "", "0.0.1", "99.0.0", "garbage", "1.7.1", "2.55.0", "14.1.1"]);
+    const FLV = ["gnu", "bsd", "other", undefined, undefined];
+
+    return { R, ri, pick, mutate, VERS, FLV };
+}

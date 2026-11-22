@@ -5,7 +5,8 @@
 
 The cells are written here; edit this file, not the notebook. Their numbers come from data/one-describer/, pinned from
 the harness's raw output in one-describer/out/ (gitignored). To measure again: `WML_HOST=<window-ml-host checkout> sh
-notebooks/shell/one-describer/build.sh`, then the scripts named in the first cell, then NB_REFRESH=1.
+notebooks/shell/one-describer/build.sh`, then the scripts named in the first cell, then NB_REFRESH=1. Section 7 (the run
+with resolution) is built from the host's own `tools/build-describer.sh` and `one-describer/fuzz-resolved.mjs`.
 """
 
 from pathlib import Path
@@ -284,6 +285,164 @@ heap = cold.groupby("variant")[["heapUsed", "embedderHeapUsed", "wasmMemoryBytes
 heap["heap added, kB"] = ((heap.heapUsed - heap.loc["control", "heapUsed"]) / 1e3).round(0)
 heap["embedder heap added, kB"] = ((heap.embedderHeapUsed - heap.loc["control", "embedderHeapUsed"]) / 1e3).round(0)
 heap.round(0)
+""")
+
+md("""
+## 7. The differential run with resolution
+
+`docs/plan/repl/ONE_DESCRIBER_BUILD.md`, section 5, last paragraph: before `describeCall` is deleted, the fuzz runs once
+more, with path resolution, against the describer the host now ships. The host returns the description BEFORE
+resolution (`pre`); the extension resolves it with `resolvePre`. `describeCall` is `resolvePre(describePre(...))`, so the
+two sides are:
+
+- **TS**: `describeCall(argv, manifest, {version, flavour, envSet, resolve})`, the resolved effects, and `describePre`'s `pre`.
+- **wasm**: the host's `describe.wasm` (built by the host's `tools/build-describer.sh`, which first replays every shared
+  vector through it) gives `described` and `pre`; `resolvePre(pre, resolve)` gives the resolved effects.
+
+The bar is 0 disagreements on `described`, on `pre` (the quantity that carries the information: equal `pre` and one
+resolver give equal effects) and on the resolved effects. `why` is compared too, reported apart. `one-describer/fuzz-resolved.mjs` runs every vector row unmutated, then, per seed, 2,000 mutations per program from the
+same generator and seeds as section 2 (`makeFuzzer` in `lib.mjs`, which `fuzz.mjs` now draws from too: its output is
+unchanged by the move). A call with a lone surrogate in argv, `envSet` or the flavour is not described on the worker side
+(plan section 4: the call asks), so it is counted as an ask and is neither an agreement nor a disagreement.
+
+**The fake resolver** is one function both sides call, deterministic per argv index `i` (the placeholder's `arg`):
+
+| placeholder | resolves to |
+| --- | --- |
+| `cwd`, `repo` | `/w`, the workspace root: in root, `isRoot` |
+| `i mod 7` is 0 or 1 | the rule of `scripts/gen-resolved-calls.mjs` on the argument as given: normalised against `/w`, in root iff under it, secret iff the basename starts `.env` or `id_`, not existing iff it starts `new` |
+| 2 | outside the roots: `/o/<i>/<basename>` |
+| 3 | a secret: `/w/.env`, `secret: true` |
+| 4 or 5 | the same path, `/w/shared`: two indices on one path |
+| 6 | does not exist: `/w/new<i>`, `exists: false` |
+
+The columns below say how often each case was actually reached by a described call, so a clean result cannot be a
+resolver that never fired.
+
+Two wasm files are run: the one built locally on macOS (the commits below), and the `describer` artifact of the host's CI
+(GitHub Actions run 45058213783, Ubuntu 24.04), which is the build a release ships. Two more runs are controls.
+""")
+
+code("""
+RUNS = ["macos", "ubuntu", "control-resolver", "control-pre"]
+
+def read_resolved():
+    rows = []
+    for label in RUNS:
+        d = OUT / "resolved" / label
+        rows.append({"kind": "meta", **json.loads((d / "meta.json").read_text())})
+        rows.append({"kind": "vectors", "label": label, **{k: v for k, v in json.loads((d / "vectors.json").read_text()).items() if k != "label"}})
+        for p in sorted(d.glob("seed-*.json")):
+            rows.append({"kind": "seed", "run": label, **json.loads(p.read_text())})
+    for r in rows:
+        if r["kind"] == "vectors": r["run"] = r.pop("label")
+        for g in r.get("groups", []): g["examples"] = g["examples"][:3] if not r["run"].startswith("control") else []
+    return rows
+
+rr = wmlnb.extract(DATA / "resolved.json", read_resolved, source={"harness": "notebooks/shell/one-describer/fuzz-resolved.mjs", "out": "notebooks/shell/one-describer/out/resolved/<label>/*.json"})
+metas = {r["label"]: r for r in rr if r["kind"] == "meta"}
+runs_of = lambda label: [r for r in rr if r["kind"] in ("vectors", "seed") and r["run"] == label]
+mac, ubu = metas["macos"], metas["ubuntu"]
+assert mac["hostCommit"] == mac["describeJson"]["commit"], "the macOS wasm was built from another commit than the checkout the harness read"
+sides = {"window-ml (TS) HEAD at the run": mac["windowMlCommit"] + " (the TS describer is unchanged since e6f4c5fb, the HEAD this branch was cut from)",
+         "window-ml-host, macOS build": mac["describeJson"]["commit"], "window-ml-host, Ubuntu build (CI merge ref)": ubu["describeJson"]["commit"],
+         "vectorPin (both)": mac["describeJson"]["vectorPin"][:16], "rustc, macOS build": mac["rustc"], "node": mac["node"],
+         "per program / seeds": f"{mac['perProgram']} / {mac['seeds']}"}
+assert mac["describeJson"]["vectorPin"] == ubu["describeJson"]["vectorPin"]
+display(pd.Series(sides, name="the two sides").to_frame())
+pd.DataFrame({m["label"]: {"sha256": m["wasmSha256"], "bytes": m["wasmBytes"], "built on": m["buildOs"], "CI run": m["runId"]} for m in (mac, ubu)})
+""")
+
+code("""
+cols = ["calls", "asks", "compared", "described", "notDescribed", "withTargets", "twoArgsOnePath", "callsOutsideRoots", "callsWithSecret", "disagreements", "barDisagreements", "seconds"]
+names = ["calls", "asks, lone surrogate", "compared", "described", "not described", "described with a path", "two args on one path", "a path outside the roots", "a secret", "disagreements (all fields)", "disagreements on described, pre or effects", "seconds"]
+def table(label):
+    runs = runs_of(label)
+    t = pd.DataFrame([{k: r[k] for k in cols} for r in runs], index=["vectors" if r["kind"] == "vectors" else f"seed {r['seed']}" for r in runs])
+    t.columns = names
+    tot = t.sum(numeric_only=True); tot["seconds"] = round(tot["seconds"], 1)
+    return pd.concat([t, tot.rename("total").to_frame().T])
+t_mac, t_ubu = table("macos"), table("ubuntu")
+display(t_mac.round(1))
+print(f"wall time of the whole macOS run (build excluded): {mac['totalSeconds']:.1f} s; Ubuntu wasm: {ubu['totalSeconds']:.1f} s")
+runs7 = runs_of("macos")
+print("resolver cases reached by described calls (resource count), macOS run:", {k: sum(r["resolverUse"].get(k, 0) for r in runs7) for k in ("cwd", "repo", "rule", "outside", "secret", "shared", "missing")})
+""")
+
+code("""
+# Every disagreement, by field and by cause. `described`, `pre` and `effects` (and an error or trap on either side) are the bar;
+# `why` is reported apart.
+causes7 = pd.DataFrame([{"run": "vectors" if r["kind"] == "vectors" else f"seed {r['seed']}", "cause": g["cause"], "in the bar": g["bar"], "count": g["count"]} for r in runs7 for g in r["groups"]])
+by_field = pd.DataFrame([{"run": "vectors" if r["kind"] == "vectors" else f"seed {r['seed']}", **r["byField"]} for r in runs7]).set_index("run").fillna(0).astype(int)
+display(by_field)
+display(causes7.pivot_table(index=["in the bar", "cause"], columns="run", values="count", fill_value=0, aggfunc="sum") if len(causes7) else "no disagreements of any field")
+bar_total = sum(r["barDisagreements"] for r in runs7)
+n_desc = sum(r["described"] for r in runs7)
+why_on_described = sum(r["whyOnDescribedCalls"] for r in runs7)
+print(f"verdict: {bar_total} disagreements on described, pre or effects over {sum(r['compared'] for r in runs7):,} compared calls "
+      f"({n_desc:,} described); `why` differs on {sum(r['byField'].get('why', 0) for r in runs7)}, of which on a described call: {why_on_described}")
+assert bar_total == 0 and all(r["byField"].get(k, 0) == 0 for r in runs7 for k in ("described", "pre", "effects")), "a disagreement on described, pre or effects: the plan stops describeCall's deletion until it is understood"
+print(f"What 0 bounds: with 0 disagreements in n = {n_desc:,} described calls, the 95% upper bound on the per-described-call disagreement rate is about 3/n = {3 / n_desc:.1e} (the rule of three), under this generator's distribution of mutations of the vectors, not over calls in general.")
+""")
+
+md("""
+The `why` differences are section 2's text causes again, on calls both sides refuse to describe: TS splits an astral
+character when it quotes one letter of a flag cluster (the wasm quotes the whole character), and Rust's `{:?}` writes
+`\\\\u{301}` and `\\\\0` where JSON writes the mark and `\\\\u0000`. One example each (seed 1), `why` as each side wrote it.
+""")
+
+code("""
+s1 = next(r for r in runs7 if r.get("seed") == 1)
+pd.DataFrame([{"cause": g["cause"], "program": g["examples"][0]["program"], "argv": shown(g["examples"][0]["argv"]),
+               "ts why": shown(g["examples"][0]["repro"]["ts"]["why"]), "wasm why": shown(g["examples"][0]["repro"]["wasm"]["why"])}
+              for g in s1["groups"] if g["examples"]])
+""")
+
+md("""
+**The Ubuntu build.** The same fuzz against the wasm the host's CI built (the release ships that one, not the macOS build).
+The files differ in size (the toolchain and its linker differ across OS), the describer's answers must not: the per-run
+counts below are asserted equal to the macOS run's, field by field.
+""")
+
+code("""
+fields = ["calls", "asks", "compared", "described", "notDescribed", "withTargets", "twoArgsOnePath", "callsOutsideRoots", "callsWithSecret", "disagreements", "barDisagreements", "whyOnDescribedCalls", "byField", "resolverUse"]
+for a, b in zip(runs_of("macos"), runs_of("ubuntu")):
+    assert [a[k] for k in fields] == [b[k] for k in fields], (a.get("seed"), "the Ubuntu build's counts differ from the macOS build's")
+print(f"{len(runs_of('ubuntu'))} runs: every count, and every disagreement by field, equals the macOS build's")
+display(t_ubu.round(1))
+print(f"wasm bytes: macOS {mac['wasmBytes']:,}, Ubuntu {ubu['wasmBytes']:,} (differ by {ubu['wasmBytes'] - mac['wasmBytes']:+d}); sha256 {mac['wasmSha256'][:12]} vs {ubu['wasmSha256'][:12]}")
+""")
+
+md("""
+**Can this harness see a difference at all?** Two controls, each a run that has to disagree, neither of them the result:
+
+- `control-resolver` (`CONTROL=resolver`): the wasm side's resolver reports every resource as in root and not secret, so the
+  sides no longer share a resolver. `pre` is untouched; only the effects can differ.
+- `control-pre` (`CONTROL=pre`): each described wasm reply's `pre` is perturbed before it is compared and resolved. If any
+  term has a target, the last target of the last such term is dropped; else, if a term is `read` or `write`, the first
+  such term's op is swapped. Calls with neither are left alone (runs-code, network terms without paths).
+""")
+
+code("""
+ctl = []
+for label in ("control-resolver", "control-pre"):
+    for r in runs_of(label):
+        ctl.append({"control": label, "run": "vectors" if r["kind"] == "vectors" else f"seed {r['seed']}", "described": r["described"], "disagreements on pre": r["byField"].get("pre", 0),
+                    "disagreements on effects": r["byField"].get("effects", 0), "disagreements on described": r["byField"].get("described", 0), "on a bar field (calls)": r["barDisagreements"]})
+ctl = pd.DataFrame(ctl).set_index(["control", "run"])
+display(ctl)
+cr, cp = ctl.loc["control-resolver"], ctl.loc["control-pre"]
+assert (cr["disagreements on effects"] > 0).all() and (cr["disagreements on pre"] == 0).all()
+assert (cp["disagreements on pre"] > 0).all() and (cp["disagreements on effects"] > 0).all()
+""")
+
+md("""
+To measure again: in a `window-ml-host` checkout at the commit under test, `tools/build-describer.sh <out-dir>` (the host's
+own script, replaying the vectors first; this section's run uses it, not the spike's `build.sh` and `wrapper/`), then from
+`notebooks/shell/one-describer/` `node --import tsx fuzz-resolved.mjs <out-dir>/describe.wasm <host checkout> 2000 1,2,3,7 <label>`
+(`BUILD_OS`, `RUN_ID` and `CONTROL=resolver|pre` are environment variables; output goes to `out/resolved/<label>/`), then
+`NB_REFRESH=1 node scripts/nb.mjs run notebooks/shell/one-describer.ipynb`. The run's labels here are `macos`, `ubuntu`,
+`control-resolver` and `control-pre`.
 """)
 
 nb = nbf.v4.new_notebook()
