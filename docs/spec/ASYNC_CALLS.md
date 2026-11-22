@@ -269,8 +269,9 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
      no tab has no sidebar to show anything in. Recommended shape, refined with the chat-page lane when built: the
      session's card in the chat page's session list carries a state mark with the count (`background: 2 running`,
      `1 result waiting`), distinct from the running and idle marks; opening the session shows a banner saying it has
-     no tab, what is running or waiting, and that a result is read at the next turn once the session is brought to a
-     tab, with the bring-here action beside it (`MOVE_RUN.md`). The sidebar shows the same mark only on a session it
+     no tab, what is running or waiting, and that a result is read at the run's next turn. Until the detached host
+     (`TABLESS_RUN.md`) is built, that turn needs the session brought to a tab; after it, the turn runs with no page.
+     The bring-here action stays beside the banner in both (`MOVE_RUN.md`). The sidebar shows the same mark only on a session it
      lists while some other tab is open. The HUD mark above covers a run that has a tab. The state is read from the
      durable task table, never a second copy, and clears when the task ends and its result is read. OPEN, a pointer
      only: whether a parked result reaches someone with the app closed (`NOTIFICATIONS.md`). Owners when built: the
