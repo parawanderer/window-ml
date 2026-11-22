@@ -1996,6 +1996,34 @@ JavaScript gets Node's `fs`, as `ml.fs`.
   write, a `mkdir` or a rename at the root fails with EROFS in Python and an `EROFS` error from `ml.fs`.
 - Provenance follows from the folder: a file under `attached/` is the person's, one under `agent/` was made by a run.
 
+### `/files/notes/`: the agent's notes (IDEA, Shane, 2026-11-22; nothing assigned, nothing built)
+
+A folder of plain text files the model keeps for its own use, the way a coding agent keeps `CLAUDE.md` or a memory
+folder: what the person told it, what it learned about a site, what to do next time. It is files on the same disk as
+everything else in `/files`, not an API: the person reviews and edits them in the files panel, and the model reads,
+writes and runs analysis scripts over them with the file tools it already has.
+
+- **The folder.** `/files/notes/`, created empty beside `attached/` and `agent/` (an exception to "nothing new at the
+  root", made by the system, not by a run). Text files only (`.md`, `.txt`); a write of anything else is refused.
+- **It outlives the session.** Unlike `agent/`, the notes are not a session's own: one folder per runtime, mounted
+  into every session's `/files`. Which scope (the runtime, the person across runtimes, a workspace) is open.
+- **One standard format.** One note per file, opening with a frontmatter `description:` line that says what it is for
+  (and optionally `site:` naming the host it is about). The index the model reads at the start of a run is GENERATED
+  from those lines, never a hand-kept file, so it cannot drift; a body is read on demand. The index is in the prompt
+  budget ([`PROMPT_BUDGET.md`](PROMPT_BUDGET.md)), and the run log and both exports carry the index the model saw.
+- **It grants nothing.** A note steers what the model tries; whether a call needs the person stays the policies' and
+  the gate's decision ([`AGENT_FILES.md`](AGENT_FILES.md), "Trust"). The gate reads only facts the host resolved
+  about the call, never the context, so no file the model read can be mistaken for permission, as it can by a
+  classifier that judges a call from the conversation: the permission is the policy. The worst a wrong or planted
+  note does is cost time: the model acts on it within what the policies already allow, or the person is asked.
+- **Worked example.** On Google's account chooser the person says the agent may always pick `shane@wander.dev` and
+  should stop and ask if a 2FA prompt follows. The first half is a policy, proposed and checked on the page
+  ([`POLICIES.md`](POLICIES.md), "Measuring an `act` rule on the page it is for"); the note
+  `notes/google-login.md` records why the policy exists and the 2FA instruction, which no policy can say.
+- **Open.** The scope above; whether backup and the archive folder carry the notes with the sessions or on their own;
+  where the folder lives on disk once a host backs `/files` (ruling 91); whether a note the model wrote is marked
+  apart from one the person wrote, or provenance stays the files panel's history.
+
 ### `ml.fs` (rulings 22 and 23)
 
 `ml.fs` is Node's `fs.promises` surface, the subset that keeps the principle, over the one ranged reader the

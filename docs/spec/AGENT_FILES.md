@@ -73,7 +73,9 @@ An instruction file is text written by whoever wrote the repository, and window.
 
 - **Writing.** Writing into another tool's memory folder changes that tool's state and lies outside every root; it is
   a separate decision, made once reading has been used.
-- **window.ml's own memory format.** If window.ml grows one, it is one more convention described the same way.
+- **window.ml's own memory format.** Proposed as plain files, `/files/notes/`
+  ([`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md), "`/files/notes/`: the agent's notes", 2026-11-22): one more convention
+  described the same way, read from the session's own disk rather than through the process host.
 
 ## Open
 
