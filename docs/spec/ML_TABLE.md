@@ -292,9 +292,11 @@ Today a stored table's `col`, `select`, `records` and a long `head` each re-pars
 - **Bounds.**
   - The source: at most `FETCH_TABLE_MAX` (64 MB) of bytes, inside `valueStoreBudgetMB` on disk.
   - The decode cache: at most 256 MiB of Arrow buffers (`TABLE_DECODE_CACHE_BYTES`), least recently read first out. A
-    decode larger than the cache serves its one read and is not kept. **Provisional:** chosen, not measured. Slice A's
-    PR measures the decode of the 64 MB CSV in the worker (Arrow buffer bytes and peak heap), commits the figure, and
-    sets the constant from it.
+    decode larger than the cache serves its one read and is not kept. **Measured** in slice A
+    ([`decode-cache.ipynb`](../../notebooks/tables/decode-cache.ipynb), in Node's V8, not the service worker): a 64 MB
+    CSV decodes to 58 to 90 MB, so the cache holds two to four of the largest. The parse peaks at least 0.6 to 1.2 GB
+    over the RSS before it, a lower bound because that RSS (285 to 903 MB) holds the generator's garbage; every stored
+    read paid it before slice A. The peak in the real service worker is a separate measurement, not slice A's.
   - `table-data.ts`'s `MAX_TABLE_ROWS` (200,000) caps the preview a fetch keeps, not the stored table, which has no
     row cap of its own. `dom.ts` has its own `MAX_TABLE_ROWS` (5,000), for a page table, which is never stored.
   - A view's rows in hand are never more than its source's rows in hand. A whole read (`col`, `records`) answers at

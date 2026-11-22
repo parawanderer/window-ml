@@ -83,6 +83,7 @@ import { approvalKey } from "./approval-key";
 import { raiseAsk } from "./sw/sw-asks";
 import { probeShell, refreshShell, shellStatusRead } from "./sw/sw-shell";
 import { toPageUi, notePage, forgetTab, syncAllPanels, servePanelPort, startGesture, tabHidden, cuePanel, panelOpen, HL_POSITIONS } from "./sw/sw-side-panel";
+import { checkReadPlan } from "./table/table-plan";
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -988,6 +989,9 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         (async () => {
             const runId = String(message.runId || ""), key = String(message.key || "");
             const names = Array.isArray(message.names) ? (message.names as unknown[]).map(String) : [];
+            // The view's plan arrives as data: a field outside its closed shape, or a limit that is not a count, is refused.
+            const plan = checkReadPlan(message as Record<string, unknown>);
+            if ("refused" in plan) { sendResponse({ error: `Refused: ${plan.refused}.` }); return; }
             const tabId = sender.tab?.id;
             // A stored table's columns go only to a page whose site may use window.ml now: the run's page after a revoke
             // (or anything else on an unapproved site) is refused, though the call that named it was sent before.
@@ -1010,7 +1014,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
                 sendResponse({ error: "That stored table was not named by the running script." }); return;
             }
             try {
-                const r = await readStoredColumns(key, names, { ...(typeof message.delimiter === "string" ? { delimiter: message.delimiter } : {}), ...(message.headerless ? { headerless: true } : {}) });
+                const r = await readStoredColumns(key, names, { ...(typeof message.delimiter === "string" ? { delimiter: message.delimiter } : {}), ...(message.headerless ? { headerless: true } : {}) }, plan);
                 sendResponse(r);
             } catch (e) { sendResponse({ error: (e as Error)?.message || String(e) }); }
         })();

@@ -26,11 +26,11 @@ export function isTable(x: unknown): boolean {
     return typeof x === "object" && x !== null && facades.has(x as object);
 }
 
-// A STORED table: a facade over a preview whose whole table is in the value store, so its `col`/`select`/`records` read
+// A STORED table: a facade over a preview whose whole table is in the value store, so its `col`/`records` read
 // every row (a request) rather than the rows in hand. The dialect sizes that work by the table's `shape`, not by
 // `rows.length`, which is how it tells the two apart; granted only by `asTable`, like the brand above. The map holds
-// the facade's store reader, so a copy of it (`copyTable`) can read the whole table too: the reader is never a
-// property a caller could reach or swap.
+// the facade's store reader, which its views (`select`, a long `head`) are made with: the reader is never a property a
+// caller could reach or swap. A copy does not keep it (`brandCut` below).
 const stored = new WeakMap<object, unknown>();
 
 /** Mark a table facade as stored, with the reader its whole-table reads go through. Called only by `asTable`. */
@@ -44,7 +44,7 @@ export function isStoredTable(x: unknown): boolean {
     return typeof x === "object" && x !== null && stored.has(x as object);
 }
 
-/** The store reader behind a stored facade; undefined for anything else. For `copyTable` only. */
+/** The store reader behind a stored facade; undefined for anything else. For `freezeTable` and `ml.table` only. */
 export function storedReader(x: unknown): unknown {
     return typeof x === "object" && x !== null ? stored.get(x as object) : undefined;
 }
@@ -81,4 +81,20 @@ export function brandEditable<T extends object>(t: T): T {
 /** Is this a table whose arrays are the caller's alone? */
 export function isEditableTable(x: unknown): boolean {
     return typeof x === "object" && x !== null && editable.has(x as object);
+}
+
+// A CUT copy: `t.copy()` of a stored table, and what its own `select`/`head` return (docs/spec/ML_TABLE.md, "Views of a
+// stored table in JS"). It holds the rows in hand and no reader, so a whole read past them (`col`, `records`) is refused
+// with the source's spelling instead of answering the sample. Kept so a copy of the copy is cut too.
+const cut = new WeakSet<object>();   // state: plumbing
+
+/** Mark a table facade as a copy cut from a stored table. Called only by `asTable`. */
+export function brandCut<T extends object>(t: T): T {
+    cut.add(t);
+    return t;
+}
+
+/** Is this a copy of a stored table, which holds only the rows it was cut with? */
+export function isCutTable(x: unknown): boolean {
+    return typeof x === "object" && x !== null && cut.has(x as object);
 }
