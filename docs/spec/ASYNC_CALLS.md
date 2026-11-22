@@ -527,8 +527,9 @@ read against main 69a73569. The rest was the lane's proposal, now ruled.
    reason)` reads `runNsVars` first, deletes it, and posts a fresh `PY_NS_DROPPED { run, at, reason, names?, total? }`
    to the service worker. `names` and `total` are absent when `runNsVars` held nothing for the run: an unknown list,
    never an empty one. `killWorker`, the reap and `PY_DELETE_RUN` call it instead of deleting `runNsVars` themselves.
-   The service worker writes the record onto the session (`sw-sessions.ts`) and keeps only the last one, since the
-   divider describes one resume. `PY_NS_DROPPED` is extension-only, like `PY_RESULT`: in neither `HANDLE_MAP` nor
+   The service worker does not write the record itself. `PY_NS_DROPPED`'s handler (`sw-sessions.ts`) checks the
+   sender and calls the store's `noteNsDropped(hash, record)`, which keeps only the last record, since the divider
+   describes one resume (ruling 2). `PY_NS_DROPPED` is extension-only, like `PY_RESULT`: in neither `HANDLE_MAP` nor
    `PAGE_STARTED_TYPES`, and answered only for this extension's sender with no tab. The reasons are the kill and reap
    reasons above plus `tab-closed` and `person`. Two paths cannot write: a browser restart, and the offscreen document
    closing (`runNsVars` dies with it). Their sessions take the "what is known" form TABLESS_RUN.md describes. Archive
@@ -549,8 +550,15 @@ read against main 69a73569. The rest was the lane's proposal, now ruled.
 ### Rulings (the coordinator, 2026-11-22, on #2085)
 
 1. A waiting result is kept through the release (point 5), its text in the row and its pointer marked released.
-2. The record's field is `nsDropped: { at, reason, names?, total? }` on the stored session's metadata. The session-store
-   lane confirms the name and where it sits before the build.
+2. The record is `nsDropped: { at, reason, names?, total? }` (`names` a `string[]` of at most 50, `total` the full
+   count) in the `runmeta` record (`RunMeta` kind `"agent"`, `session-store.ts`), beside `payload` and `sub`. It is not
+   in `SessionSummary` or the session row. An absent `names` means unknown, and an absent `nsDropped` means no drop was
+   recorded. The STORE writes it: `SessionStore.noteNsDropped(hash, record)` read-modify-writes `runmeta` in one
+   transaction (a row not yet in form 2 is migrated first; a hash the store does not hold is dropped), and `putHistory`
+   carries the stored record forward, because every `saveRunHistory` writes a fresh `runmeta` and would erase a patch
+   from another path. `joinHistory` returns it for the move-run lane's reader. The session-store lane builds this as its
+   own PR after #2083, with its upgrade rows; the release build depends on it (session-store's answer on #2085, ruled by
+   the coordinator).
 3. `kernel-death`'s record is written by `dropNamespace` inside `killWorker`: one writer. The packages lane's listener
    writes no record of its own.
 
