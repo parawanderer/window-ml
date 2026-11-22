@@ -33,6 +33,7 @@ import { hostOf } from "../../agent-start";
 import { StartAskBody, StartAskFoot, StartAskExpired, SiteWaitPrompt, startAskPending, startAskExpired } from "./card-start";
 import { toHost } from "../parent-channel";
 import { imagesRefusal, promptLine } from "../../contract/contract-run";
+import { TaskMark } from "./task-mark";
 import { isRefusedPkgCard } from "./pkg-card-view";
 
 /* ------------------------------ off-mode card ----------------------------
@@ -560,6 +561,7 @@ export function CardApp() {
                 <button class="card-x" aria-label={pending ? "Deny" : "Dismiss"} onPointerDown={onCloseDown} onClick={e => { e.stopPropagation(); cardMaximizedHash.value = ""; }}>✕</button>
             </div>
             <div class="card-body">
+                <TaskMark background={run.background} />
                 {asking && run.startAsk
                     ? <StartAskBody ask={run.startAsk.ask} />
                     : startAskExpired(run) && run.startAsk?.askOnly

@@ -15,6 +15,9 @@
 // direction is COMPUTED from where the trigger actually is, and the source node stays `display: none` so it
 // is never selected or copied. The markup does not change — the existing `.tt` / `.tt-pop` pairs keep working,
 // and the direction classes become hints rather than instructions.
+//
+// A tip shows on pointer hover AND on KEYBOARD focus (`:focus-visible` only, so a click that focuses a button
+// raises nothing a second way); Esc dismisses either (WCAG 1.4.13).
 import { tipStyle } from "./tip";
 
 const MARGIN = 6;
@@ -164,6 +167,8 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
      */
     const down = (e: Event): void => {
         const pe = e as PointerEvent;
+        // INSTRUMENT for the phone-tap e2e flake: the last pointer this rule saw. Only our own pages mount the layer.
+        Object.assign(doc.defaultView ?? {}, { __ttLastPointer: { type: pe.pointerType, target: (e.target as Element | null)?.getAttribute?.("class") ?? "" } });
         const el = pe.pointerType === "touch" ? (e.target as Element | null)?.closest?.(".tt") : null;
         if (el && !el.matches("button, a, summary, [role=button], [role=tab], [role=menuitem]")) {
             held = true;
@@ -171,6 +176,24 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
             return;
         }
         held = false;
+        hide();
+    };
+
+    /** Is `el` focused the way a KEYBOARD focuses it? An engine without `:focus-visible` (or jsdom's parser) throws:
+     *  that counts as no, so such a browser keeps hover tips only. */
+    const focusVisible = (el: Element): boolean => { try { return el.matches(":focus-visible"); } catch { return false; } };
+    /** Keyboard focus raises the same tip hover does, through the same `show`. Last event wins over a hovered one. */
+    const focusIn = (e: Event): void => {
+        const t = e.target as Element | null;
+        const el = t?.closest?.(".tt");
+        if (el && el !== current && focusVisible(t as Element)) show(el);
+    };
+    /** Focus leaving the trigger takes its tip down, unless it only moved to another element inside that trigger. */
+    const focusOut = (e: Event): void => {
+        const el = (e.target as Element | null)?.closest?.(".tt");
+        if (!el || el !== current) return;
+        const to = (e as FocusEvent).relatedTarget as Node | null;
+        if (to && el.contains(to)) return;
         hide();
     };
 
@@ -196,6 +219,8 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
     root.addEventListener("pointerout", out, true);
     root.addEventListener("pointerdown", down, true);
     root.addEventListener("scroll", onScroll, true);
+    root.addEventListener("focusin", focusIn, true);
+    root.addEventListener("focusout", focusOut, true);
     doc.defaultView?.addEventListener("blur", hide);
     // Esc dismisses hover content without moving the pointer (WCAG 1.4.13) — and is usually the very key that is
     // closing whatever the trigger was in.
@@ -208,6 +233,8 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
         root.removeEventListener("pointerdown", down, true);
         root.removeEventListener("scroll", onScroll, true);
         root.removeEventListener("keydown", onKey, true);
+        root.removeEventListener("focusin", focusIn, true);
+        root.removeEventListener("focusout", focusOut, true);
         doc.defaultView?.removeEventListener("blur", hide);
         watcher?.disconnect();
         unwatch?.();

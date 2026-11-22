@@ -409,7 +409,7 @@ test("answer render (sidebar): a result cited with `| latex` renders as a KaTeX 
     // that names the source step (clicking jumps to the compute step that produced the value).
     const tok = reply.querySelector(".tok-ref");
     assert.ok(tok && tok.querySelector(".katex"), "the typeset value is INSIDE the clickable citation");
-    assert.match(tok.querySelector(".tok-tip")?.textContent || "", /step 1 · python_exec/, "the hover tooltip names the source compute step");
+    assert.match(tok.querySelector(".tt-pop")?.textContent || "", /step 1 · python_exec/, "the hover tooltip names the source compute step");
 });
 
 test("answer render (sidebar): a STANDALONE `| latex` citation → a green DISPLAY block; an INLINE one → inline", async () => {
@@ -781,6 +781,14 @@ test("answer render (sidebar): clicking an embed's BODY does not navigate to the
     assert.equal(anno.getAttribute("role"), "button", "the caption is the control");
     anno.click(); await w.tick();
     assert.ok(step.classList.contains("astep-pulse"), "a click on the caption goes to the source step");
+});
+
+test("answer render (sidebar): a caption carries a decorative jump arrow, hidden from assistive tech", async () => {
+    const w = await loadSidebarWorld();
+    const { embed } = await jsonEmbedRun(w, "ejump");
+    const jump = embed.querySelector(".tok-anno > .tok-anno-jump");
+    assert.ok(jump?.querySelector("svg"), "the caption holds the arrow the stylesheet shows on hover and focus");
+    assert.equal(jump.getAttribute("aria-hidden"), "true", "it is decoration; the tooltip names the action");
 });
 
 test("answer render (sidebar): an embed with NO caption is captioned with its tool and step, and that caption navigates", async () => {

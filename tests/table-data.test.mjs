@@ -11,6 +11,9 @@ import {
     tableFromDelimited, tableOf, tablePreview, sniffDelimiter, looksCsv,
     namedColumns, dtypesOf, castTableColumns, parseCsv, hasHeaderRow, asTable, NotATable, MAX_TABLE_ROWS,
 } from "../src/table/table-data.ts";
+import { cachedStoredColumns, decodeCacheStats, clearDecodeCache } from "../src/table/table-decode-cache.ts";
+import { checkReadPlan } from "../src/table/table-plan.ts";
+import { storedColumns as storedColumnsS } from "../src/table/table-data.ts";
 
 test("the delimiter is DISCOVERED, not assumed — comma, semicolon, tab and pipe all parse", () => {
     for (const [delim, body] of [
@@ -412,22 +415,98 @@ test("storedColumns: Arrow file and stream by column; an unknown column or forma
     await assert.rejects(storedColumns(enc("x"), "xlsx", ["a"]), /cannot be read by column: xlsx/);
 });
 
-test("stored facade (full exec): reads are promises over every row; a missed await says so; a head within the preview stays synchronous", async () => {
+test("stored facade (full exec): reads are promises over every row; a missed await says so; select and head are synchronous views", async () => {
     const calls = [];
-    const reader = async (names) => { calls.push(names); return { rowCount: 500, columns: Object.fromEntries(names.map((c) => [c, Array.from({ length: 500 }, (_, i) => (c === "n" ? i : `s${i}`))])) }; };
+    const reader = async (names, plan = {}) => {
+        calls.push(plan.limit === undefined ? names : [names, plan]);
+        const n = Math.min(plan.limit ?? 500, 500);
+        return { rowCount: n, columns: Object.fromEntries(names.map((c) => [c, Array.from({ length: n }, (_, i) => (c === "n" ? i : `s${i}`))])) };
+    };
     const t = asTableS({ columns: ["n", "s"], rows: [[0, "s0"], [1, "s1"]], shape: [500, 2], dtypes: { n: "int64", s: "str" }, truncated: true }, { readColumns: reader });
     assert.equal(isStoredTable(t), true);
     const col = t.col("n");
     assert.throws(() => col.length, (e) => e instanceof NotATableS && /t\.col\("n"\) reads a stored table, so it is a request that returns a promise: write `await t\.col\("n"\)`/.test(e.message));
     assert.equal((await col).length, 500);
-    assert.deepEqual((await t.select(["s"])).shape, [500, 1]);
+    const sel = t.select(["s"]);
+    assert.deepEqual([sel.shape, sel.rows, sel.truncated, isStoredTable(sel)], [[500, 1], [["s0"], ["s1"]], true, true], "a view over the rows in hand");
+    assert.equal(await sel, sel, "a view is not thenable: await hands it back");
+    assert.equal((await sel.col("s"))[499], "s499", "its reads go to the store");
     assert.deepEqual((await t.records())[499], { n: 499, s: "s499" });
     assert.deepEqual(t.head(2).shape, [2, 2], "the preview holds these rows: no request");
-    assert.deepEqual((await t.head(300)).rows[299], [299, "s299"]);
-    assert.equal(calls.length, 4);
+    const h = t.head(300);
+    assert.deepEqual([h.shape, h.rows.length, h.truncated], [[300, 2], 2, true], "a long head is a view: its rows are the rows in hand");
+    assert.deepEqual((await h.records())[299], { n: 299, s: "s299" });
+    assert.equal((await h.records()).length, 300, "a head view's read stops at its n");
+    assert.deepEqual(calls, [["n"], ["s"], ["n", "s"], [["n", "s"], { limit: 300 }], [["n", "s"], { limit: 300 }]]);
     assert.throws(() => t.col("nope"), /No column "nope"/, "an unknown column fails before any request");
     // A table whose preview IS the whole table never reads, reader or not.
     const whole = asTableS({ columns: ["n"], rows: [[1]], shape: [1, 1], dtypes: { n: "int64" } }, { readColumns: reader });
     assert.equal(isStoredTable(whole), false);
     assert.deepEqual(whole.col("n"), [1]);
+});
+
+// --- Views of a stored table: the worker's decode cache and the plan's closed shape (ML_TABLE.md, slice A) ---
+
+const encT = (s) => new TextEncoder().encode(s).buffer;
+
+test("decode cache: a stored table is decoded once per blob and options, and every read after comes from memory", async () => {
+    clearDecodeCache();
+    let reads = 0;
+    const bytes = async () => { reads++; return encT("a,b\n1,x\n2,y\n3,z\n"); };
+    assert.deepEqual(await cachedStoredColumns("blob1", bytes, "csv", ["a"], {}), { rowCount: 3, columns: { a: [1, 2, 3] } });
+    assert.deepEqual(await cachedStoredColumns("blob1", bytes, "csv", ["b", "a"], {}, { limit: 2 }), { rowCount: 2, columns: { b: ["x", "y"], a: [1, 2] } });
+    assert.deepEqual([reads, decodeCacheStats().decodes, decodeCacheStats().entries], [1, 1, 1], "one read of the bytes, one decode");
+    // Other options are another decode, so one session's options never change what another reads of the same blob.
+    const headerless = await cachedStoredColumns("blob1", bytes, "csv", ["0"], { headerless: true });
+    assert.deepEqual(headerless, await storedColumnsS(await bytes(), "csv", ["0"], { headerless: true }), "the header row is a record");
+    reads--;
+    assert.deepEqual([reads, decodeCacheStats().entries], [2, 2]);
+    // Two reads at once share the one decode.
+    clearDecodeCache();
+    await Promise.all([cachedStoredColumns("blob2", bytes, "csv", ["a"], {}), cachedStoredColumns("blob2", bytes, "csv", ["b"], {})]);
+    assert.equal(decodeCacheStats().decodes, 1);
+});
+
+test("decode cache: every cell reads back as the decode made it, nulls, NaN, -0 and mixed columns included", async () => {
+    clearDecodeCache();
+    const csv = "n,f,s,b,m,e\n1,1.5,x,true,1,\n,NaN,,false,x,\n-0,-0.0,héllo ✓,,true,\n";
+    const want = await storedColumnsS(encT(csv), "csv", ["n", "f", "s", "b", "m", "e"]);
+    const got = await cachedStoredColumns("cells", async () => encT(csv), "csv", ["n", "f", "s", "b", "m", "e"], {});
+    assert.deepEqual(got, want, "the cache answers exactly what a fresh decode does");
+    for (const c of ["n", "f"]) want.columns[c].forEach((v, i) => assert.ok(Object.is(v, got.columns[c][i]), `${c}[${i}] ${v}`));
+});
+
+test("decode cache: least recently read goes first past the cap, and a decode larger than the cap serves its read and is not kept", async () => {
+    clearDecodeCache();
+    const body = encT("a\n" + Array.from({ length: 100 }, (_, i) => i).join("\n") + "\n");   // 100 doubles: 800 bytes
+    const read = (id, cap) => cachedStoredColumns(id, async () => body, "csv", ["a"], {}, {}, cap);
+    await read("x", 2000); await read("y", 2000);
+    assert.equal(decodeCacheStats().entries, 2);
+    await read("x", 2000);   // x is now the most recent
+    await read("z", 2000);
+    assert.equal(decodeCacheStats().entries, 2);
+    const before = decodeCacheStats().decodes;
+    await read("x", 2000);
+    assert.equal(decodeCacheStats().decodes, before, "x stayed: y was the least recently read");
+    await read("y", 2000);
+    assert.equal(decodeCacheStats().decodes, before + 1, "y had gone");
+    clearDecodeCache();
+    assert.equal((await read("big", 100)).rowCount, 100, "too large to keep still answers");
+    assert.deepEqual([decodeCacheStats().entries, decodeCacheStats().bytes], [0, 0]);
+});
+
+test("decode cache: an unknown column and a read past the cell cap fail with what there is", async () => {
+    clearDecodeCache();
+    await assert.rejects(cachedStoredColumns("u", async () => encT("a\n1\n"), "csv", ["nope"], {}), (e) => e instanceof NotATable && /No column "nope"\. This table has: a/.test(e.message));
+    await assert.rejects(cachedStoredColumns("u", async () => encT("a\n1\n"), "paged", ["a"], {}), /not a table/);
+});
+
+test("the plan's shape is closed: only its own fields, and a limit that is a whole number from 0", () => {
+    assert.deepEqual(checkReadPlan({ type: "VALUE_COLUMNS", runId: "r", key: "k", names: ["a"], delimiter: ",", headerless: true }), {});
+    assert.deepEqual(checkReadPlan({ key: "k", names: ["a"], limit: 0 }), { limit: 0 });
+    assert.deepEqual(checkReadPlan({ key: "k", names: ["a"], limit: 300 }), { limit: 300 });
+    for (const bad of [{ where: [] }, { columns: ["a"] }, { want: "rows" }, { __proto__x: 1 }, { sort: "a" }])
+        assert.match(checkReadPlan({ key: "k", ...bad }).refused, /has no field/, JSON.stringify(bad));
+    for (const limit of [-1, 1.5, "3", NaN, Infinity, 2 ** 60, [3], { n: 3 }, true])
+        assert.match(checkReadPlan({ key: "k", limit }).refused, /limit is a whole number from 0/, String(limit));
 });

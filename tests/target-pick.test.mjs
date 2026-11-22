@@ -14,7 +14,7 @@ for (const k of ["window", "document", "Node", "HTMLElement", "MutationObserver"
 const require_ = createRequire(import.meta.url);
 const { h, render } = require_("preact");
 const { act } = require_("preact/test-utils");
-const { useTargetPick, rememberedTab } = await import("../src/chat/new-session.tsx");
+const { useTargetPick, rememberedTab, firstTab } = await import("../src/chat/new-session.tsx");
 const { lastTargets, targetsFrom } = await import("../src/chat/view-mode.tsx");
 
 /* ------------------------------ the ask policy ------------------------------ */
@@ -216,4 +216,35 @@ test("a stored map of the wrong shape reads as nothing remembered, entry by entr
     assert.deepEqual(targetsFrom([{ tabId: 1, url: "x" }]), {});
     assert.deepEqual(targetsFrom({ a: { tabId: 1, url: "https://a/" }, b: { blank: true }, c: { tabId: "1", url: "x" }, d: { blank: "yes" }, e: null }),
         { a: { tabId: 1, url: "https://a/" }, b: { blank: true } });
+});
+
+// --- the first tab offered: the last pick or the last visit, whichever is more recent ---
+
+test("firstTab: the more recent of the last pick and the last tab visited", () => {
+    const at = (id, lastAccessed) => ({ ...tab(id, `t${id}`), ...(lastAccessed ? { lastAccessed } : {}) });
+    const tabs = [at(1, 1000), at(2, 3000), at(3, 2000)];
+    const pick = (id, pickedAt) => ({ tabId: id, url: `http://127.0.0.1/${id}`, ...(pickedAt ? { pickedAt } : {}) });
+    assert.equal(firstTab(pick(3, 5000), tabs), 3, "a pick newer than the last visit wins");
+    assert.equal(firstTab(pick(3, 2500), tabs), 2, "a visit newer than the pick wins: the tab most recently on");
+    // UPGRADE: what the code before this change stored has no `pickedAt`, so any visit is newer.
+    assert.equal(firstTab({ tabId: 3, url: "http://127.0.0.1/3" }, tabs), 2);
+    // No visit time anywhere: today's behaviour, the remembered pick or null (the caller then takes the active tab).
+    const none = [tab(1, "a"), tab(3, "c")];
+    assert.equal(firstTab(pick(3, 5000), none), 3);
+    assert.equal(firstTab({ tabId: 3, url: "http://127.0.0.1/3" }, none), 3);
+    assert.equal(firstTab(undefined, none), null);
+    // A newer pick of a new tab stays a new tab; an older one gives way to the visit.
+    assert.equal(firstTab({ blank: true, pickedAt: 9000 }, tabs), "blank");
+    assert.equal(firstTab({ blank: true, pickedAt: 100 }, tabs), 2);
+    assert.equal(firstTab({ blank: true }, tabs), 2, "a blank pick with no time is old too");
+    // Nothing picked: the last visit.
+    assert.equal(firstTab(undefined, tabs), 2);
+    // A closed pick cannot win, however new.
+    assert.equal(firstTab({ tabId: 99, url: "https://gone.example/", pickedAt: 9000 }, tabs), 2);
+});
+
+test("a remembered pick keeps its time through storage, and an old one loads without", () => {
+    assert.deepEqual(targetsFrom({ local: { tabId: 4, url: "http://x/", pickedAt: 12 }, b: { blank: true, pickedAt: 5 } }),
+        { local: { tabId: 4, url: "http://x/", pickedAt: 12 }, b: { blank: true, pickedAt: 5 } });
+    assert.deepEqual(targetsFrom({ local: { tabId: 4, url: "http://x/" } }), { local: { tabId: 4, url: "http://x/" } });
 });

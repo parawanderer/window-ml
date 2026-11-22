@@ -1,10 +1,12 @@
 # Spec (WIP): a read-only dialect of Python, and the namespace it runs in
 
-**Status: decided, nothing built.** Decided by Shane on 2026-10-15, after a discussion that first proposed treating
-Python as a sandbox and was corrected. This spec holds that decision, the reasons, the design, and the answers to the
-open questions on persistent Python state in [`STATE_INSPECTOR.md`](STATE_INSPECTOR.md) ("Python state persists per
-run") and [`PERSISTENT_RUNTIME_SPEC.md`](PERSISTENT_RUNTIME_SPEC.md). It is the second implementation of the concept the
-JS dialect implements ([`docs/dev/readonly-exec.md`](../dev/readonly-exec.md)), and the main consumer of
+**Status: decided and built.** Every `python_exec` cell runs hardened, and one inside the dialect runs with no card
+([`docs/dev/python-sandbox.md`](../dev/python-sandbox.md)); what each part was built in is noted where it is described.
+Decided by Shane on 2026-10-15, after a discussion that first proposed treating Python as a sandbox and was corrected.
+This spec holds that decision, the reasons, the design, and the answers to the open questions on persistent Python state
+in [`STATE_INSPECTOR.md`](STATE_INSPECTOR.md) ("Python state persists per run") and
+[`PERSISTENT_RUNTIME_SPEC.md`](PERSISTENT_RUNTIME_SPEC.md). It is the second implementation of the concept the JS
+dialect implements ([`docs/dev/readonly-exec.md`](../dev/readonly-exec.md)), and the main consumer of
 [`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md).
 
 ## Why a dialect, when Pyodide is already a sandbox

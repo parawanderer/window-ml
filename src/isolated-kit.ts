@@ -16,7 +16,7 @@ import type { DerefMeta, DerefValue } from "./contract/contract-pointers";
 
 /** One request an isolated exec sends the worker: re-read named read `i` through `stages`, or read named columns of the
  *  stored table `key`. The worker decides what either may reach (iso-channel.ts). */
-export type IsoRequest = { op: "pipe"; i: number; stages: string | string[] } | { op: "cols"; key: string; names: string[] };
+export type IsoRequest = { op: "pipe"; i: number; stages: string | string[] } | { op: "cols"; key: string; names: string[]; limit?: number };
 
 /** The call's channel to the worker: resolves with the answer's data, rejects with the worker's error. */
 export type IsoAsk = (req: IsoRequest) => Promise<unknown>;
@@ -46,7 +46,7 @@ export function isoValue(read: { value?: string; meta?: DerefMeta }, i: number, 
     };
     const key = read.meta?.table ? read.meta.value : undefined;
     const readColumns = key && ask
-        ? (names: string[]) => ask({ op: "cols", key, names: names.map(String) }) as Promise<{ rowCount: number; columns: Record<string, (string | number | boolean | null)[]> }>
+        ? (names: string[], plan?: { limit?: number }) => ask({ op: "cols", key, names: names.map(String), ...(plan?.limit !== undefined ? { limit: plan.limit } : {}) }) as Promise<{ rowCount: number; columns: Record<string, (string | number | boolean | null)[]> }>
         : key ? () => Promise.reject(new Error(NO_CHANNEL.table)) : undefined;
     return new DerefText(read.value ?? "", read.meta, again, readColumns);
 }

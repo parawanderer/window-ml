@@ -53,7 +53,8 @@ import { checkDraft } from "./sw/sw-manifest-proposal";
 
 import { bringableSessions, bringHere } from "./sw/bring-here";
 import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, contextByRun, turnByRun, workerRunsStarting, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, senderOwnsRun, reconcileTabPins, startingControllers, abortStart, startingOwnedBy } from "./sw/sw-runs";
-import { cancelPageTasks, detachTask, resetTaskChain, taskAction, type TaskOutcome } from "./sw/sw-tasks";
+import { cancelPageTasks, detachTask, dropAllTaskMemory, resetTaskChain, taskAction, type TaskOutcome } from "./sw/sw-tasks";
+import { refreshTaskRow, setNoTabReader, setReleaseAtReader, syncTaskRows } from "./sw/sw-task-rows";
 import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
 import { startBackgroundRun, delegateStreams, hostRun, WORKER_RUN_REFUSED } from "./sw/sw-run-host";
@@ -83,6 +84,7 @@ import { approvalKey } from "./approval-key";
 import { raiseAsk } from "./sw/sw-asks";
 import { probeShell, refreshShell, shellStatusRead } from "./sw/sw-shell";
 import { toPageUi, notePage, forgetTab, syncAllPanels, servePanelPort, startGesture, tabHidden, cuePanel, panelOpen, HL_POSITIONS } from "./sw/sw-side-panel";
+import { checkReadPlan } from "./table/table-plan";
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -132,7 +134,9 @@ startValueSweeps(liveHeldSessions);   // its first pass releases held rows no se
     dropAllAnswerMemory();
     dropAllVisionMemory();
     dropHandedMemoryForTest();
+    dropAllTaskMemory();
     await hydratePersistedRuns();
+    await syncTaskRows();
 };
 // TEST-ONLY: seed a minimal resumable bgRun for a tab, so a unit test can exercise the "don't wipe a tab that
 // still has a recoverable run" guard (resetDebug / tabHasBgRun) without driving a whole run to completion.
@@ -172,8 +176,12 @@ startValueSweeps(liveHeldSessions);   // its first pass releases held rows no se
 // HUD do (`userRunAction`). The harness's conversations with a UI-started run (converse.mjs, SURFACE=…) go through it.
 (globalThis as unknown as { __mlUserRunActionForTest?: unknown }).__mlUserRunActionForTest = (hash: string, action: "send" | "continue", body: { text?: string; surface?: string }, origin?: import("./contract/contract-run").PromptOrigin) => userRunAction(hash, action, body, undefined, origin);
 
+// TEST-ONLY (SW realm only): plug a reader into the session row's `noTab` / `releaseAt` (sw-task-rows.ts) and refresh a row, as the
+// move-run lane and the release build will. A page cannot reach this.
+(globalThis as unknown as { __mlTaskRowReadersForTest?: unknown }).__mlTaskRowReadersForTest = { setNoTabReader, setReleaseAtReader, refreshTaskRow };
+
 // TEST-ONLY (SW realm only): detach a task of a run by hand, as an executor does, and get its id and a function that ends
-// it with an outcome. A test of what a FINISHED task does (starts a turn, parks) needs one without driving ml.sh or Python.
+// it with an outcome. A test of what a FINISHED task does (starts a turn, parks, shows on the session's row) needs one without driving ml.sh or Python.
 (globalThis as unknown as { __mlDetachTaskForTest?: unknown }).__mlDetachTaskForTest = (runId: string, tool = "ml.sh"): { id: string; finish: (o: Partial<TaskOutcome>) => void; read: () => Promise<unknown> } => {
     let end!: (o: TaskOutcome) => void;
     const settled = new Promise<TaskOutcome>((res) => { end = res; });
@@ -989,6 +997,9 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         (async () => {
             const runId = String(message.runId || ""), key = String(message.key || "");
             const names = Array.isArray(message.names) ? (message.names as unknown[]).map(String) : [];
+            // The view's plan arrives as data: a field outside its closed shape, or a limit that is not a count, is refused.
+            const plan = checkReadPlan(message as Record<string, unknown>);
+            if ("refused" in plan) { sendResponse({ error: `Refused: ${plan.refused}.` }); return; }
             const tabId = sender.tab?.id;
             // A stored table's columns go only to a page whose site may use window.ml now: the run's page after a revoke
             // (or anything else on an unapproved site) is refused, though the call that named it was sent before.
@@ -1011,7 +1022,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
                 sendResponse({ error: "That stored table was not named by the running script." }); return;
             }
             try {
-                const r = await readStoredColumns(key, names, { ...(typeof message.delimiter === "string" ? { delimiter: message.delimiter } : {}), ...(message.headerless ? { headerless: true } : {}) });
+                const r = await readStoredColumns(key, names, { ...(typeof message.delimiter === "string" ? { delimiter: message.delimiter } : {}), ...(message.headerless ? { headerless: true } : {}) }, plan);
                 sendResponse(r);
             } catch (e) { sendResponse({ error: (e as Error)?.message || String(e) }); }
         })();

@@ -5,7 +5,8 @@ enough to write a reader in another language. The design, and why it is shaped t
 [`docs/dev/backup.md`](../dev/backup.md); the reference implementation is `src/backup/backup-format.ts`, and
 `tools/wmlbak-decrypt.mjs` is a standalone reader.
 
-A backup or a month file that carries a session's files is a SET of version-1 files, each one this format on its own:
+RULED, NOT BUILT (2026-11-19; `src/backup/` writes one file and no `files` rows): a backup or a month file that
+carries a session's files is a SET of version-1 files, each one this format on its own:
 the first holds the sessions and the `files` rows and keeps the usual name, and the file chunks are in numbered
 volumes (a month's are `2026-10.v2.wmlbak` and on, in the month's form), each named with its SHA-256 and size in the
 first one's `meta`.

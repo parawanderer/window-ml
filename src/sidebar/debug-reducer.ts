@@ -5,7 +5,7 @@
 // summaries and the run-block segmentation (buildRunBlocks). Pure logic, no JSX — extracted from app.tsx.
 import { sessionMap, rev, config, sidebarOpen, backendError, unreachableIfNothingSaysOtherwise, noteAside } from "./store";
 import type { Session, Status, Turn, AgentStep } from "./store";
-import type { MlDebugEvent, SiteRunEvent } from "../contract/contract-debug";
+import { backgroundOf, type MlDebugEvent, type SiteRunEvent } from "../contract/contract-debug";
 import { WORKER_ONLY_KINDS } from "../event-admission";
 import { isBackendUnreachable } from "../contract/contract-server";
 import { services } from "./services";
@@ -174,6 +174,13 @@ function onSiteRunEvent(ev: SiteRunEvent, key: string, runtime?: string): void {
         // A detached call's result, as the model read it: on the turn's list of says so it is drawn in order, as the
         // task's. It starts nothing: the run was already running when the inbox carried it.
         s.says = [...(s.says || []), { text: ev.text, ts: ev.ts, atStep: maxSessionStep(s), seen: true, task: ev.task, taskEnd: { status: ev.status, ms: ev.ms, code: ev.code ?? null } }];
+    } else if (ev.kind === "agent-tasks") {
+        // A live notice of the run's task counts: replaces what was held, and null clears it. Not part of the history.
+        const b = ev.background;
+        const held = backgroundOf(b ? { running: b.running, waiting: b.waiting } : null);   // the card holds counts only
+        if (held) s.background = held; else delete s.background;
+        rev.value++;
+        return;
     } else if (ev.kind === "agent-wait") s.siteWait = { prompt: ev.prompt, site: ev.site, ts: ev.ts };
     else if (ev.kind === "agent-note") s.notes = [...(s.notes || []), { text: ev.text, ts: ev.ts, atStep: maxSessionStep(s) }];
     s.lastTs = Math.max(s.lastTs, ev.ts); rev.value++;

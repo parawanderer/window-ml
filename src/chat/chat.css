@@ -905,17 +905,9 @@ html[data-calm]:not([data-theme="light"]), html[data-calm]:not([data-theme="ligh
     @media (prefers-reduced-motion: reduce) { .chat.calm .r-df > .r-df-bar { transition: none; } }
 }
 
-/* A CITATION'S TOOLTIP BELONGS TO ITS CAPTION. An embed is something you READ — a table, a plot — and a tip that
-   fires anywhere over it is an explanation of the frame appearing on top of the contents. The caption is the
-   frame's own text, so that is what carries the explanation; the block itself stays clickable. */
-.chat.calm .tok-block:hover > .tok-tip { opacity: 0; }
-.chat.calm .tok-anno { cursor: help; }
-.chat.calm .tok-anno:hover ~ .tok-tip, .chat.calm .tok-anno:focus-visible ~ .tok-tip { opacity: 1; }
-/* …and it appears AT the caption, not at the top of the embed. The tip is anchored rather than cursor-following
-   (the shared component draws it, and the panel's own tests pin that), so the least confusing thing it can do is
-   sit against the one element that raises it — a tip that opens half a screen from the pointer reads as belonging
-   to something else. */
-.chat.calm .tok-block > .tok-tip { bottom: auto; top: calc(100% + 4px); left: 8px; }
+/* A CITATION'S TOOLTIP BELONGS TO ITS CAPTION (`tt` is on `.tok-anno`, not on the block: an embed is something you
+   READ, and a tip that fires anywhere over a table explains the frame on top of its contents). */
+.chat.calm .tok-anno { cursor: pointer; }
 /* The wash over the whole embed goes with the tip, for the same reason: it fires while you are reading a table, and
    the rail already says where the transclusion starts and stops. It moves to the caption, which is the part that is
    now behaving like a control — and it is `--cite`, like every other mark on a citation. It was the last `--ok` in
@@ -1130,7 +1122,14 @@ html[data-calm]:not([data-theme="light"]), html[data-calm]:not([data-theme="ligh
    step stays `.open` until its body unmounts, and its 16px margins used to drop to 3px in that last frame. */
 .chat.calm .astep.tool.open.closing { margin: 3px 0; padding-bottom: 0; }
 @media (prefers-reduced-motion: reduce) { .chat.calm .astep.tool { transition: none; } }
-.chat.calm .astep-body { padding: 6px 0 10px 4px; }
+/* No room under the last thing in an open step: the fold rail runs the body's full height, so bottom padding drew the rail on past the
+   step's last block or `@tool:` chip, an end that looked like a bug. The room between this step and the next row is outside the body. */
+.chat.calm .astep-body { padding: 6px 0 0 4px; }
+/* THE BODY CONTAINS ITS OWN FLOATS, so the open animation ends on the layout it settles to. `chat-step-open` clips with `overflow: hidden`,
+   which makes the body a block formatting context that holds a float (the `@tool:` chip, `float: right` above); when the animation ended
+   `overflow` went back to `visible` and the body stopped holding it, losing the chip row's 22px in one frame. Never let the animation
+   change what the box contains: see "Traps" in docs/dev/chat-page.md. */
+.chat.calm .astep-body { display: flow-root; }
 /* An open call carries the fold rail down its left, as an open group does: room for its hit strip. */
 .chat.calm .astep-body.railed { padding-left: 13px; }
 .chat.calm .aturn-prose { margin: 6px 0 14px; }
@@ -1416,30 +1415,49 @@ html[data-calm]:not([data-theme="light"]), html[data-calm]:not([data-theme="ligh
 .chat-list-foot .chat-gear-wide { flex: 1 1 auto; width: 100%; }
 .chat-list-foot .chat-att-n { margin-left: auto; }
 
-/* The choices under an opening row: the list slides open on a cubic ease (grid rows 0fr→1fr, so closing animates
-   too), hung off a thin guide under the parent's icon so they read as its children. */
-.chat-menu-subs {
-    display: grid; grid-template-rows: 0fr; margin-left: 19px; border-left: 1px solid transparent;
-    transition: grid-template-rows .26s cubic-bezier(.4, 0, .2, 1), border-color .26s cubic-bezier(.4, 0, .2, 1);
-}
-.chat-menu-subs.open { grid-template-rows: 1fr; border-left-color: var(--border); }
-.chat-menu-subs-in { min-height: 0; overflow: hidden; display: flex; flex-direction: column; padding-left: 6px; }
-/* One choice: fades in and slides left to right, each a beat after the one above; closing runs them back at once. */
-/* A CHILD'S TEXT LINES UP WITH ITS PARENT'S LABEL (10px padding + an 18px glyph + the 12px gap = 40px), which the
-   guide line's own 19px + 6px leaves 15px short. It was 30px, putting a child's words further right than anything
-   else in the menu — and once the panel rows gained glyphs, further right again than the theme rows beside them. */
-.chat-menu-item.chat-menu-sub {
-    padding-left: 15px; opacity: 0; transform: translateX(-10px);
-    transition: opacity .16s cubic-bezier(.4, 0, .2, 1), transform .16s cubic-bezier(.4, 0, .2, 1), background-color .1s;
-}
-.chat-menu-subs.open .chat-menu-sub {
-    opacity: 1; transform: none;
-    transition: opacity .22s cubic-bezier(.2, .7, .3, 1) calc(60ms + var(--i, 0) * 35ms),
-        transform .22s cubic-bezier(.2, .7, .3, 1) calc(60ms + var(--i, 0) * 35ms), background-color .1s;
-}
+/* THE SLIDE-OVER (menu.tsx `MenuGroup`, phones): choosing a group row replaces the sheet's contents with the group's
+   rows under a back row, sliding in from the right. The page is a child of the sheet, so while one is open the sheet's
+   other rows are hidden (`:has`) and the sheet is exactly as tall as the page. Going back, the page turns absolute and
+   slides out over the rows that have come back, for as long as `useDismiss` keeps it mounted. */
+@keyframes chat-page-in { from { opacity: 0; transform: translateX(100%); } }
+@keyframes chat-page-out { to { opacity: 0; transform: translateX(100%); } }
+.chat-menu:has(> .chat-menu-page) { position: relative; overflow: hidden; }
+.chat-menu:has(> .chat-menu-page:not(.closing)) > :not(.chat-menu-page) { display: none; }
+.chat-menu-page { display: flex; flex-direction: column; animation: chat-page-in .2s cubic-bezier(.2, .7, .3, 1) both; }
+.chat-menu-page.closing { position: absolute; inset: 6px; animation: chat-page-out .16s cubic-bezier(.4, 0, 1, 1) both; pointer-events: none; }
+/* The back row is a row like any other, set apart from the choices by a hairline. */
+.chat-menu-back { margin-bottom: 4px; border-bottom: 1px solid var(--border); border-radius: 9px 9px 0 0; font-weight: 600; }
+/* The page's rows are the group's `MenuItem`s, which carry the `--i` the flyout's stagger reads; here the page's
+   own slide is the motion, so they sit at normal padding. */
+.chat-menu-page .chat-menu-item.chat-menu-sub { padding-left: 10px; opacity: 1; transform: none; transition: background-color .1s; }
+/* A device's rows under its name (menu.tsx `MenuSection`): the name is a small quiet header, not a row. */
+.chat-menu-section-head { padding: 8px 10px 3px; font-size: .82em; color: var(--fg-faint); cursor: default; user-select: none; }
+.chat-menu-section + .chat-menu-section { margin-top: 4px; border-top: 1px solid var(--border); }
 @media (prefers-reduced-motion: reduce) {
     .chat-menu { animation: none; }
-    .chat-menu-subs, .chat-menu-item.chat-menu-sub, .chat-menu-subs.open .chat-menu-sub { transition: none; }
+    .chat-menu-page, .chat-menu-page.closing { animation: none; }
+}
+
+/* THE FLYOUT (menu.tsx `MenuGroup`, wide layouts): a second `.chat-menu` sheet beside the first, `fixed` and placed by
+   script from the parent row's rectangle. It is drawn into `.chat` (or the body), NOT inside the gear's menu, because
+   `.chat-list` clips and the gear's menu is capped to the list's width: a sheet hung off its right side would be cut
+   off. It fades in and slides 6px from the side it opens on (`--fly-dx`, set with the position), on the page's cubic. */
+@keyframes chat-fly { from { opacity: 0; transform: translateX(var(--fly-dx, -6px)); } }
+@keyframes chat-fly-out { to { opacity: 0; transform: translateX(var(--fly-dx, -6px)); } }
+@keyframes chat-fly-item { from { opacity: 0; transform: translateX(-8px); } }
+.chat-menu.chat-menu-flyout { position: fixed; z-index: 60; min-width: 200px; animation: chat-fly .16s cubic-bezier(.2, .7, .3, 1) both; }
+.chat-menu.chat-menu-flyout.leaving { animation: chat-fly-out .11s ease-in both; }
+/* Its rows are the group's own `MenuItem`s, arriving a beat apart at their normal padding; their glyphs sit where any menu row's do. */
+.chat-menu-flyout .chat-menu-item.chat-menu-sub {
+    padding-left: 10px; opacity: 1; transform: none; transition: background-color .1s;
+    animation: chat-fly-item .22s cubic-bezier(.2, .7, .3, 1) calc(40ms + var(--i, 0) * 35ms) both;
+}
+/* The parent row stays lit while its flyout is open, and its caret stays a right-pointing chevron (a caret that turned
+   down would say "expands below"). */
+.chat-menu-item.fly-open { background: var(--panel-2); }
+.chat-menu-caret.fly, .chat-menu-caret.fly.open { transform: none; }
+@media (prefers-reduced-motion: reduce) {
+    .chat-menu.chat-menu-flyout, .chat-menu.chat-menu-flyout.leaving, .chat-menu-flyout .chat-menu-item.chat-menu-sub { animation: none; }
 }
 
 /* The gear's menu rises from the gear, with room for its longer rows. */
@@ -2031,6 +2049,12 @@ html[data-calm] .tt-layer { --notice: var(--accent); --notice-fg: var(--accent-f
    and an answer ends up looking annotated rather than written. The accent says the same thing in the page's own
    voice. Green stays outside calm. */
 .chat.calm { --cite: var(--accent); }
+/* …except the RAIL down an embedded output, which goes to the text's own colour: a quote's bar is a wider grey one
+   (`.md blockquote`), so a thinner, brighter line already says "this came from a tool" without adding a colour to the
+   page. Dimmer at rest and full under the pointer, the same step the accent rail took, since brightening is the only
+   way a rail says it is a control. */
+.chat.calm .fold-rail-cite::before { background: color-mix(in srgb, var(--fg) 55%, transparent); }
+.chat.calm .fold-rail-cite:hover::before { background: var(--fg); }
 /* …and the DOT beside such a row with it, or a session reads as two states at once: an amber dot against blue words
    saying the same thing. `pending` is a run working or a run waiting on you — activity, which is not a warning
    either. The dots that mean something WENT wrong (`err`, `warn`) keep their own colours. */
@@ -2148,6 +2172,10 @@ html[data-calm] .tt-layer { --notice: var(--accent); --notice-fg: var(--accent-f
    with the row rather than standing there at once. A row inside a closed group stays plain (the group's head is the line). */
 .chat.calm .astep-said { display: inline-block; max-width: 46ch; vertical-align: bottom; animation: chat-said-in .22s ease-out both; }
 .chat.calm .astreak:not(.expanded) .astep-said { display: none; }
+/* …but it does NOT fade in there. The group's rows mount in the same frame the group starts to open, so `chat-said-in` began every title at
+   opacity 0 on the second frame, under a body that was already open: bare rows, each with its gap, and the titles arriving after. The body's
+   own open animation is the group's arrival; a title is simply part of its row. */
+.chat.calm .astreak .astep-said { animation: none; }
 @keyframes chat-said-in { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .chat.calm .astep-said { animation: none; } }
 
@@ -2233,6 +2261,19 @@ html[data-calm] .tt-layer { --notice: var(--accent); --notice-fg: var(--accent-f
 /* The rail inside it is the shared fold rail (`.fold-rail`, sidebar.css). */
 /* …and it opens and shuts on the same keyframes as a step body, through the same `--astep-close-ms` handshake. */
 .astreak-body { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); }
+/* THE LAST ROW'S BOTTOM MARGIN STAYS INSIDE THE BODY. `.aturn` carries 26px under it; with `overflow: hidden` (the animation) that margin sat inside the
+   body, and at the animation's end `overflow` went back to `visible` and it collapsed out through the unpadded body, so the group lost 29px in one
+   frame. The body is a `flow-root` that holds every margin in both states, and the room under the group is its own padding: 17px, with the 6px of
+   margin it now holds under the last row and the group's own 3px, makes the 26px the collapsed margin gave (measured: next row 26px under the last one). */
+.chat.calm .astreak-body { display: flow-root; padding-bottom: 17px; }
+.chat.calm .astreak-body > .aturn:last-child { margin-bottom: 0; }
+/* …and the rail stops at the last row, not at the end of that padding: the room under a group is the gap to the next row, not more
+   group. The padding stays (it animates with the body, from 0, where a margin on `.astreak` would snap when the body unmounts). */
+.chat.calm .astreak-body > .fold-rail { bottom: 17px; }
+/* …except while the rows REFOLD into a group: that body mounts holding the rows where they stood and only ever closes, so its first frame must
+   be the lone row's layout, 26px of margin under the last row and no padding, or what follows the group steps by the difference. */
+.chat.calm .astreak.refolding > .astreak-body { padding-bottom: 0; }
+.chat.calm .astreak.refolding > .astreak-body > .aturn:last-child { margin-bottom: 26px; }
 .astreak-body.closing { animation: chat-step-close .4s cubic-bezier(.4, 0, .2, 1) forwards; }
 @media (prefers-reduced-motion: reduce) {
     .astreak, .chat.calm .astreak.refolding { --astep-close-ms: 0; }

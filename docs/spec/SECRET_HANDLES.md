@@ -1,6 +1,7 @@
 # Idea: secrets an agent can use but never read
 
-**Status: idea, not started.** Written down on 2026-09-15 to come back to. Nothing here is built, and the sketch
+**Status: idea; the handles are not started.** Written down on 2026-09-15 to come back to. Built since: the secret
+registry, scrubbed by value at every crossing (#1948, e8508959; "The scrub as built", below). The handles are not, and the sketch
 under [Shape](#shape-a-sketch-unvalidated) is a guess to be argued with, not a design.
 
 ## The idea
