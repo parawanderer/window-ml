@@ -298,7 +298,8 @@ Four rulings of Shane's that build on the registry scrub ([#1948](https://github
 is built yet. Ruling 30's value scrub lands after scrub PR 2, its channel mask with handles; ruling 32 lands before
 handles; ruling 33 lands once ruling 32's store and its Settings page exist; ruling 39's by-value half lands after
 #1948, its shape half in its own PR. Rulings 40 to 42 and 44 settle four of ruling 39's open points, and ruling 43
-adds LLM provider tokens to its shape list; all five are written into its section.
+adds LLM provider tokens to its shape list; all five are written into its section. Rulings 93 and 94 (2026-11-20) add
+a third kind, the personal detail, and the inbox item's text for the three kinds.
 
 ### Page password fields are masked from the model (ruling 30)
 
@@ -388,10 +389,11 @@ the bench session.
 
 ### A secret the model never uses is stored hash-only (ruling 32)
 
-**Two classes, chosen when a secret is registered.** `mask`, the default: recognised and redacted, never usable by the
-model, stored without its value. `use`: kept as a value, for a handle to use without the model reading it. A `mask`
-secret cannot become `use` without the value being entered again, and the Settings page shows a `mask` secret's name
-only. The registry #1948 built keeps every entry as a value; under this ruling those become `mask` entries (below).
+**Two classes, chosen when a secret is registered** (ruling 93 adds a third, `detail`, in its own section). `mask`, the
+default: recognised and redacted, never usable by the model, stored without its value. `use`: kept as a value, for a
+handle to use without the model reading it. A `mask` secret cannot become `use` without the value being entered again,
+and the Settings page shows a `mask` secret's name only. The registry #1948 built keeps every entry as a value; under
+this ruling those become `mask` entries (below).
 
 **What a `mask` entry stores**, per form of its value (the forms below): the form's length `L`, a short keyed filter
 hash `F` of its first `k` characters, and a slow confirm hash `C` of the whole form; never the value. The key `K` and a
@@ -467,7 +469,8 @@ calls, each surfaced to Shane:
 - **The form.** Each row is a name, a value and a type, the type `mask` by default. The text says in plain words what
   each type does: `mask` is recognised and redacted, never usable by the model, and stored as hashes only; `use` is
   kept as a value so the model can use it through a handle without reading it. It also says the limits: a value
-  under 8 characters, and a value that is transformed before it is printed.
+  under 8 characters, and a value that is transformed before it is printed. Ruling 94 (below) replaces this text with
+  the three kinds' lines.
 - **Where values are entered.** In the first build, only in the renderer the extension hosts. A remote host of the
   renderer (the web build, the phone) shows the item and the explanation, and its fix action explains that entry is
   on the computer, deferred as ruling 24 defers a remote unhide. The phone's native inbox receives state-level codes
@@ -721,3 +724,234 @@ snippet that come back are scrubbed. A link built from a scrubbed URL opens the 
 are scrubbed as its text is (two that scrub to one text are numbered); before the registry's first read, a key is kept
 only when it has a schema's shape (letters only, lowercase first, at most 32), so a registered value of that shape used
 as a key survives that path.
+
+### Personal details: a third kind of registered value (ruling 93)
+
+**The ruling** (Shane, 2026-11-20, in the coordinator's session). The registry gets a kind for a personal detail: a full
+name, an address, a phone number. The model never sees one. It can fill one into a form by name, and the value is
+blanked in text and in screenshots. Nothing here is built. The kind is `detail`, beside ruling 32's `mask` and `use`.
+
+**Stored as a value.** A `detail` entry keeps its value in `ml_secret_registry`, as a `use` entry does, for two reasons:
+a handle needs the value to fill a field, and the screenshot mask needs it to find rendered text. Hash-only storage
+would buy nothing here. A name or an address is in a dictionary, and ruling 32 states that a weak value is not protected
+from offline guessing by whoever holds the profile. What protects a `detail` is the store's place (local, never synced,
+backed up or exported, "The scrub as built") and not its form. The bounds are the registry's: one of the 64 entries, at
+most 512 characters, a name matching `[A-Z0-9_]{1,40}`. The minimum length differs (below).
+
+**The looser match.** A detail is written by people and pages in many ways, so the exact match misses most of them. The
+rule, applied to the registered value and to the text alike:
+
+1. Unicode NFKC, then `toLowerCase()` with no locale, which folds case (`ANN LEE` and `Ann Lee` match).
+2. Each run of whitespace (any character `\s` matches, the no-break space, a newline and a tab included) becomes one
+   space, and the registered value is trimmed. An address split over two lines matches the same address on one.
+3. A match is bounded: the character before it and the one after it are neither a letter nor a digit (`\p{L}`,
+   `\p{N}`), so `Ann Lee` does not match inside `Joann Leeds`.
+4. The text keeps a map from each normalised unit back to the original, so the replacement covers the original span,
+   its own case and whitespace included.
+
+**Not folded**, each a limit stated to the person: diacritics (`Zoë` and `Zoe` are two values), punctuation and
+abbreviation (`St.` and `Street`), a hyphen for a space, and order (`Lee, Ann`). In a script written without spaces
+(Chinese, Japanese, Thai) a name inside a sentence has a letter on both sides, so step 3's bound never lets it match:
+a gap, not lifted in the first build, since dropping the bound for those scripts would match a short name inside
+unrelated words. An entry may carry up to 4 variants
+under one name (proposed), each matched as the value is. A variant counts toward the registry's forms, not its entries.
+
+**A phone number** (proposed, beyond the ruling's minimum). A value made of digits and the separators `+`, space, `.`,
+`-`, `(` and `)` also matches any run of the same digits in the same order with any of those separators between them,
+bounded by non-digits. `+32 470 12 34 56` then matches `+32470123456` and `+32 (470) 12.34.56`. A national form
+(`0470 12 34 56` for the same number) is a variant, never derived, since which prefix replaces a country code differs by
+country. The rule applies only when the value holds at least 7 digits.
+
+**The forms.** The looser match applies to the value as written and JSON-escaped, where the escapes `\n`, `\r`, `\t`
+and the no-break space's escape (a backslash, then `u00a0`) count as whitespace. A percent-encoded form matches with a
+space as `%20` or `+` and the hex digits in either case. The base64 and shell-escaped forms are matched exactly as
+written, since case folding breaks base64; a detail inside base64 is caught only in the case it was registered in.
+
+**The minimum length, and what a false hit costs** (proposed). A `detail` is at least 6 characters after normalisation,
+not 8. `Ann Lee` is 7, and a detail is meant to match ordinary text, so the floor's reason for a `mask` entry (a short
+value occurs by chance) does not apply in the same way. What a false hit costs:
+
+- The model reads `[REDACTED:FULL_NAME]` where the text held someone else with that name, or a street that shares a
+  name with one in the person's address. The output is corrupted for that span only.
+- A task that needs the model to read the detail fails: "check the delivery address on this order" shows the model only
+  the marker. That is what the kind is for. The person's own turn can carry the value with ruling 39's "send as is";
+  a page's text has no such flag.
+- A one-word value (no whitespace and no digit: a surname alone, a city) blanks every occurrence on every page. The
+  form allows it, says so in one line, and suggests the full form.
+
+The hit rate on real pages is measured in the build PR, on captured page text with synthetic common names and
+addresses, as ruling 39's patterns are measured on real output; the floor of 6 stays provisional until then (the
+coordinator's call).
+
+**Where it is matched.** Every crossing "The scrub as built" lists, with two exceptions, and each covers only text the
+page itself supplied. A page-started model request (`FETCH_LLM` and the stream port) and an error answered to a page
+(`forPage`) skip `detail` entries. The page composed every message of its own request and holds the text of its own
+error, so scrubbing a detail there hides nothing from the page. Text the worker adds to a run a page started (a fetch
+made with the person's cookies, a tool result from another tab, in a run the worker hosts) is the worker's, not the
+page's, and is scrubbed of details as of any entry. A detail the worker hands a page inside an answer's `data` is
+outside the scrub already ("Known limits" of "The scrub as built"), so the skip adds no route of its own. Scrubbing it
+would also give an approved page a cheap way to confirm a guess: it sends a candidate name, and the model it drives
+repeats the marker. For a high-entropy `mask` value that oracle is the known limit already stated; a name or an address
+is cheap to guess, so for those it becomes a real leak. The turn the person sends is scrubbed of details as of any entry
+(ruling 39).
+
+**Use by handle.** A `detail` is filled by name with the handle mechanism ("Shape" above): the run is granted entries
+by name, and the model holds a handle with no data in it. What differs from a `use` secret:
+
+- **The sink is a page field, not a background fetch.** `type` takes a handle for the whole value of a field
+  (`{ handle: "HOME_ADDRESS" }`). The worker writes the value; the model's arguments, the step's display and both
+  exports show `[detail: HOME_ADDRESS]`.
+- **The scope is an origin**: the origin of the frame that owns the field, not the top page's. The first fill of an
+  entry on that origin in a run asks, and the card names the entry and the origin. A field in a cross-origin frame
+  asks for that frame's origin, and the card shows both the frame's origin and the top page's. A policy can allow it
+  after that (`docs/spec/POLICIES.md`). A `use` secret's path, method and header scope do not apply.
+- **No `echoes` refusal.** A page that shows the detail back (an order's confirmation) is the normal case. The scrub
+  blanks it on the way to the model, so nothing is refused.
+- **Ruling 30's exemption does not apply.** That exemption covers a password-class field holding what the run typed.
+  A detail is scrubbed by value wherever it is read, whoever wrote it, so the field the run filled reads back as the
+  marker.
+- **Parts.** An address form has separate fields (street, city, postcode). Each part is its own entry
+  (`HOME_STREET`, `HOME_CITY`, `HOME_POSTCODE`); the registry has no structured detail. A part under 6 characters (a
+  4-digit postcode) can be filled by handle but is not scrubbed.
+- **Not in the first build:** a handle inside longer text (a letter signed with `FULL_NAME`). It would make every typed
+  text a sink, and it stays open.
+
+**Masked in screenshots, `look` and `locate`.** Ruling 30's channel mask blanks a held FIELD. A detail is any rendered
+text, so the mask finds it in the page first. For each capture:
+
+1. **Find.** The content script, in its isolated world, walks the text nodes of the document, its same-origin frames and
+   its open shadow roots. It groups them by their nearest block-level ancestor (a computed `display` that is not an
+   inline one) and joins each group's text in DOM order. It runs the looser match over each joined text and turns each
+   match into a `Range`, which may span several text nodes. It takes the range's `getClientRects()`. An `input`'s or a
+   `textarea`'s value is matched alone, and its rectangle is the element's box.
+2. **Capture**, through the path the tool uses today.
+3. **Find again**, and paint the union of both reads' rectangles opaque, padded by 2 CSS pixels and scaled by the
+   capture's device pixel ratio and zoom. The painting is done on the captured bitmap, in the worker or the offscreen
+   document, before the model, the store or an export sees it. Nothing is painted in the page, which could observe or
+   undo it. Two reads that disagree still give the union, and the run log records a `secrets`/`mask-moved` mechanic.
+4. The painted image is the one the run keeps, so the sidebar and both exports show what the model saw. The raw capture
+   is never stored.
+
+**A capture that reaches the page.** One does: `CAPTURE_TAB` (`page-relay.ts`, `background.ts`) answers an approved
+page with a capture of its own tab, so it can crop to an element, and a page-hosted run's tool can return a capture to
+the page. The rule is keyed on who receives the bitmap and on the origin of the document captured, never on which tab
+it was or who started the run:
+
+- a capture whose bitmap reaches a page, of a document of the SAME origin as that page: not painted for `detail`
+  entries. The page's origin can draw and read that document's text already, so painting hides nothing, and a painted
+  rectangle would be the oracle the text skip removes (the page draws candidate names and reads which were painted). A
+  second tab of the same origin falls here too;
+- a capture whose bitmap reaches a page, of a document of ANOTHER origin: painted;
+- a capture that never reaches a page (a run the worker hosts, a model backend, the store, an export): painted.
+
+The origin compared is the captured tab's top document's. A same-origin page holding a cross-origin frame gets the
+frame's text painted, since the page cannot read that frame.
+
+A full-page capture taken in tiles gets the two reads for each tile. `locate`'s text answer and the accessibility tree a
+CDP read returns are text crossings, scrubbed with the looser match. A closed shadow root and a cross-origin frame are
+read only through CDP's piercing DOM read, when CDP is attached; otherwise their text is not masked. The walk's bound
+(proposed): 4 MiB of text. Past it, the capture is refused with one line naming the reason, never sent unmasked.
+
+**Gaps**, stated plainly:
+
+- **Text that is not text in the DOM**: an image, a canvas, a video frame, a PDF rendered by the viewer, and CSS
+  generated content (`::before`, `::after`). There is no OCR, so none of these is masked.
+- **Text split across blocks**: a match spans inline elements (`<b>Ann</b> Lee`) but never two blocks (two table cells,
+  two `div`s). Text that CSS reorders (`order`, `direction`, absolute positioning) is matched in DOM order, not in the
+  order it is drawn. `text-transform` changes only case, which the match folds.
+- **It filters; it detects nothing.** Only registered details are blanked. A name the person did not register, a first
+  name alone when the full name is registered, and a detail that was transformed (initials, reversed, encoded) all
+  reach the model.
+- **Text drawn only between the two reads** (an animation, a marquee, a value that blinks in): neither read sees it,
+  and the capture does.
+- **A site that controls a second origin.** An approved site that also controls the other origin (its own second
+  domain, in a frame or in another tab) can draw candidate names there and read the painted rectangles from the
+  capture it receives. Painting stays the rule; this residual is stated, not closed.
+- **Layout leaks a little.** A painted rectangle has the width of the text it covers.
+
+**A session secret: a second registration origin** (rulings 96, the question card, and 97, the session secret: Shane,
+2026-11-20, in the coordinator's session, numbered in the plan by #2077; [`SHELL_INTERACTIVE.md`](SHELL_INTERACTIVE.md),
+"A masked answer"). An entry has an origin as well as a kind. `settings`
+is the person in Settings, kept in `ml_secret_registry`. `session` is the harness at run time: the answer to a masked
+card (a `getpass()` in a cell). A `session` entry is kind `mask`. It is kept with ruling 30's page values in
+`chrome.storage.session`, never on disk, and is removed when its session is deleted or archived, and in any case when
+the browser closes. It shares ruling 30's bound of 256 values a session and the same fail-closed rule at the bound. The
+answers to #2066's open items:
+
+- **The name.** A generated one, `ASKED_SECRET_<n>`, numbered within the session. The card offers an optional name
+  field, checked against `[A-Z0-9_]{1,40}`. The prompt's text is never the name: the program wrote it.
+- **"Save to the store"** is offered on the card as a box that starts unticked: "Also keep in the store as <name>",
+  with ruling 32's kinds to choose from and `mask` first. Ticking it is a registration by the person, whose entry then
+  has origin `settings`. It is offered only where values are entered (ruling 33: the renderer the extension hosts).
+- **Where a masked card is answered.** In the first build, only in the renderer the extension hosts, for the same reason
+  ruling 33 gives. A remote host (the web build, the phone) shows the card and says the answer is typed on the computer.
+  A value crossing devices gets its own ruling. This narrows #2066's flow, which lets any host answer.
+- **`ml.sh`'s stdin answered by the person** registers under the same origin when the person answers in the card's
+  masked box. The host cannot tell a password prompt, so the card offers the masked box as a toggle.
+- **Under 8 characters**, a `session` answer is not registered (the floor), and the card says so in one line.
+- **What is not promised** is #2066's: the cell holds the plaintext.
+
+**`send` and scripted answers by name** (#2066, open for this spec). `send <id> secret:<NAME>` and a scripted rule that
+names an entry are allowed only for an entry that keeps its value (`use` or `detail`); a `mask` entry has none. A `use`
+entry goes only to a masked prompt, and a `detail` goes to any prompt. Each use asks the person: the card names the
+entry, the call and the prompt's text. A policy for one entry and one program may allow it later. The residual is the
+same as for `getpass`: the cell that receives the value holds it in plaintext, and the model's next cell can read the
+variable. A handle that reaches code the model wrote is a channel the handles slice has to close. Until then, this is
+the case where "never read" is weakest, and the card says so. A STORED secret's handle on `ml.sh` stdin (slice 1) stays
+open.
+
+**The other specs.** The agent's notes and `lib/` (FILE_ATTACHMENTS.md, both ideas of 2026-11-22) hold what the model
+wrote, which it wrote from what it saw, already scrubbed. A detail the model never saw cannot be in them, so they add
+no path. Reading them back crosses the `/files` read scrub, which applies `detail` entries with the rest.
+
+**Rows e3 will need**, by name:
+
+- `detail-case-and-space`: `ANN`, a newline and `lee` match `Ann Lee`; `Joann Leeds` does not match `Ann Lee`.
+- `detail-replaces-original-span`: the replacement covers the original text, its case and whitespace included.
+- `detail-phone-separators`: each separator form of one number matches; a run of the same digits inside a longer
+  digit run does not.
+- `detail-variant`: a variant is matched under its entry's name; a fifth variant is refused.
+- `detail-floor`: a 5-character detail is refused at registration; a one-word detail is accepted with the warning.
+- `detail-not-on-page-request`: a page-started request holding a registered name reaches the backend unchanged, and an
+  error to the page holding it is not marked (no oracle).
+- `detail-worker-text-in-page-run`: in a run a page started, a tool result the worker built from another tab and a
+  fetch made with the person's cookies are scrubbed of a registered name.
+- `detail-capture-to-page`: a page's `CAPTURE_TAB` of its own tab, and a capture of a second tab of the same origin
+  returned to it, come back with no `detail` painted; a capture of another origin's tab returned to the page, a
+  cross-origin frame inside a same-origin capture, and every capture that reaches no page are painted.
+- `detail-handle-fill`: `type` with a handle fills the field; the arguments, display and exports show
+  `[detail: <NAME>]`; reading the field back gives the marker.
+- `detail-handle-origin-asks`: the first fill on an origin asks; a field in a cross-origin frame asks for the frame's
+  origin and the card shows both origins; a page cannot start a fill.
+- `detail-screenshot-painted`: a page with the name in one text node, in `<b>Ann</b> Lee` and in an input is captured
+  with all three rectangles painted. The stored image is the painted one.
+- `detail-screenshot-moved`: a page that moves the text between the two reads gets the union painted and a
+  `mask-moved` record.
+- `detail-screenshot-bound`: a page past the walk's bound gets the capture refused, never sent unmasked.
+- `detail-gaps-stated`: the name in an image, in a canvas, in `::before` content, split across two cells, inside a
+  Japanese sentence with no spaces, and drawn only between the two reads is NOT masked; a page that controls a second
+  origin drawn in a frame reads which candidates were painted (the stated residual). These rows pin the stated gaps,
+  so a change to them is seen.
+- `session-secret-registered-before-resume`: a `getpass` answer is scrubbed from the cell's next output, and is gone
+  with the session.
+- `session-secret-remote-refused`: a masked card answered from a remote host is refused.
+- `send-by-name`: `secret:<NAME>` on a `mask` entry is refused; on a `use` entry to a plain prompt it is refused; on a
+  masked prompt it asks.
+
+### The inbox item names three kinds (ruling 94)
+
+**The ruling** (Shane, 2026-11-20). Ruling 33's inbox item says what the store is for, in the three kinds. The text,
+for whoever builds the item. Each line is one sentence or two that a person reads at a glance:
+
+- **Use, never read**: a password or an API key. The model puts it where it belongs, by name, and never sees it.
+- **Never read**: a token the model could come across where it works, in a file, a command's output or a process list.
+  It is blanked wherever it turns up, and the model cannot use it.
+- **Blank before the model sees it**: your full name, your address, a phone number. Blanked in text and in screenshots
+  of pages, and filled into a form by name when you allow it.
+
+One line below them gives the limits: "Not caught: a value changed before it is shown (encoded, cut or reversed), text
+inside an image, and a value shorter than 8 characters (6 for a personal detail)."
+
+The three lines replace the form's two-type text in ruling 33 ("The form"), and the form's type choice lists the three
+in this order with "Never read" (`mask`) preselected. The kinds' names in the code (`use`, `mask`, `detail`) are not
+shown to the person.
