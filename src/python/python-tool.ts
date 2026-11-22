@@ -88,6 +88,11 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
     const currentClause = onSheet ? " Or `'current'` for THIS Google Sheet."
         : singleTable ? " Or `'current'` for the one table on this page." : "";
     const tablesDesc = "Spreadsheet/table data → pandas DataFrame(s). " + PYTHON.tables + currentClause;
+    // A worker-hosted run's worker mounts the session's files at /files (files-mount.ts), read-only until the reader's write
+    // side lands; every other principal has no /files. Writes are not promised: the reader answers EROFS to each.
+    const filesClause = mintVia
+        ? "No network here: use fetch_url for that. Files the person attached to this session are under /files/attached/ (list it with os.listdir); /files is read-only."
+        : "No network or filesystem here: use fetch_url for that.";
     // Only a worker-hosted run keeps a namespace across its cells (root C), and only the worker's `ml` has `_mintToken`;
     // a page-hosted agent's cells have no run, so they stay stateless.
     const stateClause = mintVia
@@ -108,7 +113,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             "→ a table — so just `return sympy.diff(...)` / `return img` and cite `![…](@tool:…:out)` (no cast; add " +
             "`| raw` to force the literal text). " + stateClause + " In scope: " +
             PY_PACKAGE_LABELS + " + stdlib (io, math, collections, itertools…)." +
-            " A cell the read-only dialect covers runs without asking; any other asks the user first. No network or filesystem here: use fetch_url for that." +
+            " A cell the read-only dialect covers runs without asking; any other asks the user first. " + filesClause +
             currentHint,
         parameters: {
             type: "object",
@@ -223,7 +228,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                     const loaded = [dfNames, r.inputImage ? "`img`/`img_np`" : ""].filter(Boolean).join(" and ");
                     const looksLikeReload = /read_csv|read_html|read_excel|read_json|open\(|FileNotFoundError|No such file|ModuleNotFound|requests|urllib|urlopen|http|fetch|ConnectionError|storage_options/i.test(err);
                     const hint = loaded && looksLikeReload
-                        ? `\n\nHint: the tool ALREADY loaded your data as ${loaded} (the table/sheet/image PARAMETER did it) — reference it directly; do not read_csv/read_html/open/fetch anything (the sandbox has no filesystem or network).`
+                        ? `\n\nHint: the tool ALREADY loaded your data as ${loaded} (the table/sheet/image PARAMETER did it) — reference it directly; do not read_csv/read_html/open/fetch anything (${mintVia ? "your inputs are not files, and the sandbox has no network" : "the sandbox has no filesystem or network"}).`
                         : "";
                     return done(`${tableNote}Python error: ${err}${hint}${stdoutClipped ? `\n\nstdout:\n${stdoutClipped}` : ""}`, { error: err });
                 }

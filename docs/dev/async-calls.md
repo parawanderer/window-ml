@@ -198,6 +198,36 @@ cancelled task's late result is dropped by `finish`'s status guards. No page-bou
 (`tests/sh-lease.test.mjs`). `rekeyRunInbox` (`sw-runs.ts`) moves a live run's inbox to another tab (tasks are keyed by run id and
 follow); `senderOwnsRun` is the owner check `SET_APPROVAL` uses. The run host's `settle` still closes over the starting tab id.
 
+## A session's row shows its tasks (rule 4b, slice E, the state half)
+
+`SessionSummary.background` (`{ running, waiting, noTab?, releaseAt? }`) is how a session list marks a run with background
+tasks. It is present when SOMETHING is true, not only a count: both counts may be 0 with `noTab` (a run with no tasks and no
+tab to start a turn on) or `releaseAt` (epoch ms, set only while a release deadline is set). One predicate decides, `backgroundOf`
+(`contract-debug.ts`): undefined when both counts are 0 and neither field is set, else a normalised copy with only the true fields.
+`refreshTaskRow`, `SessionIndex.setBackground` and `taskMarkText` all call it, so no place tests `running + waiting === 0` itself. `taskCounts(runId)` (`sw-tasks.ts`) counts the table: `running` rows, and ended rows with `delivered` false
+(the result waits for a turn). `persist` and `endTasks` call `announceCounts`, which fires the `onTaskCounts` listeners; nothing
+stores the counts. `sw-task-rows.ts` (bound by `sw-sessions.ts` once the server exists) turns a change into
+`sessionServer.background(hash, ...)`, adding `noTab` when a count is above 0 and the run's tab (`bgRuns`, else the row's
+`page.tabId`) is not open (`chrome.tabs.get` rejects); a finished run whose tab closed is NOT marked. Two plug-in hooks cover
+what the table cannot: `setNoTabReader(f)` is asked for a run with both counts 0, and a true answer gives `{ 0, 0, noTab }`
+(the move-run lane sets it); `setReleaseAtReader(f)` is asked for every run and a number becomes `releaseAt` (the release
+build sets it). Both default to none, are `// state: plumbing`, and the table is re-read after they are awaited.
+The `agent-tasks` event still sends counts only, and null whenever both are 0. It refreshes again on `tabs.onRemoved` and after an adopt or move. At worker start, after the
+index is restored, `syncTaskRows` hydrates every `ml_tasks:*` key and sets each row, and clears a marker with no table behind it,
+so an evicted worker's rows are rebuilt from storage; `restore()` drops a saved `background`. The type is `TaskBackground`
+(`contract-debug.ts`), the one representation for the row, the setters and the HUD.
+
+The HUD half: `refreshTaskRow` also sends the run's own tab (`bgRuns` tab) an `agent-tasks` event, `background:
+TaskBackground | null` (null at zero, no `noTab`: the HUD has its tab), through `toPageUi` and `relayDebugEvent` as the
+other worker notices go. It is worker-only (`WORKER_ONLY_KINDS`, so a page cannot write one), a live notice (`save:
+false`, not in the session index's known kinds, not in an export) and is not stored: the reducer (`debug-reducer.ts`) holds
+the latest on `Session.background`, replaced on each event and cleared on null, and a panel opened late gets the last one
+from the debug ring. `TaskMark` (`card/task-mark.tsx`, words in `taskMarkText`, `transcript/task-mark-text.ts`) draws
+"2 running · 1 result waiting" at the top of the card's body, its tip saying a result is read at the run's next turn.
+The no-tab state on the chat page is not drawn yet: the chat-page lane's. No new state, so `state.md` needs nothing.
+Tests: `tests/task-row.test.mjs`, `tests/session-index.test.mjs`, `tests/task-mark.test.mjs`,
+`tests/event-admission.test.mjs`.
+
 ## Traps
 
 - **A short `expectMs` shortens the lease.** The deadline is `expectMs ?? SH_LEASE_MS`, and models underestimate: on

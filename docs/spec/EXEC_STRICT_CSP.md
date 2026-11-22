@@ -1,5 +1,10 @@
 # `exec` on strict-CSP / Trusted-Types pages — CDP `Runtime.evaluate`
 
+**Status: built** (278f8c76, 2026-08-30): an `exec` that throws on CSP or Trusted Types runs through CDP
+`Runtime.evaluate` (`cdpEval`, `src/sw/sw-cdp.ts`), with the debugger attached once per run (46154935). Two parts of
+the plan below changed: `debugger` is held from install, not requested at first use, and the flags are one `cdp`
+setting, on by default ([CDP_CLICK.md](CDP_CLICK.md), "Permission").
+
 ## Problem
 
 The `exec` tool's non-readonly path runs `new Function(...)`/`eval` in the page's

@@ -7,6 +7,7 @@ import type { DerefValue, DerefMeta, DerefRead } from "../contract/contract-poin
 import type { TokenKind } from "../contract/contract-render";
 import { jsonShape, jsonValue } from "../dom/dom";
 import { type StoredColumnReader, asTable, tableShape } from "../table/table-data";
+import { type StoredReadPlan } from "../table/table-plan";
 import { currentHasTool } from "./tool-exec";
 import { type ChannelMessage, offIsolated, onIsolated, toIsolated } from "../page-channel";
 
@@ -89,10 +90,11 @@ export class DerefText extends String implements DerefValue {
     }
 }
 
-/** Named columns of a stored table, every row, read by the service worker. The same id-matched relay as a pointer read.
- *  `runId` LABELS the request; what entitles it is decided worker-side (background.ts): a background-hosted run holding
- *  the value, or the tab the worker disclosed that key to, which is how a page-hosted run reads one. */
-export function columnsViaBackground(runId: string, key: string, names: string[], opts: { delimiter?: string; headerless?: boolean }): Promise<{ rowCount: number; columns: Record<string, (string | number | boolean | null)[]> }> {
+/** Named columns of a stored table, every row up to the plan's limit, read by the service worker. The same id-matched
+ *  relay as a pointer read. `runId` LABELS the request; what entitles it is decided worker-side (background.ts): a
+ *  background-hosted run holding the value, or the tab the worker disclosed that key to, which is how a page-hosted run
+ *  reads one. */
+export function columnsViaBackground(runId: string, key: string, names: string[], opts: { delimiter?: string; headerless?: boolean }, plan: StoredReadPlan = {}): Promise<{ rowCount: number; columns: Record<string, (string | number | boolean | null)[]> }> {
     return new Promise((resolve, reject) => {
         const id = `cols-${Math.random().toString(16).slice(2)}`;
         const onMsg = (e: ChannelMessage) => {
@@ -102,6 +104,6 @@ export function columnsViaBackground(runId: string, key: string, names: string[]
             if (d.error) reject(new Error(d.error)); else resolve({ rowCount: d.rowCount ?? 0, columns: d.columns ?? {} });
         };
         onIsolated(onMsg);
-        toIsolated({ type: "PAGE_VALUE_COLUMNS", id, runId, key, names, ...opts });
+        toIsolated({ type: "PAGE_VALUE_COLUMNS", id, runId, key, names, ...opts, ...(plan.limit !== undefined ? { limit: plan.limit } : {}) });
     });
 }

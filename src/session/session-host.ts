@@ -9,7 +9,7 @@
 import type { JsonSchema } from "../contract";
 import type { AttachedFile, AttachedFileRef, AttachedPdf, ElementContext, SentFile, WireFile } from "../contract/contract-run";
 import type { NeutralMessage, TokenUsage } from "../contract/contract-chat";
-import type { MlDebugEvent } from "../contract/contract-debug";
+import type { MlDebugEvent, TaskBackground } from "../contract/contract-debug";
 import type { FolderState } from "../archive/archive-folder";
 
 /* ------------------------------ versioning ------------------------------ */
@@ -321,6 +321,14 @@ export interface SessionSummary {
     startedBy?: Principal;
     /** set when another session started this one */
     lineage?: Lineage;
+    /**
+     * The session's background tasks, for a list to mark: `running` are detached calls still running, `waiting` are ended
+     * ones whose result no turn has read yet. `noTab` is set when the run has no open tab to start a turn on, so a result
+     * waits until the person brings the session to one. Absent when both counts are 0 (never `{ 0, 0 }`) and for a runtime
+     * that does not report it; a client that does not know the field ignores it. Never saved: it is the task table's, read
+     * again when a runtime starts.
+     */
+    background?: TaskBackground;
 }
 
 /** A change to the index. A subscription opens with one `snapshot` per runtime it covers, then streams changes.
@@ -809,6 +817,8 @@ export interface TabInfo {
     index?: number;
     /** the tab group it is in; absent when it is in none. Names and colours come in `tabs.list`'s `groups`. */
     groupId?: number;
+    /** when the person last had this tab in front, in ms since the epoch (Chrome's `lastAccessed`); absent when the runtime cannot say, never 0 */
+    lastAccessed?: number;
     /**
      * A small icon as a `data:image/…` URL the RUNTIME fetched, never the site's own icon URL: a client loading that
      * would tell each site, and the client's network, what the runtime has open. Absent when there is none.

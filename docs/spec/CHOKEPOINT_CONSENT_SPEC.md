@@ -1,7 +1,7 @@
 # Spec: enforce privileged-op consent at the BACKGROUND choke point
 
-Status: **implemented + tested** (sw-consent.ts: `senderTrust` + `pendingGrants` +
-`isBlockedFetchTarget`; the four handler guards). `tests/background.test.js` covers
+Status: **implemented + tested** (sw-consent.ts: `senderTrust` + `pendingGrants`;
+sw-image-fetch.ts: `isBlockedFetchTarget`; the four handler guards). `tests/background.test.js` covers
 it: four `SECURITY (…)` refusal tests, a trusted-surface positive, and a
 grant-*positive* end-to-end (`SECURITY (grant)`) — an approved design-A run reads
 THAT sheet mid-delegation, a different sheet is still refused, and the grant clears

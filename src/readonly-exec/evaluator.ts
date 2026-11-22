@@ -481,8 +481,10 @@ export class Evaluator {
         // column, `select` a row per row with a cell per name. Rows × width is the work, checked here because the
         // budget never sees inside the call. (Page tables are capped at 200k rows, so `col` alone never trips it;
         // a wide `records()` over a big one does.)
-        // A STORED table's reads cover every row (its `shape`), not the preview in `rows`, and each is a request the
-        // step budget cannot see, so their total across the run is bounded too.
+        // A STORED table's reads (`col`, `records`) cover every row (its `shape`), not the preview in `rows`, and each is a
+        // request the step budget cannot see, so their total across the run is bounded too. Its `select` and `head` are
+        // views over the rows in hand and read nothing (docs/spec/ML_TABLE.md, "Views of a stored table in JS"): a view's
+        // own reads are charged by the view's `shape`, which is how its limit and its columns count.
         // Last, once the arguments are walked: the search's own backtracking, which nothing above bounds.
         const search = this.regexSearch(obj, key, args, str);
         if (search) this.regexCharge(search);
@@ -490,14 +492,14 @@ export class Evaluator {
         if (isTable(obj)) {
             const t = obj as { rows: unknown[]; columns: unknown[]; shape: [number, number] };
             const stored = isStoredTable(obj);
-            const all = stored ? t.shape[0] : t.rows.length;
+            const all = stored && (key === "col" || key === "records") ? t.shape[0] : t.rows.length;
             const width = key === "records" || key === "copy" ? t.columns.length
                 : key === "select" ? (Array.isArray(args[0]) ? args[0].length : 0)
                     : key === "head" ? t.columns.length : 1;
             // A copy is of the rows in hand, never the whole stored file.
             const height = key === "head" ? Math.min(all, Math.max(0, Number(args[0] ?? 5)) || 0) : key === "copy" ? t.rows.length : all;
             if (height * width > MAX_COLLECTION) big();
-            if (stored && (key === "col" || key === "select" || key === "records" || (key === "head" && height > t.rows.length))) {
+            if (stored && (key === "col" || key === "records")) {
                 this.storedCells += height * width;
                 if (this.storedCells > MAX_STORED_CELLS) throw new NotInDialect(`reading over ${MAX_STORED_CELLS.toLocaleString("en-US")} cells of stored tables in one script, which is too much work to run without asking`);
             }

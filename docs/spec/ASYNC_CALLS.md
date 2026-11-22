@@ -1,9 +1,16 @@
 # Async calls: the three ways a run stops waiting
 
-**Status: concept document, nothing of it built (2026-10-29, from Shane's 2026-09-18 framing in
+**Status: mode 1 built, modes 2 and 3 not (2026-10-29, from Shane's 2026-09-18 framing in
 `tmp/chats/gemini_async_discussion.md` and the memories that held it since; promoted to a spec on Shane's word
-2026-10-29; UNASSIGNED).** This is the one place the design lives. The memories, the open-topics map and the specs
-that touch a piece of it point here, and a build of any mode starts from this file.
+2026-10-29; built by the async lane).** Built: mode 1 on `ml.sh` (#1437, f49b935a) and on a worker-hosted run's
+`python_exec` cell (#1642, ffbaf0d8), with the `task` tool (`src/tools/task-tool.ts`) and `ml.current.tasks`; rule 4a,
+a page change (#1751, bf6c7f3e); rule 4b slices A to D: a task outlives its turn (#1810, 159fe160), a durable task
+table and the cap setting (#1854, 43f88825), a finished task starts a turn (#1929, a9bca8b2), the lifetimes in the
+prompt (#1942, 642b4691), and slice E, the HUD task mark (#2082). How each works:
+[`docs/dev/async-calls.md`](../dev/async-calls.md). Not built: mode 1 on `exec`, modes 2 and 3, the no-tab state on
+the chat page, and the sign-in flow
+("A detached call that asks the person to sign in"). This is the one place the design lives. The memories, the
+open-topics map and the specs that touch a piece of it point here, and a build of any mode starts from this file.
 
 The problem is the one every agent harness has: a tool call blocks the loop until it returns, and when a call takes
 forty minutes nobody expected, the model sits for forty minutes uninformed. Shane hit it in Claude Code more than
@@ -34,8 +41,9 @@ only the overrun pays.
 
 ## What exists today, which each mode reuses
 
-Nothing of the three modes is built, but most of their machinery is, which is what makes them assembly rather than a
-subsystem. Do not build a second copy of any of these.
+When this was written (2026-10-29) nothing of the three modes was built, but most of their machinery was, which is what
+makes them assembly rather than a subsystem; what is built since is in the status line. Do not build a second copy of
+any of these.
 
 - **A tool call is one awaited round trip.** The loop (`agent-loop.ts`) calls the tool and waits; a DOM tool goes
   worker → tab through `delegateSend`, which already has a THIRD outcome beside answer and reject (a sleeping tab
@@ -188,8 +196,9 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    settings, carried in the public config (`pythonIdleMinutes`, `detachedTaskMaxMin`) so a page-built run composes the
    same text: the idle figure as the reap reads it (`idleMinutes`, `py-reap.ts`), the cap as the sandbox applies it
    (`capMinutes` and `clampDetachedMs`, `py-lease.ts`), both defaulting to `DEFAULT_CONFIG`; `tests/agent-start.test.mjs`
-   compares them with `DEFAULT_REAP_BETWEEN_MS` and `PY_DETACHED_MAX_MS`. NOT built: the HUD per-run task mark
-   (slice E, with the chat-page lane; slice C keeps the transcript line) and the no-tab state on the chat page. This
+   compares them with `DEFAULT_REAP_BETWEEN_MS` and `PY_DETACHED_MAX_MS`. BUILT: the HUD per-run task mark (slice E: the
+   worker-only `agent-tasks` event, `TaskBackground`, the reducer's `Session.background`, the `TaskMark` component;
+   slice C keeps the transcript line). NOT built: the no-tab state on the chat page (the chat-page lane draws it). This
    reverses rule 4, and the mode 1 ruling that a model answering while a build is detached ends the build, for the two executors that run
    outside the service worker: an `ml.sh` call (the host's process) and a detached `python_exec` cell (the offscreen
    document). A fetch runs IN the service worker and dies with it, so it stays turn-bound: the turn's end cancels it,
@@ -268,8 +277,9 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
      no tab has no sidebar to show anything in. Recommended shape, refined with the chat-page lane when built: the
      session's card in the chat page's session list carries a state mark with the count (`background: 2 running`,
      `1 result waiting`), distinct from the running and idle marks; opening the session shows a banner saying it has
-     no tab, what is running or waiting, and that a result is read at the next turn once the session is brought to a
-     tab, with the bring-here action beside it (`MOVE_RUN.md`). The sidebar shows the same mark only on a session it
+     no tab, what is running or waiting, and that a result is read at the run's next turn. Until the detached host
+     (`TABLESS_RUN.md`) is built, that turn needs the session brought to a tab; after it, the turn runs with no page.
+     The bring-here action stays beside the banner in both (`MOVE_RUN.md`). The sidebar shows the same mark only on a session it
      lists while some other tab is open. The HUD mark above covers a run that has a tab. The state is read from the
      durable task table, never a second copy, and clears when the task ends and its result is read. OPEN, a pointer
      only: whether a parked result reaches someone with the app closed (`NOTIFICATIONS.md`). Owners when built: the
@@ -379,9 +389,9 @@ field; the detach answer is a sentence plus the tail (`pyDetachedText`, `sw-pyth
   is no line-range verb, `head -n B | tail -n K` is the form `cutNote` teaches). Checked: the pipe composes this way
   today. Guessed: whether the embed syntax itself takes a pipe; the spec does not rely on it.
 - **Lifetime: the session's, until a worker eviction** (`docs/dev/state.md`, "Lost on a worker eviction"). The pointer
-  is in `tokensByRun` (`src/sw/sw-runs.ts:592`, declared `run.pointers` with `lostOn: ["worker-eviction"]`, about
-  `:595`), capped per session (`TokenStore.CAP`, 200; `MAX_TOKEN_SESSIONS` 24, `:597`) and dropped at session release
-  (`releaseSessionTokens`, `:659`). Checked: for an `ml.sh` call the open native port keeps the worker alive while the
+  is in `tokensByRun` (`src/sw/sw-runs.ts:592`, declared `run.pointers` with `lostOn: ["worker-eviction"]`, at
+  `:598`), capped per session (`TokenStore.CAP`, 200; `MAX_TOKEN_SESSIONS` 24, `:596`) and dropped at session release
+  (`releaseSessionTokens`, `:670`). Checked: for an `ml.sh` call the open native port keeps the worker alive while the
   call runs (rule 4b, "Durable"). A detached cell does not, so between turns the worker can be evicted (about 30 s idle)
   and the model's pointer then dangles, as every pointer does. The flow needs the pointer only within the turn that
   embeds it. The answer's expansion is captured at the step (`tokenRenders.push`, `agent-loop.ts:1280`, into the

@@ -1992,17 +1992,19 @@ test("nesting deep enough to exhaust the stack is out of the dialect (it asks), 
 });
 
 // --- STORED tables (POINTER_VALUES slice 7) -------------------------------------------------------------------------
-// A facade over a PREVIEW whose whole table is in the value store: `col` / `select` / `records` (and a `head` past the
-// preview) read every row through a reader bound to the run, and return promises. No construct was added, but a new kind
+// A facade over a PREVIEW whose whole table is in the value store: `col` / `records` read every row through a reader
+// bound to the run, and return promises; `select` and a `head` past the preview are views that read nothing until their
+// own `col` / `records` (docs/spec/ML_TABLE.md, "Views of a stored table in JS"). No construct was added, but a new kind
 // of value flows through the table surface, so the contract is re-checked: the reads are awaited, their work is sized by
 // the table's SHAPE (not the preview in `rows`), their total is bounded, the reader cannot be reached, and a failed
 // script leaves nothing behind.
 const STORED_PREVIEW = (total) => ({ columns: ["n", "s"], rows: [[0, "a"], [1, "b"]], shape: [total, 2], dtypes: { n: "int64", s: "str" }, truncated: true });
 function storedRun(js, { total = 1000, doc = world() } = {}) {
     const calls = [];
-    const reader = async (names) => {
-        calls.push(names);
-        return { rowCount: total, columns: Object.fromEntries(names.map((n) => [n, Array.from({ length: total }, (_, i) => (n === "n" ? i : `v${i}`))])) };
+    const reader = async (names, plan = {}) => {
+        calls.push(plan.limit === undefined ? names : [names, plan]);
+        const rows = Math.min(plan.limit ?? total, total);
+        return { rowCount: rows, columns: Object.fromEntries(names.map((n) => [n, Array.from({ length: rows }, (_, i) => (n === "n" ? i : `v${i}`))])) };
     };
     const run = evalReadonly(expandPointers(js).code, doc, {
         ...ML,
@@ -2016,11 +2018,16 @@ test("stored table: a column read covers EVERY row and is awaited for the survey
     assert.deepEqual((await plain.run).value, [1000, 2, 1000, 999], "rows is still the preview; col is the whole column");
     const awaited = storedRun(`const t = @tool:a1b2c3d.table; const x = await t.col("n"); return x.reduce((a, b) => a + b, 0)`);
     assert.equal((await awaited.run).value, 499500);
-    assert.deepEqual((await storedRun(`return @tool:a1b2c3d.table.select(["s"]).shape`).run).value, [1000, 1]);
+    const sel = storedRun(`return @tool:a1b2c3d.table.select(["s"]).shape`);
+    assert.deepEqual((await sel.run).value, [1000, 1]);
+    assert.equal(sel.calls.length, 0, "a select is a view: it reads nothing");
     assert.deepEqual((await storedRun(`return @tool:a1b2c3d.table.records()[999]`).run).value, { n: 999, s: "v999" });
-    const head = storedRun(`const t = @tool:a1b2c3d.table; return [t.head(2).shape, t.head(500).shape]`);
-    assert.deepEqual((await head.run).value, [[2, 2], [500, 2]]);
-    assert.equal(head.calls.length, 1, "a head the preview holds is answered from it; only the longer one is a read");
+    const head = storedRun(`const t = @tool:a1b2c3d.table; return [t.head(2).shape, t.head(500).shape, t.head(500).rows.length]`);
+    assert.deepEqual((await head.run).value, [[2, 2], [500, 2], 2], "a long head is a view over the rows in hand");
+    assert.equal(head.calls.length, 0, "neither head reads");
+    const view = storedRun(`const v = @tool:a1b2c3d.table.head(500).select(["n"]); return [v.col("n").length, v.records().length, v.shape]`);
+    assert.deepEqual((await view.run).value, [500, 500, [500, 1]], "a view's reads stop at its limit, over its columns");
+    assert.deepEqual(view.calls, [[["n"], { limit: 500 }], [["n"], { limit: 500 }]], "pushed down: the view's columns and limit");
 });
 
 test("ADVERSARIAL (stored table): the reader cannot be reached, extracted or pointed elsewhere", async () => {
