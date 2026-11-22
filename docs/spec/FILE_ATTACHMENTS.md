@@ -639,7 +639,8 @@ lane's read of this spec):
 - The cell's directory is `/files/agent/`, and each cell starts there: a worker-hosted run keeps its interpreter
   across cells, so an `os.chdir` in one cell would otherwise change how the next resolves a bare name. AMENDED
   2026-11-19 (the coordinator's layout call after ruling 86): this said `/files/`. BUILT (#2026): the mount enters the
-  reader's `home` at every cell's remount.
+  reader's `home` at every cell's remount. With a workspace mounted, the workspace's real path instead ("Initial
+  decisions", Shane, 2026-11-13; not built).
 - Two attachments with one name resolve to neither: the fallback refuses, and the hint lists both `@file:` handles,
   as `@file:"name"` does ("The name, and two files with one name", above).
 
@@ -1177,7 +1178,7 @@ the coordinator's value, Shane may override).
   the cell: without both, a walk of a real workspace costs sixteen times the requests. A host-lane requirement
   ("What window-ml-host must do").
 - The size cap for an open, proposed 256 MB: about 2.5 s to fetch, an eighth of the 2 GiB where one `f.read()` fails.
-  Shane's or the coordinator's value; the measurement only rules out anything at or past 2 GiB.
+  Shane's or the coordinator's value; the measurement only rules out anything at or past 2 GiB. H1 clamps it today.
 - Bytecode on a read-write mount: set `sys.pycache_prefix` to a MEMFS path so an import never writes into the person's
   directory, and so the per-cell diff does not list `.pyc` files. Not measured; `dont_write_bytecode` was, and costs
   nothing on the first import.
@@ -1190,9 +1191,10 @@ the coordinator's value, Shane may override).
   means the same file in a cell as in `ml.sh`; with none, in `/files/agent/`, as ruled above (AMENDED 2026-11-19, the
   coordinator's layout call; this said `/files/`). Every cell still starts there afresh. So a bare
   `open("notes.txt", "w")` writes to the person's disk when a read-write workspace is mounted, as a coding agent's
-  would; `/files/` is reached by its absolute path. NEEDS A RULING (2026-11-22): the layout call puts the working
-  directory at `/files/agent/` with no exception, and this decision puts it in the workspace while one is mounted;
-  neither names the other.
+  would; `/files/` is reached by its absolute path. RESOLVED 2026-11-22 (the coordinator): Shane's decision stands.
+  The layout call of 2026-11-19 covers the case with no workspace mounted; with one mounted, a cell starts in the
+  workspace's real path. A relative `ml.fs` path resolves against `/files/agent/` in both cases, since `ml.fs`'s disk
+  is the session's files only.
 - Approving a mount. Only the person mounts, per session, until they remove it. The model can ask through an approval
   card naming the real path, with two choices, "read and write" and "read only", neither preselected; it never mounts
   one itself. A page-started run never has a mount. A read-only mount fails a write with EROFS.
@@ -1507,8 +1509,10 @@ configured roots (`configure`), one list, not a second one beside it.
     the basis the worker judged on, so a judged call costs two round trips, accepted.
   - `fetch` is chunked by offset and length, 512 KiB a chunk, each chunk carrying the basis. `store` is staged as open,
     write and commit through the held descriptor, and the commit does the compare and swap (H8) and the rename. The
-    cap is per call, from the worker, and the host clamps it to 64 MiB (provisional). NEEDS A RULING (2026-11-22):
-    the open's size cap ruled the same day is 256 MB ("What follows"); which one bounds a mounted file is not said.
+    cap is per call, from the worker, and the host clamps it to 64 MiB (provisional). RESOLVED 2026-11-22 (the
+    coordinator; both figures were the coordinator's): 256 MB is the ceiling the worker asks for an open and its before
+    copy; the host's clamp, 64 MiB and provisional, is what binds today. The host raises its clamp only with a
+    measurement.
   - `mount` takes an optional `uploads` path, relative to the mount, which must exist with `attached/` inside it.
   - Path rule, on every platform: a mount-relative path refuses `\`, a leading drive letter (`C:`) and a leading `//`.
     Named cost: a unix file whose name contains a backslash cannot be reached through a mount.
@@ -2005,7 +2009,8 @@ JavaScript gets Node's `fs`, as `ml.fs`.
 - Provenance follows from the folder: a file under `attached/` is the person's, one under `agent/` was made by a run.
 - **The working directory is `/files/agent/`.** A cell starts there, and a relative `ml.fs` path resolves against it
   (the coordinator's layout call after ruling 86, 2026-11-19, amending #1999's "against `/files/`"). `ml.fs.cp`'s
-  destination is under `/files/agent/`.
+  destination is under `/files/agent/`. With a workspace mounted, a Python cell starts in the workspace's real path
+  instead ("Initial decisions", Shane, 2026-11-13; not built).
 - **Whose it is** (rulings 81 and 86): `/files/agent/` is the model's own, with subfolders it makes, where rm, rename
   and overwrite are free; everything else under `/files` is the person's and read-only to the model. `/files` is one
   private file system per session: there is no per-model subfolder, and another session's files are not reachable
