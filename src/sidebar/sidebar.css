@@ -4885,3 +4885,11 @@ pre.code.morphing:not(.numbered) > code, pre.code.morphing .lcode { visibility: 
 
 /* The HUD card's mark for a run with background tasks (card/task-mark.tsx). */
 .card-task-mark { margin: 0 0 6px; padding: 0 6px; width: fit-content; border-radius: 6px; font-size: .75em; border: 1px solid var(--border); color: var(--fg-dim); }
+
+/* `.sum-gap`: an idle gap on the usage chart, folded to a hatched marker; the idle length is drawn in it where it fits and
+   is the tip's text where it does not. Not a pointer target: the plot reads the pointer. */
+.sum-gap { position: absolute; top: 0; bottom: 0; pointer-events: none; opacity: .6; overflow: hidden; display: flex; align-items: center; justify-content: center;
+           background: repeating-linear-gradient(135deg, var(--fg-faint) 0 1px, transparent 1px 4px); }
+.sum-gap span { font-size: 9px; color: var(--fg-dim); background: var(--bg); padding: 0 2px; white-space: nowrap; }
+/* `.sum-scope`: the line over the usage totals saying they cover a selected range, not the whole session. */
+.sum-scope { margin: 6px 0 2px; font-size: .85em; color: var(--fg-dim); }

@@ -96,6 +96,13 @@ The usage part reads `sessionMap`, which the page fills only for a session it ha
 open). A session that is only in the list says "This session's usage shows once the session is opened." A session whose
 calls reported no usage says so; it does not draw an empty chart.
 
+The usage chart's time axis folds idle time away (`src/chat/usage-axis.ts`): an interval over half an hour between two calls
+(`GAP_MS`) ends a stretch, each stretch is as wide as it lasted, and each gap is a fixed hatched marker named by its idle length
+("2d 4h idle"). A session with no gap is one stretch on a linear axis. This is the chart's own axis, not the resource panel's,
+which stays linear in clock time. Drag across the plot selects a range, scrolling slides it, a pinch resizes it, Esc or the chip
+clears it; the chart's selection is its own view (`createChartView`), and the totals below follow it ("This range"; the cost and
+delegated sub-calls are per session and are left out of a range). There is no scrub strip: it is linear in time by design.
+
 Below the panel come the session's usage over time and its totals (ruled by Shane, 2026-11-19). The summary tab's "Tokens and
 cost so far" line is the short form of these totals.
 
