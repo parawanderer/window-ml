@@ -171,6 +171,24 @@ test("resolveHidden: a hide holds a non-default file", () => {
     assert.equal(resolveHidden("/files/agent/other/a.txt", [h]).hidden, false);
 });
 
+test("resolveHidden: a hide that matches a directory holds everything under it, at any depth", () => {
+    const h = E("global", "hide", "/files/agent/.ssh");
+    assert.deepEqual(resolveHidden("/files/agent/.ssh", [h]), { hidden: true, by: h.id });
+    assert.deepEqual(resolveHidden("/files/agent/.ssh/id_rsa", [h]), { hidden: true, by: h.id });
+    assert.deepEqual(resolveHidden("/files/agent/.ssh/keys/old/id_ed25519", [h]), { hidden: true, by: h.id });
+    assert.equal(resolveHidden("/files/agent/.sshrc", [h]).hidden, false, "a sibling whose name starts the same is not under it");
+    const g = E("global", "hide", "/files/agent/build*");
+    assert.equal(resolveHidden("/files/agent/build-out/log.txt", [g]).hidden, true, "a glob matching the directory holds it too");
+});
+
+test("resolveHidden: a show releases only what it matches, never what is under it", () => {
+    const s = E("global", "show", "/files/agent/.env");
+    assert.equal(resolveHidden("/files/agent/.env/.env", [s]).hidden, true);
+    const h = E("global", "hide", "/files/agent/private"), child = E("global", "show", "/files/agent/private/readme.txt");
+    assert.deepEqual(resolveHidden("/files/agent/private/readme.txt", [h, child]), { hidden: false, by: child.id }, "a show of one file under a hidden directory is more specific");
+    assert.equal(resolveHidden("/files/agent/private/other.txt", [h, child]).hidden, true);
+});
+
 test("resolveHidden: a session show beats a global hide, and the reverse does not", () => {
     const gh = E("global", "hide", "/files/agent/a.txt");
     const ss = E("session", "show", "/files/agent/*.txt");

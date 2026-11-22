@@ -45,7 +45,7 @@ import { costCalls } from "./sw/sw-prices";
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, externalApprovals, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants } from "./sw/sw-consent";
 import { syncPresence, isVisible, presence, injectRunTools, injectPageScripts, SITE_REQUESTS_KEY } from "./sw/sw-presence";
 import { isExtensionSender, senderFacts, editSiteAccess, pageRefusal, agentRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, upgradeNotice, dismissUpgradeNotice } from "./sw/sw-site-access";
-import { policiesReady, forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView, sessionPolicies, removeFromSession } from "./sw/sw-policies";
+import { policiesReady, forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView, sessionPolicies, removeFromSession, isFilesRule } from "./sw/sw-policies";
 import { POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "./sw/policy-valid";
 import { addManifest, manifestView, removeManifest } from "./sw/sw-manifests";
 import { librariesReady, removeLibrary, storedLibraries } from "./sw/sw-libraries";
@@ -775,9 +775,12 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
                 addGlobalPolicy({ consumer, effect, source, label });
             } else if (p.op === "edit") {
                 const id = str(p.id, 100);
+                if (id && isFilesRule(id)) { sendResponse({ error: "a hiding rule is not edited: remove it from its session's view and add another" }); return; }
                 if (!id || !editPolicy(id, { source: str(p.source, POLICY_SOURCE_MAX), label: str(p.label, POLICY_LABEL_MAX), effect })) { sendResponse({ error: "no such policy" }); return; }
             } else if (p.op === "remove") {
                 const id = str(p.id, 100);
+                // Removing a hide widens: only a session's view removes one, and it shows what that exposes first.
+                if (id && isFilesRule(id)) { sendResponse({ error: "a hiding rule is removed from its session's view, which shows what it exposes first" }); return; }
                 if (!id || !removePolicy(id)) { sendResponse({ error: "no such policy" }); return; }
             } else if (p.op === "session") {
                 // One session's effective view (docs/spec/POLICIES.md, "The effective view"): a read, so no change to answer with.

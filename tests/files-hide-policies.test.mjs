@@ -106,6 +106,14 @@ test("a scope holding the most rules refuses one more", () => {
     P.forgetRunPolicies("h-cap");
 });
 
+test("the model's policy list carries no files rule: a hidden file reads as absent, and its path would say it exists", () => {
+    addFilesRule("h1", { effect: "hide", source: "/files/agent/payroll-2026.xlsx", scope: "session" });
+    addFilesRule("h1", { effect: "hide", source: "/files/agent/payroll-2025.xlsx", scope: "global" });
+    const seen = JSON.stringify(P.policiesForModel("h1"));
+    assert.ok(!seen.includes("payroll"), seen);
+    assert.ok(P.filesHideEntries("h1").some((e) => e.source.includes("payroll-2026")), "positive control: the rule is stored");
+});
+
 // --- the view rows ---
 
 test("with a rule, the view holds the four defaults first, and every files row says it does not bind a spawned process yet", () => {

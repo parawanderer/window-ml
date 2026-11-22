@@ -214,14 +214,23 @@ export function defaultHold(path: string): string | undefined {
 
 // --- which entry wins ---
 
-/** Decides whether a path is hidden: layers read from the top (session, global, defaults), the first layer with a matching entry decides, the most specific entry wins within it and a tie hides; `by` is the deciding id, and a refused entry is ignored. */
+/** The directories above a path, nearest first: `/files/agent/.ssh/id_rsa` gives `/files/agent/.ssh`, `/files/agent`,
+ *  `/files`. A `hide` that matches a directory holds what is under it (POLICIES.md: the offer hides a credential
+ *  directory as one row); a `show` releases only what it matches. */
+function ancestors(path: string): string[] {
+    const out: string[] = [];
+    for (let at = path.lastIndexOf("/"); at > 0; at = path.lastIndexOf("/", at - 1)) out.push(path.slice(0, at));
+    return out;
+}
+
+/** Decides whether a path is hidden (a `hide` matching a directory above it counts): layers read from the top (session, global, defaults), the first layer with a matching entry decides, the most specific entry wins within it and a tie hides; `by` is the deciding id, and a refused entry is ignored. */
 export function resolveHidden(path: string, entries: readonly HideEntry[]): { hidden: boolean; by: string | undefined } {
     for (const layer of ["session", "global"] as const) {
         let best: HideEntry | undefined;
         for (const e of entries) {
             if (e.layer !== layer) continue;
             if (patternRefusal(e.source, e.effect) !== undefined) continue;
-            if (!globMatch(e.source, path)) continue;
+            if (!(globMatch(e.source, path) || (e.effect === "hide" && ancestors(path).some((a) => globMatch(e.source, a))))) continue;
             if (best === undefined) {
                 best = e;
                 continue;

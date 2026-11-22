@@ -775,14 +775,21 @@ every `files` row in the view says so in its label), the model's proposal card, 
 the four defaults in the view of a session with no `files` rule: as for every consumer, a default row appears once the
 consumer has a rule (a stated gap, closed before PR C merges, with the three tests that pin it). In the browser
 copy, which has no symlinks, `default:link-target` and `default:linked-template` hold nothing, and the linked-template
-refusal of a `show` is the host's to make.
+refusal of a `show` is the host's to make. Three choices made in building it, on the red team's findings at #2088: the
+policy page's generic edit and remove refuse a `files` row (an `allow` saved over a `hide` held nothing, and one click
+removed a `hide` with no confirmation), so a hiding rule is removed only from a session's view, which confirms, and
+DevTools Settings' own form for these rows is PR C; a `hide` that matches a directory holds everything under it, as the
+offer's one row for a credential directory needs, while a `show` releases only what it matches; and
+`ml.current.policies` carries no `files` row, since a hidden file reads as absent and its path in that list would say
+it exists.
 
 **One list, two verbs, the policy store's.** A hiding rule is a `StoredPolicy` with consumer `files`, effect `hide` or
 `show`, and `source` a path or a glob. Scope `global`, or `run`, which is the session's and keyed by its hash, as for
-every policy. Origin `person`, `card` or `proposed`. There is no second store: the policy page, its edit and remove,
-and the run-scope lifetime rules (it survives a resume and is removed at archive) are the ones above.
+every policy. Origin `person`, `card` or `proposed`. There is no second store: the policy page and the run-scope
+lifetime rules (it survives a resume and is removed at archive) are the ones above.
 
-- **`hide <pattern>`** holds what it matches, for reading and writing, like a default hold.
+- **`hide <pattern>`** holds what it matches, and everything under a directory it matches, for reading and writing,
+  like a default hold.
 - **`show <pattern>`** releases a hold on what it matches: a default (a dotenv name, one of the three credential files
   at a root's top, a held symlink target, or a linked template), or a `hide` in a layer below it. By the layer rule
   below, a session `show` overrides a person's global `hide`. A shown path is readable AND writable, and is never listed

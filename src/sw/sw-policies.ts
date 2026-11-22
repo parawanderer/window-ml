@@ -271,6 +271,13 @@ export function addGlobalPolicy(p: Pick<StoredPolicy, "consumer" | "effect" | "s
     return { ...made };
 }
 
+/** Whether `id` names a stored `files` rule, which only its session's view removes (it widens, so it asks first) and
+ *  nothing edits. */
+export function isFilesRule(id: string): boolean {
+    return globals.some((p) => p.id === id && p.consumer === "files")
+        || [...byRun.values()].some((list) => list.some((p) => p.id === id && p.consumer === "files"));
+}
+
 /** Remove one policy by id, from whichever scope holds it; true when it existed. */
 export function removePolicy(id: string): boolean {
     brokenWhy.delete(id);
@@ -325,6 +332,9 @@ export function takeArchiveNotice(runId: string): string | undefined {
 /** Change a policy's source, effect or label in place (the policy page); returns it, or undefined when there is none. */
 export function editPolicy(id: string, patch: Partial<Pick<StoredPolicy, "source" | "effect" | "label">>): StoredPolicy | undefined {
     const at = (list: StoredPolicy[]): number => list.findIndex((p) => p.id === id);
+    // A hiding rule has no edit: an allow/ask/deny over it would hold nothing, and its source skips `patternRefusal`.
+    // It is removed and added again through `policy.files`.
+    if (isFilesRule(id)) return undefined;
     const apply = (p: StoredPolicy): StoredPolicy => ({
         ...p,
         ...(typeof patch.source === "string" ? { source: patch.source } : {}),
@@ -677,7 +687,8 @@ export function withPolicies<T extends object>(current: T, runId: string): T & {
     };
 }
 
-/** A run's policies as the model reads them (`ml.current.policies`): what each allows or refuses, as written. */
+/** A run's policies as the model reads them (`ml.current.policies`): what each allows or refuses, as written. A
+ *  `files` rule is left out: a hidden file reads as absent, and its path in this list would say it exists. */
 export function policiesForModel(runId: string): { scope: StoredPolicy["scope"]; effect: StoredPolicy["effect"]; label: string; source: string }[] {
-    return [...globals, ...(byRun.get(runId) ?? [])].map((p) => ({ scope: p.scope, effect: p.effect, label: p.label, source: p.source }));
+    return [...globals, ...(byRun.get(runId) ?? [])].filter((p) => p.consumer !== "files").map((p) => ({ scope: p.scope, effect: p.effect, label: p.label, source: p.source }));
 }
