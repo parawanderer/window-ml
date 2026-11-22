@@ -2028,15 +2028,17 @@ Shared by both:
 - **It grants nothing.** A note steers what the model tries; whether a call needs the person stays the policies' and
   the gate's decision ([`AGENT_FILES.md`](AGENT_FILES.md), "Trust"). The gate reads only facts the host resolved
   about the call, never the context, so no file the model read can be mistaken for permission, as it can by a
-  classifier that judges a call from the conversation: the permission is the policy. The worst a wrong or planted
-  note does is cost time: the model acts on it within what the policies already allow, or the person is asked.
+  classifier that judges a call from the conversation: the permission is the policy. The worst case is a wrong or
+  planted note steering the model to anything the policies already allow; past that, the person is asked. In
+  `/shared/notes/` that worst case reaches every later session that reads the note, not one.
 - **Worked example.** On Google's account chooser the person says the agent may always pick `person@example.com` and
   should stop and ask if a 2FA prompt follows. The first half is a policy, proposed and checked on the page
   ([`POLICIES.md`](POLICIES.md), "Measuring an `act` rule on the page it is for"); the note
   `/shared/notes/google-login.md` records why the policy exists and the 2FA instruction, which no policy can say.
   Until `/shared/` exists, the same note in `/files/notes/` holds for that session only.
-- **Open.** Who writes `/shared/notes/`: every session freely (the small-fixes session's recommendation, since a note grants
-  nothing and a planted one costs only time), or by policy. The scope of `/shared/` (the runtime, the person across
+- **Open.** Who writes `/shared/notes/`: every session freely (the small-fixes session's recommendation, since a note
+  grants nothing), or by policy, given that a planted note there steers every later session within what the policies
+  allow. The scope of `/shared/` (the runtime, the person across
   runtimes, a workspace); how backup and the archive folder carry it; where it lives on disk once a host backs
   `/files` (ruling 91); whether a note the model wrote is marked apart from one the person wrote, or provenance stays
   the files panel's history.
@@ -2054,13 +2056,19 @@ the code the cell runs.**
   decided by running the cell under the fork's gate, never by its source ([`PYTHON_DIALECT.md`](PYTHON_DIALECT.md),
   "Membership replaces `mode`"). An imported module is more code through the same evaluator: inside the dialect the
   cell stays free, outside it the cell asks, as if the code were inline. The module's steps count against the cell's
-  halting bound. A planted module in `/shared/lib/` costs time; it cannot do what the dialect does not allow.
-- **A cell that asks is approved with its imports.** The card shows each imported module (collapsed, path and a
-  content hash) beside the cell, and the approval is pinned to those hashes: a module that changed between the card
-  and the run is refused and asked again, so a file edited after the approval never runs unseen.
+  halting bound. A planted module in `/shared/lib/` runs in every later cell that imports it, within what the
+  dialect allows; it cannot do what the dialect does not.
+- **A cell that asks is approved with its imports.** The card shows each imported module beside the cell, with its
+  path and a content hash: EXPANDED when the person has not approved that hash before, collapsed only when they have,
+  so no code is approved unseen. The approval is pinned to those hashes: a module that changed between the card and
+  the run is refused and asked again, so a file edited after the approval never runs unseen.
 - **Imports are static, with literal paths** (`import { f } from "/shared/lib/x.js"`, `from mylib import f` with
   `/files/lib/` and `/shared/lib/` on `sys.path`), so what a cell loads is known before it runs: the card lists it,
-  the hashes cover it, the log names it. A computed path is known only at run time, too late for a card. On the JS
+  the hashes cover it, the log names it. A computed path is known only at run time, too late for a card. Inside the
+  Python dialect a computed load is refused by the gate: `__import__`, `exec`, `compile` and `open` are not in
+  `builtins`' table, and `importlib` has no table, so importing it is refused as `import os` is
+  ([`PYTHON_DIALECT.md`](PYTHON_DIALECT.md), the kind tables). A cell OUTSIDE the dialect is approved as arbitrary
+  code and can load any file by any means; the pin covers its static imports only, and the card says so. On the JS
   side `import` is new dialect syntax, so it comes with the adversarial tests AGENTS.md requires (path tricks, a cycle,
   a module importing itself, a depth bound, a module rewritten while it loads).
 - **The log carries what ran.** Every module a cell loads is recorded by path and hash in the run log, and both
