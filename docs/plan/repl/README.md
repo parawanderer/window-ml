@@ -11,13 +11,15 @@ own clone. Read this file, then your lane file, then the specs it names, before 
 One row per live session: the thread it belongs to, where that thread came from, and what it holds today. The records
 paragraph at the end of this file has the detail; this table is the map.
 
+Every lane was resumed on 2026-11-22; the "Pauses and resumes" record lists what each one holds since then.
+
 | Session | Thread and origin | Holds today |
 | --- | --- | --- |
 | `[window-ml Chat Page]` (calm-chat-motion) | the chat page's calm view; then the `/files` folder on disk (#1780, #1789, the "upload PDFs and images" topic via the `@files` handle) and today's host requirements (#1833) | #1833 (e1b413ec), #1848 and #1855 (9c33bfaa) merged; three doc and tidy follow-ups from janitor-2 after the reset; idle |
 | `[window-ml files-host]` (new today) | the host side of `/files`: mounts and the scope check, the `/files` argv mapping with the `cp` manifest pair, the `ml.sh` diff snapshot (FILE_ATTACHMENTS.md, H1-H15) | #1852 and host#40 merged; H9: #1873 merged (1b973c5d), host#43 merged (bc01d05b, the retry sentence names paths only) and host#44 merged (fbb64534, the cwd refusal's message); the ml.sh wording #1901 merged (9a7ef765); H10 to H16 next, H16 carrying the end-to-end rows |
 | the Pyodide lane (worn by async, see its row) | the in-cell mount side of #1780: route A measured first; the restricted-mode build (the atomics fix was its work) | route A measurements after #1854 (Shane's ruling of 2026-11-13) |
 | `[window-ml async]` (also the Pyodide lane) | the three async modes, then rule 4b: a detached task survives its turn (ASYNC_CALLS.md), slices A-E; the #1780 route A measurements | slices A (#1810) and B (#1854, 43f88825) merged; route A measured and ruled (#1877 merged da38ec1b); slice C built, local, waits for the reset; then D and E, then the closed-tab release (ruled 2026-11-14: grace period, alive marker, stop-the-kernel; spec section first, e3 row) |
-| `[window-ml move-run]` | the tab-switching problem the async modes exposed: moving a settled run to another tab (#1717 merged) | shape (b) slice 1 #1862 merged (26de3759); clone removed, paused; slice 2 then the #1883 build (ruled 2026-11-14) after the reset |
+| `[window-ml move-run]` | the tab-switching problem the async modes exposed: moving a settled run to another tab (#1717 merged) | shape (b) slice 1 #1862 merged (26de3759); resumed 2026-11-22 with slice 2 local (its clone was kept), then the #1883 build after async's slice E |
 | `[window-ml settings specs]` | LINKS.md (clickable links to a setting or a chat-page view) and MODEL_SETTINGS.md (the model reading and changing whitelisted settings) | #1850 and #1857 (a542ac90) merged; clone removed, paused; after the reset MODEL_SETTINGS.md amended to Shane's ruling (every key less the secrets, the gate's own keys, the server URL and modelFilter; shellEnabled and the connection settings with old and new value shown), then a closedRunGraceMin row once async's ASYNC_CALLS section exists |
 | `[window-ml current/prompt quality] implement ml.current and cleanup prompt quality` | ml.current, then what the model reads: the prompt, tool results, error text | #1798, #1811, #1807 and labelMatch #1865 (d77fe557) merged; PR B #1867 (the prompt cuts) merged (5ba6af04); the worktree held for its bench rows; idle |
 | `[window-ml packages]` | Python packages in Pyodide: python_install's card and the PyPI index on it | #1719, #1749 and #1864 merged; slice 4 #1875 at f5a2f236 (every build writes the generated shipped-packages file) merged (d0fc7bb4); 4b (the platform scan) next |
@@ -1605,6 +1607,133 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
 - PARKED 2026-11-20 (Shane, in the coordinator's session): keeping personal details out of screenshots beyond the
   exact text layer (three modes, a pixel layer through Apple's on-device recogniser, one measurement first).
   Not scheduled, nobody assigned: [PARKED_SCREENSHOT_MASKING.md](PARKED_SCREENSHOT_MASKING.md).
+- **Shane's rulings 89 to 98 (2026-11-20, each said in the coordinator's session).**
+  - **89.** Amends ruling 57 for `ml.table`: it returns a READ-ONLY table with no copy, and `.copy()` gives an
+    editable one. The scope is by OWNERSHIP: a table is read-only exactly when something else holds the same arrays (a
+    stored `@tool:` value, a fetched table the fetch cache shares). A selector table, a caller-passed table and a
+    Sheet nobody else holds stay editable. Built in #2043; the per-source table is in ML_TABLE.md, "Ownership".
+  - **90.** One describer: the host's Rust `describe_call` compiled to wasm replaces the TypeScript port, on the
+    condition that the cold compile in Chrome's service worker is measured first. The coordinator's bar (median at
+    most 10 ms, p95 at most 50 ms, on what the describer adds) PASSED in #2057: 350 of 350 wakes cold, added round
+    trip 3.0 to 5.2 ms median and 8.0 to 13.0 ms p95. The build order is
+    [ONE_DESCRIBER_BUILD.md](ONE_DESCRIBER_BUILD.md) (#2059).
+  - **91.** `/files` on disk is one subfolder per session, and the host denies a sibling session's folder to every
+    reader by default. Shane's direction for later sharing: a person-written policy lifts the deny, read-only; not
+    built, not scheduled. Spec: #2052.
+  - **92.** `where(column, "!=", x)` keeps a row whose cell is null or NaN (the pandas rule, since the Python member
+    is pandas). Every other operator keeps "no match" on null.
+  - **93.** The secrets topic also covers PERSONAL DETAILS the person does not want the model to have (a full name, an
+    address): a second kind of registered value. Looser matching than a credential (case and whitespace at least),
+    usable by handle, masked in text and in screenshots, `look` and `locate` where the page displays it. Stated gap:
+    text inside an image, a canvas or a PDF render. It is a filter on registered strings, never a detector.
+  - **94.** Ruling 33's inbox item says what the store is for, in three kinds: secrets the model may use but not see;
+    secrets it must never see because it may meet them where it works (`ps` in a shell); anything to blank before the
+    model sees it, such as personal details.
+  - **95.** A program that prompts or prints a sign-in link: the model shows a detached task's prompt to the person by
+    a POINTER to the tail of its output, not by a card the runtime detects. The worked example goes once in
+    `agent_api_docs`, with a short pointer line in the shared `detached` result text. Clickable links in every output
+    cell are a general feature (small-fixes, #2067).
+  - **96.** A Python `input()` or `getpass` raises a question card, as a notebook does. The model may answer an
+    `input()` itself or escalate it to the person; either resolves it and the program continues. Spec: #2066.
+  - **97.** A masked card's answer is a SESSION SECRET: a registration ORIGIN (the harness registers it at run time,
+    for the session's life), not a fourth kind. files-host defines it in SECRET_HANDLES.md.
+  - **98.** A reviewer or red-team session may merge another lane's PR when its comment names the full current head,
+    asks no change, and the head is green and pushed, through merge-when-green reading every comment id. It pushes to
+    no builder's branch (rule 10's rows excepted) and merges no host PR. Given for the pause; kept in force at the
+    resume (the coordinator's call).
+  - Also confirmed by Shane the same day: the `ml.settings()` read-only survey lane (settings specs; spec #2045, code
+    #2050), and the lazy-table direction (packages; spec #2056).
+  - Not ruled, open with Shane: whether the model may script answers to a program's prompts (the coordinator
+    recommends an answers table on the call); whether ruling 88's "until `ml.table` lands" means the JS member
+    (landed) or the Python side (the coordinator recommends the Python side, so bench's sweep stays frozen); whether
+    the model may propose a show-sessions policy card; exact coverage on the policy card (settings specs' item 3,
+    unscheduled).
+- **The coordinator's calls, 2026-11-20 to 2026-11-22** (infrastructure and security; Shane overrides any of them).
+  - The one-describer build: shape (b) at opt z (the bytes in the bundle, compiled synchronously); the wasm bytes are
+    committed, with a row comparing them to the release asset at the pinned tag; a describer that fails to load or
+    errors ASKS; a lone surrogate asks; the TypeScript describer is deleted, with no oracle kept; a differential run
+    with a fixed fake resolver comes before the deletion; the host tag is Shane's word in host-setup's own session.
+  - The session folder's name is `<date>-<slug>-<id6>`, fixed at creation, `-2`/`-3` on a collision, and never adopts
+    an existing directory. `opendir` and `createReadStream` are `ml.fs` members; `createWriteStream` is not; `ml.fs`
+    has `rename`, not `mv`.
+  - `scrubPersonInput` (ruling 39's gate key) is HELD from a settings survey; the held count is 19. #2049 and #2050
+    were each green alone and red together on main (18 pinned against 19); #2060 is the repair, and its rows now fail
+    by name.
+  - The file reader scrubs inside `RangedReader.read`, the one path every read takes (#2058): matches are widened by
+    the longest form less one on each side and replaced by `0x2A` at the same length; an unavailable forms list
+    answers EIO; the forms are never logged, stored or put in error text. e4 found the scrub missing; the
+    coordinator's spec read had not caught it.
+  - `ml.fs` read members (session-store, ruling 54's second PR): every read, text or binary, returns the same masked
+    bytes, so a text read's length equals `stat`'s size and the model is not told which secret was hidden. The members
+    land with every exec that names `ml.fs` asking; their entry into the read-only dialect waits for the hide rule
+    (ruling 34), which is second in files-host's queue.
+  - Ruling 39 PR 2 (#2061): one PR; the scan returns an opaque HMAC token per span, the key lives in session storage
+    and never in a turn, an export, a log or model text; no digest is stored; an exemption is accepted only from the
+    person's own surfaces.
+  - Ruling 13: a file under the gallery-flows test folder counts as a render component's test; a new e2e spec on its
+    own is not draw-only and goes to flaky-ci for flake risk.
+  - The bench Stop row: repaired test-side with a test-only grace override and a row pinning the 1 s default (#2042);
+    the product constant is unchanged.
+  - A no-tab run has ONE representation: async's slice E (rule 4b) lands first, and move-run's TABLESS_RUN build
+    reuses its state and HUD mark.
+  - A red-team or reviewer session merging a paused builder's PR was inside ruling 98.
+- **Pauses and resumes.**
+  - 2026-11-19 (night): while builder sessions were out of tokens Shane gave the five review sessions a temporary
+    merge authority; it ended when the coordinator returned. The test queue admitted everything under load (load 45),
+    so Shane ruled one full local suite at a time machine-wide; the rule ended when #2037 (the test-slot repair)
+    reached main. Then PAUSE ALL until the morning.
+  - 2026-11-20: RESUME; a HOLD while main's unit suite was red, released at #2060; then a PAUSE of every builder
+    (tokens), with async exempt for #2066 and small-fixes for #2067; then ruling 98's partial resume for janitor-2,
+    janitor-3, flaky-ci, e3 and e4; small-fixes released to close out its open PRs.
+  - 2026-11-22: FULL RESUME (Shane: "the limit reset early, we can continue on everything again"). Each lane's first
+    job: packages merges main into #2062 (lazy-table slice A), e4 pushes its rows, janitor-3 names the head, and
+    packages corrects PYTHON_DIALECT.md's status line; files-host writes the SECRET_HANDLES.md PR for rulings 93, 94
+    and 97, then the hide rule; async builds slice E carrying three line cites corrected in ASYNC_CALLS.md, then the
+    closed-tab release; Chat Page adds the pointerType instrument line for the phone-tap flake (three occurrences;
+    flaky-ci repairs after it); move-run opens shape (b) slice 2 (its clone was kept, not removed as the lanes table
+    said), then the stale tab id after a restart, ruling 28's edit, and the TABLESS_RUN build; session-store builds
+    the `ml.fs` read members; program-manifest-backfill starts step 1 of the one-describer build (a host PR, then the
+    matching rows here); bench moves the energy attribution into `src/spend/`; settings specs is idle after #2076.
+    Small-fixes works from Shane's own list in its session.
+- **Ideas written down with nothing assigned (Shane, 2026-11-21 and 2026-11-22).** #2070 (da7df9f6): the session
+  folder must stay usable (FILE_ATTACHMENTS.md); a console that stays out of the model's context, with the Variables
+  tab (COMMAND_MODE.md; the frame is a notebook with two authors, the person and the model); the person's own terminal
+  (SHELL_INTERACTIVE.md). #2073 (62d03fc0) and #2074 (685eb36f): an `act` rule measured against the clickable elements
+  of the page it is written on, with a `check` flag on `propose_policy` (POLICIES.md); the model's notes in
+  `/files/notes/` and, with the deferred `/shared/`, `/shared/notes/`; `lib/` modules a later cell imports, approved
+  with their content hashes (FILE_ATTACHMENTS.md). #2073 committed Shane's address as its example; #2074 replaced it
+  with a placeholder.
+- **Merged 2026-11-19 (night) to 2026-11-22, each verified with gh.**
+  - Python dialect and packages: #1993 (386a3391), #1991 (145abee5), #2039 (abcae833, V1 vocabulary), #2043 (4384881c,
+    the `ml.table` JS member with ruling 89), #2053 (8dc4f4e7), #2056 (9c54009a, the lazy-table spec with ruling 92).
+    The Python side of `ml.table` is not built. #2062 (slice A) is open.
+  - Files and the session store: #1999 (5e058019), #2003 (2185077b), #1995 (881d4220), #2026 (82cd8386, Python's
+    `/files` mount), #2048 (ba24626d, the ranged reader), #2058 (090d618c, the reader's wiring and its scrub, with
+    e4's 16 rows), #2052 (3fc7a24c, ruling 91's spec).
+  - Secrets (files-host): #2006 (a771c714), #2007 (960d6f32), #2008 (45fd649c), #2049 (5ea34dcb, ruling 39 PR 1),
+    #2061 (898f3881, ruling 39 PR 2), window-ml-host#54 (16313874) and #55 (facb23fe, H13's snapshot report).
+  - Shell and manifests: #1989 (f304734d), #2036 (439505a0, the spike result), #2051 (21e99506, the notebook: 532
+    vectors with 0 differences, 0 verdict-level disagreements in 340,000 fuzzed calls), #2057 (410e0b28), #2059
+    (c685571c).
+  - Settings: #2045 (01acd2df), #2050 (bc2b1255), #2060 (6ebd0efd), #2076 (353b6c34, the gate row's Keys column).
+  - Async and prompts: #1929 (a9bca8b2), #2066 (a7527ec7, programs that prompt), #2067 (1e4b3334, output links, with
+    e3's 7 rows), #2069 (d2507eaf, a control character in a link keeps it text).
+  - Bench: #2012 (f9e5cc68), #2034 (450ae10a), #1997 (e2494c0b, the cell replay), #2047 (42a3ef85, `read_csv` served:
+    81 of 129 cells with no card), #2000 (7b56a527), #2011 (e28522f4).
+  - CI and tooling (flaky-ci): #2022 (fdd1ddc2), #2030 (d82c7956), #2035 (b6b02c33), #2018 (3214c172, by Shane's
+    hand), #2037 (ad568c2e), #2041 (5e5d94bb), #2042 (60f9978c), #2044 (9b46e8d9, by Shane's hand: merge-when-green
+    re-checks a stale BLOCKED and pins the head), #2068 (36c65dd8).
+  - Chat page and small-fixes: #1950 (82f96cd8), #2017 (65f9314b), #2001 (553915d0), #2013 (9e817f43), #1998
+    (f55ba18f), #2015 (c0eeda86), #2004 (773be7f7), #2020 (7c727d41), #2024 (4bf4d233), #2032 (f4e9ed6e), #2038
+    (855bd809), #2033 (c8396ff0), #2002 (8d004724), #2046 (f0f0c707), #2054 (ed32edb5), #2055 (1fc13b94), #2063
+    (ae1be452), #2071 (c7d02ab0, the session summary's resources tab), #2075 (b6ffc067, the docs no longer describe
+    Python's removed `mode`). #2064 is open with flaky-ci.
+  - Plan: #2065 (9ad7c19e).
+- **Named follow-ups with no PR yet.** The parse peak of a stored table in the real service worker (the 256 MiB decode
+  cache rests on a Node figure); the design specs that still say "full worker" (FILE_ATTACHMENTS.md,
+  SHELL_INTERACTIVE.md, SESSION_HISTORY_STORE.md, COMMAND_MODE.md); the unreachable unhardened branches in the
+  offscreen document and the Python worker (the Pyodide lane's to delete); the fork's numpy dtype KeyError (issue
+  #2040, no owner); e3's probes for ruling 93 and #2066, drafted locally.
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like

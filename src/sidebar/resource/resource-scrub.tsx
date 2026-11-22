@@ -11,7 +11,8 @@ import type { ResourceSample } from "../../resource/resource-model";
 import type { ResourceEvent } from "../../resource/resource-timeline";
 import { sampleGapMs } from "./panel-state";
 import { colorFor } from "../palette";
-import { zoomRange, resWindowS, resWindowPref, RESWIN_KEY, laneEnabled, showLane } from "../store";
+import { laneEnabled, showLane } from "../store";
+import { panelView, type ChartView } from "./chart-interaction";
 
 /** Which part of the scrub window the pointer is over, so the cursor can say a handle is there before you
  *  try to use it. A resize affordance you can only discover by failing to pan is not an affordance. */
@@ -19,7 +20,7 @@ const scrubGrab = signal<"from" | "to" | "pan" | "outside" | null>(null);
 
 /** Persisting `resWindowS` on every frame of a continuous gesture would write to storage dozens of times for
  *  one pinch, so the value is applied live and only the WRITE is deferred to the end of the gesture. */
-let windowWrite: ReturnType<typeof setTimeout> | null = null;
+const windowWrite = new WeakMap<ChartView, ReturnType<typeof setTimeout>>();
 
 /**
  * Settle ANY gesture that moved or resized the window — the one place the "did this rejoin live" rule lives,
@@ -42,16 +43,17 @@ let windowWrite: ReturnType<typeof setTimeout> | null = null;
  * always done this on release; the wheel paths did not, so scrolling to the end looked like rejoining live
  * and then drifted away from it.
  */
-export function settleScrub(next: { from: number; to: number }, ex: { from: number; to: number }, follows: boolean): void {
+export function settleScrub(next: { from: number; to: number }, ex: { from: number; to: number }, follows: boolean, view: ChartView = panelView): void {
     const intent = scrubIntent(ex, next, TAIL_SLACK_MS, follows);
-    if (!intent.live) { zoomRange.value = intent.window; return; }
-    resWindowS.value = intent.windowS;
-    zoomRange.value = null;
-    if (windowWrite) clearTimeout(windowWrite);
-    windowWrite = setTimeout(() => {
-        windowWrite = null;
-        try { chrome.storage.local.set({ [RESWIN_KEY]: resWindowS.value }); } catch { /* opaque origin */ }
-    }, 400);
+    if (!intent.live) { view.zoom.value = intent.window; return; }
+    view.windowS.value = intent.windowS;
+    view.zoom.value = null;
+    const pending = windowWrite.get(view);
+    if (pending) clearTimeout(pending);
+    windowWrite.set(view, setTimeout(() => {
+        windowWrite.delete(view);
+        view.remember(view.windowS.value);
+    }, 400));
 }
 
 /** The SCRUB strip: the whole session compressed into one bar, with a box showing which slice the chart above
@@ -61,7 +63,7 @@ export function settleScrub(next: { from: number; to: number }, ex: { from: numb
  *  Its own axis is LINEAR in time, unlike the chart's: this is an overview, and a ten-minute hole is a fact
  *  about the session that an overview should show at its true width rather than collapse. The runs are drawn
  *  as filled blocks with the gaps left empty, so "nothing was measured here" reads as a hole. */
-export function ScrubStrip({ samples, window: win, pan, events = [], follows, ended = false }: {
+export function ScrubStrip({ samples, window: win, pan, events = [], follows, ended = false, view = panelView }: {
     samples: ResourceSample[]; window: { from: number; to: number } | null;
     /** The window at its REAL width, for a pan. `window` is clipped to the last reading while it fills, which is right
      *  for drawing it and for a resize (narrowing means fewer seconds than the history), and wrong for a pan: moving
@@ -71,6 +73,8 @@ export function ScrubStrip({ samples, window: win, pan, events = [], follows, en
     events?: ResourceEvent[]; follows: boolean;
     /** a recording that ended (a finished sweep): the way back is to all of it, not to a session's stretch */
     ended?: boolean;
+    /** whose zoom this strip reads and moves; the panel's unless a second chart brings its own */
+    view?: ChartView;
 }) {
     const wrapRef = useRef<HTMLDivElement>(null);
     const trackRef = useRef<HTMLDivElement>(null);
@@ -118,7 +122,7 @@ export function ScrubStrip({ samples, window: win, pan, events = [], follows, en
             landed = zone === "from" || zone === "to"
                 ? scrubResize(ex, start, zone, at(ev.clientX))
                 : scrubTo(ex, pan ?? win, at(ev.clientX));
-            zoomRange.value = landed;
+            view.zoom.value = landed;
         };
         const up = () => {
             window.removeEventListener("pointermove", move);
@@ -126,15 +130,14 @@ export function ScrubStrip({ samples, window: win, pan, events = [], follows, en
             // What the gesture meant is decided HERE, by pure logic in resource-model.
             const intent = landed && scrubIntent(ex, landed, TAIL_SLACK_MS, follows);
             if (!intent) return;
-            if (!intent.live) { zoomRange.value = intent.window; return; }
+            if (!intent.live) { view.zoom.value = intent.window; return; }
             // A width dragged while following is a PREFERENCE, like the one in Settings — the same quantity,
             // reached the other way — so it is remembered rather than lost on the next mount.
-            resWindowS.value = intent.windowS;
-            zoomRange.value = null;
+            view.windowS.value = intent.windowS;
+            view.zoom.value = null;
             // Guarded, as `settleScrub` is: a page with no extension (the bench's) has no `chrome`, and the throw
             // came before the zoom was cleared, so a box dragged back to the tail stayed pinned there.
-            try { chrome.storage.local.set({ [RESWIN_KEY]: intent.windowS }); } catch { /* opaque origin */ }
-
+            view.remember(intent.windowS);
         };
         move(e);
         window.addEventListener("pointermove", move);
@@ -161,14 +164,14 @@ export function ScrubStrip({ samples, window: win, pan, events = [], follows, en
                         // pinching outside the window clamps to its nearer edge rather than teleporting it.
                         const at = ex.from + ((ev.clientX - b.left) / Math.max(1, b.width)) * (ex.to - ex.from);
                         const within = (at - win.from) / Math.max(1, win.to - win.from);
-                        settleScrub(scrubPinch({ from: ex.from, to: ex.to }, win, ev.deltaY, within), ex, follows);
+                        settleScrub(scrubPinch({ from: ex.from, to: ex.to }, win, ev.deltaY, within), ex, follows, view);
                         ev.preventDefault();
                         ev.stopPropagation();
                         return;
                     }
                     const by = wheelScrubFraction(ev.deltaX, ev.deltaY, ev.deltaMode, b.width);
                     if (!by) return;
-                    settleScrub(scrubNudge({ from: ex.from, to: ex.to }, pan ?? win, by), ex, follows);
+                    settleScrub(scrubNudge({ from: ex.from, to: ex.to }, pan ?? win, by), ex, follows, view);
                     ev.preventDefault();
                     ev.stopPropagation();
                 }}
@@ -231,12 +234,12 @@ export function ScrubStrip({ samples, window: win, pan, events = [], follows, en
                 promising a live view it cannot give. */}
             {follows ? (
                 <button class={`rc-scrub-live${ex.atTail ? " on" : ""}`} title={ex.atTail ? "Following new samples" : "Jump back to live"}
-                    onClick={() => (zoomRange.value = null)}>
+                    onClick={() => (view.zoom.value = null)}>
                     <span class="rc-live-icon" aria-hidden="true">{ex.atTail ? "▶" : "⏸"}</span>live
                 </button>
             ) : (
-                <button class={`rc-scrub-live${zoomRange.value ? "" : " on"}`} title={ended ? "Back to the whole recording: it has ended, so there is nothing live to follow" : "Back to this session's own stretch"}
-                    onClick={() => (zoomRange.value = null)}>
+                <button class={`rc-scrub-live${view.zoom.value ? "" : " on"}`} title={ended ? "Back to the whole recording: it has ended, so there is nothing live to follow" : "Back to this session's own stretch"}
+                    onClick={() => (view.zoom.value = null)}>
                     <span class="rc-live-icon" aria-hidden="true">↺</span>{ended ? "all" : "session"}
                 </button>
             )}
@@ -278,22 +281,22 @@ export const zoomSpan = (z: { from: number; to: number }): string => {
  * only off the default, unless `always` (a page with room to say how wide the default view is: `allMs`, the whole
  * history's span, for the "everything" window).
  */
-export function WindowChip({ always = false, allMs }: { always?: boolean; allMs?: number }) {
-    const pinned = zoomRange.value;
-    const resized = !pinned && resWindowS.value !== resWindowPref.value;
+export function WindowChip({ always = false, allMs, view = panelView }: { always?: boolean; allMs?: number; view?: ChartView }) {
+    const pinned = view.zoom.value;
+    const resized = !pinned && view.windowS.value !== view.windowDefault.value;
     const width = (secs: number) => (secs === 0 ? `all${allMs ? ` · ${zoomSpan({ from: 0, to: allMs })}` : ""}` : zoomSpan({ from: 0, to: secs * 1000 }));
     if (!pinned && !resized) {
         if (!always) return null;
-        return <span class="tt vram-zoom at-default" aria-label={`window: ${width(resWindowS.value)}`}>{width(resWindowS.value)}
+        return <span class="tt vram-zoom at-default" aria-label={`window: ${width(view.windowS.value)}`}>{width(view.windowS.value)}
             <span class="tt-pop wrap" role="tooltip">How wide the chart's window is: its default. Drag on the chart or a lane to select a stretch, scroll or pinch on the chart or the strip to move or resize it.</span></span>;
     }
     return (
         <button class={`tt vram-zoom ${pinned ? "pinned" : "resized"}`} onClick={() => {
-            if (zoomRange.value) { zoomRange.value = null; return; }
-            resWindowS.value = resWindowPref.value;
-            try { chrome.storage.local.set({ [RESWIN_KEY]: resWindowPref.value }); } catch { /* opaque origin */ }
+            if (view.zoom.value) { view.zoom.value = null; return; }
+            view.windowS.value = view.windowDefault.value;
+            view.remember(view.windowDefault.value);
         }}>
-            {pinned ? zoomSpan(pinned) : width(resWindowS.value)} ✕
+            {pinned ? zoomSpan(pinned) : width(view.windowS.value)} ✕
             <span class="tt-pop wrap" role="tooltip">{pinned
                 ? <>Showing the range you selected instead of the rolling window. Click, or press Esc, to go back to live.</>
                 : <>The window has been resized away from the default. Click to go back to it — the default is the one the chart's own settings name, behind the gear.</>}</span>
