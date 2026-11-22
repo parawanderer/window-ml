@@ -419,12 +419,11 @@ test("the box's panel and the Python bench are on this page, because THIS browse
         // The page's tools live in the gear's menu at the bottom-left, with the settings beside them.
         const gear = chat.locator(".chat-gear-btn");
         // Both panels hang off one "Panels" row: they are a surface opened ONTO a runtime rather than a setting of
-        // the page, and each names the runtime it would open on.
+        // the page, and each sits under the runtime it would open on (a section of the Panels flyout, named for the device).
         const panels = async () => { await gear.click(); await chat.getByRole("menuitem", { name: "Panels" }).click(); };
         await panels();
-        const box = chat.getByRole("menuitemcheckbox", { name: /Models and memory/ });
+        const box = chat.getByRole("group", { name: "This browser" }).getByRole("menuitemcheckbox", { name: /Models and memory/ });
         await expect(box).toBeVisible();
-        await expect(box).toHaveAccessibleName(/This browser/);
         await box.click();
         // Docked across the top by default, with its header row in the dock's tab bar rather than under it.
         await expect(chat.locator(".chat-dock.chat-dock-top .vram")).toBeVisible();
@@ -485,8 +484,8 @@ test("the execution log is what the machinery did under the open run, which its 
         // naming one run would go stale on the next click.
         await chat.locator(".chat-gear-btn").click();
         await chat.getByRole("menuitem", { name: "Panels" }).click();
-        const row = chat.getByRole("menuitemcheckbox", { name: /Execution log/ });
-        await expect(row).toHaveAccessibleName(/This browser/);
+        const row = chat.getByRole("group", { name: "This browser" }).getByRole("menuitemcheckbox", { name: /Execution log/ });
+        await expect(row).toBeVisible();
         await row.click();
 
         // Docked to the RIGHT by default: it is read line by line beside the steps it explains.
@@ -589,8 +588,8 @@ test("the run state panel lists every declared member of the open run, what each
         await expect(chat).toHaveURL(new RegExp(`#/s/local%3A${hash}`));
         await chat.locator(".chat-gear-btn").click();
         await chat.getByRole("menuitem", { name: "Panels" }).click();
-        const row = chat.getByRole("menuitemcheckbox", { name: /Run state/ });
-        await expect(row).toHaveAccessibleName(/This browser/);
+        const row = chat.getByRole("group", { name: "This browser" }).getByRole("menuitemcheckbox", { name: /Run state/ });
+        await expect(row).toBeVisible();
         await row.click();
 
         const panel = chat.locator(".chat-dock.chat-dock-right .rstate");
