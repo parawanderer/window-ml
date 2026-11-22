@@ -1829,17 +1829,18 @@ test("this page's theme: chosen from the gear, applied at once, kept per device,
     expect(await theme()).toBe("dark");   // the system's, as the extension's Auto means
     await page.locator(".chat-list-foot .chat-gear-btn").click();
     const menu = page.getByRole("menu", { name: "Page menu" });
-    // The choices stay mounted so closing animates, but a closed list is out of reach: not in the tree, not tabbable.
-    await expect(menu.getByRole("menuitemradio")).toHaveCount(0);
-    await page.getByRole("menuitem", { name: /Theme for this page/ }).click();
-    // The extension is on Auto here, so following it would mean the same as System: no fourth choice.
-    await expect(menu.getByRole("menuitemradio")).toHaveText(["System", "Light", "Dark"]);
-    await expect(menu.getByRole("menuitemradio", { name: "System" })).toHaveAttribute("aria-checked", "true");
-    await menu.getByRole("menuitemradio", { name: "Light" }).click();
-    expect(await theme()).toBe("light");
-    await expect(menu.getByRole("menuitem", { name: /Theme for this page/ })).toContainText("Light");
+    // The choices are in a flyout of their own, which is not drawn until its row opens it.
+    await expect(page.getByRole("menuitemradio")).toHaveCount(0);
     await menu.getByRole("menuitem", { name: /Theme for this page/ }).click();
-    await expect(menu.getByRole("menuitemradio")).toHaveCount(0);
+    const fly = page.getByRole("menu", { name: "Theme for this page" });
+    // The extension is on Auto here, so following it would mean the same as System: no fourth choice.
+    await expect(fly.getByRole("menuitemradio")).toHaveText(["System", "Light", "Dark"]);
+    await expect(fly.getByRole("menuitemradio", { name: "System" })).toHaveAttribute("aria-checked", "true");
+    await fly.getByRole("menuitemradio", { name: "Light" }).click();
+    expect(await theme()).toBe("light");
+    // Picking closes the flyout and leaves the menu, whose row now names the choice.
+    await expect(page.getByRole("menuitemradio")).toHaveCount(0);
+    await expect(menu.getByRole("menuitem", { name: /Theme for this page/ })).toContainText("Light");
     await page.reload();
     await page.locator(".chat").waitFor();
     expect(await theme()).toBe("light");
@@ -2338,7 +2339,10 @@ test("no menu is cut off — by the window or by the column it opens in", async 
                 // …and with its longest row open, which is where a sub-list can reach past the column.
                 await page.getByRole("menuitem", { name: /Theme for this page/ }).click();
                 expect(await popupCutoffs(page), `${where}, the gear's menu with Theme open`).toEqual([]);
+                // The first Escape closes the flyout and the second the menu (the next `goto` only changes the hash).
                 await page.keyboard.press("Escape");
+                await page.keyboard.press("Escape");
+                await expect(page.locator(".chat-gear-menu")).toBeHidden();
             }
             // A SESSION ROW's own menu, which opens against the list's right edge rather than rising from its foot.
             await page.goto(server.url);
