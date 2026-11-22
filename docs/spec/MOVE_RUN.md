@@ -1,6 +1,6 @@
 # Moving a run to another tab
 
-**Status: shape (a) built in the worker (`move-run.ts`), with its two callers; shape (b) in two slices, both built: the turn's tab cell, then moving a running turn (2026-11-17).** Written 2026-11-12 by the async lane, assigned by the coordinator as the lane
+**Status: shape (a) built in the worker (`move-run.ts`), with its two callers; shape (b) in two slices, both built: the turn's tab cell, then moving a running turn (2026-11-22).** Written 2026-11-12 by the async lane, assigned by the coordinator as the lane
 closest to it. Shane confirmed the decisions below in the coordinator's session on 2026-11-12 (a move, not a fork; the
 same runtime only; started only by the person). The build is the `[window-ml move-run]` lane's, started after this note
 and the page-health change land; the chat page's "move to tab…" entry is the Chat Page lane's afterwards. Revised the
