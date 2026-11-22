@@ -18,7 +18,7 @@ import type { ResourceSample } from "../../resource/resource-model";
 import type { EventPlacement, ResourceEvent } from "../../resource/resource-timeline";
 import { snapFraction, type Axis, type RunGap } from "../../resource/resource-axis";
 import { lineageOf } from "../../resource/resource-lane";
-import { zoomRange, resWindowS, resWindowPref, brush, RESWIN_KEY, laneScoped, scopedHash, crosshair, snapDot } from "../store";
+import { zoomRange, resWindowS, resWindowPref, brush, laneScoped, scopedHash, crosshair, snapDot } from "../store";
 import { releaseFocus, kbPool } from "./vram-focus";
 import { hiddenPools, sampleGraceMs } from "./panel-state";
 
@@ -173,10 +173,14 @@ export interface ChartView {
     held: Signal<{ axis: Axis; key: string } | null>;
 }
 
+/** Where the PANEL's window width is kept. The extension's entries install the write (`chrome.storage.local`); the chat
+ *  page's web build has none, and its bundle may not mention `chrome`, which is why this is a seam and not a call. */
+export const panelStorage: { write: ((secs: number) => void) | null } = { write: null };   // state: plumbing
+
 /** The resource panel's view: its own global signals, so every other reader of them is unaffected. */
 export const panelView: ChartView = {
     zoom: zoomRange, brush, windowS: resWindowS, windowDefault: resWindowPref, live, held: chartHeld,
-    remember: (secs) => { try { chrome.storage.local.set({ [RESWIN_KEY]: secs }); } catch { /* opaque origin */ } },
+    remember: (secs) => panelStorage.write?.(secs),
 };
 
 /** A fresh, independent view for a second chart: nothing it does reaches the panel, and the panel's gestures do not reach it. */

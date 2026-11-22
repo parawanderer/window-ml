@@ -64,10 +64,11 @@ const MIN_BAR_PX = 3;
  *  rows are drawn below the lane's early return where a hook cannot reach. */
 const laneWidthPx = signal(0);
 
-/** Drag across a plot to select a time range (and release to apply it). The fractions are mapped back to TIME
+/** Drag across a plot to select a time range (and release to apply it). `timeOf` is for a chart with its own axis
+ *  (the usage chart's folds idle gaps away): it turns a raw fraction across the plot into a time, replacing the panel's.  The fractions are mapped back to TIME
  *  through the same segmented geometry events are placed with — the axis is not linear, so a range read off
  *  the pixels alone would select a different stretch than the one under the pointer. */
-export const startBrush = (runs: ResourceSample[][], view: ChartView = panelView) => (e: PointerEvent) => {
+export const startBrush = (runs: ResourceSample[][], view: ChartView = panelView, timeOf?: (frac: number) => number | null) => (e: PointerEvent) => {
     if (e.button !== 0) return;
     const el = (e.currentTarget as HTMLElement);
     const box = el.getBoundingClientRect();
@@ -89,6 +90,8 @@ export const startBrush = (runs: ResourceSample[][], view: ChartView = panelView
      *  Snapped, it is the sample's own stamp, not the axis position read back through `timeAtFraction`,
      *  which would interpolate the very value the snap exists to avoid. */
     const timeAt = (x: number) => {
+        // A chart whose axis is not the panel's reads its own: `timeOf` takes the raw fraction across the plot.
+        if (timeOf) return timeOf(raw(x));
         const rs = view.live.runs ?? runs;
         if (snapDot.value) {
             const s = snapFraction(rs, raw(x), view.live.axis, sampleGraceMs());
