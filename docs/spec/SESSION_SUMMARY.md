@@ -101,15 +101,16 @@ cost so far" line is the short form of these totals.
 | --- | --- | --- | --- |
 | Tokens over time, and totals | built | `usageSamples`/`timedUsage` (`usage.tsx`, reducer): one `TokenUsage` per call, ordered by its step's or turn's `ts`; `promptTokens`, `completionTokens`, `cachedTokens`, `reasoningTokens` | — |
 | Cost over time, and total, for an external model | partial | `sessionCalls` priced through `services().priceCalls` against each call's own snapshot (`TokenUsage.prices`, `src/spend/price-book.ts`) | Extension pages only; no cost on the web or hub chat page (session-store). An unpriced call is counted, not costed. |
-| Energy for a local model, and its cost | partial | Measured on the box: the patched backend's `sample` frames carry GPU board watts and `compute.power_sources`, and the bench attributes them per session (`tests/e2e/bench/electricity.mjs`). Each call records the electricity price it ran under (`TokenUsage.electricity`) | The extension reads no power field yet. Owner: bench (ruling 53); the design is "Energy and its cost" below. A figure from a rated wattage draws nothing. |
+| Energy for a local model, and its cost | partial | Measured on the box: the patched backend's `sample` frames carry GPU board watts and `compute.power_sources`, and the bench attributes them per session (`src/spend/energy.ts`, fed from the box log by `tests/e2e/bench/electricity.mjs`). Each call records the electricity price it ran under (`TokenUsage.electricity`) | The extension reads no power field yet. Owner: bench (ruling 53); the design is "Energy and its cost" below. A figure from a rated wattage draws nothing. |
 
 #### Energy and its cost
 
 Ruled by Shane (2026-11-19): the resources tab shows what a local model drew for the session, and its cost. Owner:
-bench. The attribution is `tests/e2e/bench/electricity.mjs` today (readings integrated per interval, each interval's
-energy split among the generations running in it, per GPU by residency, priced at each moment's rate). It becomes ONE
-module under `src/spend/`, beside `price-book.ts`, that the bench and the page both import (moved with `move-symbols`),
-never a second copy; only `runEnergy`, which reads the bench's SQLite box log, stays in the bench.
+bench. The attribution is `src/spend/energy.ts` (readings integrated per interval, each interval's energy split among
+the generations running in it, per GPU by residency, priced at each moment's rate): ONE module beside `price-book.ts`,
+moved there from the bench with `move-symbols`, that the bench and the page both import, never a second copy. Only
+`runEnergy`, which reads the bench's SQLite box log, and the bench's sums per model and per sweep stay in
+`tests/e2e/bench/electricity.mjs`.
 
 Where the readings come from. Live, from frames the extension already receives: the patched Ollama's `sample` frames
 carry `info.compute.supported_gpus[].power` and `info.compute.power_sources`. In this clone's box log (2026-10-15 to
