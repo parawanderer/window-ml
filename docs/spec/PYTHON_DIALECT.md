@@ -251,7 +251,7 @@ generator or coroutine defined inside had its body CHECKED for membership but ne
 back hands a later cell unjudged code, and a builtin the gate never allowed (`f = open`) is a capability under a plain
 name. The red team showed both: `def f(): import os; return os.listdir('/')` admitted unasked, then an approved cell's
 `f()` listed the filesystem; `def f(): return ml.config()` the same way sent a wire call, a write reaching `ml` from an
-inside run. The rule has two layers, and one is not the other's substitute:
+inside run. The rule has three layers, and none is another's substitute:
 
 1. **The fork honours `CO_RESTRICTED` wherever the code runs**, not only under `_restricted.run`: a `CO_RESTRICTED`
    frame entered while no run is active is REFUSED with `NotInDialect` ("restricted code runs only inside the
@@ -305,6 +305,33 @@ inside run. The rule has two layers, and one is not the other's substitute:
    The RETURN value is a third channel with no name and no import, so it admits data only: `return ml` and `return
    [ml]` make the cell outside (the red team's reading question, 2026-10-20; its P2-alias pins eight shapes). Once layer 1 holds, a cell-defined function may cross back, since outside a run it refuses; a captured builtin
    never does, because it is not cell code and layer 1 never sees it.
+3. **No cell is tried inside in a worker that ran a cell outside** (the outside mark, ruled 2026-11-22; `py-mark.ts`).
+   Layer 1's stated residual covers the approved cell itself. It does not cover the cells AFTER it, which nobody is
+   asked about. An approved cell is full Python in the interpreter a later inside cell runs in. The gate admits a lifted
+   function by its identity, and a lifted call runs its Python callees ungated, so an approved cell can plant code that
+   a later inside cell runs with no gate at all (the packages lane, 2026-11-22, on the pinned core; both shapes are
+   `tests/python-outside-plant.test.mjs`):
+   - **The admitted function's own code.** `pd.DataFrame.head.__code__ = _p.__code__` keeps the function's identity, so
+     it stays admitted, and a later inside `df.head(1)` runs `_p`, which ran `import os` and `os.listdir('/')`.
+   - **A callee, with no admitted function touched.** `_iLocIndexer.__getitem__` replaced by a wrapper that imports
+     `os`. A later inside `df.head(2)` answers 2 as before, and the wrapper ran ungated under it. This is why a fork
+     change that snapshots each registered function's `__code__`, defaults and closure is not enough: the plant can be
+     anywhere in the lifted call's graph (class attributes, module globals, a callable kept in library state).
+   - **The rule.** Once a cell of a run has STARTED outside the dialect in a worker, no later cell in that worker is
+     tried inside it, and each asks exactly as an outside cell asks. The mark lives in the offscreen document, keyed by
+     the Worker object, and is set before the outside cell is posted. A fresh worker (reap, kill, restart) is unmarked.
+     An inside post to a marked worker is answered by the document and never sent, the readiness probe included. A cell
+     the person refused never ran and marks nothing. Which posts mark is an enumeration with "marks" as the default for
+     an unlisted kind (`docs/dev/python-sandbox.md`, "The outside mark").
+   - **What a person and the model see.** The card says "Asks because an earlier approved cell could have changed what
+     this one runs". The model reads, once per worker, "An earlier cell ran outside the read-only Python dialect in
+     this sandbox, so every later cell asks until it restarts."
+   - **What it costs.** In the cell-replay corpus (`notebooks/python-dialect/data/cell-replay`), 21 of 58 runs have an
+     outside cell before an inside one, and 27 of their 44 inside cells would ask (`replay.json`, 8d910442). With
+     `read_csv` served (`replay-read-csv-served.json`, 1fda7dec) it is 11 runs and 16 of 80 inside cells. These are
+     UPPER bounds: the replay's outside cells were never approved and run, and only an approved, started cell marks.
+   - **Not in this layer.** Clearing the mark by restarting the worker, and carrying a namespace's data into a fresh
+     worker, are later work and Shane's to want.
 
 A refused try leaves no output either: its captured stdout is discarded with its env, and whether text the tee already
 wrote to the real stdout reaches the model in a streamed call is measured before it is called closed (rule 8), not
