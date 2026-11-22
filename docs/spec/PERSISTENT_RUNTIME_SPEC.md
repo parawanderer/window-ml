@@ -100,8 +100,8 @@ As built, a worker-hosted run's cells always share one namespace, by run id; a p
 `ml.pythonExec` and a page-hosted agent's `python_exec` stay stateless. A lost namespace
 is told (`namespace reset at <time>: <reason>`), and the names and types are kept as the
 scope manifest (`src/offscreen.ts`, state `python.run-namespace`), read by the state inspector only; the
-manifest is NOT appended to each result (decided 2026-11-22, section 1), and the on-request read is planned. The tool's parameters on
-main are `code`, `image`, `cast`, `verify`, `margin`, `tables`, `tableRaw`, the output-cap
+manifest is NOT appended to each result (decided 2026-11-22, section 1), and the on-request read is planned.
+The tool's parameters on main are `code`, `image`, `cast`, `verify`, `margin`, `tables`, `tableRaw`, the output-cap
 and retry parameters, and in a worker-hosted run `keep` and `expect_ms`
 (`src/python/python-tool.ts`). How it works: [`docs/dev/python-sandbox.md`](../dev/python-sandbox.md),
 "A run's namespace (root C)".
