@@ -2,12 +2,18 @@
 // Theme setting is not Auto (when it is, following it IS following the system, and a fourth choice that means the
 // same as another would only be something to puzzle over). Two shapes of one choice: a row in the gear menu that
 // opens into a short list, and a segmented control in Settings → This page.
-import { IconCheck, IconTheme } from "../sidebar/icons";
-import { MenuGroup } from "./menu";
+import type { ComponentChildren } from "preact";
+import { IconMonitor, IconMoon, IconPuzzle, IconSun, IconTheme } from "../sidebar/icons";
+import { MenuGroup, MenuItem } from "./menu";
 import { config } from "../sidebar/store";
 import { pageThemeMode, setPageThemeMode, type PageThemeMode } from "./view-mode";
 
 const NAMES: Record<string, string> = { auto: "System", light: "Light", dark: "Dark" };
+
+/** Each choice's glyph: a puzzle piece for the extension, a monitor for the system, a sun, a moon. */
+const THEME_ICON: Record<PageThemeMode, ComponentChildren> = {
+    extension: <IconPuzzle />, system: <IconMonitor />, light: <IconSun />, dark: <IconMoon />,
+};
 
 /** The choices on offer, and the one to show as chosen ("extension" shows as System while the extension is on Auto). */
 export function themeChoices(): { choices: { id: PageThemeMode; label: string }[]; chosen: PageThemeMode } {
@@ -27,12 +33,10 @@ export function ThemeMenu() {
     const now = choices.find((c) => c.id === chosen)?.label.replace(/^Like the extension.*/, "Extension") ?? "";
     return (
         <MenuGroup icon={<IconTheme />} label="Theme for this page" detail={now}>
-            {(open) => choices.map((c, i) => (
-                <button key={c.id} class="chat-menu-item chat-menu-sub" role="menuitemradio" aria-checked={c.id === chosen}
-                    style={`--i:${i}`} tabIndex={open ? 0 : -1} onClick={() => setPageThemeMode(c.id)}>
-                    <span class="chat-menu-label">{c.label}</span>
-                    {c.id === chosen ? <span class="chat-menu-on" aria-hidden="true"><IconCheck /></span> : null}
-                </button>
+            {(open, fly) => choices.map((c, i) => (
+                // In a flyout a choice has the room for its glyph; expanded in place under the row it has not.
+                <MenuItem key={c.id} sub={{ i, open }} icon={fly ? THEME_ICON[c.id] : null} label={c.label}
+                    radio={{ on: c.id === chosen }} onPick={() => setPageThemeMode(c.id)} />
             ))}
         </MenuGroup>
     );

@@ -1442,6 +1442,29 @@ html[data-calm]:not([data-theme="light"]), html[data-calm]:not([data-theme="ligh
     .chat-menu-subs, .chat-menu-item.chat-menu-sub, .chat-menu-subs.open .chat-menu-sub { transition: none; }
 }
 
+/* THE FLYOUT (menu.tsx `MenuGroup`, wide layouts): a second `.chat-menu` sheet beside the first, `fixed` and placed by
+   script from the parent row's rectangle. It is drawn into `.chat` (or the body), NOT inside the gear's menu, because
+   `.chat-list` clips and the gear's menu is capped to the list's width: a sheet hung off its right side would be cut
+   off. It fades in and slides 6px from the side it opens on (`--fly-dx`, set with the position), on the page's cubic. */
+@keyframes chat-fly { from { opacity: 0; transform: translateX(var(--fly-dx, -6px)); } }
+@keyframes chat-fly-out { to { opacity: 0; transform: translateX(var(--fly-dx, -6px)); } }
+@keyframes chat-fly-item { from { opacity: 0; transform: translateX(-8px); } }
+.chat-menu.chat-menu-flyout { position: fixed; z-index: 60; min-width: 200px; animation: chat-fly .16s cubic-bezier(.2, .7, .3, 1) both; }
+.chat-menu.chat-menu-flyout.leaving { animation: chat-fly-out .11s ease-in both; }
+/* Its rows are the same ones the in-place group uses, so they arrive the same way (a beat apart) but draw at their
+   normal padding: there is no guide line to hang them off, and their glyphs sit where any menu row's do. */
+.chat-menu-flyout .chat-menu-item.chat-menu-sub {
+    padding-left: 10px; opacity: 1; transform: none; transition: background-color .1s;
+    animation: chat-fly-item .22s cubic-bezier(.2, .7, .3, 1) calc(40ms + var(--i, 0) * 35ms) both;
+}
+/* The parent row stays lit while its flyout is open, and its caret stays a right-pointing chevron (the in-place
+   group's turns down, which would say "expands below"). */
+.chat-menu-item.fly-open { background: var(--panel-2); }
+.chat-menu-caret.fly, .chat-menu-caret.fly.open { transform: none; }
+@media (prefers-reduced-motion: reduce) {
+    .chat-menu.chat-menu-flyout, .chat-menu.chat-menu-flyout.leaving, .chat-menu-flyout .chat-menu-item.chat-menu-sub { animation: none; }
+}
+
 /* The gear's menu rises from the gear, with room for its longer rows. */
 .chat-gear { position: relative; }
 .chat-gear-menu { position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 40; min-width: 240px; transform-origin: bottom left; }
