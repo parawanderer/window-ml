@@ -67,8 +67,9 @@ and the step's seq the worker already knows (`delegateTool`'s `call`), never any
    stream longer than its head stays held for `ml.sh.read` (`shell.outputs`, at most 32 a run), and goes when the
    session's pointers do, or with the port.
 
-**Over the wire** (a `python_exec` cell outside the Python read-only dialect, which gets realm `full`): the cell's `ml.sh.run(...)` is one wire call named `sh.run` (the
-facade sends a namespace member by its dotted path, `src/python/ml-facade.ts`). `sw-ml-wire.ts` gives `sh.run` and
+**Over the wire** (a `python_exec` cell outside the Python read-only dialect, which gets realm `full`): the cell's
+`ml.sh.run(...)` is one wire call named `sh.run` (the facade sends a namespace member by its dotted path,
+`src/python/ml-facade.ts`). `sw-ml-wire.ts` gives `sh.run` and
 `sh.read` only to a `full` client of a run that a running step opened: the opener records that step on the client
 handle (`openWireClient`'s `step`, from python_exec's `call` through `grantRunPython`), and the call's ask is raised
 there. Nothing in the request names a step (docs/spec/ML_WIRE.md); a read-only client gets `Absent`.

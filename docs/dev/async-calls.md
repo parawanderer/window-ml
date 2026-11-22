@@ -76,8 +76,8 @@ result reaches the model through the run inbox at the next step boundary, or thr
   logged `task`/`orphaned`), drops the table and its stored key, so a later result is dropped. Slice B made the table
   durable across a worker eviction and added the cap setting (`detachedTaskMaxMin`, below). Slice C made a finished
   result start the next turn, with notify-only and the chain cap (below). Slice D added the lifetimes list to the default
-  system prompt (`lifetimesClause`, `prompts.ts`). Not built yet: the HUD's per-run task mark and the no-tab state on the
-  chat page.
+  system prompt (`lifetimesClause`, `prompts.ts`). The HUD's per-run task mark is `task-mark.tsx`. Not built yet: the
+  no-tab state on the chat page.
 - **The `task` tool** (`task-tool.ts`, a worker builtin offered with `ml.sh` or `python_exec`, not gated, not citable): `await` (with
   its own `timeout_ms`, capped at `TASK_AWAIT_MAX_MS`), `cancel`, `tail`. It is keyed by the loop's run id, so another
   run's id and an invented one read the same `UnknownTask`. `ml.current.tasks` is computed at the snapshot's instant by
