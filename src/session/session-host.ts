@@ -9,7 +9,7 @@
 import type { JsonSchema } from "../contract";
 import type { AttachedFile, AttachedFileRef, AttachedPdf, ElementContext, SentFile, WireFile } from "../contract/contract-run";
 import type { NeutralMessage, TokenUsage } from "../contract/contract-chat";
-import type { MlDebugEvent } from "../contract/contract-debug";
+import type { MlDebugEvent, TaskBackground } from "../contract/contract-debug";
 import type { FolderState } from "../archive/archive-folder";
 
 /* ------------------------------ versioning ------------------------------ */
@@ -328,7 +328,7 @@ export interface SessionSummary {
      * that does not report it; a client that does not know the field ignores it. Never saved: it is the task table's, read
      * again when a runtime starts.
      */
-    background?: { running: number; waiting: number; noTab?: true };
+    background?: TaskBackground;
 }
 
 /** A change to the index. A subscription opens with one `snapshot` per runtime it covers, then streams changes.

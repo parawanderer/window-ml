@@ -205,8 +205,19 @@ stores the counts. `sw-task-rows.ts` (bound by `sw-sessions.ts` once the server 
 `sessionServer.background(hash, ...)`, adding `noTab` when the run's tab (`bgRuns`, else the row's `page.tabId`) is not open
 (`chrome.tabs.get` rejects). It refreshes again on `tabs.onRemoved` and after an adopt or move. At worker start, after the
 index is restored, `syncTaskRows` hydrates every `ml_tasks:*` key and sets each row, and clears a marker with no table behind it,
-so an evicted worker's rows are rebuilt from storage; `restore()` drops a saved `background`. The views that draw the mark are the
-chat-page lane's. Tests: `tests/task-row.test.mjs`, `tests/session-index.test.mjs`.
+so an evicted worker's rows are rebuilt from storage; `restore()` drops a saved `background`. The type is `TaskBackground`
+(`contract-debug.ts`), the one representation for the row, the setters and the HUD.
+
+The HUD half: `refreshTaskRow` also sends the run's own tab (`bgRuns` tab) an `agent-tasks` event, `background:
+TaskBackground | null` (null at zero, no `noTab`: the HUD has its tab), through `toPageUi` and `relayDebugEvent` as the
+other worker notices go. It is worker-only (`WORKER_ONLY_KINDS`, so a page cannot write one), a live notice (`save:
+false`, not in the session index's known kinds, not in an export) and is not stored: the reducer (`debug-reducer.ts`) holds
+the latest on `Session.background`, replaced on each event and cleared on null, and a panel opened late gets the last one
+from the debug ring. `TaskMark` (`card/task-mark.tsx`, words in `taskMarkText`, `transcript/task-mark-text.ts`) draws
+"2 running · 1 result waiting" at the top of the card's body, its tip saying a result is read at the run's next turn.
+The no-tab state on the chat page is not drawn yet: the chat-page lane's. No new state, so `state.md` needs nothing.
+Tests: `tests/task-row.test.mjs`, `tests/session-index.test.mjs`, `tests/task-mark.test.mjs`,
+`tests/event-admission.test.mjs`.
 
 ## Traps
 

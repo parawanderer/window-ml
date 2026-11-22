@@ -101,3 +101,18 @@ test("after an eviction the row is rebuilt from the stored table, whatever memor
     // A running `ml.sh` row hydrates as orphaned (its connection died with the worker): a result waiting for the next turn.
     assert.ok(await until(() => r.bgOf()?.waiting === 1 && r.bgOf()?.running === 0), JSON.stringify(r.bgOf()));
 });
+
+// --- the run's own tab is told (the HUD card's mark) ---
+
+test("the run's tab receives agent-tasks with running: 1 after a detach, and null once the result is read", T, async () => {
+    const r = await settled();
+    const notices = () => r.bg.tabMessages.filter(([t, m]) => t === 7 && m?.type === "ML_DEBUG_TO_PAGE" && m.event?.kind === "agent-tasks" && m.event.id === r.hash).map(([, m]) => m.event);
+    assert.equal(notices().length, 0, "a run with no tasks says nothing");
+    const t = r.detach();
+    assert.ok(await until(() => notices().some((e) => e.background?.running === 1)), JSON.stringify(notices()));
+    assert.equal(notices().at(-1).save, false);
+    assert.equal(notices().at(-1).background.noTab, undefined, "the HUD has its tab: no noTab");
+    t.finish({ text: "built" });
+    assert.ok(await until(r.idle(2)), "the task's turn ran");
+    assert.ok(await until(() => notices().at(-1)?.background === null), JSON.stringify(notices()));
+});

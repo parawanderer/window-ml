@@ -437,6 +437,15 @@ export interface DebugAgentTaskSay extends DebugBase {
     status: "running" | "done" | "failed" | "cancelled" | "orphaned"; ms: number; code: number | null;
 }
 
+/** A run's background tasks as a list or a card marks them: `running` are detached calls still running, `waiting` are
+ *  ended ones whose result no turn has read yet. `noTab` is set when the run has no open tab to start a turn on, so a
+ *  result waits until the person brings the session to one. Never `{ 0, 0 }`: no tasks is `null` or an absent field. */
+export type TaskBackground = { running: number; waiting: number; noTab?: true };
+
+/** A run's background-task counts changed (`null`: it has none now), for the card's mark. Worker-only: a page that could
+ *  write one would put a task on a run that has none. A live notice: not kept in the session index or the exports. */
+export interface DebugAgentTasks extends DebugBase { kind: "agent-tasks"; background: TaskBackground | null; }
+
 /** One quiet line in a run's step list, written by the worker: a start a page this run opened asked for (Q17). */
 export interface DebugAgentNote extends DebugBase { kind: "agent-note"; text: string; site?: string; }
 
@@ -444,7 +453,7 @@ export interface DebugAgentNote extends DebugBase { kind: "agent-note"; text: st
  *  and a detached call's result. Kept out of `MlDebugEvent`, since a page may never write one (event-admission.ts). The
  *  session index keeps `agent-site`, `agent-site-say` and `agent-task-say`, and the exports carry the two says; the
  *  rest are live notices for the surfaces that show the run. */
-export type SiteRunEvent = DebugStartAsk | DebugStartDecided | DebugAgentSite | DebugAgentPerson | DebugAgentWait | DebugAgentSiteSay | DebugAgentTaskSay | DebugAgentNote;
+export type SiteRunEvent = DebugStartAsk | DebugStartDecided | DebugAgentSite | DebugAgentPerson | DebugAgentWait | DebugAgentSiteSay | DebugAgentTaskSay | DebugAgentTasks | DebugAgentNote;
 
 /** Window-bus envelopes between the core (main world) and the sidebar. */
 export interface MlDebugMessage { __mlDebug: MlDebugEvent; }

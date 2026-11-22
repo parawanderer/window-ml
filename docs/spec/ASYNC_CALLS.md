@@ -188,8 +188,9 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    settings, carried in the public config (`pythonIdleMinutes`, `detachedTaskMaxMin`) so a page-built run composes the
    same text: the idle figure as the reap reads it (`idleMinutes`, `py-reap.ts`), the cap as the sandbox applies it
    (`capMinutes` and `clampDetachedMs`, `py-lease.ts`), both defaulting to `DEFAULT_CONFIG`; `tests/agent-start.test.mjs`
-   compares them with `DEFAULT_REAP_BETWEEN_MS` and `PY_DETACHED_MAX_MS`. NOT built: the HUD per-run task mark
-   (slice E, with the chat-page lane; slice C keeps the transcript line) and the no-tab state on the chat page. This
+   compares them with `DEFAULT_REAP_BETWEEN_MS` and `PY_DETACHED_MAX_MS`. BUILT: the HUD per-run task mark (slice E: the
+   worker-only `agent-tasks` event, `TaskBackground`, the reducer's `Session.background`, the `TaskMark` component;
+   slice C keeps the transcript line). NOT built: the no-tab state on the chat page (the chat-page lane draws it). This
    reverses rule 4, and the mode 1 ruling that a model answering while a build is detached ends the build, for the two executors that run
    outside the service worker: an `ml.sh` call (the host's process) and a detached `python_exec` cell (the offscreen
    document). A fetch runs IN the service worker and dies with it, so it stays turn-bound: the turn's end cancels it,

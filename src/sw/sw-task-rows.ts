@@ -3,6 +3,9 @@
 import type { SessionServer } from "../session/session-server";
 import { hydrateTasks, onTaskCounts, taskCounts } from "./sw-tasks";
 import { bgRuns } from "./sw-runs";
+import { relayDebugEvent } from "./sw-debug";
+import { toPageUi } from "./sw-side-panel";
+import type { TaskBackground } from "../contract";
 
 let server: SessionServer | undefined;   // state: plumbing — the session server rows are set on, bound once at worker start
 
@@ -14,17 +17,33 @@ async function hasTab(hash: string): Promise<boolean> {
 }
 
 /**
+ * Tell the run's own tab its counts changed (`agent-tasks`), for the card's mark: a live notice, never kept in the session
+ * index or an export. A run with no tab the worker knows has no card to tell.
+ * @param hash the run's session hash
+ * @param bg what the run has now, or null for no tasks
+ */
+function announceTasks(hash: string, bg: TaskBackground | null): void {
+    const tabId = bgRuns.get(hash)?.tabId;
+    if (typeof tabId !== "number") return;
+    const event = { kind: "agent-tasks", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, background: bg ? { running: bg.running, waiting: bg.waiting } : null };
+    toPageUi(tabId, { type: "ML_DEBUG_TO_PAGE", event });
+    relayDebugEvent(tabId, event);
+}
+
+/**
  * Put a run's task counts and tab state on its session row (`SessionSummary.background`), read from the task table now.
  * @param hash the run's session hash
  */
 export async function refreshTaskRow(hash: string): Promise<void> {
     if (!server) return;
     const early = taskCounts(hash);
-    if (early.running + early.waiting === 0) { server.background(hash, null); return; }
+    if (early.running + early.waiting === 0) { server.background(hash, null); announceTasks(hash, null); return; }
     const tab = await hasTab(hash);
     // The table may have moved on while the tab was asked: the row says what it holds now.
     const c = taskCounts(hash);
-    server.background(hash, c.running + c.waiting === 0 ? null : { ...c, ...(tab ? {} : { noTab: true as const }) });
+    const next: TaskBackground | null = c.running + c.waiting === 0 ? null : { ...c, ...(tab ? {} : { noTab: true as const }) };
+    server.background(hash, next);
+    announceTasks(hash, next);
 }
 
 /**

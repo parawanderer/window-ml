@@ -5,7 +5,7 @@
 //
 // Only extension pages may connect (the background checks the port's sender URL before `attach`): a content script
 // never reaches this, because a page's main world is hostile and the index spans every tab.
-import type { MlDebugEvent } from "../contract/contract-debug";
+import type { MlDebugEvent, TaskBackground } from "../contract/contract-debug";
 import { COMMAND_SCOPE, SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type RuntimeInfo, type SessionId, type SessionIndexUpdate, type SessionStreamMessage, type SessionSummary, type StreamPosition } from "./session-host";
 import type { IngestOutcome, IngestSource, SessionIndex } from "./session-index";
 
@@ -299,7 +299,7 @@ export class SessionServer {
     }
 
     /** Set a session's background-task marker and tell every client. Returns the new row, or null when nothing changed. */
-    background(hash: string, bg: { running: number; waiting: number; noTab?: true } | null): SessionSummary | null {
+    background(hash: string, bg: TaskBackground | null): SessionSummary | null {
         const row = this.index.setBackground(hash, bg);
         if (row) this.broadcastIndex({ type: "upsert", session: row });
         return row;
