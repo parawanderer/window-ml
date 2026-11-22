@@ -176,8 +176,9 @@ Order of work, one PR each:
 
 ### Files tab
 
-Owned by files-host, after its scrub chain (#1948 and what it releases). On main, `/files/` is ruled, not built
-(`FILE_ATTACHMENTS.md`).
+Owned by files-host, after its scrub chain (#1948 and what it releases). On main, `/files/` is partly built: the
+ranged reader's read side and Python's mount (#2048, #2058, #2026); no write, no quota and no `ml.fs` yet
+(`FILE_ATTACHMENTS.md`, its status line).
 
 | Field | Status | Source today | Gap |
 | --- | --- | --- | --- |

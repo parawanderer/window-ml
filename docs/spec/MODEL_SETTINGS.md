@@ -38,8 +38,9 @@ should be no reason the model can't help the user use its own tool.)"
 **Why a spec of its own.** No existing spec fits. [`POLICIES.md`](POLICIES.md) is the mechanism this uses, not a home
 for one consumer's surface (the `fetch`, `sh` and `act` consumers each live with their own feature); the
 [`SITE_ACCESS.md`](SITE_ACCESS.md) rules are about pages, and this surface is one a page never reaches. The nearest
-precedent in shape is the files API in [`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md), "`/files` on the person's disk",
-whose "deleting the person's files asks unless a policy allows it" is the rule reused here.
+precedent in shape is the delete rule of [`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md), "`/files` on the person's disk"
+(the files API proposed there is now `ml.fs`, ruling 60): "deleting the person's files asks unless a policy allows it"
+is the rule reused here.
 
 ## What exists today
 

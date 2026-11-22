@@ -1,7 +1,8 @@
 # `ml.table`: a cell reads its own tables (design note for ruling 68, 2026-11-19)
 
-Written by packages (session `19f583d1`, `claude-opus-5-5`) for Shane, through the coordinator (repl-specs). NOTHING here
-is built until the spec, [`docs/spec/ML_TABLE.md`](../../spec/ML_TABLE.md), is named. Shane's rulings 69 to 72 and
+Written by packages (session `19f583d1`, `claude-opus-5-5`) for Shane, through the coordinator (repl-specs). The spec,
+[`docs/spec/ML_TABLE.md`](../../spec/ML_TABLE.md), merged (#2028) and holds the rules; the JS member is built (#2043),
+and the Python member, the `/files` writers and the lazy table are not (2026-11-22). Shane's rulings 69 to 72 and
 75 to 87 are written as settled; none is open.
 
 Each claim is marked:
@@ -279,7 +280,8 @@ allows": write, overwrite, `rm` and `mv`, unasked, in subfolders it makes too.
 A cell inside the dialect writes its own folder unasked. The limit is the session quota and nothing
 else (ruling 76): `filesQuotaMB`, default 1024, what the session's runs keep at stored size. It is a DevTools Settings
 flag, and session-store's. The model may propose a change through `change_setting`, which always asks. It is enforced
-in the offscreen document on every chunk (#1999's slice 1, not on main).
+in the offscreen document on every chunk, with the reader's write side (slice 3 of FILE_ATTACHMENTS.md's "What it
+owes"; slice 1, #2048, is the read side, and no `filesQuotaMB` is on main).
 
 - **Which members write `/files` inside the dialect** (async's hole 4). The dialect has no `open()` and no `os`. Ruling
   36's route table (branch `measure/py-files-mount`, notebooks/files-mount/data/routes.json) shows every one of 51
@@ -292,7 +294,8 @@ in the offscreen document on every chunk (#1999's slice 1, not on main).
     - Pillow: `Image.save`.
     - pyarrow: `parquet.write_table`, through the lazy table only (item 12).
     - matplotlib's `savefig`, if and when matplotlib is admitted. It is not admitted today.
-  - `ml.fs.writeFile`, `ml.fs.cp`, `ml.fs.mv` and `ml.fs.rm` (ruling 60), awaited over the wire. They need item 1's
+  - `ml.fs.writeFile`, `ml.fs.cp`, `ml.fs.rename` and `ml.fs.rm` (ruling 60; `rename`, not `mv`, the coordinator,
+    2026-11-20), awaited over the wire. They need item 1's
     synchronous route (ruling 77), and the offscreen document checks them itself.
   - Not admitted: a restricted `open()`. The path is checked once, at `open`, but the writes come later and carry no
     path. The gate would see `write(str)` on a handle, which says nothing about where it goes:
@@ -312,12 +315,12 @@ in the offscreen document on every chunk (#1999's slice 1, not on main).
     `np.load` with `allow_pickle` unset or False is a read, under ruling 71's rule.
   - Every admitted writer is a row in #1991's ENUMERATED test: probed, or given a reason. A name added to it without
     the row fails that test.
-  - JS: `ml.fs.writeFile`, `ml.fs.rm` and `ml.fs.mv`, through `mlFacade`.
+  - JS: `ml.fs.writeFile`, `ml.fs.rm` and `ml.fs.rename`, through `mlFacade`.
 - **The checker proves the path before the call.** It is a lifted `allow_call` entry check, registered the way
   #1991's `buf` check is (`_ml_buffer_args`). It reads the path by keyword and by position, through `*` and `**`, and
   from a bound method held in a name (e3's `f = d.to_string; f(*[], **{…})`). Then it applies session-store's rule:
   - lexical normalisation with `/` as the session root, `/files/x` the same as `/x`, and `..` stopping at the root;
-  - a write, `rm` or `mv` is admitted only when the normalised target (both paths for `mv`) is under
+  - a write, `rm` or rename is admitted only when the normalised target (both paths for a rename) is under
     `/files/agent/`; anything else under `/files`
     is refused, `attached/` included (EROFS), and so is a new folder at the `/files/` level;
   - a hidden-list name (ruling 34) asks;
@@ -344,12 +347,11 @@ in the offscreen document on every chunk (#1999's slice 1, not on main).
     attempt succeeds, and a refusal or a failure aborts them, as its namespace already rolls back. Otherwise a
     refused attempt, rerun on the full path after approval, would have written once before the person answered.
   - session-store writes it in slice 1's spec.
-- **What e3 attacks:** `..` past the root; `/files/attached`, `./attached/../attached/x`; a write, `rm` or `mv` outside
-  `/files/agent/` (the person's folders, a new folder at `/files/`); an `mv` from the
-  model's folder out of it; a hidden name; a path in another session (it must resolve inside its own root by
-  construction); a link, if any API can make one; a write
-  over quota (ENOSPC, the old version intact); a write then a refusal in the same cell; each write leaf by every
-  binding form; a path made by a library callback.
+- **What e3 attacks:** `..` past the root; `/files/attached`, `./attached/../attached/x`; a write, `rm` or rename
+  outside `/files/agent/` (the person's folders, a new folder at `/files/`); a rename from the model's folder out of it;
+  a hidden name; a path in another session (it must resolve inside its own root by construction); a link, if any API can
+  make one; a write over quota (ENOSPC, the old version intact); a write then a refusal in the same cell; each write
+  leaf by every binding form; a path made by a library callback.
 
 ## 8. Manifest data (rulings 55, 56)
 
@@ -388,17 +390,18 @@ Every probe ends as a committed row or a one-line reason.
 - **Owners** (set by the coordinator, 2026-11-19):
   - packages: the Python `ml.fetch` and `ml.table` over JSPI with the hold, `read_csv`, removing `tables`, the
     `/files` write checker, and the lazy table.
-  - The JS `ml.table` and its `mlFacade` entry: unassigned; the coordinator assigns after the ruling.
-  - session-store: the ranged reader, `ml.fs` and the `/files` commit, after #1995 and #1999.
-  - async: Python's `/files` mount, on session-store's reader.
+  - The JS `ml.table` and its `mlFacade` entry: packages (the coordinator's call under ruling 54; built, #2043).
+  - session-store: the ranged reader (built, #2048 and #2058), `ml.fs` and the `/files` commit (not built), after
+    #1995 and #1999.
+  - async: Python's `/files` mount, on session-store's reader (built, #2026).
   - e3: the rows.
 - **Order:**
-  1. A spec PR from this note.
-  2. The JS member, which needs no fork.
+  1. A spec PR from this note (#2028, merged).
+  2. The JS member, which needs no fork (#2043, merged).
   3. The Python member over JSPI, with the hold and e3's rows (ruling 77). It also removes `tables` and rewrites the
      tests and fixtures that use it (ruling 79).
   4. `read_csv`.
-  5. The `/files` writes, after #1999's slice 1 and the Python mount.
+  5. The `/files` writes, after #1999's slice 1 and the Python mount (both on main now).
   6. The lazy table (item 12), last.
   V1 (the vocabulary) is unaffected; V2 is step 4, served from the kept bytes.
 - **What the model reads** (`docs/dev/prompt-review.md`, one review at the end):
