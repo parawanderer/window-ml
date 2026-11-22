@@ -423,9 +423,10 @@ running a Python script via `ml.sh.run(["python3", "script.py", ...])` do not sh
   replaced by ML_TABLE.md's served `read_csv`. A paged document (a PDF) is injected as its pages:
   each page's `text`, `kind` and `measure`, and `png(scale)`, a bounded on-demand render through the offscreen
   document, beside the bytes (`FILE_ATTACHMENTS.md`, "Python"). REOPENED 2026-11-12 (Shane, in the coordinator's
-  session) for approved and `full` cells, which get a mounted `/files/` with a read-only `/files/attached/`
-  (`FILE_ATTACHMENTS.md`, "A session's files as a directory"); this dialect writes only under `/files/agent/`, through
-  the manifest's listed writers, and reads through `ml.table` and the served `read_csv` ([`ML_TABLE.md`](ML_TABLE.md),
+  session) for cells outside this dialect, which get a mounted `/files/` with a read-only `/files/attached/`
+  (`FILE_ATTACHMENTS.md`, "A session's files as a directory"; BUILT for a worker-hosted run's own worker, #2026, with
+  every write answering EROFS until the reader's write side lands); this dialect writes only under `/files/agent/`,
+  through the manifest's listed writers, and reads through `ml.table` and the served `read_csv` ([`ML_TABLE.md`](ML_TABLE.md),
   rulings 69 and 86).
 - **Subprocess CLI (`ml.sh.run(["python3", ...])`):** Spawns a fresh OS process with `CO_RESTRICTED` off, because a CLI
   script legitimately uses `sys.argv`, `argparse`, `pathlib` and `open()`. While an agent is actively writing and editing
