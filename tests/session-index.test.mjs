@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { SessionIndex } from "../src/session/session-index.ts";
 
-const TAB_A = 11, TAB_B = 22;
+const TAB_A = 11, TAB_B = 22, TAB_C = 33;
 const bg = (tabId = TAB_A) => ({ tabId, trusted: true });
 const page = (tabId = TAB_A) => ({ tabId, trusted: false, page: { url: `https://site/${tabId}`, title: "Site" } });
 
@@ -367,6 +367,47 @@ test("a resume note is recorded once, however many sides report it", () => {
     // A second, genuinely different resume is its own note.
     assert.equal(ix.ingest(note("aaaa0001", { id: "aaaa0001-r2", url: "https://later.example/" }), bg()).accepted, true);
     assert.equal(kinds(ix.backfill("aaaa0001")).filter((k) => k === "session-resumed").length, 2);
+    assert.equal(ix.get("aaaa0001").page.url, "https://later.example/", "the row is on the later resume's page");
+});
+
+test("a resume puts the session on its new page: the row names that tab and its url, so the closed-tab bar goes", () => {
+    // Shane's report (2026-11-14): "Resume on a page" added a divider and left the bar. `pageGone` deletes the row's
+    // `page.tabId`, and the resume's note re-owned the session without touching the row, so `resumableHere` (which
+    // reads `page.tabId`) kept offering the resume.
+    const ix = index();
+    const note = (over = {}) => base("aaaa0001", "session-resumed", { url: "https://new.example/", fromUrl: "https://site/11", afterMs: 1, dropped: ["state"], ...over });
+    ix.ingest(start("aaaa0001"), { ...bg(TAB_A), page: { url: "https://site/11", title: "Site" } });
+    ix.ingest(result("aaaa0001"), bg(TAB_A));
+    ix.pageGone(TAB_A, { closed: true });
+    assert.equal(ix.get("aaaa0001").page.tabId, undefined, "precondition: the closed tab let go of it");
+
+    ix.ingest(note(), bg(TAB_B));
+    assert.deepEqual(ix.get("aaaa0001").page, { url: "https://new.example/", tabId: TAB_B }, "the new page, with no stale title");
+    assert.equal(ix.binding("aaaa0001").tabId, TAB_B);
+
+});
+
+test("a resume onto a third tab while the old one is still open moves the row and the owner there, one owner", () => {
+    const ix = index();
+    const note = (over = {}) => base("aaaa0001", "session-resumed", { url: "https://third.example/", fromUrl: "https://site/11", afterMs: 1, dropped: ["state"], ...over });
+    ix.ingest(start("aaaa0001"), { ...bg(TAB_A), page: { url: "https://site/11", title: "Site" } });
+    ix.ingest(result("aaaa0001"), bg(TAB_A));
+    assert.equal(ix.ingest(note(), bg(TAB_C)).accepted, true);
+    assert.deepEqual(ix.get("aaaa0001").page, { url: "https://third.example/", tabId: TAB_C });
+    assert.equal(ix.binding("aaaa0001").tabId, TAB_C);
+    // The tab it left, still open, is no longer the owner.
+    assert.deepEqual(ix.ingest(step("aaaa0001", 3), page(TAB_A)), { accepted: false, reason: "not-owner" });
+});
+
+test("a page's own copy of a resume note, admitted for the session its tab owns, moves nothing: only the worker's word moves the row", () => {
+    // A page-built session (hostedBy page, owned by TAB_A): its page's events are admitted, so the `trusted` guard is
+    // the only thing between the row and a url the page chose.
+    const ix = index();
+    ix.ingest(start("aaaa0001"), page(TAB_A));
+    const before = ix.get("aaaa0001").page;
+    const r = ix.ingest(base("aaaa0001", "session-resumed", { id: "aaaa0001-r9", url: "https://elsewhere.example/", afterMs: 1, dropped: ["state"] }), page(TAB_A));
+    assert.equal(r.accepted, true, "the note is admitted: it is the owning tab's");
+    assert.deepEqual(ix.get("aaaa0001").page, before, "and the row's page is unchanged");
 });
 
 test("a resume note that does not say what it dropped never enters the stream", () => {
@@ -531,4 +572,113 @@ test("agent-config is the worker's record of what the model was sent: refused fr
     assert.equal(ix.ingest(cfg("aaaa0001", "ours"), bg()).accepted, true);
     assert.deepEqual(ix.ingest(cfg("aaaa0001", "the page's words"), page(TAB_A)), { accepted: false, reason: "invalid" });
     assert.deepEqual(configs("aaaa0001"), ["ours"], "a later page copy does not overwrite the worker's");
+});
+
+// --- the Session summary page's fields: forkedFrom and currentPage ---
+
+const forkStart = (hash, forkOf, over = {}) => start(hash, { session: { hash, turn: 0, forkOf }, ...over });
+
+test("a fork on the same tab is listed with its parent's id, on the first event only", () => {
+    const ix = index();
+    ix.ingest(start("aaaa0001"), page(TAB_A));
+    ix.ingest(forkStart("bbbb0002", "aaaa0001"), page(TAB_A));
+    assert.deepEqual(ix.get("bbbb0002").forkedFrom, { runtime: "local", hash: "aaaa0001" });
+    assert.equal(ix.get("aaaa0001").forkedFrom, undefined, "the parent is not a fork");
+    // The same for a fork that a background run started.
+    ix.ingest(forkStart("cccc0003", "aaaa0001"), bg(TAB_A));
+    assert.deepEqual(ix.get("cccc0003").forkedFrom, { runtime: "local", hash: "aaaa0001" });
+});
+
+test("a fork's claim is ignored for another tab's session, an unknown or malformed hash, itself, and an ownerless parent", () => {
+    const ix = index();
+    ix.ingest(start("aaaa0001"), page(TAB_A));
+    const saved = { id: { runtime: "local", hash: "dddd0004" }, kind: "agent", status: "done", createdTs: 500, lastTs: 900, pendingApprovals: 0, saved: true, task: "old" };
+    ix.restore([{ summary: saved, count: 3 }]);
+    assert.equal(ix.binding("dddd0004")?.tabId, undefined, "a restored session has no owner");
+    const claims = {
+        eeee0005: "aaaa0001",   // the parent runs on TAB_A, the fork on TAB_B
+        ffff0006: "zzzz9999",   // not held
+        aaab0007: "has:colon",
+        aaac0008: "../etc",
+        aaad0009: "",
+        aaae0010: "aaae0010",   // itself
+        aaaf0011: "dddd0004",   // held, restored, no owner
+    };
+    for (const [hash, forkOf] of Object.entries(claims)) {
+        const tabId = hash === "aaaf0011" ? TAB_A : TAB_B;
+        assert.equal(ix.ingest(forkStart(hash, forkOf), page(tabId)).accepted, true, hash);
+        assert.equal(ix.get(hash).forkedFrom, undefined, `${hash} claimed ${JSON.stringify(forkOf)}`);
+    }
+    [7, null, { hash: "aaaa0001" }, ["aaaa0001"], true].forEach((forkOf, i) => {
+        const hash = `aabb000${i}`;
+        assert.equal(ix.ingest(forkStart(hash, forkOf), page(TAB_A)).accepted, true);
+        assert.equal(ix.get(hash).forkedFrom, undefined, `forkOf ${JSON.stringify(forkOf)}`);
+    });
+});
+
+test("forkOf on a later event of an existing session never sets or changes forkedFrom", () => {
+    const ix = index();
+    ix.ingest(start("aaaa0001"), page(TAB_A));
+    ix.ingest(start("bbbb0002"), page(TAB_A));
+    ix.ingest(start("cccc0003"), page(TAB_A));
+    // set later: ignored
+    ix.ingest(step("cccc0003", 1, { session: { hash: "cccc0003", turn: 0, forkOf: "aaaa0001" } }), page(TAB_A));
+    assert.equal(ix.get("cccc0003").forkedFrom, undefined);
+    // a fork re-pointed later: unchanged
+    ix.ingest(forkStart("dddd0004", "aaaa0001"), page(TAB_A));
+    ix.ingest(step("dddd0004", 1, { session: { hash: "dddd0004", turn: 0, forkOf: "bbbb0002" } }), page(TAB_A));
+    assert.deepEqual(ix.get("dddd0004").forkedFrom, { runtime: "local", hash: "aaaa0001" });
+    // a repeated start for the same hash does not reassign it either
+    ix.ingest(forkStart("dddd0004", "bbbb0002"), page(TAB_A));
+    assert.deepEqual(ix.get("dddd0004").forkedFrom, { runtime: "local", hash: "aaaa0001" });
+});
+
+test("pageMoved: a background-hosted running session is on the new page, the row is returned, and the start url clears it", () => {
+    const ix = index();
+    ix.ingest(start("aaaa0001"), { ...bg(TAB_A), page: { url: "https://site/11", title: "Site" } });
+    assert.equal(ix.get("aaaa0001").currentPage, undefined);
+    const rows = ix.pageMoved(TAB_A, "https://other.example/x");
+    assert.equal(rows.length, 1);
+    assert.deepEqual(rows[0].currentPage, { url: "https://other.example/x" });
+    assert.deepEqual(ix.get("aaaa0001").currentPage, { url: "https://other.example/x" });
+    assert.deepEqual(ix.get("aaaa0001").page, { url: "https://site/11", title: "Site", tabId: TAB_A }, "the start page stays");
+    // a second move
+    assert.deepEqual(ix.pageMoved(TAB_A, "https://third.example/")[0].currentPage, { url: "https://third.example/" });
+    // back on the start page
+    const back = ix.pageMoved(TAB_A, "https://site/11");
+    assert.equal(back.length, 1);
+    assert.equal("currentPage" in back[0], false);
+    assert.equal("currentPage" in ix.get("aaaa0001"), false);
+});
+
+test("pageMoved leaves a page-hosted session, an ended one and another tab's alone, and an unchanged url returns nothing", () => {
+    const ix = index();
+    ix.ingest(start("aaaa0001"), page(TAB_A));                      // page-hosted
+    ix.ingest(start("bbbb0002"), bg(TAB_A));                        // background, ends below
+    ix.ingest(result("bbbb0002"), bg(TAB_A));
+    ix.ingest(start("cccc0003"), bg(TAB_B));                        // another tab
+    ix.ingest(start("dddd0004"), { ...bg(TAB_A), page: { url: "https://site/11" } });
+    assert.equal(ix.pageMoved(TAB_A, "https://moved.example/").map((r) => r.id.hash).join(), "dddd0004");
+    for (const h of ["aaaa0001", "bbbb0002", "cccc0003"]) assert.equal(ix.get(h).currentPage, undefined, h);
+    assert.deepEqual(ix.pageMoved(TAB_A, "https://moved.example/"), [], "the same url again");
+    assert.deepEqual(ix.pageMoved(999, "https://moved.example/"), [], "a tab with no session");
+    // already on the start page and never moved
+    const ix2 = index();
+    ix2.ingest(start("aaaa0001"), { ...bg(TAB_A), page: { url: "https://site/11" } });
+    assert.deepEqual(ix2.pageMoved(TAB_A, "https://site/11"), []);
+});
+
+test("a trusted session-resumed clears currentPage; the page's copy of the note does not", () => {
+    const ix = index();
+    const note = (url, id = "n1") => base("aaaa0001", "session-resumed", { url, id, fromUrl: "https://site/11", afterMs: 1, dropped: ["state"] });
+    ix.ingest(start("aaaa0001"), { ...bg(TAB_A), page: { url: "https://site/11" } });
+    ix.pageMoved(TAB_A, "https://other.example/");
+    assert.ok(ix.get("aaaa0001").currentPage);
+    ix.ingest(result("aaaa0001"), bg(TAB_A));
+    ix.ingest(note("https://elsewhere.example/"), page(TAB_A));
+    assert.deepEqual(ix.get("aaaa0001").currentPage, { url: "https://other.example/" }, "untrusted note changes nothing");
+    const r = ix.ingest(note("https://resumed.example/", "n2"), bg(TAB_A));
+    assert.equal(r.accepted, true, JSON.stringify(r));
+    assert.equal(ix.get("aaaa0001").currentPage, undefined);
+    assert.deepEqual(ix.get("aaaa0001").page, { url: "https://resumed.example/", tabId: TAB_A });
 });

@@ -34,6 +34,7 @@ import { defineTool, lookTool, locateTool, clickTool, typeTool, navigateTool, fe
 import { read, screenshot, _shotBox, _stitchFullPage, _resolveVisionModel, _modelSees, _modelVision, _nativeLookTool, _imageToDataUrl, _fetchImageBase64 } from "./ml/ml-vision";
 import { mlFetchCache } from "./ml/ml-fetch-cache";
 import { pythonExec, _loadTable, _resolveTable } from "./ml/ml-python";
+import { table, tableSurvey } from "./ml/ml-table";
 import { createChat, resumeChat, chat, step } from "./ml/ml-chat";
 import { agent } from "./ml/ml-agent-run";
 import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } from "./ml/ml-agent-handle";
@@ -216,6 +217,8 @@ import { pageWorld } from "./page-world";
         pythonExec: pythonExec,
         _loadTable: _loadTable,
         _resolveTable: _resolveTable,
+        table: table,
+        _tableSurvey: tableSurvey,
         pythonTool: pythonTool,
         chatMetaTool: chatMetaTool,
         _resolveVisionModel: _resolveVisionModel,
@@ -377,7 +380,7 @@ import { pageWorld } from "./page-world";
                     // re-derives them. Computed here in the page main world, which has a DOM; the cached copy carries it.
                     derivedFetchFields(r, { markdown: htmlToMarkdown, python: currentHasTool("python_exec") });
                     // Keyed by url ALONE: which reads may share that key is `fetchIsCacheable`'s rule (never as-you bytes).
-                    if (fetchIsCacheable(r, { credentials, rendered, format })) mlFetchCache.set(key, cacheCopy(r));
+                    if (fetchIsCacheable(r, { credentials, rendered, format })) mlFetchCache.set(key, cacheCopy(r, { python: currentHasTool("python_exec") }));
                     return r;
                 });
         },

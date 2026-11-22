@@ -25,6 +25,9 @@ globalThis.Worker = FakeWorker;
 // The idle reap arms a clock of minutes on every idle worker; a live timer would hold this process open.
 const realSetTimeout = globalThis.setTimeout;
 globalThis.setTimeout = (fn, ms, ...rest) => { const t = realSetTimeout(fn, ms, ...rest); if (ms >= 60_000) t.unref(); return t; };
+// `chrome.storage.session` is the bench Stop's test seam (offscreen.ts BENCH_GRACE_KEY): a fake that answers, and a
+// `set` that fires `onChanged`, so the document's listener sees it as the browser would.
+const sessionStore = {}, changeFns = [];
 globalThis.chrome = {
     runtime: {
         id: "test",
@@ -32,8 +35,15 @@ globalThis.chrome = {
         onMessage: { addListener: (fn) => listeners.push(fn) },
         sendMessage: (m) => { sentToWorker.push(m); return Promise.resolve(undefined); },
     },
+    storage: {
+        session: {
+            get: async (k) => (k in sessionStore ? { [k]: sessionStore[k] } : {}),
+            set: async (o) => { for (const [k, v] of Object.entries(o)) { sessionStore[k] = v; for (const fn of changeFns) fn({ [k]: { newValue: v } }, "session"); } },
+        },
+        onChanged: { addListener: (fn) => changeFns.push(fn) },
+    },
 };
-const { BENCH_STOP_KILL_MS, BENCH_STOP_KILLED } = await import("../src/offscreen.ts");
+const { BENCH_STOP_KILL_MS, BENCH_STOP_KILLED, BENCH_GRACE_KEY } = await import("../src/offscreen.ts");
 
 const SW = { id: "test" };   // the service worker's sender: our id, no tab
 /** Deliver a runtime message to the document's listeners; resolves with its answer, or undefined when none came. */
@@ -184,4 +194,30 @@ test("a second PY_INTERRUPT while stopping answers interrupted and does not re-a
     assert.equal(w.terminated, true);
     await sleep(50);
     assert.equal(resolved, 1, "the run resolves once");
+});
+
+// --- the test seam: a LENGTHENED grace, never a shorter one ---
+
+test("the shipped bench Stop grace is 1000 ms, and the seam lengthens it: the kill waits for the longer bound", async () => {
+    assert.equal(BENCH_STOP_KILL_MS, 1000, "the shipped default, with the seam unused");
+    const long = BENCH_STOP_KILL_MS + 400;
+    await chrome.storage.session.set({ [BENCH_GRACE_KEY]: long });
+    const { answer, w } = await benchRun();
+    const t0 = Date.now();
+    assert.deepEqual(await send({ type: "PY_INTERRUPT" }), { interrupted: true });
+    await sleep(BENCH_STOP_KILL_MS + 150);
+    assert.equal(w.terminated, false, "past the shipped bound and still waiting: the seam lengthened it");
+    const res = await answer;
+    assert.deepEqual(res, { ok: false, stdout: "", error: BENCH_STOP_KILLED, stopped: "restarted" });
+    assert.ok(Date.now() - t0 >= long - 50, "killed at the lengthened bound, not before");
+});
+
+test("the seam cannot SHORTEN the grace: a small value leaves the shipped second", async () => {
+    await chrome.storage.session.set({ [BENCH_GRACE_KEY]: 50 });
+    const { answer } = await benchRun();
+    const t0 = Date.now();
+    await send({ type: "PY_INTERRUPT" });
+    await answer;
+    assert.ok(Date.now() - t0 >= BENCH_STOP_KILL_MS - 50, "still the shipped bound, not the 50 ms asked for");
+    await chrome.storage.session.set({ [BENCH_GRACE_KEY]: undefined });
 });

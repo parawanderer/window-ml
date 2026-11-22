@@ -2,7 +2,7 @@
 
 import type { FetchResult } from "../contract";
 import { isTable } from "../table/table-brand";
-import { tableFromDelimited, asTable } from "../table/table-data";
+import { tableFromDelimited, asTable, freezeTable } from "../table/table-data";
 
 /**
  * Attach what a caller would otherwise derive from the bytes, in place: `.markdown` for an HTML body (scripts, nav and
@@ -72,11 +72,15 @@ export function fetchIsCacheable(r: FetchResult | null | undefined, mode: { cred
 /**
  * The copy of a result a fetch cache keeps: frozen, so a read-only survey that writes to what it re-read (`r.markdown =
  * "…"`) cannot change what the next re-read shows as the site's content. A copy, because the caller of the fetch keeps
- * the original and may still add to it. The table facade is read-only by construction and is shared as it is.
- * @param r the result just fetched
+ * the original and may still add to it. The TABLE is not copied but shared, so it is made READ-ONLY at every level, in
+ * place, and `r.table` becomes that read-only facade too: every later reader shares it, the caller included (ruling 57,
+ * as amended), and `.copy()` gives an editable one.
+ * @param r the result just fetched; its `table` is replaced by the read-only one
+ * @param opts `python`: whether the read-only facade's advice may name python_exec
  * @returns the frozen copy to cache
  */
-export function cacheCopy(r: FetchResult): FetchResult {
+export function cacheCopy(r: FetchResult, opts: { python?: boolean } = {}): FetchResult {
+    if (r.table) r.table = freezeTable(r.table, opts);
     const { table, ...rest } = r;
     const copy = deepFreeze(structuredClone(rest)) as FetchResult;
     return Object.freeze(table === undefined ? copy : { ...copy, table });

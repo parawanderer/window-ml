@@ -11,9 +11,11 @@ import type { Session } from "../store";
 import { IconSend, IconStop } from "../icons";
 import { ClickableImg } from "../ui-kit";
 import { FilePill } from "./user-text";
+import { TurnChips, useTurnScan, type FileScanView } from "./turn-scan-ui";
 import { PDF_ATTACH_MAX, readMaxBytes, tooLargeHeld, b64Bytes, PDF_FILE_ACCEPT, TEXT_FILE_ACCEPT, decodeTextFile, encodePdfFile, fileInfo, fileSummary, looksPdf, pendingRefusals, sizeLabel, tooLarge, tooLargePdf, type FileTarget } from "../../attached-files";
 import { TURN_IMAGES_MAX, imagesRefusal, type SentFile } from "../../contract/contract-run";
 import type { FileProgress } from "../../session/session-host";
+import { cssDurationMs } from "../use-close";
 import { UsageBar } from "./usage";
 import { SpendChip } from "./spend";
 import { RunStatsBar } from "./agent-detail";
@@ -126,14 +128,14 @@ function pendingSummary(d: PendingFile): string {
 /** The text files waiting in a box, as pills with their reasons: a refused one says why and is not sent.
  *  @group sidebar/transcript
  *  @gallery {"docs": [{"name": "server.log", "type": "text/plain", "text": "a\nb\n"}, {"name": "x.bin", "type": "application/octet-stream", "why": "x.bin is not a text file"}], "reasons": [null, "x.bin is not a text file"], "onRemove": null} */
-export function FileStrip({ docs, reasons, onRemove, progress }: { docs: PendingFile[]; reasons: (string | null)[]; onRemove: (i: number) => void; progress?: FileProgress[] }) {
+export function FileStrip({ docs, reasons, onRemove, progress, scans }: { docs: PendingFile[]; reasons: (string | null)[]; onRemove: (i: number) => void; progress?: (FileProgress | undefined)[]; /** per file, the registered values the scan found in it (turn-scan-ui.tsx) */ scans?: (FileScanView | null)[] }) {
     if (!docs.length) return null;
     return (
         <div class="cfiles">
             {docs.map((d, i) => {
-                const pill = <FilePill key={`${i}${d.name}`} summary={pendingSummary(d)} refusal={reasons[i]} onRemove={() => onRemove(i)} />;
+                const pill = <FilePill key={`${i}${d.name}`} summary={pendingSummary(d)} refusal={reasons[i]} onRemove={() => onRemove(i)} scan={scans?.[i]} />;
                 // A box that keeps its files while it sends (the start page) draws each one's upload under its own chip.
-                const up = progress?.find((p) => p.name === d.name);
+                const up = progress?.[i];
                 return up ? <span class="cupload" key={`${i}${d.name}`} data-progress={up.fraction}>{pill}<UploadBar fraction={up.fraction} /></span> : pill;
             })}
         </div>
@@ -148,17 +150,21 @@ function UploadBar({ fraction }: { fraction: number }) {
 /** A fraction as a whole percentage, clamped to 0..100. */
 const pctOf = (fraction: number): number => Math.round(Math.min(1, Math.max(0, fraction || 0)) * 100);
 
+/** One file of a send still uploading, keyed by the send (a counter per composer) and its position in that send, since
+ *  two files can share a name and two sends can be in flight at once. */
+export type SendUpload = FileProgress & { send: number };
+
 /** The files of a send still going to the runtime, each as its chip with a bar of the share the runtime has accepted:
  *  the composer has emptied, and nothing else shows the message until the runtime says it arrived. `data-progress`
  *  carries the figure the bar was last given, for a test to record.
  *  @group sidebar/transcript
- *  @gallery {"uploads": [{"name": "paper.pdf", "fraction": 0.4}, {"name": "notes.txt", "fraction": 1}]} */
-export function UploadStrip({ uploads }: { uploads: FileProgress[] }) {
+ *  @gallery {"uploads": [{"send": 1, "index": 0, "name": "paper.pdf", "fraction": 0.4}, {"send": 1, "index": 1, "name": "notes.txt", "fraction": 1}]} */
+export function UploadStrip({ uploads }: { uploads: SendUpload[] }) {
     if (!uploads.length) return null;
     return (
         <div class="cfiles cuploads" role="status">
             {uploads.map((u) => (
-                <span class="cupload" key={u.name} data-progress={u.fraction}>
+                <span class="cupload" key={`${u.send}:${u.index}`} data-progress={u.fraction}>
                     <FilePill summary={`${u.name} · sending, ${pctOf(u.fraction)}%`} />
                     <UploadBar fraction={u.fraction} />
                 </span>
@@ -264,7 +270,10 @@ export function Composer({ s, multiline, tools, keys }: { s: Session; multiline?
         files: { target: () => (s.kind === "agent" ? "agent" : "chat"), accepts: () => services().acceptsFiles(key), acceptsPdf: () => services().acceptsPdf(key), initial: () => loadDraftFiles(key) },
     });
     const type = (t: string) => { setText(t); saveDraft(key, t); };
-    const [uploads, setUploads] = useState<FileProgress[]>([]);   // state: ui — the files of a send still uploading
+    // Registered values in the draft (SECRET_HANDLES.md): chips with "send as is", where the host can scan; never a block on the send.
+    const scan = useTurnScan(text, att.docs, key);
+    const [uploads, setUploads] = useState<SendUpload[]>([]);   // state: ui — the files of every send still uploading
+    const sends = useRef(0);   // state: plumbing — the id the next send is known by in `uploads`
     // Another session in the same box: its own draft. Not on mount, which `useState` already read: an effect runs after
     // paint, and a keystroke landing before it would be overwritten by what was saved before that keystroke.
     const shown = useRef(key);
@@ -292,11 +301,15 @@ export function Composer({ s, multiline, tools, keys }: { s: Session; multiline?
         const t = text.trim();
         if (!t && !att.imgs.length && !att.sendable.length) return;
         if (imagesRefusal(att.imgs.length)) return;   // the strip says why
-        const imgs = att.imgs, files = att.sendable;
-        setText(""); att.clear();
+        const imgs = att.imgs, files = att.sendable, asIs = scan.asIs();
+        setText(""); att.clear(); scan.reset();
         // A file going ahead in chunks reports each accepted one; the strip goes when the send has its answer.
-        const progress = (p: FileProgress) => setUploads((u) => (u.some((x) => x.name === p.name) ? u.map((x) => (x.name === p.name ? p : x)) : [...u, p]));
-        void sendHeld(key, t, imgs, () => services().sendToSession(key, t, imgs, files, progress), files).finally(() => setUploads([]));
+        // Keyed by (send, index): a second send started mid-upload keeps its bars when the first finishes, and two
+        // files of one name stay two bars.
+        const id = ++sends.current;
+        const same = (x: SendUpload, p: FileProgress) => x.send === id && x.index === p.index;
+        const progress = (p: FileProgress) => setUploads((u) => (u.some((x) => same(x, p)) ? u.map((x) => (same(x, p) ? { ...p, send: id } : x)) : [...u, { ...p, send: id }]));
+        void sendHeld(key, t, imgs, () => services().sendToSession(key, t, imgs, files, progress, asIs), files).finally(() => setUploads((u) => u.filter((x) => x.send !== id)));
     };
     const act = () => (stop ? cancel() : send());
     // Grow to fit, to a cap — measured from `scrollHeight`, which needs the height reset first or it only ever
@@ -326,13 +339,31 @@ export function Composer({ s, multiline, tools, keys }: { s: Session; multiline?
     // On a NARROW screen the long placeholders wrapped onto a second line of an empty one-line box; the short ones say the
     // same thing a phone can fit.
     const narrow = useNarrowScreen();
-    const placeholder = running
+    const wanted = running
         ? (agent ? (narrow ? "Steer, or queue a follow-up…" : "Steer this run, or send to queue a follow-up…") : (narrow ? "Sending…" : "Sending… or stop this turn"))
-        : narrow ? "Send a message…" : `Send a message (or paste ${att.canFiles && att.acceptsFiles ? "an image or a file" : "an image"}) to continue…`;
+        : narrow ? "Send a message…" : "Send a message to continue…";
+    // THE PLACEHOLDER FADES between its sentences instead of cutting: it fades out (`.ph-out`), the words change while it is
+    // invisible, and it fades back in. How long is the surface's say (`--ph-fade-ms`); one that sets none changes it at once.
+    const box = useRef<HTMLDivElement>(null);
+    const [placeholder, setPlaceholder] = useState(wanted);
+    const [fadingOut, setFadingOut] = useState(false);
+    useEffect(() => {
+        if (wanted === placeholder) { setFadingOut(false); return; }
+        const ms = cssDurationMs(box.current, "--ph-fade-ms");
+        if (!ms) { setPlaceholder(wanted); return; }
+        setFadingOut(true);
+        // The fade starts at the style pass after `.ph-out` lands, not when it is set: the clock starts two frames on, with a
+        // margin, or a busy machine swapped the words with the old ones still a fifth visible.
+        let t: ReturnType<typeof setTimeout> | undefined, f = requestAnimationFrame(() => {
+            f = requestAnimationFrame(() => { t = setTimeout(() => { setPlaceholder(wanted); setFadingOut(false); }, ms + 40); });
+        });
+        return () => { cancelAnimationFrame(f); clearTimeout(t); };
+    }, [wanted, placeholder]);
     return (
-        <div class="composer" data-rev={r} onDragOver={att.onDragOver} onDrop={att.onDrop}>
+        <div class={`composer${fadingOut ? " ph-out" : ""}`} ref={box} data-rev={r} onDragOver={att.onDragOver} onDrop={att.onDrop}>
             <ThumbStrip imgs={att.imgs} loading={att.loading} onRemove={att.remove} />
-            <FileStrip docs={att.docs} reasons={att.reasons} onRemove={att.removeDoc} />
+            <FileStrip docs={att.docs} reasons={att.reasons} onRemove={att.removeDoc} scans={att.docs.map((_, i) => scan.file(i))} />
+            <TurnChips chips={scan.chips} onToggle={scan.toggle} unreadable={scan.unreadable} />
             <UploadStrip uploads={uploads} />
             <div class={`composer-row${stacked ? " stacked" : ""}`}>
                 <input ref={att.fileRef} type="file" accept={att.fileAccept} multiple style="display:none"

@@ -44,7 +44,7 @@ node scripts/index.mjs '' --local | cut -f2 | sort | uniq -d   # helper names us
 
 | Flag | Effect |
 | --- | --- |
-| `--kind a,b` | `file`, `component`, `hook`, `function`, `class`, `type`, `enum`, `const`, `css`, `style` (a React Native `StyleSheet.create` key, `mobile/` only) |
+| `--kind a,b` | `file`, `component` (a capitalised `const` arrow/function, or a capitalised `function` declaration in a `.tsx` file), `hook`, `function`, `class`, `type`, `enum`, `const`, `css`, `style` (a React Native `StyleSheet.create` key, `mobile/` only) |
 | `--mobile` | include the phone app (`mobile/`), which a query leaves out by default; the checks always cover it |
 | `--word` | anchor the whole pattern, so `table` stops matching "persi**stable**" |
 | `--exported` / `--local` | module surface vs. a file's private declarations |

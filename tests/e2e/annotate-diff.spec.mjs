@@ -217,6 +217,8 @@ test("a diff, a failure and an annotation compose on ONE block without colliding
         const step = frame.locator(".astep").nth(1);
         if (!(await step.locator(".r-py-in").count())) await step.locator(".astep-head").click();
         await expect(step.locator(".r-diff")).toBeVisible({ timeout: 30000 });
+        // A failed retry opens on the DIFF (the switch replaces the body, it does not stack); the code is one click away.
+        await step.locator(".r-diff-segbtn", { hasText: "code" }).click();
         await expect(step.locator(".cline-fail"), "the failing line is marked in the same block").toHaveCount(1);
 
         const linesBefore = await step.locator(".r-py-in .cline .lcode").allTextContents();
@@ -228,7 +230,7 @@ test("a diff, a failure and an annotation compose on ONE block without colliding
         await expect(step.locator(".r-diff")).toBeVisible();
         await expect(step.locator(".cline-fail")).toHaveCount(1);
         expect(await step.locator(".r-py-in .cline .lcode").allTextContents()).toEqual(linesBefore);
-        // The diff is drawn ABOVE the code, so the reader meets "what changed" before "what it says".
+        // The REVISES header is drawn ABOVE the code, so the reader meets "what changed" before "what it says".
         // Both read in ONE frame: two `boundingBox()` calls are viewport positions taken at different moments,
         // and anything scrolling the panel between them (likelier on a loaded CI runner) flips the comparison.
         const { diffY, codeY } = await step.evaluate((el) => ({
@@ -260,7 +262,7 @@ test("focus mode folds the diff's rows and keeps its header", async () => {
 
         // Still openable by hand — a fold, not a hide. This is why it seeds a state instead of using the
         // CSS hide the rest of focus mode uses.
-        await step.locator(".r-diff-tri").click();
+        await step.locator(".r-diff-segbtn", { hasText: "diff" }).click();
         await expect(step.locator(".dline").first()).toBeVisible();
 
         // And leaving focus mode restores the default rather than whatever the fold left behind.
@@ -298,7 +300,7 @@ test("the diff opens on a failed retry and collapses to one line on a successful
         await expect(okStep.locator(".r-diff-stat")).toContainText("+");
 
         // And it opens on demand, claim and all.
-        await okStep.locator(".r-diff-tri").click();
+        await okStep.locator(".r-diff-segbtn", { hasText: "diff" }).click();
         await expect(okStep.locator(".dline").first()).toBeVisible();
         await expect(okStep.locator(".r-diff-claim")).toContainText("dropped the missing quarter");
     } finally { await ext.context.close(); await fake.stop(); }

@@ -37,13 +37,14 @@ import { CardApp, endActiveCardDrag } from "./card/hud-card";
 import { releaseAxisHold } from "./resource/chart-interaction";
 import {
     composerOpen, composerElement, composerTarget, selectedRun, cardSteerHash, setCardCollapsed,
-    cardSelectedHash, cardDetail, cardDismissedSet, isCardDismissed, startRefused,
+    cardSelectedHash, cardDetail, undismissCardRun, startRefused,
 } from "./card/card-state";
 import { shownModel, sessionProfile } from "./model";
 import { exportSession, exportSessionJson, printSession } from "./export/export";
 import { applyTheme, applyFont, applyCodePrefs, applyFocus, initThemeStyle } from "./prefs";
 import { installMermaid } from "../mermaid/mermaid-client";
 import { DEFAULT_CODE_THEME } from "../code-themes";
+import { DetailSessionMenu } from "./session-menu";
 import { IconWarn, IconTimer, IconGear, IconExport, IconVram, IconBench, IconTools, IconBrain, IconClose, IconCollapse, IconMore } from "./icons";
 import { HousekeepingView } from "./housekeeping-log";
 import { Settings, openSettingsAt } from "./settings/settings";
@@ -378,6 +379,7 @@ function App() {
                 <span class="sp" />
                 {v.name === "detail" ? <Hash hash={v.hash} /> : null}
                 {v.name === "detail" ? <ExportMenu hash={v.hash} /> : null}
+                {v.name === "detail" ? <DetailSessionMenu key={v.hash} hash={v.hash} /> : null}
                 {/* Focus mode: read the transcript as a conversation. Only offered on a DETAIL view, because
                     it quiets things that only exist there. Nothing is removed from the session — every
                     disclosure still opens, the export is unchanged, and turning it off brings it all back. */}
@@ -516,7 +518,7 @@ function onMessage(d: any): void {
     else if (d.__mlShowRun && typeof d.__mlShowRun.hash === "string") {
         // The popup's Show: the run whose start card waits on this tab comes to the front, unfolded and undismissed.
         const h = d.__mlShowRun.hash;
-        if (isCardDismissed(h)) { const s = new Set(cardDismissedSet.value); s.delete(h); cardDismissedSet.value = s; }
+        undismissCardRun(h);
         cardSelectedHash.value = h;
         cardDetail.value = true;
         setCardCollapsed(h, false);

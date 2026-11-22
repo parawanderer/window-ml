@@ -175,6 +175,10 @@ recipe, its follow-up, and a page-built handle's follow-up in `injected.ts`) can
 cannot attach a display to its task: the worker drops it from `START_RUN` unless it built the run. Plain chat
 sessions are not covered: an element sent into one is still drawn as the framed text.
 
+A registered value the person sent as it was ("send as is" on the composer's chip, `display.asIs`) is named, never tokened: `run.md` has a
+`Sent as is: <NAMES>` line under the message and `run.json` carries the names in the display (`src/sidebar/export/export.ts`,
+`attachedRows`).
+
 **A run's tool definitions and system prompt too.** A page-built run's `agent` start is emitted by the PAGE on the
 overlay and DevTools surfaces, with the page's tool texts; the worker then gives a tool named like a builtin the
 extension's description and schema texts (`ourToolTexts`, `src/sw/builtin-texts.ts`) and adds the page context to the

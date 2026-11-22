@@ -88,16 +88,24 @@ export const INVENTORY: readonly InventoryEntry[] = [
     ui("ml_runlog_colour", "the execution log's colouring"),
     ui("ml_runstate_folded", "which run-state sections are folded"),
 
+    // --- never: the person's registered secrets ---
+    local("ml_secret_registry", "config", "the values the person registered as secret (SECRET_HANDLES.md, \"The scrub as built\"): a secret is never written to a backup, an export or an archive-folder file", "never"),
+    session("ml_turn_exempt_key", "config", "the key \"send as is\" tokens are made with (SECRET_HANDLES.md, \"Per value\"): a backup carrying it would let a token outlive the browser session it was made for"),
+
     // --- never: sessions and what a run leaves behind ---
     local("ml_session_", "chat", "a chat's resumable record, per chat: the session's archive row carries the same history (backup.md, \"Resuming a restored chat\")", "never", { prefix: true }),
     local("ml_bgrun_", "run-state", "a live run's resumable snapshot; a restored machine has no run to resume", "never", { prefix: true }),
     session("ml_answer:", "run-state", "a run's answer set, memory-lifetime", { prefix: true }),
     session("ml_tasks:", "run-state", "a run's detached tasks (ids, timings, parked result text), memory-lifetime", { prefix: true }),
+    session("ml_bench_stop_grace_ms", "run-state", "a TEST's lengthened bench Stop grace (offscreen.ts BENCH_GRACE_KEY): not a setting, written only by an e2e, so a backup must not carry it to another machine"),
+    session("ml_task_chain:", "run-state", "how many turns finished tasks started in a row for a run, memory-lifetime", { prefix: true }),
     local("ml_run_models", "run-state", "the model a run was switched to"),
     local("ml_handed_to_worker", "run-state", "runs handed from a page to the worker"),
     session("ml_pagebuilt", "run-state", "which tab and site built a page's session; tab ids, meaningless in another browser"),
     session("ml_pinned_tabs", "run-state", "tab ids, meaningless in another browser"),
     session("ml_pkginstalls", "run-state", "the Python packages each run installed; dies with the run's namespace, and the wheels themselves are in the mirror"),
+    session("ml_setting_declined", "run-state", "the guarded settings each run's person declined, which that run does not ask again; meaningless outside the run"),
+    session("ml_card_dismissed", "run-state", "the runs whose page card the person closed, so it stays closed across navigation; run hashes, meaningless in another browser"),
     session("ml_py_bridged", "run-state", "runs whose Python cell reached the browser's JavaScript, for their later cells' cards; dies with the namespace"),
     local("ml_policies_run", "policies", "run policies belong to one session and go with it when it is archived or restored"),
     local("ml_policies_archived", "policies", "what an archived session lost, told once"),

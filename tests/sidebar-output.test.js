@@ -25,6 +25,9 @@ const diffStep = (hash, { failed, seq = 1 } = {}) => ({
     ...(failed ? { renderOut: { type: "python-out", error: 'File "<python_exec>", line 1, in _user\nBoom' } } : {}),
 });
 
+/** Press one segment of a revising call's view switch (code | diff | split). */
+const pickView = (root, name) => [...root.querySelectorAll(".r-diff-segbtn")].find((b) => b.textContent === name).click();
+
 for (const [lines, failed, wantNums, why] of [
     [false, false, false, "no gutter below and nothing went wrong → nothing to line up with"],
     [true, false, true, "you asked for line numbers, so the block has them and the diff matches"],
@@ -40,13 +43,14 @@ for (const [lines, failed, wantNums, why] of [
 
         const diff = w.shadow.querySelector(".r-diff");
         assert.ok(diff, "the diff renders either way");
-        // A failure opens it; a success shows one collapsed line, so open it to see the rows.
-        if (!failed) { diff.querySelector(".r-diff-tri").click(); await w.tick(); }
+        // A failure opens on the diff; a success opens on the code, so switch to the diff to see the rows.
+        if (!failed) { pickView(diff, "diff"); await w.tick(); }
         const rows = w.shadow.querySelectorAll(".r-diff-body .dline");
         assert.ok(rows.length, "the rows are drawn");
         assert.equal(w.shadow.querySelectorAll(".r-diff-body .dno").length > 0, wantNums, why);
-        // The two must not disagree: if the diff numbers, the block below it numbers too.
-        if (wantNums) assert.ok(w.shadow.querySelector(".r-py-in .lno"), "…and the block below has its gutter");
+        // The two must not disagree: if the diff numbers, the code numbers too (the switch shows one at a time).
+        pickView(diff, "code"); await w.tick();
+        if (wantNums) assert.ok(w.shadow.querySelector(".r-py-in .lno"), "…and the code view has its gutter");
     });
 }
 
@@ -637,6 +641,51 @@ test("a pointer reads the same whether it is copied under a step or revised by o
     assert.ok(chips.every((c) => c.querySelector(".tt-pop")), "…and both explain themselves on hover");
 });
 
+// --- the toolbar and the revises chip on a call that revises another ---
+// The toolbar is absolutely positioned, so it sits over its nearest positioned ancestor: on a revising call that must be
+// the code (`.code-body`), not the block whose first row is the REVISES header. And the chip's inner `code` must paint
+// no ground of its own, because in prose `.md code` gives inline code a grey and the same chip drew differently there.
+test("a revising exec call's toolbar sits over the code, not the revises header", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("tb", "retry it"));
+    await w.dispatch(agentStep("tb", 1, {
+        seq: 1, tool: "exec", result: "1", token: "@tool:abc1234", arguments: { code: "return 2;" },
+        renderIn: { type: "code", lang: "javascript", text: "return 2;",
+                    revision: { ref: "@tool:dead000", tool: "exec", seq: 0, before: "return 1;" } },
+    }));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    w.shadow.querySelector(".astep-head").click(); await w.tick();
+    const tools = w.shadow.querySelector(".code-tools");
+    assert.ok(tools, "the toolbar is drawn");
+    const body = tools.parentElement;
+    assert.ok(body.classList.contains("code-body"), "its box is the code part of the block");
+    assert.ok(!body.querySelector(".r-diff"), "the revises header is outside that box");
+    assert.ok(body.querySelector("pre.code"), "the code is inside it");
+});
+
+test("a call that revises nothing keeps its toolbar directly in the block", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("tb0", "run it"));
+    await w.dispatch(agentStep("tb0", 1, {
+        seq: 1, tool: "exec", result: "1", token: "@tool:abc1234", arguments: { code: "return 2;" },
+        renderIn: { type: "code", lang: "javascript", text: "return 2;" },
+    }));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    w.shadow.querySelector(".astep-head").click(); await w.tick();
+    const tools = w.shadow.querySelector(".code-tools");
+    assert.ok(tools.parentElement.classList.contains("code-block"));
+    assert.ok(!w.shadow.querySelector(".code-body"), "no extra wrapper without a revision");
+});
+
+test("the pointer chip's code paints no ground of its own, so it matches inside prose", () => {
+    const css = sidebarCss();
+    const rule = /\.tok-chip code \{([^}]*)\}/.exec(css);
+    assert.ok(rule, "the chip styles its code");
+    assert.match(rule[1], /background:\s*none/);
+    assert.match(rule[1], /padding:\s*0\b/);
+    assert.match(css, /\.code-body\s*\{[^}]*position:\s*relative/, "the toolbar's box is positioned");
+});
+
 // WHAT THE PILL SAYS depends on whether the model NAMED the output it is revising. A name it wrote is worth
 // more than a hex address; a name we invent is worth less than one.
 test("the revises pill shows the model's own name for the call, and the raw pointer when it has none", async () => {
@@ -664,25 +713,49 @@ test("the revises pill shows the model's own name for the call, and the raw poin
     assert.doesNotMatch(barePill.textContent, /python_exec:/, "no invented name, and no empty prefix either");
 });
 
+// WHERE THE PILL GOES in a later turn. `revision.seq` is the agent loop's per-turn counter; the panel stores steps
+// re-based by the turn's seqBase, so turn 2's call 1 is stored as seq 11 and its revision still says seq 1. The pill
+// resolves its target by the revised call's TOKEN, which survives the re-base; scrolling by `revision.seq` lands on
+// turn 1's first call instead.
+test("the revises pill in a later turn goes to the step carrying the revised call's token, not to revision.seq", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("mt", "retry it"));
+    const call = (seq, token, code, renderIn) => agentStep("mt", seq, {
+        seq, tool: "python_exec", result: "1", token, arguments: { code }, renderIn: renderIn ?? { type: "python-in", mode: "script", code },
+    });
+    await w.dispatch(call(1, "0c0ffee", "y = 1"));
+    await w.dispatch(call(11, "1a5fef", "x = 0"));
+    await w.dispatch(call(12, "9d3822", "x = 1", { type: "python-in", mode: "script", code: "x = 1",
+        revision: { ref: "@tool:1a5fef", tool: "python_exec", seq: 1, before: "x = 0" } }));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    w.shadow.querySelector('[data-astep-seq="12"] .astep-head').click(); await w.tick();
+
+    w.shadow.querySelector(".r-diff-ref").click(); await w.tick();
+    assert.ok(w.shadow.querySelector('[data-astep-seq="11"]').classList.contains("astep-pulse"), "the jump lands on the revised call, stored as seq 11");
+    assert.ok(!w.shadow.querySelector('[data-astep-seq="1"]').classList.contains("astep-pulse"), "…and not on seq 1, the turn-local number the revision carries");
+});
+
 test("diff gutter: a row carries only the side it exists on, and the new side matches the block below", async () => {
     const w = await loadSidebarWorld({ local: { ml_debug_codelines: true } });
     await w.dispatch(agentStart("dg2", "retry it"));
     await w.dispatch(agentStep("dg2", 1, diffStep("dg2", {})));
     w.shadow.querySelector(".row").click(); await w.tick();
     w.shadow.querySelector(".astep-head").click(); await w.tick();
-    w.shadow.querySelector(".r-diff-tri").click(); await w.tick();
+    pickView(w.shadow.querySelector(".r-diff"), "diff"); await w.tick();
 
     const del = w.shadow.querySelector(".dline-del"), add = w.shadow.querySelector(".dline-add");
     const nos = (el) => [...el.querySelectorAll(".dno")].map((n) => n.textContent);
     assert.deepEqual(nos(del), ["1", ""], "a deletion has no line in the NEW text");
     assert.deepEqual(nos(add), ["", "1"], "an addition has none in the OLD");
-    // The point of the new column: it is the same number the code block below draws for that line.
-    const blockLine = [...w.shadow.querySelectorAll(".r-py-in .cline")]
-        .find((el) => el.textContent.includes("x = 1"))?.getAttribute("data-line");
-    assert.equal(nos(add)[1], blockLine, "the diff's new-side number IS the block's line number");
+    const addNo = nos(add)[1];
     // A gap keeps the columns so the sign stays in one place down the block.
     const same = w.shadow.querySelector(".dline:not(.dline-add):not(.dline-del)");
     if (same) assert.equal(same.querySelectorAll(".dno").length, 2);
+    // The point of the new column: it is the same number the code view draws for that line (the switch shows one at a time).
+    pickView(w.shadow.querySelector(".r-diff"), "code"); await w.tick();
+    const blockLine = [...w.shadow.querySelectorAll(".r-py-in .cline")]
+        .find((el) => el.textContent.includes("x = 1"))?.getAttribute("data-line");
+    assert.equal(addNo, blockLine, "the diff's new-side number IS the block's line number");
 });
 
 // --- a traceback that points back at the code that raised it ---------------------------------------------
@@ -1622,4 +1695,135 @@ test("a thinking block shows the counted token figure without `~`, and the estim
     [...w2.shadow.querySelectorAll(".row")].find((r) => /rt2|t/.test(r.textContent))?.click();
     await w2.flush();
     assert.equal(w2.shadow.querySelector(".athinking .astep-tokest")?.textContent, "~350 tokens", "not counted: marked as the estimate it is");
+});
+
+// --- a revising call's view switch: code | diff | split, one body at a time ---
+// The diff used to stack ON TOP of the full code and double the block's height. Now the header's switch REPLACES the body, so
+// exactly one of them is in the DOM, and `split` (two aligned columns) gives way to `diff` when the block is too narrow.
+const bodies = (w) => ({
+    code: w.shadow.querySelectorAll(".r-diff pre.code:not(.dlines)").length,
+    diff: w.shadow.querySelectorAll(".r-diff pre.dlines:not(.dsplit)").length,
+    split: w.shadow.querySelectorAll(".r-diff pre.dsplit").length,
+});
+const openDiffStep = async (w, hash, opts) => {
+    await w.dispatch(agentStart(hash, "retry it"));
+    await w.dispatch(agentStep(hash, 1, diffStep(hash, opts)));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    w.shadow.querySelector(".astep-head").click(); await w.tick();
+};
+
+test("the view switch replaces the body: one body element after every click, never code and diff stacked", async () => {
+    const w = await loadSidebarWorld();
+    await openDiffStep(w, "vs1", {});
+    const root = w.shadow.querySelector(".r-diff");
+    assert.deepEqual(bodies(w), { code: 1, diff: 0, split: 0 }, "a step that worked opens on its code");
+    for (const [name, want] of [["diff", { code: 0, diff: 1, split: 0 }], ["split", { code: 0, diff: 0, split: 1 }], ["code", { code: 1, diff: 0, split: 0 }]]) {
+        pickView(root, name); await w.tick();
+        assert.deepEqual(bodies(w), want, `after ${name}`);
+        assert.equal(root.querySelector(".r-diff-segbtn.on").textContent, name);
+    }
+    assert.ok(root.querySelector(".r-diff-head .r-diff-ref"), "the header keeps the chip");
+    assert.match(root.querySelector(".r-diff-stat").textContent, /\+1\s+−1/);
+});
+
+test("a failed step opens on the diff, with the code one click away", async () => {
+    const w = await loadSidebarWorld();
+    await openDiffStep(w, "vs2", { failed: true });
+    assert.deepEqual(bodies(w), { code: 0, diff: 1, split: 0 });
+    pickView(w.shadow.querySelector(".r-diff"), "code"); await w.tick();
+    assert.ok(w.shadow.querySelector(".r-diff .cline-fail, .r-diff .r-py-in"), "the code view is the block itself");
+    assert.deepEqual(bodies(w), { code: 1, diff: 0, split: 0 });
+});
+
+test("the model's claim stays with the diff views and is gone in the code view", async () => {
+    const w = await loadSidebarWorld();
+    await openDiffStep(w, "vs3", {});
+    const root = w.shadow.querySelector(".r-diff");
+    assert.ok(!root.querySelector(".r-diff-claim"), "code view");
+    for (const name of ["diff", "split"]) {
+        pickView(root, name); await w.tick();
+        assert.match(root.querySelector(".r-diff-claim").textContent, /bumped it/, name);
+    }
+});
+
+test("split draws old and new row for row: same row count both sides, blank filler on the shorter", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("vs4", "retry it"));
+    const step = diffStep("vs4", {});
+    step.renderIn.code = "a = 1\nb = 2\nc = 3\nreturn c";           // one line replaced by 1, then one pure addition
+    step.renderIn.revision.before = "a = 1\nb = 0\nreturn c";
+    await w.dispatch(agentStep("vs4", 1, step));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    w.shadow.querySelector(".astep-head").click(); await w.tick();
+    pickView(w.shadow.querySelector(".r-diff"), "split"); await w.tick();
+    const rows = [...w.shadow.querySelectorAll(".r-diff .sline")];
+    assert.ok(rows.length >= 4);
+    for (const r of rows) assert.equal(r.querySelectorAll(".scell-old").length, r.querySelectorAll(".scell-new").length, "each row has both sides");
+    assert.equal(w.shadow.querySelectorAll(".r-diff .scell-old").length, w.shadow.querySelectorAll(".r-diff .scell-new").length);
+    const fills = [...w.shadow.querySelectorAll(".r-diff .scell-fill")];
+    assert.equal(fills.length, 1, "the added `c = 3` has no old line, so exactly one filler");
+    assert.ok(fills[0].classList.contains("scell-old"), "…on the old side");
+    assert.ok(!fills[0].textContent.trim(), "a filler is blank");
+});
+
+test("split splitRows pairs a replaced line and fills the shorter side", async () => {
+    const { splitRows } = await import("../src/sidebar/code-diff.tsx");
+    const rows = splitRows([
+        { kind: "same", text: "a", a: 1, b: 1 },
+        { kind: "del", text: "x", a: 2 }, { kind: "del", text: "y", a: 3 },
+        { kind: "add", text: "z", b: 2 },
+        { kind: "gap", skipped: 5 },
+    ]);
+    assert.equal(rows.length, 4);
+    assert.deepEqual(rows[1].old, { text: "x", a: 2 }); assert.deepEqual(rows[1].new, { text: "z", b: 2 });
+    assert.deepEqual(rows[2].old, { text: "y", a: 3 }); assert.equal(rows[2].new, null);
+    assert.equal(rows[3].kind, "gap");
+});
+
+test("below the width threshold, split falls back to the diff view", async () => {
+    const w = await loadSidebarWorld();
+    // jsdom has no layout: give every element a 300px width, and a ResizeObserver that never fires (the first read is enough).
+    w.window.HTMLElement.prototype.getBoundingClientRect = () => ({ width: 300, height: 100, top: 0, left: 0, right: 300, bottom: 100 });
+    w.window.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+    await openDiffStep(w, "vs5", {});
+    const root = w.shadow.querySelector(".r-diff");
+    pickView(root, "split"); await w.tick();
+    assert.deepEqual(bodies(w), { code: 0, diff: 1, split: 0 }, "narrow: the diff is drawn");
+    assert.equal(root.querySelector(".r-diff-segbtn.on").textContent, "split", "the choice itself is kept");
+    // And wide again: the same choice draws two columns.
+    w.window.HTMLElement.prototype.getBoundingClientRect = () => ({ width: 900, height: 100, top: 0, left: 0, right: 900, bottom: 100 });
+    const w2 = await loadSidebarWorld();
+    w2.window.HTMLElement.prototype.getBoundingClientRect = () => ({ width: 900, height: 100, top: 0, left: 0, right: 900, bottom: 100 });
+    w2.window.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+    await openDiffStep(w2, "vs6", {});
+    pickView(w2.shadow.querySelector(".r-diff"), "split"); await w2.tick();
+    assert.deepEqual(bodies(w2), { code: 0, diff: 0, split: 1 }, "wide: two columns");
+});
+
+test("maximise opens the current view in the shared modal; Escape and a click outside close it", async () => {
+    const w = await loadSidebarWorld();
+    await openDiffStep(w, "vs7", {});
+    const root = w.shadow.querySelector(".r-diff");
+    const max = root.querySelector(".r-diff-max");
+    assert.equal(max.getAttribute("aria-label"), "Maximise this view");
+    assert.ok(!max.hasAttribute("title"), "the panel's tooltip, never the browser's title");
+    pickView(root, "diff"); await w.tick();
+    max.click(); await w.tick();
+    const dlg = w.shadow.querySelector(".chat-dialog-back .r-max");
+    assert.ok(dlg, "opened in the shared modal shell");
+    assert.ok(dlg.querySelector("pre.dlines"), "it shows the CURRENT view (the diff)");
+    assert.equal(root.querySelectorAll(".r-diff-view pre.dlines").length, 1, "the inline body is untouched");
+    await new Promise((r) => setTimeout(r, 50)); await w.tick();   // the modal's Escape listener is attached in an effect
+    // Escape
+    w.shadow.dispatchEvent(new w.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await w.tick();
+    assert.ok(!w.shadow.querySelector(".r-max"), "Escape closes");
+    // Click outside (the backdrop)
+    max.click(); await w.tick();
+    const back = w.shadow.querySelector(".chat-dialog-back");
+    back.dispatchEvent(new w.window.Event("pointerdown", { bubbles: true })); await w.tick();
+    assert.ok(!w.shadow.querySelector(".r-max"), "a click outside closes");
+    // And the code view maximises as plain code.
+    pickView(root, "code"); await w.tick();
+    max.click(); await w.tick();
+    assert.ok(w.shadow.querySelector(".r-max pre.code"), "the code view too");
 });

@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync, rmSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkPin, protocVersion, generate } from "../scripts/gen-proto.mjs";
+import { checkPin, protocVersion, generate, withoutProtocVersion } from "../scripts/gen-proto.mjs";
 import { parseFrame } from "../src/resource/resource-events.ts";
 
 const PROTO = readFileSync(new URL("../src/proto/events.proto", import.meta.url), "utf8");
@@ -93,7 +93,7 @@ test("events.proto: the checked-in types are what the schema generates", () => {
     try {
         const fresh = generate(tmp, "events");
         const shipped = readFileSync(new URL("../src/proto/events.gen.ts", import.meta.url), "utf8");
-        assert.equal(fresh, shipped, "src/proto/events.gen.ts is stale — run `npm run gen-proto`");
+        assert.equal(withoutProtocVersion(fresh), withoutProtocVersion(shipped), "src/proto/events.gen.ts is stale — run `npm run gen-proto`");
     } finally { rmSync(tmp, { recursive: true, force: true }); }
 });
 

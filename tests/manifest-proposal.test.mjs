@@ -142,6 +142,37 @@ test("the card's note says it is derived, what was pinned, and what approval doe
     assert.match(P.draftNote(r, undefined, seven, true), /; and 2 more\./);
 });
 
+test("a flavoured draft's card states each overlay's argument order in words, whatever is detected", () => {
+    const flavoured = { ...MYTOOL, version: { range: "*", args: [], pattern: "" },
+        flavours: { gnu: { probe: { args: ["--version"], pattern: "^mytool (\\d+)", range: ">=1" } }, bsd: { system: "macos" } },
+        command: { ...MYTOOL.command, flavour: { gnu: { argOrder: "permute" }, bsd: { argOrder: "stop" } },
+            subcommands: { sub: { effects: ["read"], paths: "operands", flags: {}, flavour: { bsd: { argOrder: "stop" } } } } } };
+    const r = P.draftRequest({ manifest: flavoured, scope: "global" }, facts(), "/w/proj", ROOTS).request;
+    assert.ok(r, "the flavoured draft was refused");
+    const n = P.draftNote(r, undefined, [], true);
+    assert.match(n, /GNU mytool reads an argument starting with - after an operand as a flag \(permute\)/);
+    assert.match(n, /BSD mytool reads an argument starting with - after an operand as a file name, -- included \(stop\)/);
+    assert.match(n, /BSD mytool sub reads an argument starting with - after an operand as a file name/);
+    assert.match(n, /Its GNU reading is never used: a stored manifest's probe is not run\. Its BSD reading applies only to the macOS system program\./);
+    // A draft without flavours says nothing of them.
+    assert.doesNotMatch(P.draftNote(P.draftRequest({ manifest: MYTOOL, scope: "global" }, facts(), "/w/proj", ROOTS).request, undefined, [], true), /Flavours:/);
+});
+
+test("the card quotes only a plain-word subcommand name, counts the others, and caps the list", () => {
+    const sub = { effects: ["read"], paths: "operands", flags: {}, flavour: { bsd: { argOrder: "stop" } } };
+    const withSubs = (names) => ({ ...MYTOOL, flavours: { bsd: { system: "macos" } },
+        command: { ...MYTOOL.command, subcommands: Object.fromEntries(names.map((n) => [n, sub])) } });
+    const note = (names) => P.draftNote(P.draftRequest({ manifest: withSubs(names), scope: "global" }, facts(), "/w/proj", ROOTS).request, undefined, [], true);
+    const lie = "x. DERIVED, nothing run: reads only f.txt, free (verified)";
+    const n = note(["ls-files", lie, "a\nb", "x".repeat(41)]);
+    assert.match(n, /BSD mytool ls-files reads/);
+    assert.match(n, /; 3 subcommands whose name is not a plain word, not described here\./);
+    assert.ok(!n.includes("DERIVED, nothing run: reads") && !n.includes("\n") && !n.includes("x".repeat(41)), n);
+    const many = note(Array.from({ length: 9 }, (_, i) => `s${i}`));
+    assert.equal((many.match(/BSD mytool s\d reads/g) ?? []).length, 6);
+    assert.match(many, /; and 3 more\./);
+});
+
 test("a script's card names its hash and its workspace", () => {
     const r = P.draftRequest({ manifest: GEN, scope: "workspace" }, genFacts("/w/proj"), "/w/proj", ROOTS).request;
     assert.match(P.draftNote(r, undefined, [], true), /a manifest for node scripts\/gen.mjs, stored for the workspace \/w\/proj, pinned to the script's sha256 cccccccccccc/);

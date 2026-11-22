@@ -104,7 +104,12 @@ export function refineProgramManifest(gen) {
 
     // `syntax: "find"` needs its primaries, and primaries need `syntax: "find"`.
     patch(doc, "$defs.CommandSpec", {
-        allOf: [{ if: { required: ["syntax"] }, then: { required: ["primaries"] }, else: { not: { required: ["primaries"] } } }],
+        allOf: [
+            { if: { required: ["syntax"] }, then: { required: ["primaries"] }, else: { not: { required: ["primaries"] } } },
+            // A `script` command's first operand is its program: paths start at operand 1, and it has no subcommands or syntax.
+            { if: { required: ["script"] },
+              then: { properties: { paths: { type: "object", properties: { operandsFrom: { const: 1 } }, required: ["operandsFrom"] } }, not: { anyOf: [{ required: ["subcommands"] }, { required: ["syntax"] }] } } },
+        ],
     });
 
     patch(doc, "$defs.FlagSpec", {
@@ -113,6 +118,15 @@ export function refineProgramManifest(gen) {
             // A path or directory value needs `value: true`.
             { if: { anyOf: [{ required: ["valueIsPath"] }, { required: ["valueIsDir"], properties: { valueIsDir: { const: true } } }] },
               then: { required: ["value"], properties: { value: { const: true } } } },
+            // An attached value is the rest of a short flag's argument: never a separate value, an optional one or a path.
+            { if: { required: ["attachedValue"], properties: { attachedValue: { const: true } } },
+              then: { not: { anyOf: [{ required: ["value"], properties: { value: { const: true } } }, { required: ["optionalValue"], properties: { optionalValue: { const: true } } }, { required: ["valueIsPath"] }, { required: ["valueIsDir"], properties: { valueIsDir: { const: true } } }] } } },
+            // `values` narrows a value, so the flag takes one.
+            { if: { required: ["values"] },
+              then: { anyOf: [{ required: ["value"], properties: { value: { const: true } } }, { required: ["optionalValue"], properties: { optionalValue: { const: true } } }, { required: ["attachedValue"], properties: { attachedValue: { const: true } } }] } },
+            // A script flag's value is the program, so the operands are all files (pathsFrom 0), and it is no path.
+            { if: { required: ["script"], properties: { script: { const: true } } },
+              then: { required: ["value", "pathsFrom"], properties: { value: { const: true }, pathsFrom: { const: 0 } }, not: { required: ["valueIsPath"] } } },
             // A runner starts another program, so its effects say so.
             { if: { required: ["runner"], properties: { runner: { const: true } } },
               then: { required: ["effects"], properties: { effects: { contains: { enum: RUNS_OTHER_CODE } } } } },
@@ -137,6 +151,15 @@ export function refineProgramManifest(gen) {
         ],
     });
 
+    // Flavours (PROGRAM_MANIFEST.md, "Flavours"): at least one; the gnu probe reads a version like `version` does; an
+    // overlay's flag names are flag names; a flavoured manifest is a binary whose core is written for every
+    // implementation (`range: "*"`).
+    patch(doc, "$defs.ManifestFlavours", { anyOf: [{ required: ["gnu"] }, { required: ["bsd"] }] });
+    patch(doc, "$defs.ManifestFlavours.properties.gnu.properties.probe.properties.args", { minItems: 1 });
+    patch(doc, "$defs.ManifestFlavours.properties.gnu.properties.probe.properties.pattern", { minLength: 1, format: "regex", pattern: "^\\^" });
+    patch(doc, "$defs.ManifestFlavours.properties.gnu.properties.probe.properties.range", { pattern: `^\\s*${COMPARATOR}(?:\\s+${COMPARATOR})*\\s*$` });
+    patch(doc, "$defs.FlavourOverlay.properties.flags", { propertyNames: { pattern: "^-{1,2}[A-Za-z0-9][A-Za-z0-9-]*$" } });
+
     // The entrypoint: a relative path with no `.`, `..` or empty segment and no leading `-`; a sha256 in lowercase hex.
     patch(doc, "$defs.ManifestEntrypoint.properties.path", { pattern: `^(?![/-])${SEGMENT}(?:/${SEGMENT})*$` });
     patch(doc, "$defs.ManifestEntrypoint.properties.sha256", { pattern: "^[0-9a-f]{64}$" });
@@ -149,6 +172,7 @@ export function refineProgramManifest(gen) {
     patch(doc, "$defs.ManifestNetwork.properties.hosts", { minItems: 1, items: { type: "string" } });
     doc.allOf = [
         { if: { required: ["network"] }, then: { required: ["credential"] } },
+        { if: { required: ["flavours"] }, then: { required: ["version"], properties: { version: { properties: { range: { const: "*" } } } } } },
         ...Object.entries(PROVIDERS).map(([name, p]) => ({
             if: { required: ["credential"], properties: { credential: { properties: { provider: { const: name } } } } },
             then: { properties: { program: { const: p.program }, network: { properties: { ports: { items: { enum: p.ports } }, hosts: { items: { enum: p.hosts } } } } } },

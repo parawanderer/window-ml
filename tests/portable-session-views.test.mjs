@@ -14,8 +14,10 @@ const ROOTS = ["sidebar/transcript/session-detail.tsx", "sidebar/transcript/repl
 /** The extension frames' own implementation of the seam: the one place those calls belong. */
 const ALLOWED = new Set(["sidebar/services-ext.ts"]);
 
-/** Strip comments, roughly but safely for this purpose: a comment that NAMES a call is not a call. */
-const code = (text) => text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+/** Strip comments, roughly but safely for this purpose: a comment that NAMES a call is not a call. So is a double-quoted
+ *  string, which holds no code (a tooltip naming `chrome.debugger`, setting-text.ts); a template literal is kept, since
+ *  its `${…}` is code. */
+const code = (text) => text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1").replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
 
 function resolve(from, spec) {
     const base = path.resolve(path.dirname(path.join(SRC, from)), spec);

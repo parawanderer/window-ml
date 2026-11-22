@@ -3,10 +3,11 @@
 // the whole history, so summing would double-count the shared prefix). Extracted from app.tsx.
 import type { TokenUsage } from "../../contract/contract-chat";
 import { fmtCtx } from "../../contract/contract-config";
-import { config, psError, loadedModels } from "../store";
+import { config, psError, loadedModels, rev } from "../store";
 import type { Session } from "../store";
 import { shownModel, normModel, seenContext } from "../model";
 import { IconUsage } from "../icons";
+import { Ticking } from "../ui-kit";
 
 // Current context OCCUPANCY for a session = the LATEST turn's / step's usage
 // (prompt + completion), NOT a sum: every call re-sends the whole history, so the
@@ -22,11 +23,17 @@ import { IconUsage } from "../icons";
  *  steps-then-turns would put a turn last even when a step is newer. The index is the tie-break, so records
  *  with no timestamp keep the order they arrived in. */
 export function usageSamples(s: Session): TokenUsage[] {
+    return timedUsage(s).map((x) => x.usage);
+}
+
+/** {@link usageSamples} with each call's stamp: `ts` is its step's or turn's, 0 when the record has none (an axis must not
+ *  draw a 0 as 1970; see `usageChart`). Same order, same set. */
+export function timedUsage(s: Session): { usage: TokenUsage; ts: number }[] {
     const all: { u: TokenUsage; ts: number; i: number }[] = [];
     let i = 0;
     for (const st of s.steps || []) { if (st.usage) all.push({ u: st.usage, ts: st.ts ?? 0, i: i++ }); }
     for (const t of s.turns || []) { if (t.usage) all.push({ u: t.usage, ts: t.ts ?? 0, i: i++ }); }
-    return all.sort((a, b) => (a.ts - b.ts) || (a.i - b.i)).map((x) => x.u);
+    return all.sort((a, b) => (a.ts - b.ts) || (a.i - b.i)).map((x) => ({ usage: x.u, ts: x.ts }));
 }
 
 /** OUTPUT TOKENS OF THE MODEL CALL STILL STREAMING — the engine's running count on `liveStream`, which no usage sample
@@ -85,11 +92,12 @@ export function usageHue(frac: number): string {
 // (look/locate/verify). Distinct from the fill — it's separate SPEND, not context occupancy — so it
 // reads as "+N sub" with its own tooltip. Null → renders nothing (no delegated calls this turn).
 export function SubcallChip({ s }: { s: Session }) {
+    void rev.value;   // see UsageBar: `s` is mutated in place, so a props-memoized component never sees a new step
     const sub = sessionSubcall(s);
     if (!sub) return null;
     return (
         <span class="tt usage-sub">
-            +{fmtCtx(sub.tokens)} sub
+            +<Ticking text={fmtCtx(sub.tokens)} /> sub
             <span class="tt-pop wrap above" role="tooltip">
                 {sub.tokens.toLocaleString()} tokens over {sub.calls} delegated vision sub-call{sub.calls === 1 ? "" : "s"} this turn
                 (look/locate/verify make their own model calls). This is separate SPEND, not context occupancy — each runs in
@@ -102,6 +110,10 @@ export function SubcallChip({ s }: { s: Session }) {
 /** HOW FULL THE CONTEXT IS, and what this session has spent — the gauge beside the composer. Reads the
  *  model's own window when it is known, so the bar means tokens rather than a guess. */
 export function UsageBar({ s }: { s: Session }) {
+    // SUBSCRIBED TO `rev`. This reads signals (`psError`, `loadedModels`), which makes @preact/signals memoize it on its
+    // props, and `s` is the same mutated object for the whole session: without its own subscription the figure froze at
+    // the first sample it drew whenever the parent did not happen to re-render it (the chat page's open session).
+    void rev.value;
     const occupancy = sessionOccupancy(s);
     if (occupancy == null) return null;   // nothing to show until the server reports counts
     // Use the RESOLVED model (what the header shows), not s.model — a "default"
@@ -119,7 +131,7 @@ export function UsageBar({ s }: { s: Session }) {
             <span class="tt usage-gauge">
                 <span class="usage-ic" aria-hidden="true"><IconUsage /></span>
                 <span class="usage-track"><span class="usage-fill" style={{ width: `${Math.min(100, frac * 100).toFixed(1)}%`, background: usageHue(frac) }} /></span>
-                <span class="usage-pct">{pct}%</span>
+                <span class="usage-pct"><Ticking text={`${pct}%`} /></span>
                 <span class="tt-pop wrap above" role="tooltip">
                     Context: {occupancy.toLocaleString()} / {limit.toLocaleString()} tokens ({pct}%).
                     This is the live window occupancy — every turn re-sends the whole history. Near 100% the model starts truncating.
@@ -135,7 +147,7 @@ export function UsageBar({ s }: { s: Session }) {
         <>
         <span class="tt usage-gauge">
             <span class="usage-ic" aria-hidden="true"><IconUsage /></span>
-            <span class="usage-total">{fmtCtx(occupancy)} tok</span>
+            <span class="usage-total"><Ticking text={`${fmtCtx(occupancy)} tok`} /></span>
             <span class="tt-pop wrap above" role="tooltip">
                 {occupancy.toLocaleString()} tokens in context (latest turn). No context limit is known for this model{model ? ` ("${model}")` : ""} — it's never been resident in Ollama (a cloud model?), so there's no window size to show a % against.
             </span>

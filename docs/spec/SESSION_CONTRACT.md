@@ -115,8 +115,18 @@ grant on the client costs a greyed-out button or a `forbidden` result, never acc
 ## The session index
 
 A `SessionSummary` is one row of a list: id, `kind` (`chat`, `agent`, `embed`), `status`, `title`, `task`, `model`,
-created and last timestamps, `pendingApprovals`, the `page` it started on, whether it is `saved`, `startedBy`, and
-`lineage`.
+created and last timestamps, `pendingApprovals`, the `page` it started on, whether it is `saved`, `startedBy`,
+`lineage`, and two fields added 2026-11-19 for the Session summary page (SESSION_SUMMARY.md):
+
+- `currentPage` (`{ url }`): the page a worker-hosted run's tab moved to after it started, from the browser's own
+  navigation report, never a page's claim; kept once the run ends, as the page it was last on.
+- `forkedFrom` (a `SessionId`): the session this one was forked from (`handle.fork()`, `history.fork()`). The fork's
+  page claims it on the fork's first event (`session.forkOf`); the runtime keeps it only when the parent is a session
+  it holds on the same tab. It is not `lineage`, which is a session another session started.
+
+Both are optional, and ABSENT MEANS UNKNOWN: no current page is "still on the page it started on, or not reported"; no
+`forkedFrom` is "not a fork, or not known", never "not a fork". An older client ignores both, and an older runtime
+never sends them.
 
 `status` is one of `running`, `waiting` (on an approval), `done`, `error`, `cancelled`, `capped` (continuable), and
 `interrupted` (the runtime restarted under it).

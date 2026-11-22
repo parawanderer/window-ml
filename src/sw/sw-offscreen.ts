@@ -5,6 +5,16 @@
 
 let offscreenReady: Promise<void> | null = null;
 
+/**
+ * Whether the browser-set sender is the extension's offscreen document itself: no tab, and the document's own URL. A
+ * page, another extension page and a message with no URL all answer false.
+ * @param sender the message's sender
+ * @returns true when it is the offscreen document
+ */
+export function isOffscreenSender(sender: chrome.runtime.MessageSender | undefined): boolean {
+    return sender?.tab == null && typeof sender?.url === "string" && sender.url === chrome.runtime.getURL("offscreen.html");
+}
+
 /** Drop the cached "the offscreen document exists", so the next call creates it again: it was torn down. */
 export function forgetOffscreen(): void {
     offscreenReady = null;

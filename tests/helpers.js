@@ -137,6 +137,23 @@ function streamResponse(lines, { status = 200 } = {}) {
     };
 }
 
+// The worker's timers. Its code starts timers no test waits for (a 15 s write debounce, a 5-minute ask, a 20 s
+// debugger idle-detach), and each held a test file's process open long after its last test; every one still
+// pending is cleared once the file's tests are done. The hook is registered HERE, as the file loads: an after()
+// called inside a running test (the first loadBackground) would belong to that test and run when it ends.
+const _workerTimers = new Set();
+require("node:test").after(() => { for (const t of _workerTimers) clearTimeout(t); _workerTimers.clear(); });
+function workerTimers() {
+    return {
+        setTimeout: (fn, ms, ...args) => {
+            const t = setTimeout((...a) => { _workerTimers.delete(t); fn(...a); }, ms, ...args);
+            _workerTimers.add(t);
+            return t;
+        },
+        clearTimeout: (t) => { _workerTimers.delete(t); clearTimeout(t); },
+    };
+}
+
 // Loads background.js. `onFetch` receives { url, opts, body } (body already
 // JSON-parsed for requests that have one) and returns a response stub.
 // `commandShortcut` is what chrome.commands reports as CURRENTLY bound for the HUD
@@ -259,7 +276,8 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         navigator: { userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", languages: ["en-US", "en"], language: "en-US" },
         AbortController,   // FETCH_LLM registers one per request (for ABORT_TASK cancellation)
         __ML_NET_RETRY_WAIT_MS: 0,   // network-retry backoff → instant in tests (no 24s of real waits per down-backend test)
-        setTimeout, clearTimeout, DOMException,   // rate-limit backoff (abortableWait) uses timers + abort
+        __ML_PAUSE_COMPACTION: true,   // no screenshot-compaction pass 15 s into a test that saved a session (sw-image-compact.ts)
+        ...workerTimers(), DOMException,   // rate-limit backoff (abortableWait) uses timers + abort
         Response,          // some paths construct/inspect Response
         Blob,              // the value store keeps a fetched body as a Blob
         atob, btoa,        // a worker realm has both (imageSize reads a capture's PNG header through atob)
@@ -344,6 +362,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 session: {
                     get: async (keys) => Object.fromEntries((Array.isArray(keys) ? keys : [keys]).filter((k) => k in sessionStore).map((k) => [k, structuredClone(sessionStore[k])])),
                     set: async (obj) => { const changes = changesOf(sessionStore, obj); Object.assign(sessionStore, structuredClone(obj)); fireChanged(changes, "session"); },
+                    remove: async (keys) => { for (const k of Array.isArray(keys) ? keys : [keys]) delete sessionStore[k]; },
                 },
             },
             // GET_INVOCATION reads the manifest's suggested key + the contextMenus permission.
@@ -961,7 +980,7 @@ function closeSidebarWorlds() {
 // document (sidebar.html): renders into #root, no shadow root. In the real
 // extension the content-script shell relays __mlDebug in from the parent window;
 // in jsdom window.parent === window, so dispatch posts with source: win.
-async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), sessionTitle = () => ({ data: null }), vram = [], info = null, holdInfo = null, invocation = null, psError = null, caps = null, pythonExec = null, listModels = null, embed = null, serverTools = null, housekeeping = [], indexedDB = null, priceCalls = null, siteLists = null, siteAccess = null, accessRequests = null } = {}) {
+async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), sessionTitle = () => ({ data: null }), vram = [], info = null, holdInfo = null, invocation = null, psError = null, caps = null, pythonExec = null, listModels = null, embed = null, serverTools = null, housekeeping = [], indexedDB = null, priceCalls = null, siteLists = null, siteAccess = null, accessRequests = null, sessionStore = null, holdSessionRead = null } = {}) {
     const unloadCalls = [];
     const pyCalls = [];   // PYTHON_EXEC payloads the app sent (the bench)
     const hkCalls = [];   // DUMP_HOUSEKEEPING payloads (the Settings → Housekeeping log)
@@ -1059,6 +1078,13 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
                 get: (defaults, cb) => cb({ ...defaults, ...localStore }),
                 set: (obj) => Object.assign(localStore, obj)
             },
+            // chrome.storage.session, only when a test passes `sessionStore` (a plain object it may share between worlds, as the
+            // browser shares it between a page's successive documents): a fresh document's frame reads what the last one wrote.
+            // `holdSessionRead` is a promise every read waits on, so a test can hold the card's load-time read open.
+            ...(sessionStore ? { session: {
+                get: async (key) => { if (holdSessionRead) await holdSessionRead; return { [key]: JSON.parse(JSON.stringify(sessionStore[key] ?? null)) }; },
+                set: async (obj) => { Object.assign(sessionStore, JSON.parse(JSON.stringify(obj))); },
+            } } : {}),
             onChanged: { addListener: (fn) => changeListeners.push(fn), removeListener: (fn) => { const i = changeListeners.indexOf(fn); if (i >= 0) changeListeners.splice(i, 1); } }
         }
     };

@@ -339,12 +339,30 @@ test("progress: a send reports the share accepted after file.have and after each
         assert.equal(r.ok, true, JSON.stringify(r));
         const count = w.puts[0].count;
         assert.ok(count >= 3, `${count} chunks`);
-        assert.ok(seen.every((p) => p.name === "paper.pdf"));
+        assert.ok(seen.every((p) => p.name === "paper.pdf" && p.index === 0));
         const f = seen.map((p) => p.fraction);
         assert.equal(f.length, count + 1, "once before the first chunk, then once per accepted chunk");
         assert.equal(f[0], 0);
         assert.equal(f.at(-1), 1);
         assert.ok(f.every((x, i) => i === 0 || x > f[i - 1]), `rises: ${f.join(", ")}`);
+    } finally { await w.close(); }
+});
+
+test("progress: two files of one name report under their own index, each rising to 1", LIVE, async () => {
+    const w = await world();
+    try {
+        const seen = [];
+        const files = [31, 37].map((seed) => ({ name: "same.pdf", type: "application/pdf", data: bytesToB64(pdf(2_000_000, seed)) }));
+        const r = await w.conn.send({ type: "chat.start", runtime: w.id, text: "two", files }, { progress: (p) => seen.push(p) });
+        assert.equal(r.ok, true, JSON.stringify(r));
+        for (const index of [0, 1]) {
+            const f = seen.filter((p) => p.index === index).map((p) => p.fraction);
+            assert.ok(f.length >= 2, `index ${index} reported ${f.length} times`);
+            assert.equal(f[0], 0);
+            assert.equal(f.at(-1), 1);
+            assert.ok(f.every((x, i) => i === 0 || x > f[i - 1]), `rises: ${f.join(", ")}`);
+        }
+        assert.ok(seen.every((p) => p.name === "same.pdf"));
     } finally { await w.close(); }
 });
 

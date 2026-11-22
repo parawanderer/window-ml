@@ -10,10 +10,11 @@ import { rev, focusMode } from "../store";
 import { ARRIVAL_ASK, ARRIVAL_DENIED, type StepAsk } from "../../contract";
 import { ASK_ID } from "../../approval-key";
 import { decidedSteps, sendApproval, askKey, cursorTipOn } from "../ui-kit";
+import { services } from "../services";
 import { CopyableCode } from "../code-block";
 import { ApprovalRow } from "./approval-row";
 import { IconWarn } from "../icons";
-import { shCardLines, type ShCardLine, type ShFacts } from "../../shell/sh-call";
+import { REVEALS_CAUSE, shCardLines, type ShCardLine, type ShFacts } from "../../shell/sh-call";
 import { isCallAsk } from "../../shell/sh-entries";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { putCardLines, putSubject, type PutFacts } from "../../shell/sh-put";
@@ -73,7 +74,7 @@ export function FactList({ lines, cls = "ask-facts", skipCommand }: { lines: ShC
 }
 
 /** How long a card that was just answered takes to leave, in the calm view: the footer's count has ticked by then. */
-const LEAVE_MS = 260;
+const LEAVE_MS = 520;
 
 /**
  * A step's nested asks that need a person, each a card, in the order they were raised. An answered ask of a call
@@ -81,6 +82,7 @@ const LEAVE_MS = 260;
  * eases away rather than vanishing, so what you just did visibly goes somewhere. An answered ask of another kind (an
  * arrival) stays the one line it was.
  * @gallery {"st":{"step":3,"seq":3,"tool":"exec","pending":true,"asks":[{"id":"a0123456789abcdef01234567","kind":"sh","state":"pending","raisedAt":0,"facts":{"argv":["git","--no-pager","status"],"program":{"path":"/usr/bin/git","inRoot":false},"cwd":{"path":"/Users/me/src/proj","inRoot":true},"env":{"set":[],"free":true},"secrets":[],"paths":[],"repo":{"root":"/Users/me/src/proj","reasons":[]},"repoConfigRunsCode":false,"effects":"unknown","described":false,"why":["the program's version was not reported"],"runner":false,"mode":"host","sandboxed":true,"placement":"host-sandbox"}}]},"hash":"r1","live":true}
+ * @gallery-flow answered the card eases away tests/gallery-flows/AskListAnswer.mjs {"st":{"step":3,"seq":3,"tool":"exec","pending":true,"asks":[{"id":"a0123456789abcdef01234567","kind":"sh","state":"pending","raisedAt":0,"facts":{"argv":["git","--no-pager","status"],"program":{"path":"/usr/bin/git","inRoot":false},"cwd":{"path":"/Users/me/src/proj","inRoot":true},"env":{"set":[],"free":true},"secrets":[],"paths":[],"repo":{"root":"/Users/me/src/proj","reasons":[]},"repoConfigRunsCode":false,"effects":"unknown","described":false,"why":["the program's version was not reported"],"runner":false,"mode":"host","sandboxed":true,"placement":"host-sandbox"}}]},"hash":"r1","live":true}
  * @group approval
  * @param st the step
  * @param hash the run, for answering; absent where the run cannot be answered from here
@@ -94,27 +96,38 @@ export function AskList({ st, hash, live }: { st: AgentStep; hash?: string; live
     // The cards that WERE waiting a render ago and are not now, kept on screen for the length of their exit. Only a
     // call's ask, and only in the calm view: elsewhere a card answered is a card gone, as it always was.
     const was = useRef<Map<string, StepAsk>>(new Map());
-    const [leaving, setLeaving] = useState<StepAsk[]>([]);
+    // state: ui — the cards on their way out and when each is due to go
+    const leave = useRef<{ a: StepAsk; until: number }[]>([]);
+    const [, bump] = useState(0);
     const calm = focusMode.value;
     // SUBSCRIBED TO `rev` TOO, and the read is kept in the output. Reading `focusMode` makes @preact/signals memoize this
     // component on its props, which stops the parent's cascade reaching it, and that cascade is how an answer given here
     // (`decidedSteps`, a plain Set) takes the card away. Without this the card stayed until the worker's event landed.
     void rev.value;
+    // Worked out IN the render that takes the card away, not in an effect after it: an effect put the exit card on screen one
+    // frame later, and for that frame there was neither card.
+    const now = Date.now();
+    const gone = [...was.current.values()].filter((p) => !waitingNow.some((w) => w.id === p.id) && isCallAsk(p.kind));
+    was.current = new Map(waitingNow.map((a) => [a.id, a]));
+    if (gone.length && calm) leave.current = [...leave.current, ...gone.map((a) => ({ a, until: now + LEAVE_MS }))];
+    leave.current = leave.current.filter((l) => l.until > now);
+    const leaving = leave.current.map((l) => l.a);
     useEffect(() => {
-        const gone = [...was.current.values()].filter((p) => !waitingNow.some((w) => w.id === p.id) && isCallAsk(p.kind));
-        was.current = new Map(waitingNow.map((a) => [a.id, a]));
-        if (!gone.length || !calm) return;
-        setLeaving((l) => [...l, ...gone]);
-        const t = setTimeout(() => setLeaving((l) => l.filter((x) => !gone.includes(x))), LEAVE_MS);
+        if (!leave.current.length) return;
+        const t = setTimeout(() => bump((n) => n + 1), Math.max(...leave.current.map((l) => l.until)) - Date.now() + 20);
         return () => clearTimeout(t);
     });
     if (!asks.length && !leaving.length) return null;
     return (
         <>
             {leaving.filter((l) => !asks.some((a) => a.id === l.id && isWaiting(a))).map((a) => (
+                // THE CARD AS IT WAS, buttons held in their place unseen, so its first frame is as tall as its last: a copy that
+                // dropped the note and the buttons was 40px shorter than the card it replaced, and the exit began with a jump.
                 <div key={`leave-${a.id}`} class="astep-approve ask leaving" aria-hidden="true">
                     <span class="appr-ask">{Object.hasOwn(ASK_TITLE, a.kind) ? ASK_TITLE[a.kind] : String(a.kind)}</span>
+                    {a.why ? <div class="appr-note"><IconWarn /><span>{a.why.line}</span></div> : null}
                     <FactList lines={askLines(a)} />
+                    <div class="ask-leave-row" inert><ApprovalRow grants={false} decide={() => {}} /></div>
                 </div>
             ))}
             {asks.map((a) => {
@@ -142,12 +155,28 @@ export function AskList({ st, hash, live }: { st: AgentStep; hash?: string; live
                                     decidedSteps.add(key);
                                     rev.value++;
                                     sendApproval(hash, seq, ok, false, feedback, a.id);
-                                }} />}
+                                }} always={alwaysOf(a, (program) => {
+                                    // Listed first, then approved: the run's next call reads the list as written.
+                                    decidedSteps.add(key);
+                                    rev.value++;
+                                    void services().revealsAllow?.(program).catch(() => undefined).then(() => sendApproval(hash, seq, true, false, undefined, a.id));
+                                })} />}
                     </div>
                 );
             })}
         </>
     );
+}
+
+/**
+ * The "Always allow" answer of an ask that asks only because its program reveals other processes, on a surface that can
+ * write the list (`services().revealsAllow`); undefined for every other ask.
+ * @param a the ask
+ * @param allow what pressing it does, given the program
+ */
+export function alwaysOf(a: StepAsk, allow: (program: string) => void): { program: string; allow: () => void } | undefined {
+    const program = a.kind === "sh" && a.why?.cause === REVEALS_CAUSE ? a.why.program : undefined;
+    return typeof program === "string" && program && services().revealsAllow ? { program, allow: () => allow(program) } : undefined;
 }
 
 /** One answered ask, as a line under its step. */

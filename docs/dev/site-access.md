@@ -49,6 +49,28 @@ settings a change replaced stay scrubbed while the worker lives, for a request i
 resumed history crosses `forModel` once before its first model call (a session saved before the scrub).
 `tests/error-scrub.test.mjs` walks every page-started type under each backend failure.
 
+**A registered secret reaches no script and no model** (SECRET_HANDLES.md, "The scrub as built"). The person's
+registry (`ml_secret_registry` in local storage, `src/sw/sw-secret-registry.ts`, edited in Settings, Secrets, through the
+extension-only `SECRET_REGISTRY` message) rides the same `forModel`, which adds `[REDACTED:<NAME>]` and a count line;
+the matching is `src/secret-registry.ts`. The other crossings: an `ml.sh` head and `ml.sh.read` range where they enter
+the script (`sw-shell-call.ts`: a cut head holds back a tail that begins a value, a read is widened by the longest
+form), the live `streamOutput` and the loop's appended lines (`scrubText`), the run log's `key` (`forPerson`: the
+config's secrets stay, a registered value goes), and a page-started model request where it leaves the worker
+(`forBackendFromPage` in the router's `FETCH_LLM` and stream port: every role, a bare `[REDACTED]`, nothing said back to
+the page). `tests/secret-scrub-crossings.test.mjs` holds a row per crossing.
+
+**What the person or a page sends is scrubbed where it becomes a turn** (SECRET_HANDLES.md, ruling 39, by value):
+`forTurn` (`sw-scrub.ts`) takes out each registered value and the extension's own saved API key
+(`[REDACTED:window-ml-api-key]`, from 12 characters) at every entry point, never inside `hostRun`/`hostTurn`, whose
+synchronous registration the steer flush relies on: a page's and an extension page's `START_RUN`/`RESUME_RUN`
+(`scrubTurnInput`), the person's run and later messages (`sw-run-start.ts`), steers (the session command, an extension
+frame's `INJECT_MESSAGE`, a page's `pageInject`), the chat page's chat (`sw-chat.ts`) and an attachment's text at rest
+(`sw-attach.ts`). A person's turn shows names, and the model reads a note after it that the bubble does not show
+(`hostRun`'s `inputNote`); a page's turn is bare, and a page's `scrubInput: false` does not turn it off. A store that
+cannot be read refuses the turn (`TurnUnreadable`, ruling 44). A run stored before this has no `inputScrubbed`, and a
+resume scrubs its history's user turns on the way to the model. `tests/turn-scrub.test.mjs` and
+`tests/turn-scrub-paths.test.mjs`.
+
 **A page's screenshot is of its own tab, or nothing.** `CAPTURE_TAB` goes through the debugger by tab id when CDP is
 on; otherwise `captureOwnTab` (`sw-capture.ts`) takes `captureVisibleTab` only while the sender's tab is the one its
 window shows, and throws the shot away if the window showed another tab while it was taken. `captureVisibleTab` takes a
@@ -763,8 +785,10 @@ which has no `chrome` in it so its rules are tested without a worker.
 and gets a handle, `mlw-<uuid>`. The handle is bound to the sender kind that will carry the calls: `offscreen`
 (`sender.tab == null` and `sender.url` is the offscreen document's URL), the only kind so far. An isolated world keeps
 its own channel (`iso-channel.ts`); when it becomes a wire client, every fact (tab, frame 0, document, world) is
-REQUIRED, since a client opened without one would match any document on the tab. It is bound to the run the cell is for, and to a realm, `readonly` or `full`, taken
-from `hardened`. The handle and the run ride `PY_RUN` as `wire: { client, run }`, and the client is closed when the cell
+REQUIRED, since a client opened without one would match any document on the tab. It is bound to the run the cell is
+for, and to a realm (`WireRealm`): `full` when the cell's code is outside the dialect (`outside`, `sw-python.ts`),
+`readonly` otherwise. The handle and the run ride `PY_RUN` as `wire: { client, run }`, and the client is closed when
+the cell
 ends, so a call on the handle after that is refused. A completion runs no code and gets no client.
 
 **A call is answered only when the handle AND the sender match.** `senderIs` compares what the browser set on the
@@ -782,7 +806,9 @@ run's `@tool:` values by naming the run.
 
 **Members.** They are the worker survey's own facade (`workerReadonlyMl` through `mlFacade` with realm `worker`), cut to
 `ML_READONLY_METHODS`. What reads the page (`queryAll`, `a11y`) is absent, and answered as `Absent` with the list of what
-the code does have. A member added to `ML_READONLY_METHODS` later arrives here without a second list. `full` has the same
+the code does have. A member added to `ML_READONLY_METHODS` later arrives here without a second list. `settings` is the one member
+bound per client: only a client whose handle names a run the worker built (`isWorkerRun`) has it, read as a survey's
+is, with every guarded or gate value `ml.config()` does not return held (`docs/spec/MODEL_SETTINGS.md`). `full` has the same
 set this round: the gated members (a live fetch, `chat`, `click`) come with the consent path, each with its own gate.
 `dereference` is read from the run's resolver and answers `{ text, meta?, warning? }`, or the pointer when the value is
 over `WIRE_VALUE_CAP` (2^20 JSON characters). No read reaches that today: the run's store holds the text the model was

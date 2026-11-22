@@ -1,0 +1,1193 @@
+{
+  "commit": "8d9104424cf0ffaf28372c100b2446e88a4263ef",
+  "extracted_at": "2026-11-20T07:43:12+00:00",
+  "rows": [
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 234,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 2)",
+      "run": "0e50d876651789db531cd3d6ee1c3ac6",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": true,
+      "model": "qwen3.6:35b",
+      "ms": 88,
+      "refused": null,
+      "run": "0e50d876651789db531cd3d6ee1c3ac6",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 75,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 2)",
+      "run": "1a1edf057a65ca8a516f323df07a3b61",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": true,
+      "model": "qwen3.6:35b",
+      "ms": 77,
+      "refused": null,
+      "run": "1a1edf057a65ca8a516f323df07a3b61",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 62,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 3)",
+      "run": "0ec7d4f4f0796f3f638d9995e356ad9b",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 1,
+      "fullError": "TypeError",
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 69,
+      "refused": "not in dialect: item access on NoneType (line 1)",
+      "run": "0ec7d4f4f0796f3f638d9995e356ad9b",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 2,
+      "inside": true,
+      "model": "qwen3.6:35b",
+      "ms": 97,
+      "refused": null,
+      "run": "0ec7d4f4f0796f3f638d9995e356ad9b",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 75,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 2)",
+      "run": "d16714506b07cc9f21210b823d420d43",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 64,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 2)",
+      "run": "97fb7053d967e121cd9681881c580440",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": true,
+      "model": "qwen3.6:35b",
+      "ms": 86,
+      "refused": null,
+      "run": "97fb7053d967e121cd9681881c580440",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": true,
+      "model": "qwen3.6:35b",
+      "ms": 79,
+      "refused": null,
+      "run": "be30cb07c776f3ce6ef6ba96181d4cab",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": true,
+      "insideError": "SyntaxError",
+      "model": "qwen3.6:35b",
+      "ms": 87,
+      "refused": null,
+      "run": "addef6bb6c21c39192c38ef306dc68c9",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 74,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 2)",
+      "run": "addef6bb6c21c39192c38ef306dc68c9",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 2,
+      "inside": true,
+      "model": "qwen3.6:35b",
+      "ms": 82,
+      "refused": null,
+      "run": "addef6bb6c21c39192c38ef306dc68c9",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 0,
+      "fullError": "NameError",
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 67,
+      "refused": "not in dialect: a refusal during the run was caught by library code",
+      "run": "89302ad63c79fd6bdf121ed2004a4f82",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 76,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 2)",
+      "run": "89302ad63c79fd6bdf121ed2004a4f82",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 80,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 2)",
+      "run": "29135d104167cf89c594de781020d346",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": true,
+      "model": "qwen3.6:35b",
+      "ms": 145,
+      "refused": null,
+      "run": "29135d104167cf89c594de781020d346",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 184,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 2)",
+      "run": "800388c568223835722d6281db90f592",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 79,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 2)",
+      "run": "da5ecceba5856e3222d5e44cf3100866",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": true,
+      "model": "qwen3.6:35b",
+      "ms": 74,
+      "refused": null,
+      "run": "da5ecceba5856e3222d5e44cf3100866",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 82,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 1)",
+      "run": "96754b028718dd836fec6983fd6c032f",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": true,
+      "model": "qwen3.6:35b",
+      "ms": 80,
+      "refused": null,
+      "run": "9e35f8ac7a235cc6551734a3fdf9d16e",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 77,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 1)",
+      "run": "640452f7898fcd6dc13442e423dea0ee",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 102,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 2)",
+      "run": "640452f7898fcd6dc13442e423dea0ee",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 81,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 1)",
+      "run": "103533fc8438a10a829e2df50f49b659",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": true,
+      "model": "qwen3.6:35b",
+      "ms": 79,
+      "refused": null,
+      "run": "103533fc8438a10a829e2df50f49b659",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": true,
+      "model": "qwen3.6:35b",
+      "ms": 68,
+      "refused": null,
+      "run": "33315b179090a59f5cb49196f94685a1",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 77,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 1)",
+      "run": "157a09d2cb3310b64dc81072ae117fb7",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 77,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 2)",
+      "run": "c5bf5ae40ba569529e01b08e380e92e6",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 1,
+      "fullError": "TypeError",
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 79,
+      "refused": "not in dialect: item access on NoneType (line 1)",
+      "run": "c5bf5ae40ba569529e01b08e380e92e6",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 2,
+      "fullError": "TypeError",
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 64,
+      "refused": "not in dialect: item access on NoneType (line 1)",
+      "run": "c5bf5ae40ba569529e01b08e380e92e6",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 3,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 78,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 3)",
+      "run": "c5bf5ae40ba569529e01b08e380e92e6",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 4,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 68,
+      "refused": "not in dialect: call on builtin_function_or_method (line 1)",
+      "run": "c5bf5ae40ba569529e01b08e380e92e6",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 5,
+      "inside": true,
+      "model": "qwen3.6:35b",
+      "ms": 68,
+      "refused": null,
+      "run": "c5bf5ae40ba569529e01b08e380e92e6",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 6,
+      "inside": true,
+      "model": "qwen3.6:35b",
+      "ms": 78,
+      "refused": null,
+      "run": "c5bf5ae40ba569529e01b08e380e92e6",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 85,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 2)",
+      "run": "7f45bc6da74b3562444cd7b05d750a1c",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 65,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 2)",
+      "run": "7f45bc6da74b3562444cd7b05d750a1c",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": true,
+      "insideError": "SyntaxError",
+      "model": "qwen3.6:35b",
+      "ms": 65,
+      "refused": null,
+      "run": "c0fdea44b5229b7f46e890dd4e7414dc",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": true,
+      "insideError": "SyntaxError",
+      "model": "qwen3.6:35b",
+      "ms": 62,
+      "refused": null,
+      "run": "c0fdea44b5229b7f46e890dd4e7414dc",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 2,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 67,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 2)",
+      "run": "c0fdea44b5229b7f46e890dd4e7414dc",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 3,
+      "inside": true,
+      "model": "qwen3.6:35b",
+      "ms": 67,
+      "refused": null,
+      "run": "c0fdea44b5229b7f46e890dd4e7414dc",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 0,
+      "fullError": "TypeError",
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 67,
+      "refused": "not in dialect: item access on NoneType (line 1)",
+      "run": "4f5bcd120f169e352a3ccf1fd855a7de",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 79,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 2)",
+      "run": "4f5bcd120f169e352a3ccf1fd855a7de",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 2,
+      "inside": true,
+      "model": "qwen3.6:35b",
+      "ms": 71,
+      "refused": null,
+      "run": "4f5bcd120f169e352a3ccf1fd855a7de",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 65,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 1)",
+      "run": "2dab4d91ca549838477db2f940a4af1e",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": true,
+      "model": "qwen3.6:35b",
+      "ms": 81,
+      "refused": null,
+      "run": "2dab4d91ca549838477db2f940a4af1e",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 2,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 67,
+      "refused": "not in dialect: call on builtin_function_or_method (line 6)",
+      "run": "2dab4d91ca549838477db2f940a4af1e",
+      "sweep": "bench/prompt-budget-cuts-rep2/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "deepseek.deepseek-flash",
+      "ms": 69,
+      "refused": "not in dialect: call on type (line 2)",
+      "run": "4bf2819c33791e3c391a2ed25eb58368",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": true,
+      "model": "deepseek.deepseek-flash",
+      "ms": 86,
+      "refused": null,
+      "run": "bf5cf6cf8ee76044b6bf7bfddd6ca846",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": false,
+      "model": "deepseek.deepseek-flash",
+      "ms": 62,
+      "refused": "not in dialect: attribute 'rint' of module (line 1)",
+      "run": "bf5cf6cf8ee76044b6bf7bfddd6ca846",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 2,
+      "inside": false,
+      "model": "deepseek.deepseek-flash",
+      "ms": 75,
+      "refused": "not in dialect: attribute 'rint' of module (line 1)",
+      "run": "bf5cf6cf8ee76044b6bf7bfddd6ca846",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "deepseek.deepseek-flash",
+      "ms": 78,
+      "refused": "not in dialect: attribute 'rint' of module (line 2)",
+      "run": "0f7631c70f7803a84de39ee8d75c7a51",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "deepseek.deepseek-v4-pro",
+      "ms": 70,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 2)",
+      "run": "be673fd01d166e0b7f9c6cc2b82fecaf",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": false,
+      "model": "deepseek.deepseek-v4-pro",
+      "ms": 72,
+      "refused": "not in dialect: attribute 'round' of numpy.ndarray (line 2)",
+      "run": "be673fd01d166e0b7f9c6cc2b82fecaf",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": true,
+      "insideError": "KeyError",
+      "model": "deepseek.deepseek-v4-pro",
+      "ms": 97,
+      "refused": null,
+      "run": "7846f89817dad232c5c91dd538e03ce8",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": true,
+      "model": "deepseek.deepseek-v4-pro",
+      "ms": 71,
+      "refused": null,
+      "run": "7846f89817dad232c5c91dd538e03ce8",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": true,
+      "model": "deepseek.deepseek-v4-pro",
+      "ms": 86,
+      "refused": null,
+      "run": "9655897ad9f1eb10d560bccb93694c57",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "glm-4.7-flash:latest",
+      "ms": 69,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 2)",
+      "run": "d13f4d30e8e37ec033b212681862f74d",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": true,
+      "model": "glm-4.7-flash:latest",
+      "ms": 84,
+      "refused": null,
+      "run": "d13f4d30e8e37ec033b212681862f74d",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 2,
+      "inside": true,
+      "model": "glm-4.7-flash:latest",
+      "ms": 81,
+      "refused": null,
+      "run": "d13f4d30e8e37ec033b212681862f74d",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": true,
+      "model": "glm-4.7-flash:latest",
+      "ms": 79,
+      "refused": null,
+      "run": "44164568760138eaf7168784a1559294",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": false,
+      "model": "glm-4.7-flash:latest",
+      "ms": 80,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 1)",
+      "run": "44164568760138eaf7168784a1559294",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 2,
+      "inside": false,
+      "model": "glm-4.7-flash:latest",
+      "ms": 72,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 1)",
+      "run": "44164568760138eaf7168784a1559294",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 3,
+      "inside": true,
+      "model": "glm-4.7-flash:latest",
+      "ms": 69,
+      "refused": null,
+      "run": "44164568760138eaf7168784a1559294",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 4,
+      "fullError": "NameError",
+      "inside": false,
+      "model": "glm-4.7-flash:latest",
+      "ms": 77,
+      "refused": "not in dialect: a refusal during the run was caught by library code",
+      "run": "44164568760138eaf7168784a1559294",
+      "sweep": "bench/prompt-budget-cuts/csv-total",
+      "tableError": "source"
+    },
+    {
+      "cell": 5,
+      "inside": true,
+      "model": "glm-4.7-flash:latest",
+      "ms": 73,
+      "refused": null,
+      "run": "44164568760138eaf7168784a1559294",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 6,
+      "inside": false,
+      "model": "glm-4.7-flash:latest",
+      "ms": 64,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 2)",
+      "run": "44164568760138eaf7168784a1559294",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 7,
+      "inside": true,
+      "model": "glm-4.7-flash:latest",
+      "ms": 81,
+      "refused": null,
+      "run": "44164568760138eaf7168784a1559294",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "fullError": "TypeError",
+      "inside": false,
+      "model": "glm-4.7-flash:latest",
+      "ms": 88,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 4)",
+      "run": "3806af2f860eb55f68ec79470a27b15c",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "litellm.google/gemini-flash-latest",
+      "ms": 66,
+      "refused": "not in dialect: attribute 'round' of numpy.ndarray (line 10)",
+      "run": "1dbf3f6a3fac5db3e262e7b92a2365ea",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": false,
+      "model": "litellm.google/gemini-flash-latest",
+      "ms": 79,
+      "refused": "not in dialect: call on type (line 3)",
+      "run": "1dbf3f6a3fac5db3e262e7b92a2365ea",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 2,
+      "inside": false,
+      "model": "litellm.google/gemini-flash-latest",
+      "ms": 68,
+      "refused": "not in dialect: attribute 'iloc' of Series (line 1)",
+      "run": "1dbf3f6a3fac5db3e262e7b92a2365ea",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": true,
+      "model": "litellm.google/gemini-flash-latest",
+      "ms": 85,
+      "refused": null,
+      "run": "7ebed513b8ac1e506e429c96d319d511",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": false,
+      "model": "litellm.google/gemini-flash-latest",
+      "ms": 87,
+      "refused": "not in dialect: call on type (line 4)",
+      "run": "7ebed513b8ac1e506e429c96d319d511",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 2,
+      "inside": false,
+      "model": "litellm.google/gemini-flash-latest",
+      "ms": 83,
+      "refused": "not in dialect: call on type (line 3)",
+      "run": "7ebed513b8ac1e506e429c96d319d511",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 3,
+      "inside": false,
+      "model": "litellm.google/gemini-flash-latest",
+      "ms": 77,
+      "refused": "not in dialect: attribute 'iloc' of Series (line 1)",
+      "run": "7ebed513b8ac1e506e429c96d319d511",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": true,
+      "model": "litellm.google/gemini-flash-latest",
+      "ms": 71,
+      "refused": null,
+      "run": "0eb5cefbc04694f3ffa9eff545cc4335",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": false,
+      "model": "litellm.google/gemini-flash-latest",
+      "ms": 69,
+      "refused": "not in dialect: call on type (line 4)",
+      "run": "0eb5cefbc04694f3ffa9eff545cc4335",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "fullError": "AttributeError",
+      "inside": false,
+      "model": "openrouter.minimax/minimax-m3",
+      "ms": 70,
+      "refused": "not in dialect: attribute 'keys' of FrameLocalsProxy (line 4)",
+      "run": "bc39339c6dbea8a6ebb3d9669f839997",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": false,
+      "model": "openrouter.minimax/minimax-m3",
+      "ms": 72,
+      "refused": "not in dialect: attribute 'shape' of DataFrame (line 4)",
+      "run": "bc39339c6dbea8a6ebb3d9669f839997",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "openrouter.minimax/minimax-m3",
+      "ms": 68,
+      "refused": "not in dialect: a generator expression outside consumer position (line 8)",
+      "run": "dd4878ad41bfb006efd0561f12ee44fd",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": false,
+      "model": "openrouter.minimax/minimax-m3",
+      "ms": 161,
+      "refused": "not in dialect: a generator expression outside consumer position (line 9)",
+      "run": "dd4878ad41bfb006efd0561f12ee44fd",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "openrouter.minimax/minimax-m3",
+      "ms": 83,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 2)",
+      "run": "a5bb96a1728acffe81045a12a1a66db0",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 1,
+      "fullError": "TypeError",
+      "inside": false,
+      "model": "openrouter.minimax/minimax-m3",
+      "ms": 82,
+      "refused": "not in dialect: item access on NoneType (line 3)",
+      "run": "a5bb96a1728acffe81045a12a1a66db0",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 2,
+      "inside": true,
+      "model": "openrouter.minimax/minimax-m3",
+      "ms": 88,
+      "refused": null,
+      "run": "a5bb96a1728acffe81045a12a1a66db0",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 70,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 2)",
+      "run": "fdb0bd7b8b1f342f4eb53c75483bedbe",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": true,
+      "model": "qwen3.6:35b",
+      "ms": 90,
+      "refused": null,
+      "run": "fdb0bd7b8b1f342f4eb53c75483bedbe",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": true,
+      "model": "qwen3.6:35b",
+      "ms": 88,
+      "refused": null,
+      "run": "78544884b2edfadd4bfbf105971fee7c",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 111,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 1)",
+      "run": "af8a9d0cd2e5d58f408fbb2c453c0ede",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": true,
+      "model": "qwen3.6:35b",
+      "ms": 86,
+      "refused": null,
+      "run": "af8a9d0cd2e5d58f408fbb2c453c0ede",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "deepseek.deepseek-flash",
+      "ms": 88,
+      "refused": "not in dialect: call on type (line 2)",
+      "run": "f864d73bfdbad93e9360e187164b62ec",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "deepseek.deepseek-flash",
+      "ms": 120,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 2)",
+      "run": "c5e4f8e00d3270db69e3dcdb6c4ff737",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": true,
+      "model": "deepseek.deepseek-flash",
+      "ms": 101,
+      "refused": null,
+      "run": "c5e4f8e00d3270db69e3dcdb6c4ff737",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "fullError": "AttributeError",
+      "inside": false,
+      "model": "deepseek.deepseek-flash",
+      "ms": 121,
+      "refused": "not in dialect: attribute 'strip' of float (line 2)",
+      "run": "5dbb7254590b2b0aed52c72035b929d2",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": false,
+      "model": "deepseek.deepseek-flash",
+      "ms": 100,
+      "refused": "not in dialect: call on type (line 2)",
+      "run": "5dbb7254590b2b0aed52c72035b929d2",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": true,
+      "model": "deepseek.deepseek-v4-pro",
+      "ms": 90,
+      "refused": null,
+      "run": "6ad62069e13119c555f59a673d539fd2",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": true,
+      "model": "deepseek.deepseek-v4-pro",
+      "ms": 87,
+      "refused": null,
+      "run": "d5cf05e59cae38c72781c935b6beb4ba",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "deepseek.deepseek-v4-pro",
+      "ms": 110,
+      "refused": "not in dialect: attribute 'keys' of FrameLocalsProxy (line 2)",
+      "run": "f092096dc759a8c6c77ddbfab9c705c3",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": true,
+      "model": "deepseek.deepseek-v4-pro",
+      "ms": 94,
+      "refused": null,
+      "run": "f092096dc759a8c6c77ddbfab9c705c3",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "glm-4.7-flash:latest",
+      "ms": 91,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 3)",
+      "run": "88e9ba4e5284d9ed1b8504129bc54f4a",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "glm-4.7-flash:latest",
+      "ms": 98,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 3)",
+      "run": "65face10419f09031f3e719aadd3a69e",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "glm-4.7-flash:latest",
+      "ms": 86,
+      "refused": "not in dialect: attribute 'iloc' of Series (line 3)",
+      "run": "540299695743945d6946e6f0a978efa6",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "litellm.google/gemini-flash-latest",
+      "ms": 91,
+      "refused": "not in dialect: call on type (line 9)",
+      "run": "b416f0e5efe43755410f31c1a1f56c78",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": false,
+      "model": "litellm.google/gemini-flash-latest",
+      "ms": 98,
+      "refused": "not in dialect: call on type (line 2)",
+      "run": "b416f0e5efe43755410f31c1a1f56c78",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 2,
+      "inside": true,
+      "model": "litellm.google/gemini-flash-latest",
+      "ms": 85,
+      "refused": null,
+      "run": "b416f0e5efe43755410f31c1a1f56c78",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 3,
+      "inside": false,
+      "model": "litellm.google/gemini-flash-latest",
+      "ms": 119,
+      "refused": "not in dialect: the attribute __name__ (line 1)",
+      "run": "b416f0e5efe43755410f31c1a1f56c78",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": true,
+      "model": "litellm.google/gemini-flash-latest",
+      "ms": 101,
+      "refused": null,
+      "run": "5547329c28230a2ea5c2125f544d7e36",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": false,
+      "model": "litellm.google/gemini-flash-latest",
+      "ms": 80,
+      "refused": "not in dialect: call on type (line 2)",
+      "run": "5547329c28230a2ea5c2125f544d7e36",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "litellm.google/gemini-flash-latest",
+      "ms": 96,
+      "refused": "not in dialect: attribute 'columns' of DataFrame (line 2)",
+      "run": "08b8e7640a9f8562451cf07659e2ff24",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": false,
+      "model": "litellm.google/gemini-flash-latest",
+      "ms": 84,
+      "refused": "not in dialect: call on type (line 5)",
+      "run": "08b8e7640a9f8562451cf07659e2ff24",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "openrouter.minimax/minimax-m3",
+      "ms": 77,
+      "refused": "not in dialect: a generator expression outside consumer position (line 6)",
+      "run": "f6db0cbd6f816936d5f9bb3b57afdaf9",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": false,
+      "model": "openrouter.minimax/minimax-m3",
+      "ms": 87,
+      "refused": "not in dialect: a generator expression outside consumer position (line 5)",
+      "run": "f6db0cbd6f816936d5f9bb3b57afdaf9",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 2,
+      "inside": false,
+      "model": "openrouter.minimax/minimax-m3",
+      "ms": 72,
+      "refused": "not in dialect: attribute 'keys' of FrameLocalsProxy (line 1)",
+      "run": "f6db0cbd6f816936d5f9bb3b57afdaf9",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 3,
+      "inside": false,
+      "model": "openrouter.minimax/minimax-m3",
+      "ms": 74,
+      "refused": "not in dialect: a generator expression outside consumer position (line 2)",
+      "run": "f6db0cbd6f816936d5f9bb3b57afdaf9",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 4,
+      "inside": false,
+      "model": "openrouter.minimax/minimax-m3",
+      "ms": 70,
+      "refused": "not in dialect: attribute 'dtype' of Series (line 1)",
+      "run": "f6db0cbd6f816936d5f9bb3b57afdaf9",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "openrouter.minimax/minimax-m3",
+      "ms": 67,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 3)",
+      "run": "bd0a34e2c29d1d401010fe7aef07df0b",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": false,
+      "model": "openrouter.minimax/minimax-m3",
+      "ms": 80,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 3)",
+      "run": "bd0a34e2c29d1d401010fe7aef07df0b",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 2,
+      "inside": true,
+      "model": "openrouter.minimax/minimax-m3",
+      "ms": 67,
+      "refused": null,
+      "run": "bd0a34e2c29d1d401010fe7aef07df0b",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 3,
+      "inside": true,
+      "insideError": "KeyError",
+      "model": "openrouter.minimax/minimax-m3",
+      "ms": 64,
+      "refused": null,
+      "run": "bd0a34e2c29d1d401010fe7aef07df0b",
+      "sweep": "bench/prompt-budget-cuts/csv-total",
+      "tableError": "source"
+    },
+    {
+      "cell": 4,
+      "inside": true,
+      "model": "openrouter.minimax/minimax-m3",
+      "ms": 94,
+      "refused": null,
+      "run": "bd0a34e2c29d1d401010fe7aef07df0b",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "openrouter.minimax/minimax-m3",
+      "ms": 100,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 4)",
+      "run": "730ec778c812e75d25a171c79762eb6c",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "fullError": "TypeError",
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 72,
+      "refused": "not in dialect: item access on NoneType (line 1)",
+      "run": "a5a2ab563f3a6fa42be5a2e28985113b",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 63,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 2)",
+      "run": "a5a2ab563f3a6fa42be5a2e28985113b",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 2,
+      "fullError": "TypeError",
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 80,
+      "refused": "not in dialect: item access on NoneType (line 1)",
+      "run": "a5a2ab563f3a6fa42be5a2e28985113b",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 3,
+      "fullError": "TypeError",
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 71,
+      "refused": "not in dialect: item access on NoneType (line 1)",
+      "run": "a5a2ab563f3a6fa42be5a2e28985113b",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 89,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 1)",
+      "run": "7fec7c79ecc068c5de722a4becc3be09",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 0,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 63,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 1)",
+      "run": "cedc0ac58ba2011bc5f2158ecf6c6921",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    },
+    {
+      "cell": 1,
+      "inside": false,
+      "model": "qwen3.6:35b",
+      "ms": 79,
+      "refused": "not in dialect: attribute 'read_csv' of module (line 1)",
+      "run": "cedc0ac58ba2011bc5f2158ecf6c6921",
+      "sweep": "bench/prompt-budget-cuts/csv-total"
+    }
+  ],
+  "source": {
+    "core": "pyodide-restricted-314.0.3-35bd1d69 93eda2433fa4f650ba395f9df09f6e5c8d4398446d3b295c1075599b52873751",
+    "driver": "notebooks/python-dialect/cell-replay/replay.mjs",
+    "mode": "as recorded",
+    "runs": "58 run.json exports in ~/git/window-ml/tests/e2e/artifacts/bench/prompt-budget-cuts{,-rep2}/csv-total (every export since 2026-10-20 with a python_exec cell that asked)"
+  }
+}

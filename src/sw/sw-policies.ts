@@ -13,11 +13,14 @@ import { evalPolicy, PolicyEffect } from "../readonly-exec";
 import { fromFetch, free, boundFor, EffectsData } from "../effects";
 import { defineState } from "../state-registry";
 import type { AskWhy, PersistGrant } from "../contract";
+import { effectiveRows, type PolicyRow, type PolicyInput } from "./sw-policy-view";
 import { validList, CONSUMERS, GLOBAL_POLICIES_KEY, POLICY_LABEL_MAX } from "./policy-valid";
+import { REVEALS_CAUSE, revealsText } from "../shell/sh-call";
 
 /** Which kind of call a policy is about; a policy is only ever evaluated over calls of its own consumer. `sh` is
- *  `ml.sh` (docs/spec/SHELL.md), whose facts its own consumer builds. */
-export type PolicyConsumer = "fetch" | "sh" | "act";
+ *  `ml.sh` (docs/spec/SHELL.md), whose facts its own consumer builds. `setting` is `change_setting`
+ *  (docs/spec/MODEL_SETTINGS.md): an `allow` frees only an ordinary key's change, never a guarded one. */
+export type PolicyConsumer = "fetch" | "sh" | "act" | "setting";
 
 /** Where a policy came from: written by the person, added by answering an approval card, or proposed by the model and
  *  approved by the person on its own card (`propose_policy`). */
@@ -354,6 +357,27 @@ export function policyView(): { global: StoredPolicy[]; runs: { hash: string; po
     };
 }
 
+/** One session's effective policies as rows (sw-policy-view.ts), computed here beside {@link judgeCall} from the same lists. */
+export function sessionPolicies(hash: string): { rows: PolicyRow[]; builtin: typeof BUILTIN_POLICY } {
+    const input = (l: StoredPolicy[]): PolicyInput[] => l.map((p) => ({ id: p.id, consumer: p.consumer, label: p.label, source: p.source, effect: p.effect, origin: p.origin, created: p.created, ...(brokenWhy.has(p.id) ? { broken: brokenWhy.get(p.id) } : {}) }));
+    return { rows: effectiveRows(input(globals), input(byRun.get(hash) ?? []), BUILTIN_POLICY), builtin: BUILTIN_POLICY };
+}
+
+/**
+ * Remove one policy from a session's view, with the confirm a widening removal needs. A removal that only narrows is done at
+ * once; one that widens (a deny or an ask goes) is refused until the caller says it showed the entry and what becomes reachable
+ * (`confirmed`), and the refusal carries both, so a caller that did not ask first learns them.
+ * @param hash the session whose view the removal is made from; a policy of neither this session nor the global list is refused
+ * @param id the policy to remove
+ * @param confirmed whether the person was shown a widening removal's effect
+ */
+export function removeFromSession(hash: string, id: string, confirmed: boolean): { removed: true; class: "narrows" | "widens" } | { removed: false; why: "unknown" | "confirm"; row?: PolicyRow } {
+    const row = sessionPolicies(hash).rows.find((r) => r.layer !== "default" && r.entry.id === id);
+    if (!row?.removal) return { removed: false, why: "unknown" };
+    if (row.removal.class === "widens" && !confirmed) return { removed: false, why: "confirm", row };
+    return removePolicy(id) ? { removed: true, class: row.removal.class } : { removed: false, why: "unknown" };
+}
+
 /**
  * Judge one call against the global policies and the run's. The strictest answer wins across both scopes: `deny`, then
  * `ask`, then `allow`; a policy that breaks is no opinion (and recorded). An `ask` puts the call to the person where an
@@ -394,6 +418,9 @@ export function judgeCall(runId: string | undefined, consumer: PolicyConsumer, f
     // A call the host sends the person's credential with ALWAYS asks: no allow policy and no free tier answers it
     // (SHELL.md, "GH UNDER THE SANDBOX RULED"). A deny or an ask policy above still does.
     if (isCredentialed(facts)) return { decision: undefined, broken };
+    // A call to a program that reveals other processes asks unless the person listed it: no allow policy and no free tier
+    // answers it, since a policy can be the model's proposal and the list is a gate key (PROGRAM_MANIFEST.md, ruling 31).
+    if (revealsUnlisted(facts)) return { decision: undefined, broken };
     if (allow) return { decision: "allow", by: { ...allow }, broken };
     if (free(facts.effects, boundFor(placement))) return { decision: "allow", by: "builtin", broken };
     const gone = lapsedCover(runId, consumer, facts);
@@ -403,6 +430,33 @@ export function judgeCall(runId: string | undefined, consumer: PolicyConsumer, f
 /** Whether a call's facts say the host will inject a credential into it (`ShFacts.credential.held`). */
 const isCredentialed = (facts: Record<string, unknown>): boolean =>
     typeof facts.credential === "object" && facts.credential !== null && (facts.credential as { held?: unknown }).held === true;
+
+/** Whether a call's facts say its program reveals other processes and is not in `shellRevealsAllow`
+ *  (`ShFacts.reveals.allowed` false). */
+const revealsUnlisted = (facts: Record<string, unknown>): boolean =>
+    typeof facts.reveals === "object" && facts.reveals !== null && (facts.reveals as { allowed?: unknown }).allowed !== true;
+
+/**
+ * Why a call asks when the ONLY thing between it and running unasked is that its program reveals other processes and is
+ * not listed: judged again as if it were listed, it is allowed. Its card then offers "Always allow". Undefined for any
+ * other call, a call that asks for another reason too included.
+ * @param j the call's judgement
+ * @param runId the run's session hash
+ * @param consumer the kind of call
+ * @param facts the call's facts
+ * @param placement where the call runs
+ */
+export function revealsAskWhy(j: PolicyJudgement, runId: string | undefined, consumer: PolicyConsumer, facts: Record<string, unknown> & { effects: EffectsData },
+    placement: Parameters<typeof boundFor>[0]): AskWhy | undefined {
+    if (j.decision !== undefined || !revealsUnlisted(facts)) return undefined;
+    const r = facts.reveals as { program?: unknown };
+    if (typeof r.program !== "string") return undefined;
+    if (judgeCall(runId, consumer, { ...facts, reveals: { ...r, allowed: true } }, placement).decision !== "allow") return undefined;
+    const program = speakable(r.program);
+    return { line: `Asking because ${revealsText(program)}. "Always allow ${program}" adds it to the programs that may.`,
+        detail: `This call needed approval because ${program} shows other processes and the person has not listed it in Settings, Programs (ml.sh); it would otherwise have run without asking.`,
+        cause: REVEALS_CAUSE, program: r.program };
+}
 
 /** The most recent gone policy that would have allowed this call, or undefined. Evaluated like a live one, but its answer
  *  only becomes text on the ask: nothing here is read by the decision. */

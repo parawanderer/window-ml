@@ -1,0 +1,55 @@
+# retry-install — run an install step that reaches Ubuntu's apt mirrors, retrying their outages.
+#
+# Twice on 2026-11-19 a job went red on the mirror rather than on the diff: run 44522486923 (#2007) failed
+# `build` and `e2e (2/3)` at `Install Playwright Chromium`, and #2005's bench job 135545553314 failed the same
+# step with `Err: … Connection failed [IP: …]` and `503 Service Unavailable` from security.ubuntu.com. The
+# step's exit code (100) is apt's, and a re-run is what everyone did; this does that automatically, in the job.
+#
+# Three knobs, because the failure has three shapes.
+#   - `Acquire::Retries` is apt's own per-download retry, for one file's transient failure inside a run that
+#     otherwise succeeds.
+#   - The loop is for the install as a whole failing with the mirror's signature (`Connection failed`,
+#     `Failed to fetch`, `503 Service Unavailable`, …) or for it not finishing inside the bound. A failing
+#     install that does NOT look like that — a missing package, a check that fails after the install — fails
+#     the step at once; running it twice would only stretch a real breakage.
+#   - `timeout` bounds each attempt, and it has to sit ABOVE a slow but healthy install, not below: five green
+#     `Install Playwright Chromium` steps today ran 517 to 652 s (runs 44549797776, 44515712288 twice,
+#     44513881627, 44513870993), so a tight bound would kill installs that pass. 900 s is past that tail; an
+#     install that reaches it is not slow, it is the other shape of the same outage — e2e (1/3) job
+#     135545553298 sat 3 h 38 min in this step (last line `Get:5 … noble-security InRelease`) until the run
+#     was cancelled by hand, because apt was waiting on a socket that never answered.
+#
+# TWO attempts, so the worst case is 2 x 900 s + a 15 s pause = 30 min 15 s, and each job's `timeout-minutes`
+# in tests.yml is written to hold that plus the job's own work (the arithmetic is beside each cap).
+name: retry-install
+description: Run an apt or Playwright --with-deps install, retrying a mirror outage or a stall
+inputs:
+  run:
+    description: the shell command to run
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        COMMAND: ${{ inputs.run }}
+      run: |
+        echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/99-retries >/dev/null
+        for attempt in 1 2; do
+          log="$(mktemp)"
+          # `tee` so a ten-minute install still streams into the job log; PIPESTATUS, not `$?`, is the
+          # command's own exit code (124 is the timeout's, when the bound fires).
+          set +e
+          timeout -k 30 900 bash -eo pipefail -c "$COMMAND" 2>&1 | tee "$log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -eq 0 ]; then rm -f "$log"; exit 0; fi
+          if [ "$attempt" -eq 2 ] || { [ "$rc" -ne 124 ] && ! grep -Eq 'Connection failed|Failed to fetch|503 Service Unavailable|Could not connect|Could not resolve|Temporary failure resolving|Hash Sum mismatch' "$log"; }; then
+            rm -f "$log"
+            break
+          fi
+          echo "::warning::$COMMAND failed (attempt 1 of 2, exit $rc): the log names the mirror, or the install stalled; retrying once"
+          rm -f "$log"
+          sleep 15
+        done
+        exit 1

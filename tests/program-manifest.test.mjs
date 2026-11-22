@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
 
 const { describeCall, hardenArgv, validateManifest, inRange, CREDENTIAL_PROVIDERS, scriptLacksRunsCode, SCRIPT_RUNS_CODE_WARNING } = await import("../src/shell/program-manifest.ts");
 const { effectKey, free, boundFor, fromProgramEffect } = await import("../src/effects.ts");
@@ -27,7 +28,7 @@ const changesEffect = (f) => (f.effects?.length ?? 0) > 0 || f.valueIsPath || f.
 // --- the shipped manifests ---
 
 test("the first set from PROGRAM_MANIFEST.md ships, one file per program", () => {
-    assert.deepEqual(Object.keys(manifests).sort(), ["cat", "cp", "find", "gh", "git", "head", "jq", "ls", "mv", "rg", "rm", "rmdir", "tail", "unlink", "wc"]);
+    assert.deepEqual(Object.keys(manifests).sort(), ["awk", "cat", "cp", "find", "gh", "git", "head", "jq", "ls", "mv", "rg", "rm", "rmdir", "sed", "tail", "unlink", "wc"]);
     for (const [file, m] of Object.entries(manifests)) assert.equal(m.program, file, `${file}.json names ${m.program}`);
 });
 
@@ -347,20 +348,106 @@ test("repoWide + pathspecs: git rm / mv also claim the directory and the reposit
     assert.equal(describeCall(["git", "-C", "sub", "rm", "a"], git, V).described, false, "-C with operands: git resolves them against sub, the host against the cwd");
 });
 
+// --- a flag after an operand, per shipped manifest (the optionsFirst audit, 2026-11-17) ---
+
+/** Every shipped manifest, with one call that puts a flag after an operand and what that call describes as. Without
+ *  `optionsFirst` the manifest reads such an argument as a flag, which is right only where every supported platform's
+ *  parser does too: `measured` says which parser, on what. A parser that reads it as a file name reads a path the host
+ *  never resolved (macOS 26.7: `cat f -n`, with `-n` a symlink to `.env`, printed the secret, and main described it as
+ *  reading `f` alone). */
+const AFTER_OPERAND = {
+    cat: { argv: ["cat", "f", "-n"], described: false },
+    head: { argv: ["head", "f", "-n", "5"], described: false },
+    tail: { argv: ["tail", "f", "-n", "1"], described: false },
+    wc: { argv: ["wc", "f", "-l"], described: false },
+    ls: { argv: ["ls", "f", "-l"], described: false },
+    cp: { argv: ["cp", "a", "b", "-R"], described: false },
+    mv: { argv: ["mv", "a", "b", "-f"], described: false },
+    rm: { argv: ["rm", "a", "-r"], described: false },
+    rmdir: { argv: ["rmdir", "a", "-v"], described: false },
+    unlink: { argv: ["unlink", "a", "-v"], described: false },
+    sed: { argv: ["sed", "p", "f", "-n"], described: false },
+    awk: { argv: ["awk", "{print}", "f", "-F:"], described: false },
+    find: { argv: ["find", ".", "-L"], described: false, measured: "find's own grammar: after the first operand -L is an expression, which the manifest does not list (macOS find: \"-L: unknown primary or operator\")" },
+    rg: { argv: ["rg", "a", "f", "-n"], described: true, measured: "ripgrep 15.0.0 on macOS numbered the lines: rg parses its own argv, the same code on Linux" },
+    jq: { argv: ["jq", ".", "f", "-c"], described: true, measured: "jq-1.7.1-apple printed compact output: jq's main.c reads options anywhere, the same code on Linux" },
+    git: { argv: ["git", "status", "README.md", "-s"], described: true, measured: "git 2.54.0 (Apple) and 2.56.0: parse-options permutes (status -s, blame -s, ls-files -s, rm -n, mv -n, branch <name> -v) or refuses (diff, log: \"must come before non-option arguments\"), never a path; git's own parser, the same on Linux" },
+    gh: { argv: ["gh", "pr", "view", "12", "--comments"], described: true, measured: "gh 2.103.0: pflag intersperses flags (gh config get git_protocol --host github.com read --host); gh's own parser, the same on Linux" },
+};
+
+test("every shipped manifest says what a flag after an operand is (enumerate, do not sample)", () => {
+    assert.deepEqual(Object.keys(AFTER_OPERAND).sort(), Object.keys(manifests).sort());
+    for (const [name, row] of Object.entries(AFTER_OPERAND)) {
+        const d = describeCall(row.argv, manifests[name], { version: fixtures[name].version });
+        assert.equal(d.described, row.described, `${row.argv.join(" ")}: ${d.why.join("; ")}`);
+    }
+});
+
+test("a command without optionsFirst names the measured parser that permutes on every supported platform", () => {
+    for (const [name, m] of Object.entries(manifests)) {
+        const loose = commands(m.command).filter(([, c]) => !c.optionsFirst && c.syntax !== "find" && !c.subcommands);
+        if (loose.length) assert.equal(typeof AFTER_OPERAND[name].measured, "string", `${name}: ${loose.map(([at]) => [name, ...at].join(" ")).join(", ")} lack optionsFirst; set it, or measure the parser`);
+    }
+});
+
+test("upgrade: main's cat, head, tail, wc and ls described a flag after an operand, and head, tail, wc and ls a lone - as stdin; the shipped ones do not, and an old stored copy is never read", async () => {
+    const OLD = new URL("./fixtures/manifests-before-options-first/", import.meta.url);
+    const { validStored } = await import("../src/shell/stored-manifests.ts");
+    const { SHIPPED_MANIFESTS, manifestsFor, manifestFor } = await import("../src/shell/sh-call.ts");
+    for (const name of ["cat", "head", "tail", "wc", "ls"]) {
+        const old = JSON.parse(fs.readFileSync(new URL(`${name}.json`, OLD), "utf8"));
+        const { argv } = AFTER_OPERAND[name];
+        const was = describeCall(argv, old);
+        assert.equal(was.described, true, `${name}: the fixture is the defect, a described call`);
+        assert.deepEqual(was.pathArgs.map((p) => p.arg), [1], `${name}: main resolved only the first operand`);
+        assert.equal(describeCall(argv, manifests[name]).described, false, name);
+        const strip = (m) => ({ ...m, command: { ...m.command, optionsFirst: undefined, dashIsPath: undefined } });
+        assert.deepEqual(strip(manifests[name]), strip(old), `${name}: optionsFirst and dashIsPath are the only changes`);
+        // A lone `-` is a FILE for macOS head, tail, wc and ls (e3, #1951): main claimed no path for it; now it is one.
+        if (name !== "cat") {
+            assert.deepEqual(describeCall([name, "f", "-"], old).pathArgs.map((p) => p.arg), [1], `${name}: main left the file named - unresolved`);
+            assert.deepEqual(describeCall([name, "f", "-"], manifests[name]).pathArgs.map((p) => p.arg), [1, 2], `${name}: - is resolved as a path`);
+        }
+        // A copy of the old file stored as the person's own manifest: dropped at load (B2), and passed over at call time.
+        const entry = { id: `man-${name}`, scope: "global", manifest: old, origin: "person", created: 1, pin: { path: `/bin/${name}`, fingerprint: "1:2:3:4", inRoot: false } };
+        assert.equal(validStored(entry, "global", SHIPPED_MANIFESTS), false, `${name}: a stored copy of a shipped program is dropped`);
+        assert.equal(manifestFor(argv, undefined, manifestsFor([entry], ["/w"]).list), SHIPPED_MANIFESTS[name], `${name}: the call is described by the shipped file`);
+    }
+});
+
 // --- the host holds the same bytes (window-ml #882, window-ml-host #19) ---
 
 /** The pin both repos hold: sha256 of the lines "<sha256 hex of the raw bytes>  <name>\n", over every .json of the fixtures
- *  ("calls/<p>.json") and the manifests ("manifests/<p>.json"), names sorted bytewise. The host's copy under
+ *  ("calls/<p>.json"), the manifests ("manifests/<p>.json"), the flavoured calls ("flavoured/<p>.json") and the sed
+ *  scanner vectors ("scanners/<f>.json"), names sorted bytewise. The host's copy under
  *  `vectors/program-manifests/` records it in `PIN`. */
-const VECTOR_PIN = "60807baf3ec79d7b8bfd2aa3963440f12896c10fc7470df46208eb25eed084d3";
+/** The calls described as one detected flavour (sed's two -i, awk's -safe), shared with the host like the other vectors. */
+const FLAVOURED_CALLS = new URL("./fixtures/program-calls-flavoured/", import.meta.url);
+
+const VECTOR_PIN = "597122c31a364b90cd17d6cc5f2b629ff19d9263ccbc0242b361b27af65d52c7";
 
 test("the manifests and call fixtures hash to the pin the host holds", () => {
     const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");
-    const named = [["calls", FIXTURES], ["manifests", MANIFESTS]].flatMap(([dir, url]) =>
+    const named = [["calls", FIXTURES], ["manifests", MANIFESTS], ["flavoured", FLAVOURED_CALLS], ["scanners", new URL("./fixtures/sed-scanners/", import.meta.url)]].flatMap(([dir, url]) =>
         fs.readdirSync(url).filter((f) => f.endsWith(".json")).map((f) => [`${dir}/${f}`, fs.readFileSync(new URL(f, url))]));
     named.sort(([a], [b]) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
     const pin = sha(named.map(([n, bytes]) => `${sha(bytes)}  ${n}\n`).join(""));
-    assert.equal(pin, VECTOR_PIN, "the manifests or call fixtures changed: re-copy them to window-ml-host's vectors/program-manifests/ and update VECTOR_PIN here and PIN there together");
+    assert.equal(pin, VECTOR_PIN, "the manifests, call fixtures or scanner vectors changed: re-copy them to window-ml-host's vectors/program-manifests/ and update VECTOR_PIN here and PIN there together");
+});
+
+test("every flavoured call describes as recorded under its flavour", () => {
+    const files = fs.readdirSync(FLAVOURED_CALLS).filter((f) => f.endsWith(".json"));
+    assert.deepEqual(files.sort(), ["awk.json", "sed.json"]);
+    for (const f of files) {
+        const fx = JSON.parse(fs.readFileSync(new URL(f, FLAVOURED_CALLS), "utf8"));
+        assert.ok(manifests[fx.program].flavours, `${fx.program} declares flavours`);
+        for (const c of fx.calls) {
+            const d = describeCall(c.argv, manifests[fx.program], { version: fx.version, flavour: c.flavour });
+            const got = { described: d.described, effects: keys(d.effects), pathArgs: d.pathArgs, actsOnDir: d.actsOnDir, runner: d.runner, okCodes: d.okCodes, echoes: d.echoes, recursive: d.recursive, hardened: hardenArgv(c.argv, d) };
+            const want = { described: c.described, effects: c.effects, pathArgs: c.pathArgs, actsOnDir: c.actsOnDir, runner: c.runner, okCodes: c.okCodes, echoes: c.echoes, recursive: c.recursive, hardened: c.hardened };
+            assert.deepEqual(got, want, `${c.argv.join(" ")} as ${c.flavour} (${c.note})`);
+        }
+    }
 });
 
 // --- the editor's warning: a script whose manifest lacks runs-code (SHELL.md, the TRAP paragraph) ---
@@ -393,4 +480,146 @@ test("scriptLacksRunsCode reads the default command only: a subcommand with runs
     assert.ok(sub.effects !== "unknown" && sub.effects.some((e) => e.op === "exec" && e.res.kind === "process"), JSON.stringify(sub.effects));
     const top = describeCall(["bash", "scripts/t.sh"], m);
     assert.ok(top.effects !== "unknown" && !top.effects.some((e) => e.op === "exec"), JSON.stringify(top.effects));
+});
+
+// --- flavours: which implementation runs, and what each adds (PROGRAM_MANIFEST.md "Flavours", ruled 2026-11-17) ---
+
+const { flavourOf, SYSTEM_PROGRAM_DIRS } = await import("../src/shell/program-manifest.ts");
+
+/** A flavoured program: GNU permutes and hardens with --sandbox; BSD stops at the first operand and has its own -l. */
+const FLAVOURED = {
+    program: "tool", version: { range: "*", args: [], pattern: "" },
+    flavours: { gnu: { probe: { args: ["--version"], pattern: "^tool \\(GNU tool\\) (\\d+\\.\\d+)", range: ">=4.3 <5" } }, bsd: { system: "macos" } },
+    command: {
+        effects: ["read"], paths: "operands", terminator: "--", clusters: true, flags: { "-n": {} },
+        flavour: { gnu: { flags: { "--quiet": {}, "--sandbox": {} }, argOrder: "permute", harden: ["--sandbox"] }, bsd: { flags: { "-l": {} }, argOrder: "stop" } },
+    },
+};
+
+test("the flavoured fixture validates", () => {
+    assert.deepEqual(validateManifest(FLAVOURED), []);
+});
+
+test("flavourOf: in-root never, another file name is other, the macOS system program is bsd, a GNU probe in range is gnu, else undetected", () => {
+    const at = (path, inRoot = false) => ({ path, inRoot });
+    const rows = [
+        // [program, platform, probed, flavour, probe wanted]
+        [at("/w/proj/bin/tool", true), "macos", undefined, null, false],
+        [at("/w/proj/bin/tool", true), "linux", "4.9", null, false],
+        [at("/usr/bin/busybox"), "linux", undefined, "other", false],
+        [at("/opt/homebrew/Cellar/gnu-tool/4.9/bin/gtool"), "macos", "4.9", "other", false],
+        ...SYSTEM_PROGRAM_DIRS.macos.map((d) => [at(`${d}/tool`), "macos", undefined, "bsd", false]),
+        [at("/usr/bin/tool"), "linux", undefined, null, true],
+        [at("/usr/local/bin/tool"), "macos", undefined, null, true],
+        [at("/usr/bin/tool"), "linux", "4.9", "gnu", false],
+        [at("/usr/bin/tool"), "linux", "4.2", null, false],
+        [at("/usr/bin/tool"), "linux", "5.0", null, false],
+        [at("/usr/bin/tool"), "linux", null, null, false],
+        [at("/usr/bin/tool"), undefined, undefined, null, true],
+    ];
+    for (const [program, platform, probed, flavour, probe] of rows) {
+        const r = flavourOf(FLAVOURED, program, platform, probed, true);
+        assert.deepEqual([r.flavour, r.probe], [flavour, probe], `${program.path} on ${platform}, probed ${probed}`);
+        assert.equal(typeof r.how, "string");
+        // The same facts for a stored manifest: what its author does not choose decides alike, and the probe never.
+        const stored = flavourOf(FLAVOURED, program, platform, probed, false);
+        assert.deepEqual([stored.flavour, stored.probe], [flavour === "gnu" ? null : flavour, false], `stored: ${program.path} on ${platform}, probed ${probed}`);
+    }
+    // The system rule needs the bsd flavour declared, and a manifest without flavours is never flavoured.
+    const gnuOnly = { ...FLAVOURED, flavours: { gnu: FLAVOURED.flavours.gnu } };
+    assert.deepEqual(flavourOf(gnuOnly, at("/usr/bin/tool"), "macos", undefined, true).probe, true);
+    assert.equal(flavourOf(gnuOnly, at("/usr/bin/tool"), "macos", undefined, true).flavour, null);
+    assert.deepEqual(flavourOf(manifests.cat, at("/bin/cat"), "macos", undefined, true), { flavour: null, how: "the manifest declares no flavours", probe: false });
+});
+
+test("a stored manifest's gnu flavour is never detected: its probe's output is the author's, and no filter on it holds", () => {
+    // The author chose the probe's arguments and the program, so the output says what the author wants. A filter
+    // dropping lines that contain an argument is not enough: printf prints the matching line from octal escapes.
+    const printf = { ...FLAVOURED, flavours: { gnu: { probe: { args: ["\\164ool (GNU tool) 4.9\\n"], pattern: "^tool \\(GNU tool\\) (\\d+\\.\\d+)", range: ">=4.3 <5" } } } };
+    const printed = execFileSync("printf", printf.flavours.gnu.probe.args, { encoding: "utf8" });
+    assert.match(printed, new RegExp(printf.flavours.gnu.probe.pattern, "m"), "printf did not print the GNU line");
+    assert.ok(!printf.flavours.gnu.probe.args.some((a) => printed.includes(a)), "the printed line contains an argument, so it does not show the bypass");
+    const r = flavourOf(printf, { path: "/usr/bin/tool", inRoot: false }, "linux", "4.9", false);
+    assert.deepEqual([r.flavour, r.probe], [null, false]);
+    assert.match(r.how, /never run/);
+});
+
+test("a detected flavour reads the core and its own overlay; undetected reads the core with optionsFirst; other describes nothing", () => {
+    const rows = [
+        // [argv, flavour, described, pathArgs]
+        [["tool", "-n", "f"], "gnu", true, [2]],
+        [["tool", "f", "--quiet"], "gnu", true, [1]],
+        [["tool", "f", "-n"], "gnu", true, [1]],
+        [["tool", "-l", "f"], "gnu", false, null],
+        [["tool", "-n", "f"], "bsd", true, [2]],
+        [["tool", "-l", "f"], "bsd", true, [2]],
+        [["tool", "--quiet", "f"], "bsd", false, null],
+        // BSD stops at the first operand: what follows is a file name, `--` and `-n` included.
+        [["tool", "f", "-n"], "bsd", true, [1, 2]],
+        [["tool", "f", "--", "-x"], "bsd", true, [1, 2, 3]],
+        [["tool", "-n", "f"], null, true, [2]],
+        [["tool", "f", "-n"], null, false, null],
+        [["tool", "--quiet", "f"], null, false, null],
+        [["tool", "-l", "f"], null, false, null],
+        [["tool", "-n", "f"], undefined, true, [2]],
+        [["tool", "f", "-n"], undefined, false, null],
+        [["tool", "-n", "f"], "other", false, null],
+        [["tool", "f"], "other", false, null],
+    ];
+    for (const [argv, flavour, described, pathArgs] of rows) {
+        const d = describeCall(argv, FLAVOURED, flavour === undefined ? {} : { flavour });
+        assert.equal(d.described, described, `${argv.join(" ")} as ${flavour}: ${d.why.join("; ")}`);
+        if (pathArgs) assert.deepEqual(d.pathArgs.map((p) => p.arg), pathArgs, `${argv.join(" ")} as ${flavour}`);
+        if (flavour === "other") assert.match(d.why.join("; "), /an implementation its manifest does not describe/);
+    }
+});
+
+test("under stop, an argument after an operand that spells a declared flag doing more than a read asks, in every spelling", () => {
+    // The manifest says the program reads it as a file name; if the argument order is misread, the write is dropped
+    // (red-team, #1963). Both describers apply this: window-ml-host's manifest.rs agrees on `tool f.txt --write-all`.
+    const stop = {
+        program: "tool", version: { range: "*", args: [], pattern: "" }, flavours: { bsd: { system: "macos" } },
+        command: { effects: ["read"], paths: "operands", clusters: true, terminator: "--", flags: { "-n": {}, "--write-all": { effects: ["write"] }, "-w": { effects: ["write"] },
+            "--out": { value: true, valueIsPath: "write" }, "-R": { recursive: true }, "--exec": { runner: true, effects: ["runs-code"] }, "--grep": { value: true, effects: ["read"] } },
+            flavour: { bsd: { argOrder: "stop", flags: { "--rm": { effects: ["write-names"] } } } } },
+    };
+    assert.deepEqual(validateManifest(stop), []);
+    for (const tail of [["--write-all"], ["--write-all=x"], ["-w"], ["-nw"], ["--out", "o"], ["--out=o"], ["-R"], ["--exec"], ["--rm"], ["--", "--write-all"], ["g", "-w"], ["-xw"]]) {
+        const argv = ["tool", "f.txt", ...tail];
+        const d = describeCall(argv, stop, { flavour: "bsd" });
+        assert.equal(d.described, false, `${argv.join(" ")} was described under stop: ${JSON.stringify(d.pathArgs)}`);
+        assert.ok(d.why.some((w) => /does more than read/.test(w)), `${argv.join(" ")}: ${JSON.stringify(d.why)}`);
+    }
+    // A read-only flag, or an argument no flag spells, stays a file name under stop.
+    for (const tail of [["-n"], ["--grep"], ["--nope"], ["-x"]]) {
+        const argv = ["tool", "f.txt", ...tail];
+        const d = describeCall(argv, stop, { flavour: "bsd" });
+        assert.equal(d.described, true, `${argv.join(" ")}: ${JSON.stringify(d.why)}`);
+        assert.deepEqual(d.pathArgs.map((p) => argv[p.arg]), ["f.txt", tail[0]]);
+    }
+    // Before the first operand the flag is a flag, as ever; after a `--` the command honours, given BEFORE any operand,
+    // every implementation reads an operand, so it stays one. After an operand, `--` is itself a file name under stop.
+    assert.equal(describeCall(["tool", "-w", "f.txt"], stop, { flavour: "bsd" }).described, true);
+    const t = describeCall(["tool", "--", "f.txt", "--write-all"], stop, { flavour: "bsd" });
+    assert.equal(t.described, true, JSON.stringify(t.why));
+    assert.deepEqual(t.pathArgs.map((p) => p.arg), [2, 3]);
+});
+
+test("a flavour's hardening is added after the core's, only for that flavour", () => {
+    const hardened = (flavour) => hardenArgv(["tool", "f"], describeCall(["tool", "f"], FLAVOURED, { flavour }));
+    assert.deepEqual(hardened("gnu"), ["tool", "--sandbox", "f"]);
+    for (const f of ["bsd", null, "other"]) assert.deepEqual(hardened(f), ["tool", "f"], String(f));
+    assert.equal(describeCall(["tool", "--sandbox", "f"], FLAVOURED, { flavour: "gnu" }).described, true, "the hardened argv describes as the original");
+});
+
+test("upgrade: a manifest without flavours describes every fixture call identically whatever the flavour says", () => {
+    // The 15 manifests shipped before flavours declare none; each vector under each detection state is today's description.
+    const plain = Object.entries(fixtures).filter(([name]) => !manifests[name].flavours);
+    assert.equal(plain.length, 15);
+    for (const [name, fx] of plain) {
+        for (const c of fx.calls) {
+            const today = describeCall(c.argv, manifests[name], { version: fx.version });
+            for (const flavour of ["gnu", "bsd", "other", null]) assert.deepEqual(describeCall(c.argv, manifests[name], { version: fx.version, flavour }), today, `${c.argv.join(" ")} as ${flavour}`);
+        }
+    }
 });

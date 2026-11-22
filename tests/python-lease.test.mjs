@@ -50,7 +50,8 @@ globalThis.chrome = {
 };
 const { leaseCell, pyKernelBusy, pyDetachedText, pyTailText, pyCancelText } = await import("../src/sw/sw-python-task.ts");
 const { pythonStarted, pythonDone, runPython } = await import("../src/sw/sw-python.ts");
-const { taskAction, endTasks, closeTurnTasks, openTasks, taskDrained, cancelPageTasks, hydrateTasks, dropAllTaskMemory, detachedCapMs, capMinutes } = await import("../src/sw/sw-tasks.ts");
+const { taskAction, endTasks, closeTurnTasks, openTasks, taskDrained, cancelPageTasks, hydrateTasks, dropAllTaskMemory, detachedCapMs } = await import("../src/sw/sw-tasks.ts");
+const { capMinutes } = await import("../src/python/py-lease.ts");
 const { dropPyTaskMemory } = await import("../src/sw/sw-python-task.ts");
 const { resetStateRegistry } = await import("../src/state-registry.ts");
 const { runControllers, runInboxes } = await import("../src/sw/sw-runs.ts");
@@ -1041,4 +1042,16 @@ test("PY_RESULT is the service worker's alone: absent from every table a page's 
     const mapped = Object.entries(HANDLE_MAP).flatMap(([k, v]) => [k, v.type, v.responseType]);
     assert.ok(!mapped.some((m) => String(m).startsWith("PY_RESULT")), "PY_RESULT is in HANDLE_MAP");
     assert.ok(!PAGE_STARTED_TYPES.has("PY_RESULT"), "PY_RESULT is page-started");
+});
+
+// --- the bench Stop's grace: the shipped second, and the test seam that can only lengthen it ---
+
+test("benchStopGraceMs: the default when nothing overrides it, longer only, anything else ignored", async () => {
+    const { benchStopGraceMs } = await import("../src/python/py-lease.ts");
+    assert.equal(benchStopGraceMs(1000, undefined), 1000, "the shipped bound, unchanged, when the seam is unused");
+    assert.equal(benchStopGraceMs(1000, 250), 1000, "a shorter value cannot make the bench give up sooner");
+    assert.equal(benchStopGraceMs(1000, 20_000), 20_000, "a test may lengthen it");
+    assert.equal(benchStopGraceMs(1000, "20000"), 1000, "only a number is obeyed");
+    assert.equal(benchStopGraceMs(1000, Number.NaN), 1000);
+    assert.equal(benchStopGraceMs(1000, Number.POSITIVE_INFINITY), 1000, "an unbounded wait is not a value a test can set");
 });

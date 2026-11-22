@@ -780,8 +780,9 @@ test("focus mode: a decided code step stays open while it runs and collapses onc
         await w.tick();
         const whileRunning = !w.shadow.querySelector(".astep-preview");   // a preview line only shows while COLLAPSED
         await w.dispatch(agentStep("fm", 1, { seq: 1, tool: "exec", arguments: { js: "1" }, pending: false, result: "ok", approval: "user" }));
-        // The fold is an animation on the surface and a timer in the component: give it its beat instead of counting ticks.
-        for (let i = 0; i < 20 && !w.shadow.querySelector(".astep-preview"); i++) { await w.tick(); await new Promise((r) => setTimeout(r, 30)); }
+        // The fold waits a moment after the result lands (so the result is seen), then animates, on a timer in the component:
+        // give it its beat, past that wait, instead of counting ticks.
+        for (let i = 0; i < 80 && !w.shadow.querySelector(".astep-preview"); i++) { await w.tick(); await new Promise((r) => setTimeout(r, 40)); }
         return { whileRunning, settled: !w.shadow.querySelector(".astep-preview") };
     };
     const debug = await run(false);

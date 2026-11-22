@@ -2,10 +2,10 @@
 // agent run's final answer), the user/assistant turn pair, and the session-list row. Extracted from
 // app.tsx; a leaf view layer over ui-kit + answer-render (no agent-detail / HUD deps, so agent-detail
 // can import ReplyBubble without a cycle).
-import { ArrivingMsg, PROMPT_RAW_TIPS, RawToggle, SentContext, SentImages, UserActions, UserText } from "./user-text";
+import { ArrivingMsg, PROMPT_RAW_TIPS, RawToggle, SentAsIs, SentContext, SentImages, UserActions, UserText } from "./user-text";
 import { cssDurationMs } from "../use-close";
 import { services, bareHash } from "../services";
-import { useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useJustArrived } from "./history-paint";
 import { StreamingMd, continuesLiveAnswer } from "./streaming-md";
 import type { ExtendProfile } from "../../contract/contract-chat";
@@ -131,6 +131,17 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
     // snapping in; it then draws exactly what the plain renderer would.
     const streamed = useRef(false);
     if (streaming) streamed.current = true;
+    // The "…thinking" line is not cut when the reply takes its place: a ghost of it fades out over the arriving body, for as long
+    // as the body takes to arrive (a surface that animates no arrival draws none). Decided in render, from the node on screen.
+    const wasPending = useRef(status === "pending");
+    const [ghost, setGhost] = useState(false);
+    if (status === "pending") wasPending.current = true;
+    else if (wasPending.current) { wasPending.current = false; if (cssDurationMs(bodyRef.current, "--asst-arrive-ms") > 0 && !streaming) setGhost(true); }
+    useEffect(() => {
+        if (!ghost) return;
+        const t = setTimeout(() => setGhost(false), cssDurationMs(bodyRef.current, "--asst-arrive-ms") + 20);
+        return () => clearTimeout(t);
+    }, [ghost]);
     const [closing, setClosing] = useState(false);
     const [opening, setOpening] = useState(false);
     const swapMs = (): number => cssDurationMs(bodyRef.current, "--asst-close-ms");
@@ -195,6 +206,7 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
                 stable, so it can shrink, swap, and grow. Surfaces that set no `--asst-close-ms` swap in one frame,
                 exactly as they always have. `folded` says which side is in it, so each half can run in its own
                 direction. */}
+            {ghost ? <div class="pending-note ghost" aria-hidden="true">…thinking</div> : null}
             <div class={`asst-body${collapsed ? " folded" : ""}${closing ? " closing" : ""}${opening ? " opening" : ""}`} ref={bodyRef}>
             {status === "pending"
                 ? <div class="pending-note">…thinking</div>
@@ -289,10 +301,11 @@ export function MessageTurn({ t, hash }: { t: Turn; hash?: string }) {
             <ArrivingMsg ts={t.ts}>
                 <div class={`msg user${shown ? "" : " no-text"}`} data-prompt={`t${t.id}`}>
                     <div class="mrow"><span class="who">user</span>{t.display ? <RawToggle raw={raw} onRaw={setRaw} tips={PROMPT_RAW_TIPS} /> : null}<span class="sp" />{shown ? <UserActions text={shown} /> : null}<Stamp ts={t.ts} /></div>
-                    {shown ? <UserText text={shown} /> : null}
+                    {shown ? <UserText text={shown} marks={!raw} /> : null}
                 </div>
                 <SentImages images={t.images} />
                 {t.display && !raw ? <SentContext context={t.display.context} /> : null}
+                <SentAsIs names={t.display?.asIs} />
             </ArrivingMsg>
             {/* `anchorHash` is what the event lane scrolls to. A chat session gets a container bar and
                 generation spans like any other, and clicking one used to navigate here and then find nothing

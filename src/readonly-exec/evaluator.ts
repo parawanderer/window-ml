@@ -3,12 +3,12 @@
 
 import type { CurrentSnapshot } from "../agent/current-context";
 import { isEmbedding } from "../ml/embedding";   // by brand, as a table is; embedding.ts imports nothing
-import { isTable, isStoredTable } from "../table/table-brand";   // a table facade is recognised by BRAND, and the brand module is itself dependency-free
+import { isTable, isStoredTable, isFrozenTablePart, isEditableTable, READ_ONLY_TABLE } from "../table/table-brand";   // a table facade is recognised by BRAND, and the brand module is itself dependency-free
 import { NotInDialect, Stopped, MAX_STRING, MAX_COLLECTION, Denied, riskyRegex, MAX_STORED_CELLS, STEP_BUDGET, NeedsPage, MAX_CALL_DEPTH, HOST_CHARS_PER_STEP, HOST_SCAN_CHARS_PER_STEP, FIXED_SLICE_FREE_CHARS, HOST_SCAN_ELEMENTS_PER_STEP, HOST_COPY_ELEMENTS_PER_STEP, EXPANDED_PARTS_PER_STEP, MAX_EXPANDED, MAX_EXPANDED_CHARS } from "./limits";
 import { Node } from "./parser";
 import { regexSteps } from "./regex-cost";
 import { replaceSize, replaceWorstCase } from "./replace-size";
-import { isSet, isMap, isStringObject, isRegExpObject, drainIterator, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, tokenListBrand, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS, INTRINSIC_CALLBACKS, INTRINSIC_ROOTS, COERCING_CALLBACKS, convertingArgs, ROOT_CONVERTS, CTOR_CONVERTS, CTOR_ITERABLES, convertsByIntrinsics, argWrites } from "./policy";
+import { isSet, isMap, isStringObject, isRegExpObject, drainIterator, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, tokenListBrand, SAFE_CONSTRUCTORS, ANSWER_METHODS, SH_READONLY_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS, INTRINSIC_CALLBACKS, INTRINSIC_ROOTS, COERCING_CALLBACKS, convertingArgs, ROOT_CONVERTS, CTOR_CONVERTS, CTOR_ITERABLES, convertsByIntrinsics, argWrites } from "./policy";
 import { PrintSwap, abridgeRow, diffSwap, jsonPathKey } from "./print";
 
 /** Per-frame set of names declared `const`, kept off the frame's own enumerable keys. */
@@ -491,10 +491,11 @@ export class Evaluator {
             const t = obj as { rows: unknown[]; columns: unknown[]; shape: [number, number] };
             const stored = isStoredTable(obj);
             const all = stored ? t.shape[0] : t.rows.length;
-            const width = key === "records" ? t.columns.length
+            const width = key === "records" || key === "copy" ? t.columns.length
                 : key === "select" ? (Array.isArray(args[0]) ? args[0].length : 0)
                     : key === "head" ? t.columns.length : 1;
-            const height = key === "head" ? Math.min(all, Math.max(0, Number(args[0] ?? 5)) || 0) : all;
+            // A copy is of the rows in hand, never the whole stored file.
+            const height = key === "head" ? Math.min(all, Math.max(0, Number(args[0] ?? 5)) || 0) : key === "copy" ? t.rows.length : all;
             if (height * width > MAX_COLLECTION) big();
             if (stored && (key === "col" || key === "select" || key === "records" || (key === "head" && height > t.rows.length))) {
                 this.storedCells += height * width;
@@ -533,7 +534,20 @@ export class Evaluator {
     // NOT here, so page state can't be written. Page arrays are never RETURNED by an allowlisted method (those
     // all build new ones), so marking method results owned can't launder a live page container.
     private owned = new WeakSet<object>();
-    private own<T>(v: T): T { if (v !== null && typeof v === "object" && isWritableTarget(v)) this.owned.add(v as object); return v; }
+    private own<T>(v: T): T {
+        if (v === null || typeof v !== "object" || isFrozenTablePart(v)) return v;   // a read-only table is never the script's
+        // A COPY (`t.copy()` and its own `select`/`head`) is the script's down to its rows, so `c.rows[0][1] = x` and
+        // `c.rows.push(r)` work on it as on an array it built. Any other table may share its rows with a store, a cache
+        // or the table it was cut from (`head` shares its parent's rows), so only the facade itself is marked.
+        if (isEditableTable(v)) {
+            const t = v as unknown as { rows: unknown[]; columns: unknown[] };
+            this.owned.add(t.rows); this.owned.add(t.columns);
+            for (const r of t.rows) if (Array.isArray(r)) this.owned.add(r);
+            return v;
+        }
+        if (isWritableTarget(v)) this.owned.add(v as object);
+        return v;
+    }
     /** Containers that are READ-ONLY with a message saying so: `ml.current.messages`, its rows, and everything inside
      *  them. A write there is not a refusal (the human gate would then run the script on the page, where there is no
      *  `ml.current`) but a TypeError the model reads. The write half will one day make these writes MEAN something
@@ -544,6 +558,8 @@ export class Evaluator {
     /** Each message row, to its index: the print boundary abridges a large one and names how to print it whole. */
     private rows = new Map<object, number>();
     constructor(private ml: Record<string, unknown> | null, private budget: number = STEP_BUDGET, private realm: ReadonlyRealm = "page") { this.fuel = budget; }
+    /** The steps spent so far, at most the budget: what a caller that shares one budget across evaluations charges. */
+    stepsSpent(): number { return Math.min(this.budget, this.budget - this.fuel); }
 
     /** STRICT FACADES: the policy realm's `c` and every object and array inside it. Reading a field one does not have
      *  is a REFUSAL, never `undefined`, so a typo'd `deny` is a broken policy the person sees rather than a rule that
@@ -698,6 +714,7 @@ export class Evaluator {
     }
 
     private refuseWrite(obj: unknown): void {
+        if (isFrozenTablePart(obj)) throw new TypeError(READ_ONLY_TABLE);
         if (obj !== null && typeof obj === "object" && this.shared.has(obj))
             throw new TypeError("ml.current.debug is read-only: it is what the person shared with you. To work on it as data, copy what you need ([...ml.current.debug.userWatches]).");
         if (obj !== null && typeof obj === "object" && this.readOnly.has(obj))
@@ -1169,6 +1186,8 @@ export class Evaluator {
             // like `onMl` — so add/remove/clear/dump run on IT, and nothing else. Its methods deliberately never
             // join ALLOWED_METHODS (so `x.remove()`/`x.dump()` on a page object stay out of dialect).
             const onAnswer = this.ml !== null && obj != null && obj === (this.ml as Record<string, unknown>).answer;
+            // `ml.sh` — the worker's program runner, with its OWN allowlist (SH_READONLY_METHODS: run, read), by identity too.
+            const onSh = this.ml !== null && obj != null && obj === (this.ml as Record<string, unknown>).sh;
             // THE CURATED FACADES FIRST, where absence is a REFUSAL rather than a typo. `ml` holds only the
             // read-only API, and `ml.answer` only its four curate methods — the real `window.ml` has
             // `setModel`/`chat`/`pythonExec`, so a missing name here means "the dialect withheld it", which
@@ -1184,6 +1203,8 @@ export class Evaluator {
                 if (typeof obj[key] !== "function") throw new TypeError(`${key} is not a function on the call`);
             } else if (onAnswer) {
                 if (!ANSWER_METHODS.has(key)) throw new NotInDialect(`method '${key}' not allowed`);
+            } else if (onSh) {
+                if (!SH_READONLY_METHODS.has(key)) throw new NotInDialect(`ml.sh.${key} is not in the read-only dialect: it is put to the person`);
             } else if (!methodAllowed(obj, key, this.isTokenList)) {
                 // WHICH KIND OF "no" IS THIS? The distinction decides whether a human gets interrupted.
                 //

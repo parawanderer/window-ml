@@ -91,15 +91,18 @@ page-hosted one. Several stores exist once per host.
 
 | State | Where | Persisted |
 | --- | --- | --- |
-| The session index: summary (title, pinned, status, start model, start page, lineage), event ring, gates, owner tab | `SessionIndex` (`session-index.ts`), `SessionSummary` (`session-host.ts`) | summaries and events of SAVED sessions in `ml-saved-sessions` |
-| A finished run's history (messages, payload, sub spend) | session store `history` | `ml-saved-sessions` if saved; otherwise only `bgRuns` (memory) |
+| The session index: summary (title, pinned, status, start model, start page, current page, fork parent, lineage), event ring, gates, owner tab | `SessionIndex` (`session-index.ts`), `SessionSummary` (`session-host.ts`) | summaries and events of SAVED sessions in `ml-saved-sessions` |
+| A finished run's history (messages, payload, sub spend) | session store: one record per message in the `history` store (`[hash, pos]`), the payload and sub spend in `runmeta` (`[hash]`); a row written before version 2 carries it as `history` until `SessionStore.migrate` moves it (`session.history` in the inspector). The writer's memory of its last write (`written`) is a cache: lost, the next write is a whole one | `ml-saved-sessions` (version 2) if saved; otherwise only `bgRuns` (memory) |
 | Chats: `createChat` histories | page `sessionRegistry`; worker-hosted `chats` (`sw-chat.ts`, cap 32) | `ml_session_<hash>` and store `history` when `save: true` |
+| A worker-hosted chat's PDFs (`chat.files`) | `BgChat.files` (`sw-chat.ts`): name, pages, pages sent, two row keys | the list in `ml_session_<hash>` (`StoredSession.files`); the bytes as held `ml-values` rows, released with the chat's session |
 | Page registries of runs and handles | `agentRegistry`, `handleRegistry` (`bus.ts`) | no; they never shrink, so finished runs stay resumable for the page's life |
 | Reader-triggered model calls (titles, summaries, annotations) | `asides` (`store.ts`), client-side | no |
 | The title | owned by the worker (`titleSession`, `sw-sessions.ts`): kept in the session index, asked of the utility model once; every surface asks it (`SESSION_TITLE`, or `side.call` with purpose `title`) | in `ml-saved-sessions` if saved. A rename on the chat page does not yet reach a sidebar that already shows the old one |
 | Who built a page-built run or chat: its tab and that tab's top-frame origin (`run.builder`) | `ml_pagebuilt` in `chrome.storage.session` (`page-route.ts`), written once from the browser's stamp at the page's START_RUN or first session event | survives a worker eviction, not a browser restart; dropped when its tab closes, when the session is forgotten, and oldest first past 500 |
-| The Python packages a run installed (`python.run-installs`) | `ml_pkginstalls` in `chrome.storage.session` (`sw-pkg-installs.ts`), appended when an install's candidate passes; every readonly cell of the run carries it to the run's worker | survives a worker eviction, not a browser restart; dropped with the run's namespace (`deletePythonRun`) |
+| The Python packages a run installed (`python.run-installs`) | `ml_pkginstalls` in `chrome.storage.session` (`sw-pkg-installs.ts`), appended when an install's candidate passes; every cell of the run carries it to the run's worker | survives a worker eviction, not a browser restart; dropped with the run's namespace (`deletePythonRun`) |
+| Which runs' HUD cards the person dismissed (the ✕) | `cardDismissedSet` (`card-state.ts`), in the card's iframe | `ml_card_dismissed` in `chrome.storage.session`, read by the card's frame at load (no run's card shows until it has) and written by `dismissCardRun`/`undismissCardRun`; survives navigation and a worker eviction, not a browser restart; oldest dropped past 200. Written only from the extension frame, never by the page or the worker; a new run has a new hash and shows. The popup's Show clears it | none |
 | A run's detached tasks (`run.tasks`): each row's tool, status, timing, result text and whether the model read it, and for a cell the id that finds it again | `tasks` (`sw-tasks.ts`) | `ml_tasks:<runId>` in `chrome.storage.session`, written through (`persist`) and read back by `hydrateTasks` before a turn opens; survives a worker eviction, not a browser restart; removed by `endTasks`. The executor, a waiter and the ending flag are never stored | `run.tasks` (`ml.current.tasks`) |
+| How many turns finished tasks started for a run in a row, with no message from the person between (`run.taskChain`): the cap is the `taskTurnChainMax` setting | `chains` (`sw-tasks.ts`), a cache of the stored key | `ml_task_chain:<runId>` in `chrome.storage.session`, written when a task starts a turn and removed by the person's next word (`resetTaskChain`) and by `endTasks`; absent reads as 0, so a table from before it reads as a fresh chain; survives a worker eviction, not a browser restart | `run.taskChain` (the inspector only) |
 
 The builder record is what lets a person's message to a page-built session reach a page at all
 (`pageRouteFor`): without one the message is refused, so losing it fails closed. A browser restart loses it along
@@ -165,7 +168,7 @@ saved); `tabPageUrl`; unsaved sessions' index rows; ephemeral worker chats; the 
 
 `apiKey`, `chatUrl` (it can carry a token), `modelFilter`, the self-approval list and the old `pageApprovalDomains` (show `publicConfig()` only); the hub
 keyring (`ml-hub-keyring`: private keys, the channel key, the account root) beyond what `membershipOf` returns; a
-pairing offer's code; the archive folder handle (its name and state only); values in Python's `full` namespace (it can
+pairing offer's code; the archive folder handle (its name and state only); values in a Python cell's namespace that is outside the dialect (it can
 hold live network handles: neither shown nor evaluated).
 
 ## The registry

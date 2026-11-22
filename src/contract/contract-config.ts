@@ -135,6 +135,13 @@ export interface MlConfig {
      *  ended, whichever executor runs it. 1..60; a value outside reads as 60, the ceiling (docs/spec/ASYNC_CALLS.md,
      *  rule 4b). A call's own `timeoutMs` is clamped to it. */
     detachedTaskMaxMin: number;
+    /** A finished detached task starts the run's next turn by default (docs/spec/ASYNC_CALLS.md, rule 4b). On, a finished
+     *  task with no turn running only parks its result and says so in the transcript: it is read at the person's next
+     *  message. DevTools Settings only. */
+    taskNotifyOnly: boolean;
+    /** The most turns finished tasks start in a row, with no message from the person between them. 1..20; a value outside
+     *  reads as the default, 5. At the cap a finished task parks and says so, as with `taskNotifyOnly`. */
+    taskTurnChainMax: number;
     /** Move a session the store evicts (by retention or by the budget) into the long-term SQLite archive instead of
      *  deleting it. Off by default: it changes what "delete after N days" means. */
     sessionArchive: boolean;
@@ -222,6 +229,10 @@ export interface MlConfig {
      *  its execution log, the watches you shared) inside a read-only `exec` of a run the extension hosts, and its system
      *  prompt says so, with `ml.current`'s shape. Off: no `ml.current` at all, and no word of it in the prompt. */
     selfIntrospection: boolean;
+    /** Default ON. The worker replaces every registered secret value, and the extension's own saved API key, in what the
+     *  PERSON sends (a typed message, a paste, an attached file's text) with `[REDACTED:<NAME>]` before the model reads it
+     *  or the session stores it. Off: what you send reaches the model as typed. A run cannot change it, a page cannot read it. */
+    scrubPersonInput: boolean;
     /** Default OFF. Let a run's approved script start programs on this machine through `ml.sh`, by way of the process
      *  host (window-ml-host, installed separately). Every call still asks, showing what will run. */
     shellEnabled: boolean;
@@ -233,6 +244,10 @@ export interface MlConfig {
     shellSandbox: boolean;
     /** The directories programs are looked up in, in order. Empty: the host's own default. */
     shellPath: string[];
+    /** The programs that reveal other processes (a manifest's `reveals`: `ps`, `lsof`, `top`) whose otherwise free calls
+     *  run without asking, by the manifest's `program`. Empty: every such call asks. A gate key: only the person writes
+     *  it (docs/spec/PROGRAM_MANIFEST.md, "Programs that reveal other processes"); not in `ml.config()`. */
+    shellRevealsAllow: string[];
     /** The most disk, in MB, the value store may hold: the whole bodies of fetched tables too large for their preview,
      *  kept so a later step can read every row by pointer. Least recently read goes first past it; the browser's own
      *  quota caps it further. */
@@ -324,6 +339,8 @@ export const DEFAULT_CONFIG: MlConfig = {
     sessionStoreBudgetMB: 256,
     pythonIdleMinutes: 10,
     detachedTaskMaxMin: 60,
+    taskNotifyOnly: false,
+    taskTurnChainMax: 5,
     sessionArchive: false,
     agentStartPage: "",
     priceSnapshotUrl: "",
@@ -345,11 +362,13 @@ export const DEFAULT_CONFIG: MlConfig = {
     autoApproveSelfSource: true,        // default on: an uncredentialed read of the agent's OWN repo source is free
     agentSeesFocus: true,               // default on: chat_metadata says where the user is, when it is not the agent's tab
     selfIntrospection: true,            // default on: the agent reads its own run as `ml.current`, and is told so
+    scrubPersonInput: true,             // default on: registered secrets in what the person sends become [REDACTED:<NAME>]
     valueStoreBudgetMB: 1024,           // capped at half the browser's quota for the extension
     shellEnabled: false,                // default off: no program runs until the person turns ml.sh on and names a folder
     shellRoots: [],
     shellSandbox: true,                 // default on, and fails closed: no sandbox on this machine means every call says so
     shellPath: [],
+    shellRevealsAllow: [],              // default empty: a call to ps, lsof or top asks until the person lists the program
     protoStream: "auto",                // ask every time: one header, and a backend that won't serve it answers as it always did
     pierceClosedShadow: true,
     cdp: true,
@@ -418,13 +437,17 @@ export const SETTING_PLACES: Readonly<Partial<Record<keyof MlConfig, SettingPlac
     autoApprovePython: { tab: "advanced", section: "python" },
     pythonIdleMinutes: { tab: "advanced", section: "python" },
     detachedTaskMaxMin: { tab: "advanced", section: "python" },
+    taskNotifyOnly: { tab: "advanced", section: "python" },
+    taskTurnChainMax: { tab: "advanced", section: "python" },
     autoApproveSelfSource: { tab: "advanced", section: "fetch" },
     agentSeesFocus: { tab: "advanced", section: "focus" },
     shellEnabled: { tab: "advanced", section: "shell" },
     shellRoots: { tab: "advanced", section: "shell" },
     shellSandbox: { tab: "advanced", section: "shell" },
     shellPath: { tab: "advanced", section: "shell" },
+    shellRevealsAllow: { tab: "advanced", section: "shell" },
     selfIntrospection: { tab: "advanced", section: "introspection" },
+    scrubPersonInput: { tab: "advanced", section: "secrets" },
     protoStream: { tab: "advanced", section: "protostream" },
     pierceClosedShadow: { tab: "advanced", section: "shadow" },
     cdp: { tab: "advanced", section: "cdp" },
@@ -465,7 +488,7 @@ export const fmtCtx = (n: number): string => {
  *  ml.agent can decide whether to route a run through the unforgeable BACKGROUND loop (design A —
  *  when a debug surface is enabled) or the in-page loop (off). It's UI state, not a secret. */
 export type MlPublicConfig = Pick<MlConfig,
-    "model" | "ocrModel" | "ocrNumCtx" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "serverToolsOff" | "commanderServerTools" | "autoApprovePython" | "autoApproveSelfSource" | "selfIntrospection" | "pierceClosedShadow" | "cdp" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision" | "labelMatch"> & {
+    "model" | "ocrModel" | "ocrNumCtx" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "serverToolsOff" | "commanderServerTools" | "autoApprovePython" | "autoApproveSelfSource" | "selfIntrospection" | "pierceClosedShadow" | "cdp" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision" | "labelMatch" | "pythonIdleMinutes" | "detachedTaskMaxMin"> & {
     /** COMPUTED per request (not stored): whether THIS page's origin is on the user's page-approval
      *  whitelist. When true, ml.agent honours the page's own approve()/confirm gate (the user trusts this
      *  domain); otherwise a privileged tool routes to the unforgeable background gate. The raw domain
@@ -495,6 +518,8 @@ export function publicConfig(config: MlConfig, pageApprovalAllowed: boolean): Ml
         pierceClosedShadow: config.pierceClosedShadow, cdp: config.cdp,
         groundingEnabled: config.groundingEnabled, groundingModel: config.groundingModel,
         groundingRange: config.groundingRange, debugMode: config.debugMode, labelMatch: labelMetric(config.labelMatch),
+        // The lifetimes list in the prompt states them (docs/spec/ASYNC_CALLS.md, rule 4b): a page-built run composes its own.
+        pythonIdleMinutes: config.pythonIdleMinutes, detachedTaskMaxMin: config.detachedTaskMaxMin,
         pageApprovalAllowed: pageApprovalAllowed === true,
     } as MlPublicConfig;
 }
@@ -537,7 +562,7 @@ const layout = {
     advanced: { label: "Advanced", sections: {
         servertools: "Server-side tools", javascript: "JavaScript", pointers: "Output pointers", python: "Sandboxed Python",
         fetch: "Fetching (fetch_url / ml.fetch)", focus: "Where you are (chat_metadata)", shell: "Programs (ml.sh)",
-        manifests: "Program manifests (ml.sh)", libraries: "Python libraries (read-only dialect)",
+        manifests: "Program manifests (ml.sh)", secrets: "Secrets", libraries: "Python libraries (read-only dialect)",
         introspection: "The agent reading its own run (ml.current)", protostream: "Streaming wire format",
         shadow: "Shadow DOM", cdp: "Debugger-based actions and user scripts" } },
     permissions: { label: "Permissions", sections: {

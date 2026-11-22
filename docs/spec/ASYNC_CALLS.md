@@ -171,8 +171,25 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    detached `ml.sh` call or cell; the `Detached` texts say the task runs on. Slice B: the table is durable in
    `chrome.storage.session` (`ml_tasks:<runId>`), read back by `hydrateTasks` before a turn opens it; `PY_DONE` for a
    cell a new worker never sent fetches the result from the offscreen document (`PY_RESULT`) and parks it; the cap is the
-   `detachedTaskMaxMin` setting (default 60) for both executors, and `PY_DETACHED_MAX_MS` is its 60 min ceiling. NOT
-   built: a completion starting a turn, notify-only, the chain cap, the lifetimes list and the no-tab state. This
+   `detachedTaskMaxMin` setting (default 60) for both executors, and `PY_DETACHED_MAX_MS` is its 60 min ceiling. Slice C: a
+   finished task with no turn running starts the run's next turn through the person's Continue path (`startTurnFor`,
+   `sw-tasks.ts`), unless `taskNotifyOnly` is on, `taskTurnChainMax` (default 5) turns were already started in a row, the run is
+   page-built, busy, has no tab or sits on an extension page; each parks the result and logs `task`/`not-started` with its
+   reason, and notify-only and the cap also say a transcript line. Completions that arrive while the turn starts coalesce into
+   it, and a person's message sent meanwhile is steered into that turn: a starting resume no longer answers "busy" and
+   loses it. A turn started for a task never runs on an empty inbox: if its result was read elsewhere while the page was
+   adopted, nothing starts, the chain count is given back and `task`/`not-started` logs `empty-inbox`. The check runs in
+   `userRunAction` after the page-adopt awaits and before `hostRun` (ruled 2026-11-14), since a turn stopped after
+   hosting still emits a result and nothing can drain the inbox without a live turn. The chain count is
+   `ml_task_chain:<runId>` and the person's
+   next word resets it. A result for an archived or released run is dropped with a record.
+   Slice D: the lifetimes list, one paragraph ("HOW LONG THINGS LAST") in the default system prompt
+   (`lifetimesClause`, `prompts.ts`, appended by `composeSystemPrompt`), nowhere else. Its two figures are the person's
+   settings, carried in the public config (`pythonIdleMinutes`, `detachedTaskMaxMin`) so a page-built run composes the
+   same text: the idle figure as the reap reads it (`idleMinutes`, `py-reap.ts`), the cap as the sandbox applies it
+   (`capMinutes` and `clampDetachedMs`, `py-lease.ts`), both defaulting to `DEFAULT_CONFIG`; `tests/agent-start.test.mjs`
+   compares them with `DEFAULT_REAP_BETWEEN_MS` and `PY_DETACHED_MAX_MS`. NOT built: the HUD per-run task mark
+   (slice E, with the chat-page lane; slice C keeps the transcript line) and the no-tab state on the chat page. This
    reverses rule 4, and the mode 1 ruling that a model answering while a build is detached ends the build, for the two executors that run
    outside the service worker: an `ml.sh` call (the host's process) and a detached `python_exec` cell (the offscreen
    document). A fetch runs IN the service worker and dies with it, so it stays turn-bound: the turn's end cancels it,
@@ -260,7 +277,7 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
      and mobile in one change), as with the task line.
    - **Notify-only is a setting.** A durable per-config flag in DevTools Settings (the settings rule; the popup is
      optional) switches every run to notify-only: a completion with no turn running parks, the person sees a
-     transcript system line and a HUD mark, and the model reads it at the next turn the person starts. The
+     transcript system line (slice C) and a HUD mark (slice E, with the chat-page lane), and the model reads it at the next turn the person starts. The
      subscription path (mode 2, "a detached call's completion") is unchanged by either setting.
    - **A chain of started turns is capped.** RULED 2026-11-12 (Shane, both numbers). A started turn can detach a
      task whose completion starts the next, so turns can follow one another with no person's message between them.
@@ -276,12 +293,33 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
      task runs on after the answer and its result starts or reaches the next turn, replacing the line that says the
      answer ends it. Each figure in the list is read from the constant that enforces it, never typed twice, and a row
      fails when the two differ. The list is measured against the prompt budget (`docs/spec/PROMPT_BUDGET.md`) and
-     goes through the next prompt review.
+     goes through the next prompt review. BUILT 2026-11-17 (slice D; see the BUILT line above, the review in
+     PROMPT_BUDGET.md). The `Detached` texts already said the task runs on after the answer and that a result after it
+     is read at the start of the next turn, so slice D left them as they were; "starts a turn" waits for slice C. The
+     list says a `@tool:` value is gone when the worker restarts (`docs/dev/state.md`, "Lost on a worker eviction"),
+     so the tool-output clause's "valid for the whole session", which contradicted it, was removed: the list is the one
+     statement of how long a value lasts.
    - **Bounds** (e3's rows, rule 10, on the building branch): a task never delivers to another run or another
      session; no task completion starts a turn for a run other than its own; a completion on notify-only never starts
      a turn; a started turn runs on no page we own; a parked result is delivered only to its own run, on its own session, at that run's next turn; a run
      archived or released first drops it, and the drop is a run-log record; the per-task deadline and the cap hold
      between turns; session release ends every task of the session; a page reaches no parked result.
+     Proposed 2026-11-14 for slice C (red-team rows, to be written as failing tests first):
+     1. A completion never starts a turn for another run or session, including through a forged run id on any
+        page-started type or `HANDLE_MAP` shape.
+     2. With notify-only on, no path starts a turn: memory, `pythonDone` after an eviction, or the attach probe.
+     3. The chain cap holds across a worker eviction, and nothing a page can send resets the count (a page's
+        `INJECT_MESSAGE` or steer, or a page-built run's message).
+     4. A started turn never runs on a page we own or a non-http(s) tab, including a tab that navigated to one after
+        the task detached.
+     5. A run with no tab, an archived one or a released one starts nothing, and a late result is dropped with its
+        record.
+     6. A person's message held during a starting turn reaches only that run's turn; if the turn never hosts, it is
+        taken back with the notice, never delivered later.
+     7. `ml_task_chain:` is not readable or writable from a page, and a page cannot set `taskNotifyOnly` or
+        `taskTurnChainMax` (the `SET_MODEL` control is the only setting a page may change).
+     OPEN, untouched by slice C: a person's empty Continue probably shows as done on the chat page until its first
+     step, as a task-started turn did before `session-index.ts` treated `agent-task-say` as running.
 5. **The handle is the run's.** It is answered only for the run that made it, from that run's own tab or the service
    worker, with the sender checks the inbox already has; a page cannot await, cancel or read another run's call. A
    detached call, its wake and its collection are records in the run log (`python`/`detached`, `shell`/`detached`,
@@ -294,6 +332,145 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    whole's key, its length and any figure, minted into a `@tool:` pointer where the loop drains it (#1730); the model
    inspects more with `tail(id, { lines })` on the handle, and the full capped output is a value it can point at, as
    a tool's large result is today.
+
+## A detached call that asks the person to sign in (proposed 2026-11-20, Shane's ruling; not built)
+
+**Status: proposed, assigned to the async lane as a spec only; nothing below is built.** A device-flow login
+(`gh auth login`, `huggingface-cli login`, a cloud CLI's device login, a Python library's device flow over the network)
+prints a link and a code, then polls until the person approves. It needs no stdin, so none of
+[`SHELL_INTERACTIVE.md`](SHELL_INTERACTIVE.md) applies. It outlives its lease and detaches (mode 1). The model reads
+the prompt in the task's `tail`. It shows that output to the person BY POINTER in its answer, never retyped, says
+what to do, and ends its answer. The call's result arrives through the inbox as today and, under rule 4b slice C,
+starts the next turn. A program that waits for TYPED input is another case, with its own `waiting-input` status:
+[`SHELL_INTERACTIVE.md`](SHELL_INTERACTIVE.md), "Typed input". Three pieces are missing: a pointer for a running task's tail (1), links the person can click
+(2, another lane's), and the model knowing the flow (3).
+
+Every claim about today below is marked **checked** (file and line, read on main at 6ebd0efd) or **guessed**.
+
+### 1. A tail of a running task gets a pointer
+
+**Today (checked).** `task` is declared `citable: false` (`src/tools/tool-registry.ts:105`), so its schema gets no
+`token` parameter (`src/sw/builtin-texts.ts:42`). The loop mints a pointer for a step only when it is citable
+(`src/agent/agent-loop.ts:1224`). For `task`, that means only when its answer carries a stored whole (`textValue`),
+and `tail` stores one only when a stream is past `ASKED_TAIL_CHARS` (8,192 characters per stream, not bytes,
+`src/shell/sh-tail.ts:17`). The paths are `peekTail` (`src/sw/sw-shell-call.ts:245-254`) and `pyTail`
+(`src/sw/sw-python-task.ts:113-123`), entered from `src/sw/sw-tasks.ts:602-608`. Even then the model sees the id only
+through `cutNote` (`agent-loop.ts:365`). An uncut tail, which is what a sign-in prompt is, has no pointer. A detached
+call's own result has a pointer only when cut (`taskPointer`, `agent-loop.ts:940-947`). Nothing has a `pointer`
+field; the detach answer is a sentence plus the tail (`pyDetachedText`, `sw-python-task.ts:66-74`; `detachedText`,
+`sw-shell-call.ts:274-281`).
+
+**Proposed.**
+- **Every `task` tail of a RUNNING task is citable.** The step mints a pointer through the generic path
+  (`tokenStore.note`, `agent-loop.ts:1279`) whose `out` is the snapshot exactly as the model was shown it, after
+  `forModel`'s scrub (`sw-tasks.ts:607-608`). A cut tail keeps today's stored whole as the pointer's value. An uncut
+  one stores no value-store row: the snapshot is in the pointer's `out`, as any small citable output is. A tail of a
+  task that has ended is not new data (it is the stored result) and mints nothing new.
+- **The answer names the pointer on every such tail**, not only on `token: true`, in one line beside the snapshot:
+  `[this output is @tool:<id>; to show it to the person, embed ![label](@tool:<id>:out) in your answer, never retype it]`.
+  That is 117 characters, about 29 tokens at four characters a token (not measured against a backend). It is paid
+  on each tail of a running task only. A cut tail's `cutNote` and this line are one line, not two.
+- **The snapshot is frozen at read time.** A later tail mints another pointer and never changes this one, so an
+  embedded snapshot shows the person exactly what the model read. A program cannot swap the link after the model
+  read it. The log and the exports carry the same text, the rule that the log shows what the model saw.
+- **The pipe selects the lines.** The model embeds only the relevant lines by reading the pointer through
+  `dereference` with a pipe, e.g. `grep -A2 -i 'https\|code'`. That mints a VIEW pointer and names it for embedding
+  (`agent-loop.ts:609`; `PIPE_CMDS`, `src/pointers/text-pipe.ts:22`: `grep` with `-A/-B/-C`, `head -n`, `tail -n`; there
+  is no line-range verb, `head -n B | tail -n K` is the form `cutNote` teaches). Checked: the pipe composes this way
+  today. Guessed: whether the embed syntax itself takes a pipe; the spec does not rely on it.
+- **Lifetime: the session's, until a worker eviction** (`docs/dev/state.md`, "Lost on a worker eviction"). The pointer
+  is in `tokensByRun` (`src/sw/sw-runs.ts:592`, declared `run.pointers` with `lostOn: ["worker-eviction"]`, about
+  `:595`), capped per session (`TokenStore.CAP`, 200; `MAX_TOKEN_SESSIONS` 24, `:597`) and dropped at session release
+  (`releaseSessionTokens`, `:659`). Checked: for an `ml.sh` call the open native port keeps the worker alive while the
+  call runs (rule 4b, "Durable"). A detached cell does not, so between turns the worker can be evicted (about 30 s idle)
+  and the model's pointer then dangles, as every pointer does. The flow needs the pointer only within the turn that
+  embeds it. The answer's expansion is captured at the step (`tokenRenders.push`, `agent-loop.ts:1280`, into the
+  result's outputs). Guessed: the person's rendered answer therefore survives an eviction with the saved session; the
+  building PR checks it with a fixture.
+- **Bounds.** One pointer per tail call, under the step budget, `TASK_TAIL_MAX_LINES` (200, `sw-tasks.ts:127`) and the
+  `TokenStore` cap, oldest first. A loop of tails costs steps, never unbounded memory.
+
+### 2. Links the person can click (a dependency, owned by the small-fixes lane)
+
+This flow depends on the output-cell link rule the small-fixes lane owns: an embedded output shows http and https
+links as clickable, with the host shown.
+
+### 3. The model knowing the flow: a worked example, written once
+
+**Placement (Shane, 2026-11-20).** The flow is the same for every executor that detaches, so it is written once, as
+prose with a worked example, in `agent_api_docs` (no standing prompt cost). A short pointer to it sits where the model
+meets the situation.
+
+**Where the pointer goes (checked, and the coordinator's recommendation refined).**
+- The executors do NOT share their detached text. Each formats its own: `pyDetachedText`
+  (`src/sw/sw-python-task.ts:66-74`) and `detachedText` (`src/sw/sw-shell-call.ts:274-281`). They share only copied
+  wording ("use the task tool (await, tail, cancel). Its result arrives as a [task <id> …] message"). `exec` does not
+  detach today (rule 4a: only `ml.sh` and `python_exec` do), so "all three executors" is two now.
+- **Recommended: one shared constant, `SIGN_IN_HINT`, beside `TASK_AWAIT_MAX_MS` in `sw-tasks.ts`.** Both detached
+  texts append it, a detached `exec` appends it when built, and a test asserts each executor's text ends with it. The
+  text: `If its output asks the person to sign in or open a link: agent_api_docs "sign-in prompts".` That is 90
+  characters, about 23 tokens, paid only when a call detaches.
+- **The tail's pointer line (piece 1) is the second place**, and it is where the model actually meets the link. It
+  says how to embed (above), so it needs no reference to the docs.
+- **No line in the system prompt or in a tool description.** One sentence there (about 25 tokens) would be paid on
+  every call of every run that offers `task`, against the 82-token lifetimes paragraph (PROMPT_BUDGET.md, "Review of
+  2026-11-17"). It would be the only line about one rare flow, and `python_exec`'s description alone would miss
+  `ml.sh` (Shane's condition). The detach and the tail are the two moments the model meets the case, and both carry
+  text already. The probe below decides if this is wrong: its second arm adds the sentence to the default prompt.
+
+**The example, as `agent_api_docs` would carry it** (a static section beside the runtime ones in
+`src/tools/api-docs-tool.ts`; single spaces, no aligned columns, per the no-padding rule):
+
+```
+## Sign-in prompts
+Some programs print a link and a code and wait for the person to approve (gh auth login, huggingface-cli login).
+1. Give the call a time limit long enough to approve in, e.g. ml.sh(["gh","auth","login","--web"], {timeoutMs: 900000}). It detaches.
+2. task tail <id>. The answer names a pointer to that output, e.g. @tool:a1b2.
+3. Optional: dereference @tool:a1b2 with pipe "grep -A1 -i 'https\|code'" for only those lines; it names a new pointer.
+4. Answer the person with the pointer, never the link or code retyped, e.g.:
+To sign in, open this link and enter the code:
+![sign-in prompt](@tool:a1b2:out)
+Tell me when you have approved it.
+5. Do not open the link yourself, and do not await the task before answering: the person cannot see your answer until you finish. Its result arrives as a [task <id> …] message.
+```
+
+Measured: 837 characters, about 209 tokens at four characters a token, paid only when the model reads that section. Step 1 matters: an `ml.sh` call
+that names no `timeoutMs` keeps the host's 120 s default (rule 4b, "The cap"), and a device code usually lasts longer
+than that. The cap clamps it to `detachedTaskMaxMin`. Checked: `TASK_AWAIT_MAX_MS` is 10 min (`sw-tasks.ts:125`). An
+await inside the turn would hold the answer, and so the link, from the person, which is why step 5 says not to.
+Under `taskNotifyOnly` or at the chain cap, the result parks and the person's next message (step 4's "tell me")
+starts the turn that reads it.
+
+**How it is checked (named, not run now).** A new panel interview (`sign-in-detach`, in `tests/e2e/panel/`), on the
+`python-detach.interview.ts` pattern (PROMPT_BUDGET.md, "`task` reaches every run with `python_exec`"). Each model gets
+a detached `ml.sh` task whose `task tail` answer is a real `gh auth login` device prompt with its pointer line, and is
+asked for its next move as text. It passes when the answer:
+- embeds `@tool:<that id>` (or a view of it);
+- contains neither the URL nor the code verbatim;
+- calls no `navigate`, `fetch_url` or `exec` on the link;
+- does not `task await` before answering.
+
+The arms are (a) the detached hint and the tail line only, and (b) the same plus one sentence in the default system
+prompt. Two answers go to the next prompt review: (b) is adopted only if (a) misses where (b) does not, and both are
+costed with `usage.prompt_tokens`.
+
+**Later, named only.** A BROWSER stand-in in the host for programs that open a browser themselves instead of printing
+the link. Many CLIs honour `BROWSER`, and `gh` honours `GH_BROWSER` (guessed, not checked against each CLI). The host
+would set it to a stand-in that prints the URL to stdout, where piece 1 picks it up. That is window-ml-host's change.
+
+### What a hostile program or page must not get (e3's rows, when a piece is built)
+
+1. A snapshot pointer is the run's. No page, other run or resumed session can dereference or embed it (pointers are
+   run-bound, `docs/dev/pointers.md`), and `task` stays worker-realm and keyed by run (rule 5).
+2. An embedded snapshot shows the person exactly the scrubbed text the model read, and never more than the scrub let
+   through. The same text goes to the log and both exports.
+3. A snapshot is frozen. A program that rewrites its output after the tail cannot change what an earlier embed shows.
+4. Nothing in the hint, the tail line or the example tells the model to open, fetch or navigate to a link from program
+   output. The probe asserts it. A hostile program printing a link gets at most that link shown to the person, with
+   its host (piece 2).
+5. A loop of tails is bounded by steps and the pointer cap, never memory.
+6. A page cannot cause a tail, read a snapshot, or make a call detach. None of `task`'s paths is in `HANDLE_MAP` or a
+   page-started type.
 
 ## Mode 2: the push subscription
 

@@ -50,11 +50,12 @@ A yes/no "readonly" flag is not enough. Each function carries an effect signatur
 | `cache` | keeps internal state no caller can observe (a memo table) | allowed. The test is OBSERVATIONAL: same results, same order, same identities with or without the cache. A cache that changes iteration order or object identity fails it and is `external`. |
 | `reads-external` | reads state the arguments did not carry (the clock, a random source, a global) | allowed or refused per dialect: it is not an effect, but it makes the result non-deterministic |
 | `external` | any observable effect outside the interpreter | refused |
+| `writes(path arg)` | writes the file its path argument names | allowed only when an entry check proves, before the call, that the path is under the model's writable folder (`/files/agent/`, [`ML_TABLE.md`](ML_TABLE.md), "Writing files"); refused otherwise. The offscreen document re-checks the write. |
 
 An effect may depend on an argument's VALUE: pandas `df.sort_values(…, inplace=True)` mutates `df`, and with
 `inplace=False` it is pure. So an effect signature can be a function of the arguments, like a cost (below).
 
-These five terms are the authoring vocabulary. What a policy reads is their projection onto the shared algebra of
+These terms are the authoring vocabulary (`writes(path arg)` added 2026-11-19, ruling 69). What a policy reads is their projection onto the shared algebra of
 (operation, resource) pairs in [`EFFECTS.md`](EFFECTS.md): `mutates(i)` is `write(heap(arg i))`, which the interpreter
 resolves to owned or unowned at the call; `reads-external` is `read(entropy)`; `external` is `unknown` unless the manifest
 names the resource. The algebra is what lets one policy read a library call, a program call and a fetch alike.
@@ -198,10 +199,11 @@ export default {
 
 ## Examples: Python
 
-**A Python read-only dialect is decided and not yet built** ([`PYTHON_DIALECT.md`](PYTHON_DIALECT.md), 2026-10-15); until
-it exists everything built is JavaScript. (`python_exec`'s `mode: "readonly"` shares only the name: it cuts the
-sandbox's network and JS bridges ([`docs/dev/python-sandbox.md`](../dev/python-sandbox.md)), does not bound work, and
-tracks no ownership; the dialect replaces it.) **The Python dialect is this spec's main consumer**: in JS the dialect has
+**A Python read-only dialect is built** ([`PYTHON_DIALECT.md`](PYTHON_DIALECT.md), decided 2026-10-15): the restricted
+CPython fork's gate decides a cell's membership by running it ([`docs/dev/python-sandbox.md`](../dev/python-sandbox.md),
+"Membership is decided by RUNNING the cell"). (`python_exec`'s former `mode: "readonly"`, removed 2026-10-19, shared
+only the name: it cut the sandbox's network and JS bridges, did not bound work, and tracked no ownership; the dialect
+replaced it.) **The Python dialect is this spec's main consumer**: in JS the dialect has
 few native libraries to worry about, while in Python every useful cell is numpy or pandas, so these examples are the
 ones that matter first. The parser is `ast.parse`, the evaluator is CPython itself under a restricted mode the fork adds,
 and the native leaves are C extensions, as builtins are in JS. Tier 1 is the practical tier for them (no charge hook

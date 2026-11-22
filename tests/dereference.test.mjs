@@ -1023,3 +1023,23 @@ test("a person's steering message carrying a value is not minted a pointer: only
     assert.equal(store.all().length, 0);
     assert.deepEqual(claimed, []);
 });
+
+// --- a minted view or task pointer records its STORED seq (seqBase + the turn's own counter) ---
+// The state inspector reads a pointer's `seq` (state-rows.ts pointerRow) against the session's stored steps, which a
+// later turn re-bases by seqBase. A turn-local seq there points at an earlier turn's step.
+test("in a turn with seqBase 7, a piped dereference view and an inbox task result are noted at 7 + their loop seq", async () => {
+    const rows = ["q1 1455", "TOTAL 6260"].join("\n");
+    const store = new TokenStore();
+    await drive(
+        [call("python_exec", { code: "df", token: true }), call("dereference", { token: "python_exec", pipe: "grep TOTAL" })],
+        (name) => name === "python_exec" ? { result: rows } : { result: "" },
+        { seqBase: 7, tokenStore: store });
+    const py = store.all().find((t) => t.tool === "python_exec"), view = store.all().find((t) => t.tool === "dereference");
+    assert.equal(py.seq, 7 + 1, "loop step 1, the python_exec call");
+    assert.equal(view.seq, 7 + 2, "loop step 2, the dereference that minted the view");
+
+    const inbox = await driveInbox([{ text: "[task t1 done after 1 s: x]", task: "t1", value: "k", chars: 9000 }], { seqBase: 7 });
+    const [task] = inbox.store.all();
+    assert.equal(task.tool, "task");
+    assert.equal(task.seq, 7 + 1, "the task result is the turn's first minted seq");
+});

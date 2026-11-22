@@ -4,7 +4,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { CONFIG_ENUMS, SettingsError, applyRestore, collectSettings, parseSettings, planRestore, previewRestore, upgradeSettings, PAYLOAD_LIMITS } from "../src/backup/backup-settings.ts";
+import { SettingsError, applyRestore, collectSettings, parseSettings, planRestore, previewRestore, upgradeSettings, PAYLOAD_LIMITS } from "../src/backup/backup-settings.ts";
+import { CONFIG_ENUMS } from "../src/setting-class.ts";
 import { POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "../src/sw/policy-valid.ts";
 import { DEFAULT_CONFIG } from "../src/contract/contract-config.ts";
 import { SITE_SCHEMA } from "../src/site-access.ts";

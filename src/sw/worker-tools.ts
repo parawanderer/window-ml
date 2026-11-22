@@ -8,6 +8,8 @@
 import { judgeCall, fetchFacts, runPolicies } from "./sw-policies";
 import { checkProposals } from "./policy-proposal";
 import { proposePolicyTool } from "../tools/propose-policy-tool";
+import { changeSettingTool } from "../tools/change-setting-tool";
+import { changeSettingApproved } from "./sw-change-setting";
 import { proposeManifestTool } from "../tools/propose-manifest-tool";
 import { pythonInstallTool } from "../tools/python-install-tool";
 import { installOutcome } from "./sw-pkg-install";
@@ -20,7 +22,7 @@ import type { MintToken } from "../python/python-tool";
 import { spendOf } from "../contract/contract-chat";
 import { fetchTool, defineTool, pythonTool, type KeepText } from "../ml/ml-tool-factories";
 import { storeText } from "./sw-values";
-import { _loadTable, isTableValue, tableSpecs } from "../ml/ml-python";
+import { _loadTable, isTableValue, sitePathUrl, tableSpecs } from "../ml/ml-python";
 import { googleSheetCsvUrl, googleSheetId } from "../dom/dom";
 import { runPython } from "./sw-python";
 import { leaseCell, pyKernelBusy, type PyDetached } from "./sw-python-task";
@@ -42,6 +44,8 @@ import { invocationInfo } from "./sw-invocation";
 import { senderTrust } from "./sw-consent";
 import { htmlToMarkdownOffscreen } from "./sw-offscreen";
 import { fetchLLM, getConfig } from "./sw-llm";
+import { isWorkerRun } from "./sw-runs";
+import { forModelMessages } from "./sw-scrub";
 import { typeFromExtension } from "../dom/dom";
 import type { PageTableData } from "./worker-page-read";
 
@@ -254,6 +258,8 @@ export function retabWorkerRun(runId: string, to: number): void {
  * @returns the reply's text
  */
 async function meteredChat(ctx: RunCtx, payload: FetchLlmPayload): Promise<string> {
+    // The utility reader (fetch_url's ASK mode, python's `ml.chat(.., {extend:"utility"})`) is handed text the run read: no registered value goes with it.
+    if (payload.extend === "utility" && Array.isArray(payload.messages)) payload = { ...payload, messages: await forModelMessages(payload.messages) };
     const r = await fetchLLM(payload) as { content?: string | null; model?: string | null; usage?: TokenUsage | null };
     const p = r.usage?.promptTokens || 0, c = r.usage?.completionTokens || 0;
     const s = ctx.spent;
@@ -345,10 +351,11 @@ function runMl(ctx: RunCtx): MlApi {
 }
 
 /** One `tables` source, loaded in the worker: a table by value (the page's own loader, which needs no DOM), a URL this
- *  run's fetch_url read (its cache), a Google Sheet (an external one, or `"current"` on a sheet's page), read with the
- *  person's cookies only when this call was approved for it, or a page table (a CSS selector, or `"current"` on any other
- *  page), which the page reads from its DOM and the worker checks (worker-page-read.ts). */
-async function workerTable(ctx: RunCtx, name: string, src: unknown, raw: boolean): Promise<Awaited<ReturnType<typeof _loadTable>>> {
+ *  run's fetch_url read (its cache; a path on the tab's site, `sitePathUrl`, is that URL), a Google Sheet (an external
+ *  one, or `"current"` on a sheet's page), read with the person's cookies only when this call was approved for it, or a
+ *  page table (a CSS selector, or `"current"` on any other page), which the page reads from its DOM and the worker checks
+ *  (worker-page-read.ts). Exported for its tests. */
+export async function workerTable(ctx: Pick<RunCtx, "tabId" | "tabUrl" | "cache" | "pyCall" | "media">, name: string, src: unknown, raw: boolean): Promise<Awaited<ReturnType<typeof _loadTable>>> {
     if (isTableValue(src)) return _loadTable.call({} as MlApi, name, src, raw);   // the by-value branch reads no DOM
     // A source is a URL string or nothing: a wrapped one (`[url]`, `{s:[url]}`) is NOT coerced back with
     // String(src). The gate's scan finds a sheet at any depth now (externalSheetIds), so the person sees it
@@ -357,7 +364,9 @@ async function workerTable(ctx: RunCtx, name: string, src: unknown, raw: boolean
     if (typeof src !== "string") throw new Error(`pythonExec tables — "${name}" is not a loadable source: pass a URL string or a table value, not a ${Array.isArray(src) ? "list" : typeof src}.`);
     // `current` on a Google Sheet's page is that sheet, as the page's loader reads it (ml-python.ts `_loadTable`).
     const sheetPage = src === "current" && googleSheetCsvUrl(ctx.tabUrl()) ? ctx.tabUrl() : null;
-    const url = sheetPage ?? src;
+    // A path on the tab's site is that URL, by the page's own rule (`sitePathUrl`), and is then read from the run's
+    // fetches only, as a full URL is: never fetched here, never sent to the DOM reader as a selector.
+    const url = sheetPage ?? sitePathUrl(src, ctx.tabUrl()) ?? src;
     const csvUrl = /^https?:\/\//i.test(url) ? googleSheetCsvUrl(url) : null;
     if (csvUrl) {
         const id = googleSheetId(url);
@@ -472,7 +481,7 @@ export function buildWorkerTools(runId: string, tabId: number, tabUrl: () => str
     runs.set(runId, ctx);
     const ml = runMl(ctx);
     // agent_api_docs reads the shortcut and the config here, where the page would have asked for them by message.
-    const docs = { invocation: invocationInfo, config: async () => publicConfig(await getConfig(), await senderSelfApproves({ url: ctx.tabUrl() })) };
+    const docs = { invocation: invocationInfo, config: async () => publicConfig(await getConfig(), await senderSelfApproves({ url: ctx.tabUrl() })), freeSettings: () => isWorkerRun(runId) };
     // answer keeps the run's set here, with the page's descriptor (what the model is shown); worker-answer.ts.
     const pageAnswer = () => makeDomTools(defineTool).find((t) => t.name === "answer")!;
     // `look` and `locate` are none of these: the run host builds them for each call (worker-look.ts, worker-locate.ts).
@@ -481,5 +490,6 @@ export function buildWorkerTools(runId: string, tabId: number, tabUrl: () => str
         : n === "task" ? taskTool(defineTool, { act: (a) => taskAction(runId, a) })
         : n === "propose_manifest" ? proposeManifestTool(defineTool, { outcome: (a) => isLibraryDraft(a) ? libraryOutcome(runId, a) : proposalOutcome(runId, a) })
         : n === "python_install" ? pythonInstallTool(defineTool, { outcome: (a) => installOutcome(runId, a) })
+        : n === "change_setting" ? changeSettingTool(defineTool, { write: (a) => changeSettingApproved(runId, a) })
         : null)).filter((t): t is MlTool => !!t);
 }

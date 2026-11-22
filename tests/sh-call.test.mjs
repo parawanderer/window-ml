@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { credentialFor, manifestSha256, parseShRun, planSpawn, shFacts, shCardLines, headText, shOut, shResult, wireCodeOf, manifestFor, SHIPPED_MANIFESTS, ShRefused, SH_LIMITS, envelopeFor, envelopeMismatch, envelopeText, protectedChangesText, shOutcome, shOutcomeLines, SH_CHANGES_SHOWN, unaskedCalls, unaskedLines, isTildeArg, tildeLines } from "../src/shell/sh-call.ts";
+import { credentialFor, factsFlavour, flavourReplan, manifestSha256, parseShRun, planSpawn, shFacts, shCardLines, headText, shOut, shResult, wireCodeOf, manifestFor, SHIPPED_MANIFESTS, ShRefused, SH_LIMITS, envelopeFor, envelopeMismatch, envelopeText, protectedChangesText, shOutcome, shOutcomeLines, SH_CHANGES_SHOWN, unaskedCalls, unaskedLines, isTildeArg, tildeLines, hiddenSecretsLines, SH_HIDDEN_SHOWN } from "../src/shell/sh-call.ts";
 import { HostClient, HostError, hostTakesEnvelope, READ_CHUNK, bytesOf } from "../src/shell/host-protocol.ts";
 
 const S = { cwd: "/w" };
@@ -337,6 +337,73 @@ test("in-root program: a registered entrypoint manifest still applies (the refus
     assert.deepEqual(f.why, []);
 });
 
+// --- flavours: the facts say which implementation runs, and the plan follows it (PROGRAM_MANIFEST.md, "Flavours") ---
+
+/** A flavoured program: GNU hardens with --sandbox and has --out (a path it writes); BSD stops at the first operand. */
+const FLAV_TOOL = {
+    program: "tool", version: { range: "*", args: [], pattern: "" },
+    flavours: { gnu: { probe: { args: ["--version"], pattern: "^tool \\(GNU tool\\) (\\d+\\.\\d+)", range: ">=4.3 <5" } }, bsd: { system: "macos" } },
+    command: {
+        effects: ["read"], paths: "operands", flags: { "-n": {} },
+        flavour: { gnu: { flags: { "--sandbox": {}, "--out": { value: true, valueIsPath: "write", effects: ["write"] } }, argOrder: "permute", harden: ["--sandbox"] }, bsd: { argOrder: "stop" } },
+    },
+};
+const toolFacts = (argv, path = "/usr/bin/tool", inRoot = false) => facts({ argv, program: { path, inRoot, fingerprint: "1:2:3:4" }, paths: argv.slice(1).filter((a) => !a.startsWith("-")).map((a) => ({ arg: argv.indexOf(a), given: a, path: `/w/${a}`, inRoot: true, secret: false, exists: true })) });
+const toolPlace = (platform) => ({ roots: ["/w"], manifests: [FLAV_TOOL], ...(platform ? { platform } : {}) });
+
+test("flavours: the facts carry the flavour and why, and the card's Program line says it", () => {
+    const rows = [
+        // [path, platform, version, flavour, card words]
+        ["/usr/bin/tool", "macos", null, "bsd", /^\/usr\/bin\/tool, BSD \(the macOS system program\)$/],
+        // A manifest the caller names is not shipped, so its gnu probe never decides (`flavourOf`'s unit rows hold the shipped case).
+        ["/usr/bin/tool", "linux", "4.9", null, /never run: its author chose what it prints/],
+        ["/usr/bin/tool", "linux", null, null, /not detected/],
+        ["/usr/bin/busybox", "linux", null, "other", /its file is busybox, not tool/],
+    ];
+    for (const [path, platform, version, flavour, words] of rows) {
+        const f = shFacts(toolFacts(["tool", "a.txt"], path), version, toolPlace(platform));
+        assert.equal(f.flavour.name, flavour, `${path} on ${platform}`);
+        assert.equal(factsFlavour(toolFacts(["tool", "a.txt"], path), version, toolPlace(platform)), flavour, "factsFlavour reads it as shFacts does");
+        const line = shCardLines(f).find((l) => l.label === "Program");
+        assert.match(line.value, words);
+        assert.equal(line.warn, flavour === "other" ? true : undefined, "an implementation nobody described is flagged");
+        assert.equal(f.described, flavour !== "other", `${path}: ${f.why.join("; ")}`);
+    }
+    // BSD reads a post-operand -n as a file; undetected cannot tell, so the call asks.
+    assert.equal(shFacts(toolFacts(["tool", "a.txt", "-n"]), null, toolPlace("macos")).described, true);
+    assert.equal(shFacts(toolFacts(["tool", "a.txt", "-n"]), null, toolPlace("linux")).described, false);
+    // A manifest without flavours: no flavour in the facts, nothing on the card.
+    const cat = shFacts(facts(), null, { roots: ["/w"], platform: "macos" });
+    assert.equal(cat.flavour, null);
+    assert.equal(shCardLines(cat).find((l) => l.label === "Program").value, "/bin/cat");
+});
+
+test("flavours: an in-root program is never flavoured, even by a workspace's own manifest and a version it reported (condition a)", () => {
+    // Main today: shFacts refuses a shipped manifest for an in-root program (the 2026-10-22 ruling); only a workspace's
+    // own stored manifest describes one, and then flavourOf reads it undetected, so no overlay applies.
+    const entry = { id: "man-tool", scope: "workspace", root: "/w", manifest: FLAV_TOOL, origin: "person", created: 1, pin: { path: "/w/bin/tool", fingerprint: "1:2:3:4", inRoot: true } };
+    for (const platform of ["macos", "linux"]) for (const version of [null, "4.9"]) {
+        const f = shFacts(toolFacts(["tool", "a.txt"], "/w/bin/tool", true), version, { roots: ["/w"], stored: [entry], platform });
+        assert.deepEqual(f.flavour, { name: null, how: "inside a workspace root, never flavoured" }, `${platform} ${version}`);
+        assert.equal(factsFlavour(toolFacts(["tool", "a.txt"], "/w/bin/tool", true), version, { roots: ["/w"], stored: [entry], platform }), null);
+        assert.equal(shFacts(toolFacts(["tool", "--out", "o", "a.txt"], "/w/bin/tool", true), version, { roots: ["/w"], stored: [entry], platform }).described, false, "no gnu overlay flag is read");
+    }
+});
+
+test("flavours: the plan follows the flavour the facts showed: gnu re-plans with its hardening and its path; the rest keep the first plan", () => {
+    const S2 = { cwd: "/w", manifests: [FLAV_TOOL] };
+    const req = { argv: ["tool", "--out", "o.txt", "a.txt"], env: {} };
+    const first = planSpawn(req, S2);
+    assert.equal(first.description.described, false, "undetected: --out is not in the core");
+    assert.deepEqual(first.spawn.argv, req.argv, "no flavour hardening before the facts");
+    for (const f of ["bsd", null, "other"]) assert.equal(flavourReplan(req, S2, first, f), null, String(f));
+    const again = flavourReplan(req, S2, first, "gnu");
+    assert.deepEqual(again.spawn.argv, ["tool", "--sandbox", "--out", "o.txt", "a.txt"]);
+    assert.deepEqual(again.spawn.pathArgs, [{ arg: 3, role: "write" }, { arg: 4 }], "the overlay's path value is resolved by the host");
+    assert.equal(again.description.described, true);
+    assert.equal(flavourReplan(req, S2, again, "gnu"), null, "a plan already made for gnu is not made again");
+});
+
 // --- interpreted scripts: (program, entrypoint) pinned by sha256 (PROGRAM_MANIFEST.md, rulings of 2026-10-19) ---
 
 const PIN = "a".repeat(64);
@@ -438,6 +505,27 @@ test("tilde: the facts carry the host's entries ([] from a host with none), and 
     assert.deepEqual(lines, [{ label: "~", value: "~/n.txt is /h/n.txt" }, { label: "~", value: "~ stays literal (no-home)", warn: true }]);
     assert.deepEqual(shCardLines(f).map((l) => l.label).slice(0, 5), ["Runs", "Program", "In", "~", "~"], "after where it runs");
     assert.deepEqual(tildeLines([]), []);
+});
+
+test("hiddenSecrets: an older host's facts give [] and no card line; a host's list reaches the card, one line each, all of them", () => {
+    assert.deepEqual(shFacts(facts()).hiddenSecrets, []);
+    assert.ok(shCardLines(shFacts(facts())).every((l) => l.label !== "Held"));
+    const list = Array.from({ length: 20 }, (_, i) => `/w/p${i}/.env`);
+    const f = shFacts(facts({ hiddenSecrets: list }));
+    assert.deepEqual(f.hiddenSecrets, list);
+    assert.notEqual(f.hiddenSecrets, list, "a copy");
+    const held = shCardLines(f).filter((l) => l.label === "Held");
+    assert.equal(held.length, 20, "the card lists every file, past the answer's bound");
+    assert.deepEqual(held[0], { label: "Held", value: "/w/p0/.env (unreadable to this call)" });
+    assert.deepEqual(shCardLines(f).map((l) => l.label).slice(0, 4), ["Runs", "Program", "In", "Held"], "after where it runs");
+    assert.deepEqual(hiddenSecretsLines([]), []);
+    assert.deepEqual(shFacts(facts({ hiddenSecrets: "nope" })).hiddenSecrets, [], "a field of another shape is none");
+});
+
+test("upgrade: facts stored before hiddenSecrets (no key) still draw the card, with no Held line", () => {
+    const old = shFacts(facts());
+    delete old.hiddenSecrets;
+    assert.ok(shCardLines(old).every((l) => l.label !== "Held"));
 });
 
 test("the card's In line marks a cwd outside the roots (synthetic: a host refuses such a cwd, so no host fact carries it)", () => {
@@ -752,6 +840,23 @@ test("K3: the card's Sandbox applied line is the host's report, and a mismatch w
     assert.match(m.value, /not the write roots, exec program-only that was asked for/);
 });
 
+// --- the held files: the answer lists at most SH_HIDDEN_SHOWN and counts the rest ---
+
+test("hiddenSecrets: the result carries none from an older host, all of a short list, and the first 16 plus a count of a long one", () => {
+    const out = { stdout: shOut({ ptr: "o", size: 0, sha256: "", truncated: false }, null, new Uint8Array()), stderr: shOut({ ptr: "e", size: 0, sha256: "", truncated: false }, null, new Uint8Array()) };
+    const done = () => ({ event: "done", id: "c1", code: 0, signal: null, ok: true, timedOut: false, cancelled: false, durationMs: 3, stdout: {}, stderr: {} });
+    const run = (hiddenSecrets) => shResult(done(), { placement: "host-sandbox", hiddenSecrets }, null, out);
+    for (const none of [undefined, []]) { const r = run(none); assert.ok(!("hiddenSecrets" in r) && !("hiddenSecretsMore" in r), "nothing in the answer"); }
+    assert.deepEqual(run(["/w/.env"]).hiddenSecrets, ["/w/.env"]);
+    assert.equal(run(["/w/.env"]).hiddenSecretsMore, undefined);
+    assert.equal(SH_HIDDEN_SHOWN, 16);
+    const twenty = Array.from({ length: 20 }, (_, i) => `/w/p${i}/.env`);
+    const r = run(twenty);
+    assert.deepEqual(r.hiddenSecrets, twenty.slice(0, 16));
+    assert.equal(r.hiddenSecretsMore, 4);
+    assert.equal(run(twenty.slice(0, 16)).hiddenSecretsMore, undefined, "exactly 16 is complete");
+});
+
 // --- the protected-name tripwire (K3b): what changed during the call, reported, never "nothing" when unknown ---
 
 test("K3b: done.protectedChanged reaches the result as the host's list; absent or malformed is null, never []", () => {
@@ -873,6 +978,12 @@ test("an unasked record that carries tilde entries shows them after who allowed 
     const lines = unaskedLines({ by: "default", argv: ["cat", "/h/n.txt"], tilde, outcome: {} });
     assert.deepEqual(lines.slice(0, 2), [{ label: "Allowed by", value: "the built-in default" }, { label: "~", value: "~/n.txt is /h/n.txt" }]);
     assert.ok(unaskedLines({ by: "default", argv: ["ls"], outcome: {} }).every((l) => l.label !== "~"));
+});
+
+test("an unasked record that carries held files shows a line each; one without draws none", () => {
+    const lines = unaskedLines({ by: "default", argv: ["ls"], hiddenSecrets: ["/w/.env", "/w/.netrc"], outcome: {} });
+    assert.deepEqual(lines.slice(1), [{ label: "Held", value: "/w/.env (unreadable to this call)" }, { label: "Held", value: "/w/.netrc (unreadable to this call)" }]);
+    assert.ok(unaskedLines({ by: "default", argv: ["ls"], outcome: {} }).every((l) => l.label !== "Held"));
 });
 
 test("only a span that carries an unasked record with an argv is a line", () => {

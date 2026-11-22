@@ -46,6 +46,19 @@ export const PY_LEASE_MAX_MS = Math.min(150_000, Math.floor(PY_DETACHED_MAX_MS /
  *  Stop bound is (offscreen.ts `BENCH_STOP_KILL_MS`). */
 export const PY_INTERRUPT_KILL_MS = 1000;
 
+/**
+ * The grace the bench's Stop waits before it restarts the worker: `defaultMs`, LENGTHENED only.
+ *
+ * The override is a TEST seam (`offscreen.ts` reads `ml_bench_stop_grace_ms` from `chrome.storage.session`, which a page
+ * cannot write): a CI shard can starve the worker for longer than a second, and an interrupt that would land at once on
+ * a person's machine takes longer than the shipped bound there. It never SHORTENS the grace, so no value can make the
+ * bench give up sooner than the product does, and a value that is not a number is ignored.
+ * @param defaultMs the shipped bound (`offscreen.ts` `BENCH_STOP_KILL_MS`)
+ * @param override what the test seam holds, if anything
+ */
+export const benchStopGraceMs = (defaultMs: number, override: unknown): number =>
+    (typeof override === "number" && Number.isFinite(override) && override > defaultMs ? override : defaultMs);
+
 /** The most output a detached cell keeps for `task tail`, in characters: the last of it, never all of it. A placeholder. */
 export const PY_TAIL_RING_CHARS = 64 * 1024;
 
@@ -66,3 +79,12 @@ export function ringAppend(ring: string, chunk: string, max = PY_TAIL_RING_CHARS
 /** What the cell's sandbox says a cancel did: the interrupt landed and the names are kept, or the sandbox was killed
  *  and they are lost, or the cell had already ended. */
 export type CellCancel = "interrupted" | "killed" | "ended";
+
+/**
+ * The knob's value as minutes: a finite number from 1 to 60, rounded down, else the ceiling.
+ * @param v what the setting holds
+ */
+export function capMinutes(v: unknown): number {
+    const n = typeof v === "number" ? Math.floor(v) : NaN;
+    return Number.isFinite(n) && n >= 1 && n <= 60 ? n : 60;
+}

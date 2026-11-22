@@ -1,0 +1,226 @@
+{
+  "commit": "a771c714ceb498c12459840a69f1112e7997f5a9",
+  "extracted_at": "2026-11-20T08:02:48+00:00",
+  "rows": [
+    {
+      "class": "A",
+      "pr": "window-ml#995",
+      "quote": "commit 7157b94d: \"validateManifest refuses an unknown version key, as the host's VersionSpec does ... The version object was never key-checked, so the extension loaded a manifest the host refuses.\"",
+      "reasoning": "TS validator was wrong (accepted unknown keys in `version`); found by comparing with the host reader's deny_unknown_fields. Validator, not describeCall proper. Borderline: no comment says the host was read to find it; the commit message is the only evidence.",
+      "url": "https://github.com/parawanderer/window-ml/pull/995"
+    },
+    {
+      "class": "unclear",
+      "pr": "window-ml#882 / host#19",
+      "quote": "\"parseOptions's apply ... skips the flag's own effect for a path-valued flag only when it is read or write; write-names is not in the list ... in step with the host's reader.\"",
+      "reasoning": "Red team read host #17 and wrote the same gap into both repos. Host #14's review shows the host had the SAME gap (`matches!(t, Read|Write)` equals program-manifest.ts:247). A defect in both found by reading one copy: B by the rubric; unclear because the cross-reading may have prompted the look at TS. Not live: no shipped flag combines them.",
+      "url": "https://github.com/parawanderer/window-ml/issues/882"
+    },
+    {
+      "class": "B",
+      "pr": "window-ml#909",
+      "quote": "\"Both sites match window-ml-host #20 ... Verified: the new test fails against main's program-manifest.ts\"",
+      "reasoning": "The fix for #882 item 1, each side tested by its own failing-first test.",
+      "url": "https://github.com/parawanderer/window-ml/pull/909"
+    },
+    {
+      "class": "C",
+      "pr": "host#20",
+      "quote": "review: \"VECTOR_PIN equals the value window-ml computes (18075fc6...bcba at window-ml b10aedf8)\"",
+      "reasoning": "Hash pin added because neither suite checked the other's copy of the vectors; a cost of two copies.",
+      "url": "https://github.com/parawanderer/window-ml-host/pull/20"
+    },
+    {
+      "class": "C",
+      "pr": "window-ml#910",
+      "quote": "\"A change to either side fails until both pins move.\"",
+      "reasoning": "Same pin guard, TS side.",
+      "url": "https://github.com/parawanderer/window-ml/pull/910"
+    },
+    {
+      "class": "B",
+      "pr": "host#20 rustdoc",
+      "quote": "\"Direction::Write's rustdoc says a write changes the remote resource, a fetch is a read whatever it sends\"",
+      "reasoning": "Host rustdoc contradicted EFFECTS.md; found by the red team reading the spec and host #17. One copy's own review would find it.",
+      "url": "https://github.com/parawanderer/window-ml-host/pull/20"
+    },
+    {
+      "class": "B",
+      "pr": "host#17",
+      "quote": "review: \"every_term() is a hand list, and its comment claims the compiler enforces it ... leaves ... green at 7/7\"",
+      "reasoning": "Host test-enumeration gap, found by mutation on the host alone.",
+      "url": "https://github.com/parawanderer/window-ml-host/pull/17"
+    },
+    {
+      "class": "C",
+      "pr": "host#14",
+      "quote": "\"the next vector sync failed closed with 'unknown variant write-names'\"",
+      "reasoning": "Host enum lagged window-ml #788; failed closed, caught by the vector sync. Cost of two copies, no defect in intended behaviour.",
+      "url": "https://github.com/parawanderer/window-ml-host/pull/14"
+    },
+    {
+      "class": "B",
+      "pr": "window-ml#788",
+      "quote": "\"git diff --output=.envrc was free under host-sandbox\" (red team's shell-policy audit)",
+      "reasoning": "Decide-layer/policy defect in the TS worker; no host involvement.",
+      "url": "https://github.com/parawanderer/window-ml/pull/788"
+    },
+    {
+      "class": "B",
+      "pr": "window-ml#990 / host#25 (git -C)",
+      "quote": "host commit bc688dd0 / TS 3bd776f9: \"git resolves operands against the -C directory while the host resolves and walks them against the cwd, so a secret under -C was never checked\"",
+      "reasoning": "Review of #990 on the TS side; host mirrored it. The cwd-versus-resolver mismatch is a host facts issue, found by a reviewer reading one repo.",
+      "url": "https://github.com/parawanderer/window-ml-host/pull/25"
+    },
+    {
+      "class": "B",
+      "pr": "window-ml#990 / host#25 (pathspec glob, icase)",
+      "quote": "TS 2c3b47a7, 46844a32; host ab9861a9, 59532e0d: \"Mirrors window-ml#990 2c3b47a7 (the red-team pass on the delete-family manifests)\"",
+      "reasoning": "Red team on TS; host ported the repair afterwards (the host copy is C-type lag, the defect B).",
+      "url": "https://github.com/parawanderer/window-ml-host/pull/25"
+    },
+    {
+      "class": "B",
+      "pr": "window-ml#951",
+      "quote": "c870f47b: \"macOS reads such an argument as a file name the host never resolved: cat f -n ...\"; 84f6dd1a lone dash (e3)",
+      "reasoning": "Found by measuring real macOS tools and the red team. Host reader needed no change (host #50).",
+      "url": "https://github.com/parawanderer/window-ml/pull/1951"
+    },
+    {
+      "class": "C",
+      "pr": "host#50",
+      "quote": "\"The host reader already reads both: no source change.\"",
+      "reasoning": "Pure vector copy and pin move after window-ml #1951.",
+      "url": "https://github.com/parawanderer/window-ml-host/pull/50"
+    },
+    {
+      "class": "C",
+      "pr": "window-ml#1951 residual",
+      "quote": "\"VECTOR_PIN moves to a09ef075 while window-ml-host's PIN still records 60807baf on main and on every branch\"",
+      "reasoning": "Pin lag between merges.",
+      "url": "https://github.com/parawanderer/window-ml/pull/1951"
+    },
+    {
+      "class": "B",
+      "pr": "window-ml#1963",
+      "quote": "11e8e99b: \"under stop a post-operand writing flag asks\" (red-team finding e3)",
+      "reasoning": "TS flavour design hole found by the red team; no host comparison.",
+      "url": "https://github.com/parawanderer/window-ml/pull/1963"
+    },
+    {
+      "class": "C",
+      "pr": "host#49 (stop_shadow)",
+      "quote": "abe99b8a: \"Mirrors window-ml's stopShadow (red-team finding on window-ml#1963) ... Both describers agree on `tool f.txt --write-all`.\"",
+      "reasoning": "Host lagged the TS repair; the defect was the TS one, found by the red team.",
+      "url": "https://github.com/parawanderer/window-ml-host/pull/49"
+    },
+    {
+      "class": "C",
+      "pr": "host#49 (flavours refused)",
+      "quote": "\"Before this change, deny_unknown_fields refused any manifest that carried it.\"",
+      "reasoning": "Host reader behind the TS schema until ported.",
+      "url": "https://github.com/parawanderer/window-ml-host/pull/49"
+    },
+    {
+      "class": "B",
+      "pr": "host#49 review",
+      "quote": "\"nothing pins that an unknown key inside `flavours` fails to parse\"",
+      "reasoning": "Host test-coverage gap found by a reviewer of the host alone.",
+      "url": "https://github.com/parawanderer/window-ml-host/pull/49"
+    },
+    {
+      "class": "B",
+      "pr": "window-ml#1963 review",
+      "quote": "\"The two describers agree on the stop rule: window-ml-host's read_only_flag and stop_shadow (src/manifest.rs:936, 949) apply the same conjunction\"",
+      "reasoning": "Cross-reading found agreement, no defect.",
+      "url": "https://github.com/parawanderer/window-ml/pull/1963"
+    },
+    {
+      "class": "B",
+      "pr": "window-ml#1989 / host#53 (awk splice)",
+      "quote": "193c9dea: \"gawk joins a backslash-newline inside a keyword, so {sys\\<newline>tem(\"id\")} ... describe free\"; host #53: \"found by janitor-2's review of #1989\"",
+      "reasoning": "Same defect in both ports (the host copy was written from the TS grammar). Found by reading and running the TS side. One copy would have caught it. Borderline A: the host port had already shipped the flaw, so the second copy only multiplied it.",
+      "url": "https://github.com/parawanderer/window-ml/pull/1989"
+    },
+    {
+      "class": "C",
+      "pr": "window-ml#1989 CR-LF / host#53 aeb908a3",
+      "quote": "\"Backslash-CR-LF is removed before backslash-LF, two passes in the same order as window-ml's port, so both refuse the same texts.\"",
+      "reasoning": "Parity work between the copies: both ports needed the same extra splice; the order is only chosen to match. Review of host #53 found no failing case.",
+      "url": "https://github.com/parawanderer/window-ml-host/pull/53"
+    },
+    {
+      "class": "C",
+      "pr": "host#52 / window-ml#1989 reviews",
+      "quote": "\"The two ports agree on every shared vector ... Walking script_grammar.rs against script-grammar.ts function by function found no behavioural divergence; the only difference is message formatting\"",
+      "reasoning": "Wording difference ({:?} vs JSON.stringify) exists only because there are two copies; no defect.",
+      "url": "https://github.com/parawanderer/window-ml-host/pull/52"
+    },
+    {
+      "class": "C",
+      "pr": "host#52 pin",
+      "quote": "pin 597122c3, \"merges first\"",
+      "reasoning": "Merge-order coupling between the PRs.",
+      "url": "https://github.com/parawanderer/window-ml-host/pull/52"
+    },
+    {
+      "class": "C",
+      "pr": "window-ml#1538 / host#30",
+      "quote": "\"The PR's 'both must merge together' precondition is therefore unmet ... Not a defect in this diff\"",
+      "reasoning": "Merge-order and pin lag.",
+      "url": "https://github.com/parawanderer/window-ml/pull/1538"
+    },
+    {
+      "class": "C",
+      "pr": "window-ml#1545",
+      "quote": "\"Every byte change to gh.json changes manifestSha256, and the host answers CredentialRefused until a release pins the new vector; no test in this repo notices\"",
+      "reasoning": "Two-copy coupling (a credential pin), not a describer defect.",
+      "url": "https://github.com/parawanderer/window-ml/pull/1545"
+    },
+    {
+      "class": "C",
+      "pr": "window-ml#1588 / #1630 / host#4",
+      "quote": "pin bump to window-ml-host v0.8.0 / v0.9.0; host #4: \"pin now names window-ml's merge commit\"",
+      "reasoning": "Pin bumps.",
+      "url": "https://github.com/parawanderer/window-ml/pull/1588"
+    },
+    {
+      "class": "C",
+      "pr": "window-ml#1977",
+      "quote": "\"the host's reader refuses the marker today and never receives a stored manifest's bytes\"",
+      "reasoning": "A TS key the Rust reader does not know yet; spec had to say so.",
+      "url": "https://github.com/parawanderer/window-ml/pull/1977"
+    },
+    {
+      "class": "B",
+      "pr": "window-ml#1698",
+      "quote": "\"The warning speaks for the whole script while the predicate reads the default command\"",
+      "reasoning": "Reviewer reading one side.",
+      "url": "https://github.com/parawanderer/window-ml/pull/1698"
+    },
+    {
+      "class": "B",
+      "pr": "window-ml#800",
+      "quote": "\"two cases pass for the wrong reason\" (undescribed git without a version)",
+      "reasoning": "Test review, TS only.",
+      "url": "https://github.com/parawanderer/window-ml/pull/800"
+    },
+    {
+      "class": "B",
+      "pr": "host#43",
+      "quote": "\"the walked-write retry ... taught `rm -r /files` as in rm notes.txt /files/notes.txt\"",
+      "reasoning": "Host spawn text, not the describer; host-only review.",
+      "url": "https://github.com/parawanderer/window-ml-host/pull/43"
+    },
+    {
+      "class": "B",
+      "pr": "window-ml#1873 / host#43 vectors",
+      "quote": "\"Both readers are handed the same answer. The 466-call vectors ... are byte-identical\"",
+      "reasoning": "Cross-check read, no defect.",
+      "url": "https://github.com/parawanderer/window-ml/pull/1873"
+    }
+  ],
+  "source": {
+    "method": "gh only: PRs touching the describer's files in parawanderer/window-ml and parawanderer/window-ml-host; see the spike doc"
+  }
+}

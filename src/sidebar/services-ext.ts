@@ -11,6 +11,8 @@ import { residentNow } from "./resource/panel-facts";
 import { downloadBlob } from "./export/download";
 import { printInFrame } from "./export/print-frame";
 import { toHost } from "./parent-channel";
+import { askScan } from "./scan-ask";
+import { SESSIONS_PORT } from "../session/session-server";
 
 
 /** A utility-model call through the background's `FETCH_LLM`, tagged as a side task about the session. */
@@ -61,13 +63,21 @@ export const extensionServices: SidebarServices = {
     answerApproval: (hash, seq, decision, persist, feedback, ask, files) => toHost({ __mlSidebarApp: "approval", hash, seq, decision, persist, feedback, ...(ask !== undefined ? { ask } : {}), ...(files !== undefined ? { files } : {}) }),
     // The shell, or the DevTools panel, forwards it as SET_START_APPROVAL, having checked it came from this frame.
     answerStart: (requestId, decision) => toHost({ __mlSidebarApp: "startDecision", requestId, decision }),
+    // Written here, by the person's click in this extension frame: never through change_setting or a message a page can send.
+    revealsAllow: async (program) => {
+        const had = await new Promise<unknown>((r) => chrome.storage.sync.get({ shellRevealsAllow: [] }, (o) => r(o.shellRevealsAllow)));
+        const list = Array.isArray(had) ? had.filter((x): x is string => typeof x === "string") : [];
+        if (!list.includes(program)) await chrome.storage.sync.set({ shellRevealsAllow: [...list, program] });
+    },
     // A post to the page, which answers nothing: what goes wrong from there shows in the run itself.
     // An agent run takes files with any message: one the worker built holds each as an `@file:` pointer, and one a page
     // built takes text files whole, its refusal of a PDF said in the run's step list (sw-run-start.ts). A chat here is
     // a page's, which frames no file.
     acceptsFiles: (hash) => sessionMap.get(hash)?.kind === "agent",
     acceptsPdf: (hash) => sessionMap.get(hash)?.kind === "agent",
-    sendToSession: async (hash, text, images, files) => { toHost({ __mlSidebarApp: "sessionSend", hash, text, images, ...(files?.length ? { files } : {}) }); return { ok: true }; },
+    sendToSession: async (hash, text, images, files, _progress, asIs) => { toHost({ __mlSidebarApp: "sessionSend", hash, text, images, ...(files?.length ? { files } : {}), ...(asIs?.length ? { asIs } : {}) }); return { ok: true }; },
+    // This frame is an extension page, so the worker answers it (SCAN_TURN is an extension sender's only).
+    scanTurn: (texts) => askScan(texts),
     cancelSession: (hash) => toHost({ __mlSidebarApp: "sessionCancel", hash }),
     continueSession: (hash, maxSteps) => toHost({ __mlSidebarApp: "continueRun", hash, ...(maxSteps ? { maxSteps } : {}) }),
     // This frame is attached to the tab the run is in: if it were gone, so would this panel be.
@@ -108,6 +118,7 @@ export const extensionServices: SidebarServices = {
         try { chrome.runtime.sendMessage({ type: "PRICE_CALLS", payload: { calls } }, (resp: { data?: import("../spend/price-book").CallCost[] } | undefined) => resolve(Array.isArray(resp?.data) ? resp.data : null)); }
         catch { resolve(null); }
     }),
+    connectSessions: () => chrome.runtime.connect({ name: SESSIONS_PORT }),
     // Loaded on the click, not with this file: Settings is the whole settings view, and what loads the services
     // (the code-block tools under Node, among others) must not pull it in.
     findSetting: (query) => { void import("./settings/settings").then((m) => { m.searchSettings(query); view.value = { name: "settings" }; }); },

@@ -6,8 +6,8 @@
 // host's resolution (`HostFacts`) and the program's manifest, never from what the script says about its call: the
 // script supplies the argv, the cwd and the environment additions, and nothing else.
 
-import type { CallDescription, ProgramManifest } from "./program-manifest";
-import { CREDENTIAL_PROVIDERS, describeCall, hardenArgv } from "./program-manifest";
+import type { CallDescription, Flavour, ProgramManifest } from "./program-manifest";
+import { CREDENTIAL_PROVIDERS, describeCall, flavourOf, hardenArgv, revealsRefusal } from "./program-manifest";
 import { claimsTopLevelName, type EffectsData, type Resource } from "../effects";
 import type { HostDone, HostDoneEnvelope, HostEnvelope, HostFacts, HostPathArg, HostPlacement, HostProtectedChange, HostSpawn, HostStream, HostTilde, HostFilesMapped } from "./host-protocol";
 import { binaryKind } from "../sw/body-read";
@@ -36,6 +36,10 @@ export const SHIPPED_MANIFESTS: Readonly<Record<string, ProgramManifest>> = Obje
     ([cat, cp, find, gh, git, head, jq, ls, mv, rg, rm, rmdir, tail, unlink, wc] as unknown as ProgramManifest[]).map((m) => [m.program, m]),
 ));
 
+/** Whether `m` is a shipped manifest's own object (not a stored copy of one): only those carry a credential, and only
+ *  those have their gnu probe run (`flavourOf`), because their bytes are reviewed and pinned. */
+export const isShipped = (m: ProgramManifest): boolean => SHIPPED_MANIFESTS[m.program] === m;
+
 /** The manifests a call is described by: the shipped ones, unless the caller names its own. */
 const SHIPPED_LIST: readonly ProgramManifest[] = Object.freeze(Object.values(SHIPPED_MANIFESTS));
 
@@ -50,7 +54,8 @@ export interface ManifestPlace { cwd: string; roots: readonly string[]; rootOf?:
  *  global. */
 export function manifestsFor(stored: readonly StoredManifest[] | undefined, roots: readonly string[]): { list: readonly ProgramManifest[]; rootOf: (m: ProgramManifest) => string | undefined; entryOf: (m: ProgramManifest) => StoredManifest | undefined } {
     // B2 at call time too: the store and its load refuse an entry for a shipped program, and this keeps one from shadowing it if any arrives another way.
-    const here = applicable(stored ?? [], roots).filter((s) => !SHIPPED_MANIFESTS[s.manifest.program]);
+    // Ruling 31 likewise: a stored manifest for a program that shows other processes never drops the marker.
+    const here = applicable(stored ?? [], roots).filter((s) => !SHIPPED_MANIFESTS[s.manifest.program] && !revealsRefusal(s.manifest, s.pin?.path));
     const byManifest = new Map(here.map((s) => [s.manifest, s]));
     return {
         list: here.length ? [...here.map((s) => s.manifest), ...SHIPPED_LIST] : SHIPPED_LIST,
@@ -274,7 +279,7 @@ export async function credentialFor(plan: ShPlan, host: { hello: { credentials?:
  *   folder as the model's text writes it (`~/git/proj/window-ml-files`)
  * @returns the plan
  */
-export function planSpawn(req: ShRunRequest, session: { cwd: string; roots?: readonly string[]; manifests?: readonly ProgramManifest[]; stored?: readonly StoredManifest[]; tilde?: boolean; files?: { mount: string; session: string; shown: string } }): ShPlan {
+export function planSpawn(req: ShRunRequest, session: ShSession): ShPlan {
     const cwd = req.cwd === undefined ? session.cwd : req.cwd.startsWith("/") || (session.tilde && isTildeArg(req.cwd)) ? req.cwd : `${session.cwd.replace(/\/+$/, "")}/${req.cwd}`;
     const st = session.stored ? manifestsFor(session.stored, session.roots ?? []) : undefined;
     const m = manifestFor(req.argv, session.roots ? { cwd, roots: session.roots, ...(st ? { rootOf: st.rootOf } : {}) } : undefined, st?.list ?? session.manifests);
@@ -282,13 +287,14 @@ export function planSpawn(req: ShRunRequest, session: { cwd: string; roots?: rea
     const files = session.files;
     if (files) spawn.files = { mount: files.mount, session: files.session };
     if (!m) return { spawn, description: null, ...filesPlaced(req.argv, null, files) };
-    const first = describeCall(req.argv, m, { envSet: Object.keys(req.env) });
+    const flavour = session.flavour === undefined ? {} : { flavour: session.flavour };
+    const first = describeCall(req.argv, m, { envSet: Object.keys(req.env), ...flavour });
     // Hardening is a belt, not a judgement: it applies whether or not the call is described (git is undescribed until
     // the host reports its version, and still gets `--no-pager`). Its points come only from levels the parse
     // understood. The hardened argv describes as the original does, so its own description carries the indices the
     // host resolves.
     const argv = first.harden.length ? hardenArgv(req.argv, first) : req.argv;
-    const d = argv === req.argv ? first : describeCall(argv, m, { envSet: Object.keys(req.env) });
+    const d = argv === req.argv ? first : describeCall(argv, m, { envSet: Object.keys(req.env), ...flavour });
     spawn.argv = argv;
     const pathArgs: HostPathArg[] = d.pathArgs.map((p) => ({ arg: p.arg, ...(p.split ? { split: p.split } : {}), ...(p.walk ? { walk: true } : {}), ...(p.role === "write" ? { role: "write" as const } : {}) }));
     // The script itself, resolved and hashed, so its facts say which file runs and whether it is the pinned one.
@@ -298,9 +304,30 @@ export function planSpawn(req: ShRunRequest, session: { cwd: string; roots?: rea
     if (m.program === "git" && d.dirArg !== null) spawn.repoArg = d.dirArg;
     // Only the shipped manifest's own object: the host pins the shipped bytes alone, and a stored entry kept from before
     // `shippedOnlyRefusal` existed would only end in CredentialRefused after the ask.
-    const shipped = m.credential && SHIPPED_MANIFESTS[m.program] === m;
+    const shipped = m.credential && isShipped(m);
     return { spawn, description: d, ...(shipped ? { credential: { provider: m.credential!.provider, manifest: m } } : {}), ...filesPlaced(argv, m, files) };
 }
+
+/**
+ * The plan again once the host's facts showed which flavour runs, when that flavour changes what is sent: its own
+ * hardening (GNU `--sandbox`), or an overlay flag whose value is a path the host must resolve. The first plan is made
+ * before any facts exist (undetected), so the call is discarded and spawned again with this plan; the caller requires
+ * the same program file (fingerprint) and describes the NEW facts, so what the card shows and what runs is this argv.
+ * @param req the request
+ * @param session as for `planSpawn`
+ * @param plan the plan the facts came from
+ * @param flavour what `flavourOf` read from those facts
+ * @returns the new plan, or null when the first one already sends what it would
+ */
+export function flavourReplan(req: ShRunRequest, session: ShSession, plan: ShPlan, flavour: Flavour): ShPlan | null {
+    if (flavour !== "gnu" && flavour !== "bsd") return null;
+    const again = planSpawn(req, { ...session, flavour });
+    return JSON.stringify(again.spawn) === JSON.stringify(plan.spawn) ? null : again;
+}
+
+/** What `planSpawn` plans a call against: the session's working directory and roots, the manifests, what the host
+ *  expands, and the flavour once facts showed it (absent: undetected, the first plan). */
+export type ShSession = { cwd: string; roots?: readonly string[]; manifests?: readonly ProgramManifest[]; stored?: readonly StoredManifest[]; tilde?: boolean; files?: { mount: string; session: string; shown: string }; flavour?: Flavour };
 
 /** Whether an argument names `/files` itself or a path under it. */
 const isFilesPath = (a: string): boolean => a === "/files" || a.startsWith("/files/");
@@ -374,6 +401,9 @@ export interface ShFacts {
     argv: string[];
     /** `version`: what the program reported (the worker's version probe), null when it was not read. */
     program: { path: string; inRoot: boolean; version: string | null };
+    /** Which implementation runs, for a manifest that declares `flavours` (`flavourOf`): its name, null when undetected,
+     *  and why in words for the card. Null for a manifest without flavours, or no manifest. */
+    flavour: { name: Flavour; how: string } | null;
     /** `topLevel`/`isRoot` as on a path, present only when the roots were given. */
     cwd: { path: string; inRoot: boolean; topLevel?: boolean; isRoot?: boolean; containsSecret?: boolean | null };
     env: { set: string[]; free: boolean };
@@ -394,9 +424,15 @@ export interface ShFacts {
      *  will inject it (the call then always asks, `judgeCall`); null when the manifest names none. `hosts` is null when
      *  a host holds it without naming hosts (a build from before the proxy), whose profile reaches any host on `ports`. */
     credential: { provider: string; sends: string; held: boolean; ports: readonly number[]; hosts: readonly string[] | null } | null;
+    /** The call's program shows other processes (its manifest's `reveals`), and whether the person listed it in
+     *  `shellRevealsAllow`: one not listed always asks (`judgeCall`); null when the manifest says nothing of it. */
+    reveals: { what: "processes"; program: string; allowed: boolean } | null;
     /** The arguments whose leading `~` the host expanded (`argv` and the paths already carry the expansion); `[]` from a
      *  host that expands nothing. */
     tilde: HostTilde[];
+    /** The files at the roots' tops the sandbox holds unreadable for this call (`HostFacts.hiddenSecrets`); `[]` from a
+     *  host that reports none. */
+    hiddenSecrets: string[];
     /** The `/files` arguments the host mapped to the uploads folder (FILE_ATTACHMENTS.md H9; `argv` and the paths carry
      *  the real path); `[]` when nothing was mapped. */
     files: HostFilesMapped[];
@@ -423,8 +459,40 @@ export function tildeLines(tilde: readonly HostTilde[]): ShCardLine[] {
     return tilde.map((t) => ({ label: "~", value: t.to ? `${t.from} is ${t.to}` : `${t.from} stays literal (${t.reason ?? "no home"})`, ...(t.to ? {} : { warn: true }) }));
 }
 
+/**
+ * The card's lines for the files the sandbox holds unreadable for this call, one per file: a program that loads one
+ * without being given it fails, and the person should see why. Human-facing text.
+ * @param hidden the facts' paths
+ */
+export function hiddenSecretsLines(hidden: readonly string[]): ShCardLine[] {
+    return hidden.map((p) => ({ label: "Held", value: `${p} (unreadable to this call)` }));
+}
+
+/** The `AskWhy.cause` of a call that asks only because its program reveals other processes and is not in
+ *  `shellRevealsAllow`: its card has a third answer, "Always allow" (PROGRAM_MANIFEST.md, ruling 31). */
+export const REVEALS_CAUSE = "reveals";
+
+/** What a program that reveals other processes shows, in the card's words (PROGRAM_MANIFEST.md, ruling 31). */
+export const revealsText = (program: string): string => `${program} shows other processes: their arguments, users and open files`;
+
 /** A walked directory whose walk found a secret, or could not tell, counts as one. */
 const secretBeneath = (containsSecret: boolean | null | undefined): boolean => containsSecret !== undefined && containsSecret !== false;
+
+/**
+ * `shellRevealsAllow` as every reader takes it: the stored value when it is an array of strings, else an empty list, so
+ * a value of another type (a bare string, whose `includes` matches a substring; a number; an object) lists nothing and
+ * the program's calls ask.
+ * @param v the stored `shellRevealsAllow`, of whatever type storage holds
+ */
+export const revealsAllowOf = (v: unknown): readonly string[] =>
+    Array.isArray(v) && v.every((x) => typeof x === "string") ? v : [];
+
+/**
+ * Whether `shellRevealsAllow` lists a program, through {@link revealsAllowOf}.
+ * @param list the stored `shellRevealsAllow`, of whatever type storage holds
+ * @param program the manifest's program
+ */
+export const revealsListed = (list: unknown, program: string): boolean => revealsAllowOf(list).includes(program);
 
 /**
  * The facts of one call, from the host's resolution, described again by the manifest over the resolved paths.
@@ -433,10 +501,10 @@ const secretBeneath = (containsSecret: boolean | null | undefined): boolean => c
  *   describes nothing: its effects are `unknown`)
  * @returns the policy's `c`
  */
-export function shFacts(facts: HostFacts, version: string | null = null, place?: { roots: readonly string[]; manifests?: readonly ProgramManifest[]; stored?: readonly StoredManifest[] }): ShFacts {
-    const st = place?.stored ? manifestsFor(place.stored, place.roots) : undefined;
-    const m = manifestFor(facts.argv, place ? { cwd: facts.cwd.path, roots: place.roots, ...(st ? { rootOf: st.rootOf } : {}) } : undefined, st?.list ?? place?.manifests);
+export function shFacts(facts: HostFacts, version: string | null = null, place?: ShFactsPlace): ShFacts {
+    const { m, st } = factsManifest(facts, place);
     const entry = m ? st?.entryOf(m) : undefined;
+    const fl = m?.flavours ? flavourOf(m, facts.program, place?.platform, version ?? undefined, isShipped(m)) : null;
     const why: string[] = [];
     let effects: EffectsData = "unknown";
     let described = false;
@@ -460,7 +528,7 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
             // An argument the host was not asked to resolve has no root or secret answer, which no bound covers.
             return f ? { kind: "fs", path: f.path, inRoot: f.inRoot && !unnamedLink(f, facts.cwd.path), secret: f.secret || secretBeneath(f.containsSecret), exists: f.exists, ...placeBoth(f, place?.roots, facts.cwd.path) } : { kind: "fs", path: p.given };
         };
-        const d = describeCall(facts.argv, m, { envSet: facts.env.set, resolve, ...(version !== null ? { version } : {}) });
+        const d = describeCall(facts.argv, m, { envSet: facts.env.set, resolve, ...(version !== null ? { version } : {}), ...(fl ? { flavour: fl.flavour } : {}) });
         effects = d.effects;
         described = d.described;
         runner = d.runner;
@@ -479,6 +547,7 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
     return {
         argv: [...facts.argv],
         program: { path: facts.program.path, inRoot: facts.program.inRoot, version },
+        flavour: fl ? { name: fl.flavour, how: fl.how } : null,
         cwd: { path: facts.cwd.path, inRoot: facts.cwd.inRoot, ...placeAmongRoots(facts.cwd.path, place?.roots), ...(facts.cwd.containsSecret !== undefined ? { containsSecret: facts.cwd.containsSecret } : {}) },
         env: { set: [...facts.env.set], free: facts.env.free },
         secrets: [...facts.env.secrets],
@@ -488,9 +557,33 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
         effects, described, why, runner,
         mode: facts.mode, sandboxed: facts.sandboxed, placement: facts.placement,
         credential: credentialOf(facts, m),
+        // Absent list, absent from the config: nothing is listed, so a revealing call asks.
+        reveals: m?.reveals ? { what: m.reveals, program: m.program, allowed: revealsListed(place?.revealsAllow, m.program) } : null,
         tilde: (facts.tilde ?? []).map((t) => ({ ...t })),
+        hiddenSecrets: Array.isArray(facts.hiddenSecrets) ? facts.hiddenSecrets.filter((p): p is string => typeof p === "string") : [],
         files: (facts.files ?? []).map((m) => ({ ...m })),
     };
+}
+
+/** Where a call's facts are described: the roots, the manifests, and `hello.platform` (for `flavourOf`). */
+export type ShFactsPlace = { roots: readonly string[]; manifests?: readonly ProgramManifest[]; stored?: readonly StoredManifest[]; platform?: string; revealsAllow?: readonly string[] };
+
+/** The manifest a call's facts are described by, chosen as `shFacts` chooses it, and the stored manifests it came from. */
+function factsManifest(facts: HostFacts, place?: ShFactsPlace): { m: ProgramManifest | undefined; st: ReturnType<typeof manifestsFor> | undefined } {
+    const st = place?.stored ? manifestsFor(place.stored, place.roots) : undefined;
+    return { m: manifestFor(facts.argv, place ? { cwd: facts.cwd.path, roots: place.roots, ...(st ? { rootOf: st.rootOf } : {}) } : undefined, st?.list ?? place?.manifests), st };
+}
+
+/**
+ * Which flavour a call's facts show, as `shFacts` will read it: what the worker re-plans the call under
+ * (`flavourReplan`) before it describes the facts. Null for a manifest without flavours, or none.
+ * @param facts what `spawn` answered
+ * @param version what the probe read, or null
+ * @param place as for `shFacts`
+ */
+export function factsFlavour(facts: HostFacts, version: string | null, place?: ShFactsPlace): Flavour {
+    const { m } = factsManifest(facts, place);
+    return m?.flavours ? flavourOf(m, facts.program, place?.platform, version ?? undefined, isShipped(m)).flavour : null;
 }
 
 /** The call's credential: the host's word when it will inject one, else the manifest's, not held. */
@@ -668,9 +761,10 @@ function portsText(ports: readonly number[]): string {
 export function shCardLines(f: ShFacts, applied?: HostDoneEnvelope | null, asked?: HostEnvelope): ShCardLine[] {
     const lines: ShCardLine[] = [
         { label: "Runs", value: f.argv.map(quoteArg).join(" "), command: true, ...(scriptOf(f.argv) !== null ? { script: scriptOf(f.argv)! } : {}) },
-        { label: "Program", value: f.program.path + (f.program.version ? ` (version ${f.program.version})` : "") },
+        { label: "Program", value: f.program.path + (f.program.version ? ` (version ${f.program.version})` : "") + (f.flavour ? `, ${f.flavour.how}` : ""), ...(f.flavour?.name === "other" ? { warn: true } : {}) },
         { label: "In", value: f.cwd.path + (f.cwd.inRoot ? "" : " (outside the workspace roots)"), ...(f.cwd.inRoot ? {} : { warn: true }) },
         ...tildeLines(f.tilde ?? []),
+        ...hiddenSecretsLines(f.hiddenSecrets ?? []),
         ...filesLines(f.files ?? []),
         f.sandboxed
             ? { label: "Sandbox", value: f.credential?.held ? `on: writes only inside the workspace roots, network to ${f.credential.hosts ? f.credential.hosts.join(", ") : "any host"} on ${portsText(f.credential.ports)} only` : "on: writes only inside the workspace roots, no network" }
@@ -694,6 +788,7 @@ export function shCardLines(f: ShFacts, applied?: HostDoneEnvelope | null, asked
     if (secretBeneath(f.cwd.containsSecret)) lines.push({ label: "Reads", value: f.cwd.containsSecret ? "the whole directory, which has secret-looking files in it" : "the whole directory, too large to check for secrets", warn: true });
     if (f.repoConfigRunsCode) lines.push({ label: "Repository", value: `its own config makes git run a program: ${f.repo?.reasons.join(", ") || "see .git/config"}`, warn: true });
     if (f.runner) lines.push({ label: "Starts", value: "another program, which this card does not show", warn: true });
+    if (f.reveals) lines.push({ label: "Shows", value: revealsText(f.reveals.program), ...(f.reveals.allowed ? {} : { warn: true }) });
     lines.push({ label: "Does", value: effectsText(f.effects), tip: doesTip(f), ...(f.effects === "unknown" || f.effects.some(claimsTopLevelName) ? { warn: true } : {}) });
     if (!f.described && f.why.length) lines.push({ label: "Why unknown", value: f.why.join("; ") });
     return lines;
@@ -765,7 +860,15 @@ export interface ShResult {
     protectedChanged: HostProtectedChange[] | null;
     /** The host cut `protectedChanged` at its bound; absent = the list is complete. */
     protectedChangedTruncated?: true;
+    /** The files at the roots' tops the sandbox held unreadable for this call, at most {@link SH_HIDDEN_SHOWN}; absent
+     *  when none (or from an older host). */
+    hiddenSecrets?: string[];
+    /** How many more than {@link SH_HIDDEN_SHOWN} were held; absent when the list is complete. */
+    hiddenSecretsMore?: number;
 }
+
+/** How many held files an `ml.sh.run` answer lists; the rest are a count (`hiddenSecretsMore`). */
+export const SH_HIDDEN_SHOWN = 16;
 
 const CHANGE_KINDS: ReadonlySet<unknown> = new Set(["created", "modified", "removed"]);
 
@@ -817,7 +920,7 @@ export function shOut(s: HostStream, token: string | null, head: Uint8Array): Sh
  * @param out the two streams, already shaped
  * @param asked the envelope sent on `start`, or undefined when none was (today's floor)
  */
-export function shResult(done: HostDone, facts: Pick<ShFacts, "placement">, description: CallDescription | null, out: { stdout: ShOut; stderr: ShOut }, asked?: HostEnvelope): ShResult {
+export function shResult(done: HostDone, facts: Pick<ShFacts, "placement"> & Partial<Pick<ShFacts, "hiddenSecrets">>, description: CallDescription | null, out: { stdout: ShOut; stderr: ShOut }, asked?: HostEnvelope): ShResult {
     const okCodes = description?.okCodes ?? [0];
     const ok = !done.error && !done.killed && !done.timedOut && !done.cancelled && done.code !== null && okCodes.includes(done.code);
     const changed = protectedChangedOf(done.protectedChanged);
@@ -827,6 +930,7 @@ export function shResult(done: HostDone, facts: Pick<ShFacts, "placement">, desc
         envelope: done.envelope ?? null,
         ...(asked !== undefined ? { asked } : {}),
         protectedChanged: changed, ...(changed !== null && done.protectedChangedTruncated === true ? { protectedChangedTruncated: true as const } : {}),
+        ...(facts.hiddenSecrets?.length ? { hiddenSecrets: facts.hiddenSecrets.slice(0, SH_HIDDEN_SHOWN), ...(facts.hiddenSecrets.length > SH_HIDDEN_SHOWN ? { hiddenSecretsMore: facts.hiddenSecrets.length - SH_HIDDEN_SHOWN } : {}) } : {}),
         ...(done.error ? { error: `${done.error.code}: ${done.error.message}` } : {}),
         ...(done.killed === "oom" ? { killed: "oom" as const, error: `killed: past its memory bound of ${done.memoryBound ?? "?"} bytes` } : {}),
         ...(typeof done.peakFootprint === "number" ? { peakFootprint: done.peakFootprint } : {}),
@@ -874,6 +978,7 @@ function putWrote(o: unknown): ShCardLine | undefined {
 export function unaskedLines(u: ShUnasked): ShCardLine[] {
     const lines: ShCardLine[] = [{ label: "Allowed by", value: u.by !== "policy" ? "the built-in default" : u.policy ? `the policy "${u.policy}"` : "a policy (no label recorded)" }];
     if (Array.isArray(u.tilde)) lines.push(...tildeLines(u.tilde));
+    if (Array.isArray(u.hiddenSecrets)) lines.push(...hiddenSecretsLines(u.hiddenSecrets));
     if (Array.isArray(u.files)) lines.push(...filesLines(u.files));
     const put = putWrote(u.outcome);
     if (put) return [...lines, put];

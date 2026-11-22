@@ -5,8 +5,10 @@
 import { senderTrust, tabGrants } from "./sw-consent";
 import { isExtensionSender } from "./sw-site-access";
 import { recordHousekeeping } from "./sw-housekeeping";
-import { ensureOffscreen, forgetOffscreen } from "./sw-offscreen";
-import { activeRuns, execReads, isWorkerRun, onSessionRelease, pageValueSession, runControllers } from "./sw-runs";
+import { ensureOffscreen, forgetOffscreen, isOffscreenSender } from "./sw-offscreen";
+import { secretFormsNow } from "./sw-scrub";
+import type { SecretForm } from "../secret-mask";
+import { activeRuns, attachedFilesOf, execReads, isWorkerRun, onSessionRelease, pageValueSession, runControllers } from "./sw-runs";
 import { valueHolders, budgetBytes as valueBudgetBytes, claimValue } from "./sw-values";
 import { PY_PACKAGE_LOADS } from "../python/python-env";
 import { defineJob } from "../job-registry";
@@ -22,6 +24,7 @@ import type { CellCancel } from "../python/py-lease";
 import { sessionArea } from "./sw-housekeeping";
 import { defineState } from "../state-registry";
 import { DEFAULT_CONFIG } from "../contract/contract-config";
+import { idleMinutes } from "../python/py-reap";
 import { dropRunInstalls, runInstalls } from "./sw-pkg-installs";
 
 // LIVE python_exec stdout streaming: maps a run's streamId (the page requestId) → its tabId, so a PY_STDOUT
@@ -348,8 +351,7 @@ export function endPythonTurn(runId: string): void {
     void (async () => {
         let minutes: unknown = DEFAULT_CONFIG.pythonIdleMinutes;
         try { minutes = (await chrome.storage.sync.get({ pythonIdleMinutes: DEFAULT_CONFIG.pythonIdleMinutes }))?.pythonIdleMinutes; } catch { /* default */ }
-        const n = Number(minutes);
-        const ms = Math.round((Number.isFinite(n) && n >= 0 ? n : DEFAULT_CONFIG.pythonIdleMinutes) * 60_000);
+        const ms = Math.round(idleMinutes(minutes, DEFAULT_CONFIG.pythonIdleMinutes) * 60_000);
         try { await chrome.runtime.sendMessage({ type: "PY_END_TURN", run: runId, ms }); } catch { /* no offscreen listening: the worker is gone with its Map */ }
     })();
 }
@@ -412,6 +414,33 @@ export function pythonReaped(message: any, sender: chrome.runtime.MessageSender,
     }
     const dropped = message.dropped as { count?: unknown; afterCell?: unknown } | undefined;
     if (dropped && typeof dropped.count === "number" && dropped.count > 0) recordRunLog(run, { subsystem: "python", kind: "dropped", reason: "at-reap", detail: { count: dropped.count, afterCell: Number(dropped.afterCell) || 0 } });
+}
+
+/**
+ * FILES_ATTACHED: the offscreen document asks which files a session holds, for Python's `/files` mount. Answered from the
+ * run's shelf, never from a pointer store made for the asking. Only the offscreen document is answered: anyone else, a
+ * missing session or one this worker does not know gets none.
+ * @param message `{ session }`, the run's id
+ * @param sender who sent it
+ * @returns the files, in the shape the reader lists them (`handle`, `name`, `key`, `bytes`, `sha256`)
+ */
+export function filesAttached(message: any, sender: chrome.runtime.MessageSender): { files: { handle: string; name: string; key: string; bytes: number; sha256: string }[] } {
+    const session = message?.session;
+    if (!isOffscreenSender(sender) || typeof session !== "string" || !session) return { files: [] };
+    return { files: attachedFilesOf(session).map((f) => ({ handle: f.id, name: f.name, key: f.data, bytes: f.bytes, sha256: f.sha256 })) };
+}
+
+/**
+ * FILES_SECRET_FORMS: the offscreen document asks for every secret's forms, to mask them in each read of Python's
+ * `/files` mount (secret-mask.ts). The answer is plaintext, so it is given to the offscreen document only (the
+ * FILES_ATTACHED check, no relay entry); anyone else gets `{ forms: null }`, as does a config or registry that cannot
+ * be read, which fails the read.
+ * @param sender the message's sender
+ * @returns the forms, or null
+ */
+export async function filesSecretForms(sender: chrome.runtime.MessageSender): Promise<{ forms: SecretForm[] | null }> {
+    if (!isOffscreenSender(sender)) return { forms: null };
+    try { return { forms: await secretFormsNow() }; } catch { return { forms: null }; }
 }
 
 /** The leased cells this worker sent and is still waiting on, and the last ones it settled: a `PY_DONE` naming neither

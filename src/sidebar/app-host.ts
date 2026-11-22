@@ -3,6 +3,7 @@
 import { approvalPayload } from "../approval-key";
 import { cleanImages } from "../contract/contract-run";
 import { cleanFiles } from "../attached-files";
+import { cleanAsIs } from "./transcript/turn-scan";
 
 // The app posts __mlLightbox on an image click; the overlay's shell shows it full-window.
 // The panel is its own page, so it needs its own viewer — with Escape + backdrop close,
@@ -73,8 +74,8 @@ export function relayAppToWorker(d: any, tabId: number, surface: string, toApp: 
     // Session composer reverse channel: the panel can't touch the inspected page, so relay to the
     // background → that tab's shell → the page's handle registry (same route as hover-highlight).
     if (d.__mlSidebarApp === "sessionSend" && typeof d.hash === "string" && typeof d.text === "string" && (d.text.trim() || cleanImages(d.images) || cleanFiles(d.files))) {
-        const files = cleanFiles(d.files);
-        void chrome.runtime.sendMessage({ type: "ML_SESSION_REMOTE", tabId, action: "send", hash: d.hash, text: d.text, images: cleanImages(d.images), ...(files ? { files } : {}), surface }).catch(() => {});
+        const files = cleanFiles(d.files), asIs = cleanAsIs(d.asIs);
+        void chrome.runtime.sendMessage({ type: "ML_SESSION_REMOTE", tabId, action: "send", hash: d.hash, text: d.text, images: cleanImages(d.images), ...(files ? { files } : {}), ...(asIs ? { asIs } : {}), surface }).catch(() => {});
         return true;
     }
     if (d.__mlSidebarApp === "sessionCancel" && typeof d.hash === "string") {

@@ -12,6 +12,9 @@ import { ensureOffscreen, forgetOffscreen } from "./sw-offscreen";
 /** How long the store must be quiet before a pass starts: a streaming run writes every 400 ms, and each write
  *  pushes the pass back. Under the ~30 s a service worker idles for, so the timer is still alive when it fires. */
 export const COMPACT_QUIET_MS = 15_000;
+/** Whether the worker's compactors start no quiet timer: set by the node:vm test harness (`__ML_PAUSE_COMPACTION`),
+ *  where a pass would fire 15 s into a test that never asked for one. Never set in a browser. */
+export const compactionPaused = (): boolean => { try { return (globalThis as { __ML_PAUSE_COMPACTION?: boolean }).__ML_PAUSE_COMPACTION === true; } catch { return false; } };
 
 /** One PNG data URL as a lossless WebP data URL from the offscreen image worker, or null to keep it. Throws when the
  *  worker cannot answer at all. */
@@ -43,6 +46,8 @@ export function imageCompactor(store: SessionStore, o: {
     encode?: (url: string) => Promise<string | null>;
     record?: (r: HousekeepingReport) => void;
     quietMs?: number;
+    /** `kick()` starts no quiet timer ({@link compactionPaused}); a `pass()` asked for still runs. */
+    paused?: boolean;
     now?: () => number;
 } = {}): { kick(): void; pass(): Promise<void>; status(): JobLive } {
     const encode = o.encode ?? webpFromWorker, now = o.now ?? Date.now;
@@ -79,6 +84,7 @@ export function imageCompactor(store: SessionStore, o: {
     };
     return {
         kick() {
+            if (o.paused) return;
             if (timer) clearTimeout(timer);
             const ms = o.quietMs ?? COMPACT_QUIET_MS;
             dueAt = now() + ms;
@@ -124,6 +130,8 @@ export function archiveImageCompactor(o: {
     /** A pass replaced images: the months holding them are dirty, so the folder's files are worth rewriting. */
     onReplaced?: () => void;
     quietMs?: number;
+    /** `kick()` starts no quiet timer ({@link compactionPaused}); a `pass()` asked for still runs. */
+    paused?: boolean;
     now?: () => number;
 }): { kick(): void; pass(): Promise<void>; status(): JobLive } {
     const encode = o.encode ?? webpFromWorker, now = o.now ?? Date.now;
@@ -167,6 +175,7 @@ export function archiveImageCompactor(o: {
     };
     return {
         kick() {
+            if (o.paused) return;
             if (timer) clearTimeout(timer);
             const ms = o.quietMs ?? COMPACT_QUIET_MS;
             dueAt = now() + ms;

@@ -18,6 +18,7 @@
       "apply",
       "assign",
       "astype",
+      "columns",
       "copy",
       "drop",
       "dropna",
@@ -45,6 +46,7 @@
       "reset_index",
       "round",
       "select_dtypes",
+      "shape",
       "sort_values",
       "sum",
       "to_dict",
@@ -68,6 +70,7 @@
       "groupby",
       "head",
       "idxmax",
+      "iloc",
       "index",
       "info",
       "isin",
@@ -371,6 +374,12 @@
       "cost": "cells",
       "why": "a new frame of converted columns"
     },
+    "DataFrame.columns": {
+      "effects": "pure",
+      "returns": "alias(0)",
+      "cost": "O(1)",
+      "why": "the receiver's column Index, immutable (ruled in, V1 2026-11-19)"
+    },
     "DataFrame.copy": {
       "effects": "pure",
       "returns": "fresh",
@@ -533,6 +542,12 @@
       "cost": "cells",
       "why": "a column subset; the selected columns' buffers are the receiver's (measured: shared)"
     },
+    "DataFrame.shape": {
+      "effects": "pure",
+      "returns": "fresh",
+      "cost": "O(1)",
+      "why": "a new tuple of two ints (ruled in, V1 2026-11-19)"
+    },
     "DataFrame.sort_values": {
       "effects": "pure; mutates(0) when inplace",
       "returns": "None when inplace; alias(0) otherwise",
@@ -558,10 +573,10 @@
       "why": "may share memory with the receiver (measured: shared)"
     },
     "DataFrame.to_string": {
-      "effects": "pure",
-      "returns": "fresh",
+      "effects": "pure; write(buffer arg) when buf= is given",
+      "returns": "fresh; None when buf= is given",
       "cost": "cells",
-      "why": "a new string"
+      "why": "a new string; given buf (a path or a buffer) it writes there instead"
     },
     "DataFrame.unstack": {
       "effects": "pure",
@@ -869,6 +884,12 @@
       "cost": "size",
       "why": "a new label"
     },
+    "Series.iloc": {
+      "effects": "pure",
+      "returns": "alias(0)",
+      "cost": "O(1)",
+      "why": "an indexer over the receiver; inside, item reads only: an item write would be judged on the indexer, a new object each read, not the Series (ruled in, V1 2026-11-19)"
+    },
     "Series.index": {
       "effects": "pure",
       "returns": "alias(0)",
@@ -990,10 +1011,10 @@
       "why": "may share memory with the receiver (measured: shared)"
     },
     "Series.to_string": {
-      "effects": "pure",
-      "returns": "fresh",
+      "effects": "pure; write(buffer arg) when buf= is given",
+      "returns": "fresh; None when buf= is given",
       "cost": "size",
-      "why": "a new string"
+      "why": "a new string; given buf (a path or a buffer) it writes there instead"
     },
     "Series.tolist": {
       "effects": "pure",

@@ -35,9 +35,10 @@ import { PythonBench } from "./sidebar/vram-bench";
 import type { RuntimeId } from "./session/session-host";
 import { BACKUP_BLOCK_ID, BACKUP_TAB, Settings, searchSettings, showSettingsSection } from "./sidebar/settings/settings";
 import { addressHash } from "./sidebar/links";
-import { config, psError } from "./sidebar/store";
+import { config, psError, holdScope } from "./sidebar/store";
 import { residentNow } from "./sidebar/resource/panel-facts";
 import { residentReader } from "./sidebar/resident-reader";
+import { askScan } from "./sidebar/scan-ask";
 import { DEFAULT_CONFIG, SETTING_PLACES, type MlConfig } from "./contract";
 
 /**
@@ -57,7 +58,9 @@ const extensionPlatform: ClientPlatform = { ...webPlatform, kind: "extension", p
  * is not. The sidebar app keeps these going for the whole of its life because it is mounted in every tab and has a
  * status dot to feed; this page has neither, so the box is only asked about while someone is looking at it.
  */
-function BoxPanel() {
+function BoxPanel({ hash }: { hash?: string }) {
+    // Scoped to `hash` while mounted, whatever session the page has open (`holdScope`, store.ts).
+    useEffect(() => (hash ? holdScope(hash) : undefined), [hash]);
     useEffect(() => {
         fetchModels();
         pollBackendHealth();
@@ -142,7 +145,7 @@ const FIXES: Record<string, () => Promise<boolean>> = {
 
 /** What this device can draw beyond the chat core. Every answer is per runtime, and null for one that is not ours. */
 const extras: ChatExtras = {
-    resourcePanel: (id) => (localRuntimes.has(id) ? <BoxPanel /> : null),
+    resourcePanel: (id, hash) => (localRuntimes.has(id) ? <BoxPanel hash={hash} /> : null),
     // The bench itself, not its drawer: the page's dock is the drawer here (edge, size, zoom, close).
     bench: (id) => (localRuntimes.has(id) ? <PythonBench /> : null),
     settings: (id) => (localRuntimes.has(id) ? <SettingsPane /> : null),
@@ -178,6 +181,8 @@ installServices(hostServices(store, extensionPlatform, {
         try { chrome.runtime.sendMessage({ type: "PRICE_CALLS", payload: { calls } }, (resp: { data?: import("./spend/price-book").CallCost[] } | undefined) => resolve(Array.isArray(resp?.data) ? resp.data : null)); }
         catch { resolve(null); }
     }),
+    // The worker that scrubs is this browser's, so only a local runtime's draft is scanned; a hub device's send ignores "send as is".
+    scanTurn: (runtime, texts) => (localRuntimes.has(runtime) ? askScan(texts) : Promise.resolve(null)),
     findSetting: (query) => { searchSettings(query); settingsTab.value = "extension"; mainView.value = "settings"; },
     // A `window-ml:` link sets this page's hash in place, which the router reads like any other address (LINKS.md).
     // The same address twice changes nothing, so it is read again by hand.

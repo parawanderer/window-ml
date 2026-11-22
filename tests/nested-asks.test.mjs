@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { hostAsks, raiseAsk, canAsk, stepAsks, noteAskOutcome, MAX_ASKS_PER_STEP } from "../src/sw/sw-asks.ts";
 import { ASK_ID, approvalKey, approvalPayload } from "../src/approval-key.ts";
-import { pendingApprovals, resolveApproval } from "../src/sw/sw-consent.ts";
+import { externalApprovals, pendingApprovals, resolveApproval } from "../src/sw/sw-consent.ts";
 
 const FACTS = { argv: ["git", "--no-pager", "status"], cwd: { path: "/w", inRoot: true }, effects: "unknown", sandboxed: true, placement: "host-sandbox" };
 let n = 0;
@@ -288,13 +288,13 @@ const T = { timeout: 30000 };
  * an ask is raised from (a click rather than an exec, which a default build routes to an isolated world that answers at
  * once). Every step event the surfaces get is kept.
  */
-async function runningStep({ approve = true } = {}) {
+async function runningStep({ approve = true, local = {} } = {}) {
     let turns = 0, release;
     const held = new Promise((r) => { release = r; });
     const events = [];
     const bg = loadBackground({
         config: { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "m", apiFormat: "openai", ocrModel: "", debugMode: "off", autoApproveReadonly: false },
-        openTabs: [SITE], siteGate: false,
+        openTabs: [SITE], siteGate: false, local,
         onFetch: (c) => {
             if (!c.url.includes("/chat/completions")) return jsonResponse({});
             return turns++ === 0
@@ -428,4 +428,151 @@ test("red team: an ask raised on a seq no surface has a step for is refused at o
     void w.bg.send({ type: "CANCEL_RUN", payload: { runId: w.hash } });
     await q;
     } finally { void w.bg.send({ type: "CANCEL_RUN", payload: { runId: w.hash } }); await p; w.release(); }
+});
+
+// --- what the step's event keeps of an ask: the stored scrub, and the live card's raw facts (sw-asks.ts) ---
+
+const VALUE = "tok-9f8e7d6c5b4a3210";
+const MARK = "[REDACTED:API_TOKEN]";
+/** A stored scrub as the run host's: the registered value as its marker, by name. */
+const keep = async (v) => JSON.parse(JSON.stringify(v).replaceAll(VALUE, MARK));
+const SECRET_FACTS = { ...FACTS, argv: ["curl", "-H", `Authorization: Bearer ${VALUE}`, "https://api.example/"] };
+const holds = (v, what) => JSON.stringify(v ?? null).includes(what);
+
+test("the step's event keeps the scrubbed facts; the live copy has the raw ones only while the ask waits; a policy judges the raw", async () => {
+    const emitted = [];
+    const { r, unhost } = run({ keep, emit: (seq, asks, live) => emitted.push({ seq, asks, live }) });
+    const p = raiseAsk(r.runId, 2, { kind: "sh", facts: SECRET_FACTS, consumer: "sh", placement: "host-sandbox" });
+    for (let i = 0; i < 20 && !emitted.length; i++) await tick();
+    const [key] = keysOf(r.runId);
+    const d = pendingApprovals.get(key).descriptor;
+    assert.ok(holds(d.facts, VALUE), "the policy's c is the facts as the host reported them");
+    assert.ok(!holds(d.arguments, VALUE) && holds(d.arguments, MARK), "what a reader of the pending gates gets (run.approvals, the external approver) is the kept copy");
+    assert.ok(!holds(emitted[0].asks, VALUE) && holds(emitted[0].asks, MARK), "the event keeps the marker, by the value's name");
+    assert.ok(holds(emitted[0].live, VALUE), "the live card shows the person what they are approving");
+    assert.ok(!holds(stepAsks(r.runId, 2), VALUE) && holds(stepAsks(r.runId, 2, true), VALUE));
+    resolveApproval(key, { approved: false, feedback: `not with ${VALUE}`, source: "user" });
+    const o = await p;
+    assert.equal(o.state, "denied");
+    const last = emitted.at(-1);
+    assert.equal(last.asks[0].state, "denied");
+    assert.ok(!holds(last, VALUE), "once it settled, neither copy holds the value: not the facts, not the person's note");
+    assert.equal(last.asks[0].note, `not with ${MARK}`);
+    assert.ok(!holds(stepAsks(r.runId, 2, true), VALUE), "a later event of the step (its DONE) gets no raw facts either");
+    unhost();
+});
+
+test("the external approver's list (__mlApprovals.list) gets the kept copy in facts and arguments; the policy keeps the raw", async () => {
+    const { r, unhost } = run({ keep, routing: "external" });
+    const p = raiseAsk(r.runId, 5, { kind: "sh", facts: SECRET_FACTS, consumer: "sh", placement: "host-sandbox" });
+    for (let i = 0; i < 20 && !keysOf(r.runId).length; i++) await tick();
+    const [key] = keysOf(r.runId);
+    const mine = externalApprovals().filter((d) => d.key === key);
+    assert.equal(mine.length, 1, "positive control: an externally routed gate is listed");
+    assert.ok(!holds(mine, VALUE), JSON.stringify(mine[0].facts));
+    assert.ok(holds(mine[0].facts, MARK) && holds(mine[0].arguments, MARK));
+    assert.ok(holds(pendingApprovals.get(key).descriptor.facts, VALUE), "what a policy judges is still the raw copy");
+    resolveApproval(key, { approved: false, source: "external" });
+    await p;
+    unhost();
+});
+
+test("an allowed call's outcome is kept through the same scrub before it rides the step", async () => {
+    const emitted = [];
+    const { r, unhost } = run({ keep, emit: (seq, asks, live) => emitted.push({ seq, asks, live }) });
+    const p = raiseAsk(r.runId, 3, { kind: "sh", facts: FACTS });
+    for (let i = 0; i < 20 && !keysOf(r.runId).length; i++) await tick();
+    resolveApproval(keysOf(r.runId)[0], { approved: true, source: "user" });
+    const o = await p;
+    await noteAskOutcome(r.runId, 3, o.askId, { protectedChanged: [{ root: "/w", name: `.env-${VALUE}`, change: "created" }] });
+    assert.ok(!holds(emitted.at(-1), VALUE) && holds(emitted.at(-1).asks[0].outcome, MARK));
+    unhost();
+});
+
+test("fails closed: a scrub that throws keeps no fact, no note and no outcome, and the live card still shows the raw facts", async () => {
+    const emitted = [];
+    const { r, unhost } = run({ keep: async () => { throw new Error("registry unreadable"); }, emit: (seq, asks, live) => emitted.push({ seq, asks, live }) });
+    const p = raiseAsk(r.runId, 4, { kind: "sh", facts: SECRET_FACTS });
+    for (let i = 0; i < 20 && !emitted.length; i++) await tick();
+    assert.deepEqual(emitted[0].asks[0].facts, { withheld: "the registered secrets could not be read" });
+    assert.ok(holds(emitted[0].live, VALUE), "the person can still judge the call");
+    resolveApproval(keysOf(r.runId)[0], { approved: false, feedback: VALUE, source: "user" });
+    await p;
+    assert.ok(!holds(emitted.at(-1), VALUE));
+    assert.equal(emitted.at(-1).asks[0].note, "[withheld: the registered secrets could not be read]");
+    unhost();
+});
+
+const REG = { ml_secret_registry: [{ name: "API_TOKEN", value: VALUE }] };
+const EXT_PAGE = { url: "chrome-extension://test/chat.html" };
+/** Every stream message a session-server subscription got, for one session. */
+function backfill(bg, hash) {
+    const port = bg.connect("ml-sessions", EXT_PAGE);
+    port.send({ type: "events", sub: 1, hash });
+    return port;
+}
+
+test("in the worker: a waiting ask's raw facts reach only the live card; the session server's backfill, a late DevTools panel and the replay hold the marker", T, async () => {
+    const w = await runningStep({ local: REG });
+    const p = w.raise(SECRET_FACTS);
+    for (let i = 0; i < 100 && !w.asksOn().length; i++) await tick();
+    assert.ok(holds(w.asksOn(), VALUE), "positive control: the card the person answers from shows the raw facts");
+    // (3) a backfill taken while the ask is PENDING
+    const port = backfill(w.bg, w.hash);
+    for (let i = 0; i < 20; i++) await tick();
+    assert.ok(holds(port.messages, MARK), "positive control: the backfill carries the ask");
+    assert.ok(!holds(port.messages, VALUE), "the session server's ring holds no registered value");
+    // (2) a DevTools panel opened now replays the ring, and a page that rebuilds the card replays the run's buffer
+    const panel = w.bg.connect("ml-devtools");
+    panel.send({ type: "ml-devtools-init", tabId: SITE.id });
+    assert.ok(holds(panel.messages, MARK) && !holds(panel.messages, VALUE), "the DevTools ring keeps the scrubbed copy");
+    const before = w.events.length;
+    const sender = { tab: SITE, frameId: 0, url: SITE.url };
+    await w.bg.send({ type: "CONTENT_READY" }, sender); void w.bg.send({ type: "SHELL_LISTENING" }, sender);
+    for (let i = 0; i < 20; i++) await tick();
+    const replayed = w.events.slice(before);
+    assert.ok(replayed.some((e) => e.asks?.length), "positive control: the replay carries the step with its ask");
+    assert.ok(!holds(replayed, VALUE), "the replay buffer keeps the scrubbed copy");
+    // settled: every fan's latest copy, and both buffers, hold none
+    const [a] = w.asksOn();
+    void w.bg.send({ type: "SET_APPROVAL", payload: { runId: w.hash, seq: w.seq, decision: false, ask: a.id } });
+    await p;
+    for (let i = 0; i < 20; i++) await tick();
+    assert.equal(w.asksOn()[0].state, "denied");
+    assert.ok(!holds(w.asksOn(), VALUE), "the live card's last copy drops the raw facts once the ask settles");
+    const later = w.bg.connect("ml-devtools");
+    later.send({ type: "ml-devtools-init", tabId: SITE.id });
+    assert.ok(!holds(later.messages, VALUE));
+    assert.ok(!holds(backfill(w.bg, w.hash).messages, VALUE));
+    await w.finish();
+});
+
+test("upgrade: an ask a kept session stored with its raw facts (the code before the stored scrub) is served back with the marker", T, async () => {
+    const { IDBFactory } = await import("fake-indexeddb");
+    const idb = new IDBFactory();
+    const hash = "aaaa0042";
+    const config = { chatUrl: "http://llm.test/api/chat/completions", apiKey: "sk-test", model: "m", apiFormat: "openai" };
+    const tab = { tab: { id: 9, url: "https://site9.example/", title: "Site 9" }, url: "https://site9.example/" };
+    // FIXTURE: a step event as the old code stored it, the ask's facts, note and outcome as the call had them.
+    const old = { kind: "agent-step", id: hash, ts: 2, save: false, session: { hash, turn: 1 }, step: 1, seq: 1, tool: "exec", pending: false, result: "ok",
+        asks: [{ id: "a0123456789abcdef01234567", kind: "sh", state: "allowed", raisedAt: 1, answeredAt: 2, note: `ran with ${VALUE}`, facts: SECRET_FACTS, outcome: { ran: "host-sandbox", protectedChanged: [{ root: "/w", name: VALUE, change: "created" }] } }] };
+    const first = loadBackground({ config, indexedDB: idb, local: REG });
+    first.context.__mlKeepSessionForTest(hash);
+    void first.send({ type: "ML_DEBUG_EVENT", event: { kind: "agent", id: hash, ts: 1, save: false, session: { hash, turn: 0 }, task: "t", model: "m", maxSteps: 5, config: null } }, tab);
+    void first.send({ type: "ML_DEBUG_EVENT", event: old }, tab);
+    for (let i = 0; i < 50; i++) await tick();
+    // A restarted worker serves the session from the store.
+    const bg = loadBackground({ config, indexedDB: idb, local: REG });
+    let port;
+    for (let i = 0; i < 200; i++) {
+        await tick();
+        if (i % 20 === 19) { port = backfill(bg, hash); for (let j = 0; j < 20; j++) await tick(); if (holds(port.messages, "a0123456789abcdef01234567")) break; }
+    }
+    const steps = (port?.messages ?? []).flatMap((m) => m.message?.events ?? (m.message?.event ? [m.message.event] : [])).filter((e) => e?.asks);
+    assert.ok(steps.length, "positive control: the stored step came back from the store");
+    const [a] = steps.at(-1).asks;
+    assert.ok(!holds(a, VALUE), "no fact, note or outcome of the old ask leaves the store with the value");
+    assert.ok(a.facts.argv.includes(`Authorization: Bearer ${MARK}`), "the card the person reads names the hidden secret");
+    assert.equal(a.note, `ran with ${MARK}`);
+    assert.deepEqual([a.state, a.kind, a.facts.program, a.outcome.ran], ["allowed", "sh", SECRET_FACTS.program, "host-sandbox"], "everything else is as stored");
 });

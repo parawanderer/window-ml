@@ -19,6 +19,8 @@ import { DIALECT_FILES, DIALECT_MODULES, DIALECT_NODES } from "./dialect-data";
 import { wrapUserSetup, wrapUserScript, COMPLETE_HELPER, completeIn, RESET, injectInputs, stdoutWriter, injectStoredTable, takeIpc, releaseNamespace, hostRunScript, cancelPath, type PyCompletion } from "./python-runtime";
 import { dialectSetup, libraryLoad, libraryShape, type DialectLibrary } from "./python-dialect-run";
 import { lockdownReadonly } from "./lockdown";
+import { makeFilesMount, FILES_OPEN_WORDS } from "./files-mount";
+import { makeRequester, type FilesShared } from "./files-wire";
 import { cellBoundary, cellDropped, onSpending } from "./cell-gate";
 import { shownText } from "./pkg-card";
 
@@ -46,6 +48,11 @@ let sitePackages = "";   // state: plumbing — read once at boot, before the lo
 // while C code ran stays pending and fires on the NEXT bytecode, which would be the next script's: `clearInterrupt`
 // runs before a run touches the interpreter and again when it ends (docs/dev/python-sandbox.md, "Stopping a bench script").
 let interruptFlag: Int32Array | null = null;   // state: plumbing — set once, from the first message
+// `/files` (files-host.ts): the channel's memory, posted once before the runtime boots, to a worker-hosted run's worker only.
+let filesShared: FilesShared | null = null;   // state: plumbing — set once, from the offscreen document
+let filesHome: string | undefined;   // state: plumbing — where the run writes (the reader's `home`), posted with `filesShared`
+let filesMount: ReturnType<typeof makeFilesMount> | null = null;   // state: plumbing — built at boot, before the lockdown
+let filesWords: ((on: boolean) => void) | null = null;   // state: plumbing — the open wrappers' switch (FILES_OPEN_WORDS)
 
 /** Drop a stop that did not land: no run may be interrupted by a Stop meant for the one before it. */
 function clearInterrupt(): void {
@@ -60,7 +67,7 @@ type WheelBytes = { filename: string; sha256: string; bytes: ArrayBuffer };
 // two never have to be inferred from one another.
 // `prewarm` is on the first run after a pre-warm started the runtime: whether that run found it `warm` or still
 // `starting`.
-type RunResult = { ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; ipc?: ArrayBuffer; table?: { columns: string[]; rows: (string | number | null)[][]; rowCount?: number }; render?: "latex" | "img" | "figure"; bootMs?: number; runMs?: number; bench?: BenchSession; prewarm?: "warm" | "starting"; notInDialect?: string; installFailed?: boolean; dropped?: { count: number; afterCell: number } };
+type RunResult = { ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; ipc?: ArrayBuffer; table?: { columns: string[]; rows: (string | number | null)[][]; rowCount?: number }; render?: "latex" | "img" | "figure"; bootMs?: number; runMs?: number; bench?: BenchSession; prewarm?: "warm" | "starting"; notInDialect?: string; installFailed?: boolean; dropped?: { count: number; afterCell: number }; fatal?: boolean };
 /** A kept-state bench namespace after a run: which one it is (`id`, new whenever it is created afresh — a
  *  reset, or the worker restarting under it) and the variables the USER has in it, prelude names excluded. */
 type BenchSession = { id: string; vars: { name: string; type: string }[] };
@@ -96,6 +103,8 @@ function makeWireSend(id: number): (requestJson: string) => Promise<string> {
 }
 
 let pyodideReady: Promise<any> | null = null;
+let interpreter: any = null;   // state: plumbing — the started interpreter, for the kernel-death probe; dies with the worker
+let fatalCause: string | null = null;   // state: plumbing — what Pyodide's own fatal-error handler caught; dies with the worker
 // Whether the runtime has finished starting. A run that finds it false WAITED for the start, and that wait is
 // its `bootMs`: a first python_exec spends several seconds fetching the runtime and its wheels before a line of
 // the script runs, and a plain "ran in 4.2s" blames the script for time it never spent — the same confusion a
@@ -121,7 +130,25 @@ function getPyodide(by: "prewarm" | "run" = "run"): Promise<any> {
         const t0 = Date.now();
         const { loadPyodide } = await import(new URL("pyodide/pyodide.mjs", base).href);
         const py = await loadPyodide(pyodideLoadOptions(new URL("pyodide/", base).href));
+        // The kernel's death's cause, from Pyodide's fatal-error handler (`API.on_fatal`, called with what it caught), not
+        // a rejection's reason or a cell's answer, which a cell can choose; those stand in only for a Pyodide without the
+        // hook. Set before the lockdown, like every hook here.
+        if (py._api) py._api.on_fatal = (e: unknown) => { fatalCause ??= String((e as Error)?.message ?? e); };
         if (interruptFlag) py.setInterruptBuffer(interruptFlag);
+        // `/files` is built here, BEFORE the lockdown: the requester keeps `post` and the shared memory in its closure.
+        if (filesShared) {
+            const { call, data, Interrupted } = makeRequester(filesShared, post as never, interruptFlag);
+            const mount = makeFilesMount({ FS: py.FS, ERRNO_CODES: py.ERRNO_CODES, call, data, Interrupted, home: filesHome });
+            filesMount = mount;
+            mount.remount();
+            // A hidden file's refusal in the reader's words, not "Permission denied": the model acts on the text.
+            py.runPython(FILES_OPEN_WORDS);
+            const install = py.globals.get("_ml_files_install");
+            const sw = install((p: string | null | undefined) => mount.refusal(p ?? null));
+            install.destroy?.();
+            py.globals.delete("_ml_files_install");
+            filesWords = (on: boolean) => { try { sw(on); } catch { /* the opens stay as they were */ } };
+        }
         await py.loadPackage(PY_PACKAGE_LOADS);
         // Lazy tooling (jedi) loads BEFORE the lockdown too: `complete()` calls `py.loadPackage(PY_LAZY_LOADS)`
         // after the strip has removed `fetch`, and Pyodide's loader needs it to fetch the wheel. Only readonly
@@ -141,6 +168,7 @@ function getPyodide(by: "prewarm" | "run" = "run"): Promise<any> {
             bridgeLift = held.bridges;
         }
         pyodideLive = true;
+        interpreter = py;
         post({ booted: true, ms: Date.now() - t0, by });
         return py;
     })();
@@ -257,6 +285,9 @@ async function run(code: string, image: string | null, hardened: boolean, tables
     const w0 = Date.now();
     const py = await getPyodide();
     clearInterrupt();
+    // Each cell sees `/files` as it is now: what the last cell's mount knew of it (stats, cached chunks) is dropped.
+    filesMount?.remount();
+    filesWords?.(!inside);
     const boot = wasLive ? null : Date.now() - w0;
     // INSIDE THE DIALECT (docs/spec/PYTHON_DIALECT.md, "Membership replaces `mode`"): an interpreter that cannot judge
     // membership runs nothing unasked; the cell is reported outside and goes to the person.
@@ -464,6 +495,30 @@ async function installWheels(wheels: WheelBytes[]): Promise<string | null> {
     return null;
 }
 
+// THE KERNEL'S DEATH (ruling 26). A fatal Pyodide error ends the interpreter, not the cell: a JS stack overflow in the
+// parser (a call chain past ~10,000 attributes in Chromium) never settles the cell's promise, and escapes as an unhandled
+// rejection on this worker's `self` (measured 2026-11-18: never as `error`, never as the host's `worker.onerror`); a trap
+// in a wasm call (pillow's `_imagingtk`) answers the cell, and every later call throws "already fatally failed".
+// Only Pyodide's own verdict kills the kernel: once its fatal-error handler has run, every public call throws that text,
+// so an ordinary rejection a cell's own code left unhandled, after which the interpreter still answers, kills nothing.
+let fatal: string | null = null;   // state: plumbing — the fatal error, once the interpreter died; the worker is ended for it
+let runningId = 0;   // state: plumbing — the message whose cell holds the interpreter; 0 between cells
+
+/** Whether the interpreter has fatally failed: it answers a no-op call with "already fatally failed". */
+function interpreterDead(): boolean {
+    if (!interpreter) return false;
+    try { interpreter.runPython("None"); return false; } catch (e) { return /fatally failed/.test(String((e as Error)?.message ?? e)); }
+}
+
+/** An error or rejection no cell caught: the kernel's death when the interpreter says so, answered on the running cell. */
+function onUncaught(reason: unknown): void {
+    if (fatal !== null || !interpreterDead()) return;
+    fatal = fatalCause ?? String((reason as Error)?.message ?? reason ?? "Pyodide fatal error").trim().split("\n")[0].slice(0, 300);
+    if (runningId) post({ id: runningId, ok: false, stdout: "", error: fatal, fatal: true });
+}
+self.addEventListener("unhandledrejection", ((e: PromiseRejectionEvent) => onUncaught(e.reason)) as EventListener);
+self.addEventListener("error", ((e: ErrorEvent) => onUncaught(e.error ?? e.message)) as EventListener);
+
 // The message handler. Registered via `addEventListener` at module load — BEFORE the lockdown strips
 // `addEventListener` — so the listener lives in the browser's C++ EventTarget list, unreachable from JS
 // after the strip. Setting `self.onmessage` instead would invoke the WebIDL setter (which starts the
@@ -486,7 +541,16 @@ function onMessage(e: MessageEvent): void {
     // The interrupt buffer, posted once before anything else (offscreen.ts `ensureWorker`).
     const buf = (e.data as { interruptBuffer?: unknown })?.interruptBuffer;
     if (buf instanceof Int32Array && !interruptFlag && !pyodideReady) { interruptFlag = buf; return; }
+    const fsh = (e.data as { filesShared?: FilesShared })?.filesShared;
+    if (fsh && fsh.ctl instanceof SharedArrayBuffer && fsh.data instanceof SharedArrayBuffer && !filesShared && !pyodideReady) {
+        filesShared = fsh;
+        const home = (e.data as { filesHome?: unknown }).filesHome;
+        if (typeof home === "string" && (home === "/files/agent" || home.startsWith("/files/agent/"))) filesHome = home;
+        return;
+    }
     if (!msg || typeof msg.id !== "number") return;
+    // A dead kernel answers everything with its death: its chain may never settle again (the cell that killed it did not).
+    if (fatal !== null) { post({ id: msg.id, ok: false, stdout: "", error: fatal, fatal: true }); return; }
     // ROOT C: drop a run's kept namespace when the run closes or is archived. Through the chain so it
     // cannot land mid-run. Callables the run's last cell handed to JavaScript that fired since its result have no next
     // cell to report them (cell-gate.ts), so the answer carries them.
@@ -569,13 +633,26 @@ function onMessage(e: MessageEvent): void {
     const wheels = Array.isArray(msg.wheels) ? msg.wheels : [];
     if (wheels.length && !READONLY) { post({ id: msg.id, ok: false, stdout: "", error: "Refused: installed packages go only to a run's readonly worker." }); return; }
     runChain = runChain
-        .then(() => installWheels(wheels))
+        .then(() => { runningId = msg.id; return installWheels(wheels); })
         .then((failed) => failed !== null
             ? { ok: false, stdout: "", error: `Not run: a package this run installed could not be put in place: ${failed}. Nothing of the cell ran; the next cell tries again.`, installFailed: true } as RunResult
             : run(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, onStdout, msg.persist === true, onStarted, msg.wire === true, msg.run ?? null, msg.id, msg.inside === true, Array.isArray(msg.libraries) ? msg.libraries : [], msg.bridges === true))
         .then(
-            (result: RunResult) => post({ id: msg.id, ...result }, { transfer: result.ipc ? [result.ipc] : [] }),
-            (err: unknown) => post({ id: msg.id, ok: false, stdout: "", error: String(err) }),
+            (result: RunResult) => {
+                runningId = 0;
+                if (fatal !== null) return;   // already answered as the kernel's death
+                // A fatal error the cell's own answer carried (a wasm trap): the interpreter is gone though the cell answered.
+                if (!result.ok && interpreterDead()) { fatal = fatalCause ?? String(result.error ?? "Pyodide fatal error"); post({ id: msg.id, ...result, error: fatal, fatal: true }); return; }
+                if (!result.ok && typeof result.error === "string" && filesMount) result.error = filesMount.inWords(result.error);
+                post({ id: msg.id, ...result }, { transfer: result.ipc ? [result.ipc] : [] });
+            },
+            (err: unknown) => {
+                runningId = 0;
+                if (fatal !== null) return;
+                const dead = interpreterDead();
+                if (dead) fatal = fatalCause ?? String(err);
+                post({ id: msg.id, ok: false, stdout: "", error: dead ? fatal! : String(err), ...(dead ? { fatal: true } : {}) });
+            },
         );
 }
 self.addEventListener("message", onMessage as EventListener);

@@ -76,11 +76,11 @@ The in-memory index (`session-index.ts`) is already bounded: 500 events and 16 M
 
 | Bound | Figure | Source | What a person sees when it is crossed today |
 | --- | --- | --- | --- |
-| The service worker's JS heap | **unknown**. The Pyodide worker dies at 2.6 GB (measured, `docs/dev/python-sandbox.md:291`); no figure is published for an extension service worker | measure `performance.memory.jsHeapSizeLimit` in the worker, then allocate in steps | unknown. The worker holds every saved session's history from start-up (§1), so the sum of all histories, at most 500 sessions, sits in this heap |
-| One runtime message (`sendMessage`, `Port.postMessage`) | 64 MiB, JSON-serialized | Chromium `extensions/renderer/api/messaging/messaging_util.cc`; developer.chrome.com messaging docs | "Message exceeded maximum allowed size of 64MiB." An archive move of a larger session fails, the session is KEPT (`session-store.ts:255-258`), the move is retried hourly (`ARCHIVE_RETRY_MS`, `:28`), and the housekeeping log records `archive-failed` each time. A PDF export of a larger session fails the same way |
-| One IndexedDB value | no fixed cap: above 64 KiB a value is wrapped as a Blob; the IPC limit is 128 MiB minus 1 MiB | Chromium `third_party/blink/public/mojom/indexeddb/indexeddb.mojom` (`kIDBWrapThreshold`, `kIDBMaxMessageSize`) | unknown whether a row put with a history near or above 127 MiB fails, or how. Not reached by the per-event records |
-| The IndexedDB and OPFS quota | `unlimitedStorage` is declared (`manifest.json:6`); its effect on IndexedDB and OPFS quota is **unknown** (MDN gives 60% of disk per origin without it) | measure `navigator.storage.estimate()` from an extension page | a write fails with `QuotaExceededError`, and NOTHING says so: the worker builds its store with no `onError` (`sw-sessions.ts:565`), so `flush`'s catch (`session-store.ts:374`) drops it. The run continues; that flush's events are not on disk |
-| One JS string (`JSON.stringify`, `join`) | 2^29 − 24 code units, about 512 Mi | measured in Node 26 (`buffer.constants.MAX_STRING_LENGTH` = 536,870,888; one more threw `RangeError: Invalid string length`). Chrome's V8 is assumed to match, not checked | the Markdown or JSON export of a larger session throws, and no file is saved |
+| The service worker's JS heap | measured lower bounds, no limit found: the worker held 96 million small JS objects (V8 heap, near the 4.09 GiB `jsHeapSizeLimit` an extension page reports), 6 GiB of external strings and 6 GiB of ArrayBuffers, each without dying; one death in the objects case was not reproduced. The worker has no `performance.memory` | `notebooks/session-store/chrome-bounds.ipynb`, section 1 (Chromium 151) | a death takes the whole extension process, its pages included. Not the first bound a session meets: the 64 MiB message and the 512 Mi string bind long before |
+| One runtime message (`sendMessage`, `Port.postMessage`) | 64 MiB, JSON-serialized; measured: a 64 MiB string passes (129 ms by `sendMessage`, 123 ms by a `Port`), 65 MiB is refused at the sender, on both | Chromium `extensions/renderer/api/messaging/messaging_util.cc`; `notebooks/session-store/chrome-bounds.ipynb`, section 4 | "Message exceeded maximum allowed size of 64MiB." An archive move of a larger session fails, the session is KEPT (`session-store.ts:255-258`), the move is retried hourly (`ARCHIVE_RETRY_MS`, `:28`), and the housekeeping log records `archive-failed` each time. A PDF export of a larger session fails the same way |
+| One IndexedDB value | no cap found up to 256 MiB as one string and 512 MiB as an object of strings, each put and read back: the 128 MiB IPC limit (`kIDBMaxMessageSize`) does not bind a put, since a value above 64 KiB is wrapped as a Blob | `notebooks/session-store/chrome-bounds.ipynb`, section 3 | a 512 MiB string cannot be made at all (`RangeError: Invalid string length`), so a whole-session JSON is refused before IndexedDB sees it |
+| The IndexedDB and OPFS quota | measured: 10 GiB without `unlimitedStorage`; with it, the disk's free space (672.1 GiB of 926.3 here). window.ml declares it (`manifest.json:6`), so the disk, not the browser, is the bound | `notebooks/session-store/chrome-bounds.ipynb`, section 2 | a write fails with `QuotaExceededError`, and NOTHING says so: the worker builds its store with no `onError` (`sw-sessions.ts:565`), so `flush`'s catch (`session-store.ts:374`) drops it. The run continues; that flush's events are not on disk |
+| One JS string (`JSON.stringify`, `join`) | 2^29 − 24 code units, about 512 Mi | measured in Node 26 (`buffer.constants.MAX_STRING_LENGTH` = 536,870,888; one more threw `RangeError: Invalid string length`), and checked in Chromium 151, where a 512 MiB string throws the same `RangeError` (`notebooks/session-store/chrome-bounds.ipynb`, section 3) | the Markdown or JSON export of a larger session throws, and no file is saved |
 | A backup's restore | 1 GiB decompressed (`LIMITS.outputBytes`, `backup-format.ts:82`) | code | **a compressed or encrypted backup bigger than 1 GiB is written without complaint and refused on restore**: the person finds out on the day they need it |
 | One hub frame | 1 MiB (`seal.ts:17-18`) | code | not determined: no publish-side check of an event above it was found |
 | One protected session larger than the budget | measured (`protect.mts` below) | `planEviction`, `session-store.ts:107-126` | **every unprotected, unpinned session is dropped.** One running session of 300 MB against the 256 MiB budget evicted all 40 others; only a pinned one survived. With the archive on, each is moved, or each fails and is retried hourly if it is over 64 MiB |
@@ -136,7 +136,9 @@ still resume it. Those records:
 **A failed write is recorded and shown.** The store gets an `onError` (today the worker builds it with none,
 `sw-sessions.ts:565`, §2): a failed flush is recorded in the housekeeping log (subsystem `sessions`, kind
 `write-failed`, the session's hash and how many events and history positions were not written) and shown on the
-session as one line saying what was not saved. The run continues. This is the same slice as the row change.
+session as one line saying what was not saved. The run continues. A session's failure is reported once until
+one of its writes succeeds: the line is itself a write, and a failure that persists (a full disk, a quota) would
+otherwise fail, report and fail again without end. This is the same slice as the row change.
 
 **Eviction (ruled by the coordinator, 2026-11-17).** A protected session's excess is not paid for by the others:
 `planEviction` evicts down to `budget + protectedBytes`, where `protectedBytes` is what the protected sessions hold
@@ -151,8 +153,9 @@ not yet bound resume**: Shane's ruling (only a recent window is loaded) is met f
 only once a compaction policy writes a smaller view ("Open", below). Everything else (transcript, export, the model's
 reads of older history) takes a range.
 
-**Expected cost after the change** (to be measured by the build, same script): rows written per step drop from O(N)
-to O(1), so the 800-step case above writes about 3.3 MB of history instead of 1.35 GB.
+**Cost after the change** (measured by slice 2 with the same script, counting the history positions and `runmeta`
+each write puts): the 800-step case writes 3.34 MB of history for a 3.34 MB history (1.0x, was 1.35 GB), 8 KB of
+`runmeta` once, and 0.27 MB of rows; 200 steps, 0.84 MB for 0.84 MB.
 
 **The upgrade.** Old state meets the new code on someone's machine, and that is what gets tested:
 
@@ -245,8 +248,9 @@ Each of these keeps a bound per step: one batch of events, a few MiB at most, ne
 
 ### a. The memory of `/files/` (FILE_ATTACHMENTS.md, "A session's files as a directory")
 
-**A proposal.** It takes effect only through an amendment to FILE_ATTACHMENTS.md, a separate spec PR after this one
-(accepted as a proposal by the coordinator, 2026-11-17); building it is assigned later.
+**Ruled 2026-11-17, and now in FILE_ATTACHMENTS.md**, "`/files/` read by range, and `ml.fs`": Shane ruled that
+`/files/` never holds all files in memory and that it gets `ml.fs` (Node's `fs/promises`) for JS. The text below is
+the recommendation that led there; the spec there is what holds.
 
 **Measured in that spec, not built** (`FILE_ATTACHMENTS.md:552-555`). The ruled mount is EAGER: at interpreter start
 every file's whole bytes are posted to the worker and held as ArrayBuffers, "one times the directory's size" (`:601`).
@@ -277,7 +281,7 @@ store, `/history/` beside `/files/`, served by the same ranged reader as §4. It
 places:
 
 1. **Not every run has file tools.** The read-only `exec` dialect, the path that runs with no prompt, has no file API;
-   files exist only in `python_exec` and `ml.sh`, and `full` Python always asks. So `/history/` cannot replace §4's
+   files exist only in `python_exec` and `ml.sh`, and a Python cell outside the dialect always asks. So `/history/` cannot replace §4's
    `dereference` path; it is a second front end over one reader.
 2. **Byte offsets against a whole-string scrub.** A file promises an exact `st_size` and stable offsets. The model must
    see the scrubbed text, and a scrub changes lengths, so the file's size is only known after scrubbing every
@@ -345,12 +349,23 @@ console.log(planEviction(rows, { protect: ["big-running"] }).length);   // 40
 
 In order. Each is one PR, with what it must not break.
 
-1. **The two unknown figures, measured in a real Chrome, as a notebook** (`notebooks/session-store/`): the service
+1. **The two unknown figures, measured in a real Chrome, as a notebook** (`notebooks/session-store/`; DONE,
+   `chrome-bounds.ipynb`, §2's rows): the service
    worker's `jsHeapSizeLimit` and where it dies, and what `unlimitedStorage` does to IndexedDB and OPFS quota
    (`navigator.storage.estimate()`). Small, no `src/` change. It decides the batch sizes in slices 4, 6 and 7.
 2. **The `history` and `runmeta` stores, the writer, the upgrade, `onError`, `historyBytes` in the budget** (§3).
    Medium. Must not break: resume of a session saved by today's code (the upgrade fixture), a run resumed after
    worker eviction, `ml.resumeChat`, the Storage page's figures.
+   BUILT (`session-store.ts`): version 2 creates `history`, `runmeta`, and `marks` and `views` empty (so slice 5 needs
+   no version); the writer compares by identity, then by length and a 64-bit print (two independent 32-bit hashes),
+   so a page's chat (new objects at every save) writes only what changed too. A collision (a changed message of the
+   same length and print) is NOT written and nothing reports it: about 2^-64 per changed position, reachable only by
+   a page crafting one against its own chat; a message that cannot be serialized gets no print and is always written; `checkImmutable` is the test build's check of the rule; a failed write
+   rolls its row back, is recorded (`sessions/write-failed`) and said on the session as an `agent-note`; `migrate`
+   moves each version-1 row in one transaction, and any other write of such a row moves it in the same transaction.
+   Left for later slices: the pass walks the rows `open()` already holds, not a cursor (slice 3 stops `open()` loading
+   them); `marks` and `views` are not written (slice 5; an absent view is the whole history); the resume snapshot
+   still carries `messages`, and an unsaved run's history is not written under its run id.
 3. **`open()` without histories; the protected-session eviction rule** (§3). Small. Must not break: the session
    list after a restart, a pinned session surviving, the housekeeping log's eviction records.
 4. **Ranged `events` reads, `session.backfill` by key range, the chat page's newest window** (§5). Medium. Changes
@@ -370,10 +385,14 @@ In order. Each is one PR, with what it must not break.
    (`docs/dev/export.md`).
 8. **`/history/`** (§6b), after `/files/` exists.
 
+## Resume before compaction (ruled 2026-11-17)
+
+RULED 2026-11-17 (Shane, in the coordinator's session): resume stays as it is for the storage slices: it loads the
+VIEW, which is the whole history until compaction exists (§3, "What is loaded"). The first compaction design item is a
+recent window plus a stub that points at the older range (`@history:0-N`), read on demand (§4). The stub's wording and
+the window's size are compaction policy, proposed to Shane through the coordinator with options when slice 5 is near.
+
 ## Open, for Shane through the coordinator
 
-- **What bounds resume before compaction exists.** Resume loads the VIEW, which with no compaction is the whole
-  history (§3, "What is loaded"). Until a policy writes a smaller view, resume is the one reader this spec does not
-  bound.
 - **Anything about what the model is SENT** (the view's contents, when it shrinks, what a stub says): compaction
   policy, out of scope here.
