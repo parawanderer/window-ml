@@ -2012,8 +2012,10 @@ writes and runs analysis scripts over them with the file tools it already has.
   from those lines, never a hand-kept file, so it cannot drift; a body is read on demand. The index is in the prompt
   budget ([`PROMPT_BUDGET.md`](PROMPT_BUDGET.md)), and the run log and both exports carry the index the model saw.
 - **It grants nothing.** A note steers what the model tries; whether a call needs the person stays the policies' and
-  the gate's decision ([`AGENT_FILES.md`](AGENT_FILES.md), "Trust"). The worst a wrong or planted note does is send the
-  model at something the person is then asked about.
+  the gate's decision ([`AGENT_FILES.md`](AGENT_FILES.md), "Trust"). The gate reads only facts the host resolved
+  about the call, never the context, so no file the model read can be mistaken for permission, as it can by a
+  classifier that judges a call from the conversation: the permission is the policy. The worst a wrong or planted
+  note does is cost time: the model acts on it within what the policies already allow, or the person is asked.
 - **Worked example.** On Google's account chooser the person says the agent may always pick `shane@wander.dev` and
   should stop and ask if a 2FA prompt follows. The first half is a policy, proposed and checked on the page
   ([`POLICIES.md`](POLICIES.md), "Measuring an `act` rule on the page it is for"); the note
