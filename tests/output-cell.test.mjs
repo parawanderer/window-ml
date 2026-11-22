@@ -760,7 +760,7 @@ test("the live call hands its glyphs over, the reformatted block takes them, and
     assert.match(rd("../src/sidebar/code-block.tsx"), /if \(format && preRef\.current\) morphInto\(preRef\.current\)/);
     assert.match(rd("../src/sidebar/transcript/agent-detail.tsx"), /useState\(\(\) => \(!history \? liveHandoff\(\) : null\)\)/);
     assert.match(rd("../src/sidebar/transcript/agent-detail.tsx"), /handed && open \? " handed"/);
-    assert.match(rd("../src/chat/chat.css"), /\.chat\.calm \.astep\.handed \.astep-body \{ animation: none; \}/);
+    assert.match(rd("../src/chat/chat.css"), /\.chat\.calm \.astep\.handed:not\(\.closing\) \.astep-body \{ animation: none; \}/);
 });
 
 test("a call that arrived as one block, or stood for a frame, is not morphed", async () => {
@@ -771,4 +771,74 @@ test("a call that arrived as one block, or stood for a frame, is not morphed", a
     // A not-streamed hand-over also clears what an earlier call left, so the next block cannot inherit it.
     noteLiveGlyphs({}, false);
     assert.equal(morphInto({}), undefined);
+});
+
+// --- an http(s) address in plain output is a link (src/sidebar/output-links.ts) ---
+
+test("output links: an anchor with the host in the tip, a click that opens a tab and never navigates, in the gutter path and the plain one", async () => {
+    const { installServices, services } = await import("../src/sidebar/services.ts");
+    const { cursorTip } = await import("../src/sidebar/ui-kit.tsx");
+    const { showOutTimes } = await import("../src/sidebar/store.ts");
+    const { TimedOutput, PlainOutput } = await import("../src/sidebar/transcript/render-panel.tsx");
+    const opened = [];
+    const before = services();
+    installServices({ ...before, openLink: (u) => opened.push(u) });
+    const host = doc.getElementById("root");
+    const text = "fetched https://example.com/a?b=1.\nbad https://good.com@evil.com/ and javascript:alert(1)";
+    try {
+        for (const [name, view] of [["gutter", () => h(TimedOutput, { text, marks: [[0, 1731000000000]] })], ["no marks", () => h(TimedOutput, { text })], ["plain", () => h(PlainOutput, { text })]]) {
+            showOutTimes.value = true;
+            render(null, host);
+            render(view(), host);
+            await tick();
+            const links = [...host.querySelectorAll("a.out-link")];
+            assert.equal(links.length, 1, `${name}: only the safe URL is an anchor`);
+            const a = links[0];
+            assert.equal(a.getAttribute("href"), "https://example.com/a?b=1");
+            assert.equal(a.getAttribute("target"), "_blank");
+            assert.equal(a.getAttribute("rel"), "noopener noreferrer");
+            assert.equal(a.textContent, "https://example.com/a?b=1", `${name}: the trailing dot is not in the link`);
+            assert.equal(host.textContent.includes("https://good.com@evil.com/"), true, `${name}: the userinfo URL is still on screen, as text`);
+            assert.equal(host.querySelector("pre.code > code.hljs") != null, true, `${name}: the same markup a code block has`);
+            // the tip: host first, JSX (a string would be rendered as Markdown)
+            a.dispatchEvent(new doc.defaultView.MouseEvent("pointermove", { bubbles: true, clientX: 5, clientY: 5 }));
+            const tip = cursorTip.value;
+            assert.ok(tip, `${name}: hovering shows the tip`);
+            assert.equal(tip.text, undefined, `${name}: the tip is a node, not Markdown text`);
+            const shown = JSON.stringify(tip.node);
+            assert.match(shown, /Opens example\.com in a new tab · https:\/\/example\.com\/a\?b=1/, name);
+            cursorTip.value = null;
+            // the click: a tab through openLink, no navigation
+            const ev = new doc.defaultView.MouseEvent("click", { bubbles: true, cancelable: true });
+            a.dispatchEvent(ev);
+            assert.equal(ev.defaultPrevented, true, `${name}: the click does not navigate`);
+            assert.equal(opened.pop(), "https://example.com/a?b=1", name);
+            assert.equal(opened.length, 0);
+        }
+    } finally { installServices(before); showOutTimes.value = true; }
+});
+
+test("output links: text with no http(s) URL draws the unchanged code block, and the cell's find still matches across a link", async () => {
+    const { PlainOutput } = await import("../src/sidebar/transcript/render-panel.tsx");
+    const { codeLineNumbers } = await import("../src/sidebar/store.ts");
+    const host = doc.getElementById("root");
+    render(null, host);
+    render(h(PlainOutput, { text: "nothing\nto see" }), host);
+    await tick();
+    assert.equal(host.querySelector("a"), null);
+    const plain = host.querySelector("pre.code").outerHTML;
+    assert.match(plain, /hljs/);
+    // a numbered cell keeps its gutter, and the copy text (the line cells) is the output verbatim
+    const had = codeLineNumbers.value;
+    codeLineNumbers.value = true;
+    try {
+        render(null, host);
+        render(h(OutputCell, {}, h(PlainOutput, { text: "one\nsee https://example.com/x here\nthree" })), host);
+        await tick();
+        assert.equal(host.querySelectorAll(".cline .lno").length, 3, "line numbers kept");
+        assert.equal([...host.querySelectorAll(".lcode")].map((e) => e.textContent).join("\n"), "one\nsee https://example.com/x here\nthree");
+        const cell = host.querySelector(".r-outcell");
+        await openFind(cell);
+        assert.match(await type(cell, "com/x here"), /1/, "a match that runs from inside the link to the text after it is found");
+    } finally { codeLineNumbers.value = had; }
 });

@@ -21,6 +21,7 @@ import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { readFileSync, readdirSync } from "node:fs";
 import { salesCsv } from "./sales.mjs";
+import { returnsCsv, targetsCsv, regionsCsv } from "./reshape.mjs";
 
 // Every example page (all self-contained — inline CSS/JS, data-URL images) served straight off disk, so the
 // harness can drive the EXACT pages a human uses for real tasks (spreadsheet / find-waldo / canvas-input / …)
@@ -94,6 +95,10 @@ const RAW = {
     "/data.json": { ct: "application/json", body: JSON.stringify({ id: 7, name: "widget", tags: ["a", "b"] }) },
     "/data.csv": { ct: "text/csv", body: "name,qty,price\napples,3,1.20\npears,5,0.90\n" },
     "/sales.csv": { ct: "text/csv", body: salesCsv() },   // 3,000 rows: too many to read off a preview (the prompt-budget bench)
+    // The reshaping bench's other three tables (reshape.mjs): joined to /sales.csv, they answer which pair missed its target.
+    "/returns.csv": { ct: "text/csv", body: returnsCsv() },
+    "/targets.csv": { ct: "text/csv", body: targetsCsv() },
+    "/regions.csv": { ct: "text/csv", body: regionsCsv() },
     "/code.ts": { ct: "text/plain; charset=utf-8", body: "export const answer: number = 42;\nexport function id<T>(x: T): T { return x; }\n" },
     // Beside /shop/aisle-4/ and nowhere else, so only a URL resolved against that page finds it (the prompt-budget bench).
     "/shop/aisle-4/stock.json": { ct: "application/json", body: JSON.stringify({ aisle: 4, stock: { apples: 41, pears: 23, plums: 8 } }) },

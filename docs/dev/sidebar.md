@@ -304,8 +304,20 @@ grammar in `src/link-address.ts`, which the worker shares.
 - **The row is found in the panel's own body** (`panelBody`), not `document`: the overlay draws Settings in a shadow
   root. It is scrolled to and ringed (`set-marked`) for six seconds.
 
+
+## The access tab's read (the worker side is built; the page is not)
+
+The Session summary page's access tab will list one session's policies as the rows `POLICIES` `{ op: "session", hash }` answers
+(docs/spec/POLICIES.md, "The effective view"). A session view reaches it through `services()`, never `chrome.*`: `sessionPolicies(key)`
+(a read and a change subscription) and `removePolicy(key, id, confirm?)`, where `null` means unknown and a host with no gate path hides the remove.
+The renderer draws what the row says and decides nothing: a widening `removal` shows its `entry` and `exposes` and sends `confirm`
+only after that; the worker refuses a widening removal without it. Nothing in the seam exists in `services()` yet.
+
 ## Traps
 
+- **`scopedHash()` is not only the open view.** It answers `scopeOverride` first (`holdScope(hash)` in `store.ts`), which a
+  mounted resource panel sets for a session that is not the view's (the summary page's resources tab, via `BoxPanel`).
+  Release it on unmount; code that wants "the open session" reads `view`, not `scopedHash()`.
 - **A web-accessible file has two URLs (`use_dynamic_url`).** `getURL("sidebar.html")` (or `mermaid.html`) names a
   per-session URL, which is the only one a web page may load it by; the document it loads still reports the
   extension's own id (`location`, `sender.url`, `getURL("")`). So a frame inside a page is LOADED by `getURL(file)`

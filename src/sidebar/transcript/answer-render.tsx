@@ -16,7 +16,7 @@ import { linkTipFor, onAddressClick } from "../links";
 import { reveal } from "./transcript-window";
 import { IconChevron, IconEye, IconCheck } from "../icons";
 import { ClickableImg, SheetChip, cursorTipOn } from "../ui-kit";
-import { RenderPanel, PyDfTable, CodeRender, ValueOut } from "./render-panel";
+import { RenderPanel, PyDfTable, CodeRender, ValueOut, LinkedLine } from "./render-panel";
 import type { CodeCtx } from "./render-panel";
 import { scrollToStepSeq } from "./step-scroll";
 import { FoldRail } from "./fold-rail";
@@ -114,7 +114,7 @@ function tokenRender(d: RenderDescriptor | undefined, rawText: string, ctx?: Cod
     const j = tryPrettyJson(rawText);
     if (j) return { node: <ValueOut text={j} />, block: true };
     const block = !!rawText && (rawText.length > 80 || /\n/.test(rawText));
-    return { node: block ? <ValueOut text={rawText} /> : <code class="tok-val">{rawText}</code>, block };
+    return { node: block ? <ValueOut text={rawText} /> : <code class="tok-val"><LinkedLine line={rawText} /></code>, block };
 }
 
 // One embedded @tool citation, resolved to the step it cites — rendered as the ACTUAL (focused) output, with a
@@ -196,7 +196,7 @@ function TokenRef({ seg, run, scope, standalone }: { seg: Extract<AnswerSegment,
     const { node, block } = imgSrc
         ? { node: <ClickableImg src={imgSrc} alt={label || "image"} />, block: true }
         : isRaw
-            ? { node: rawBlock ? <ValueOut text={rawText} /> : <code class="tok-val">{rawText}</code>, block: rawBlock }
+            ? { node: rawBlock ? <ValueOut text={rawText} /> : <code class="tok-val"><LinkedLine line={rawText} /></code>, block: rawBlock }
             : isLatex
                 // Use EXPLICIT delimiters, not `$…$` — single-`$` inline math only typesets when the content
                 // carries a math signal, so a bare value like `5` would render as the literal text "$5$". The
@@ -270,6 +270,7 @@ function TokBlock({ node, label, tip, name, onJump }: { node: ComponentChildren;
  *  @group transcript
  *  @gallery embedded JSON value {"text": "Counts per kind:\n\n![the counts by kind](@tool:abcdef5:out)\n\nThat is all.", "run": {"hash": "g1", "steps": [{"seq": 1, "step": 1, "tool": "python_exec", "token": "abcdef5", "result": "{\"n\": 12, \"kinds\": {\"info tab\": 6, \"warn\": 2}, \"ok\": true}", "renderOut": {"type": "python-out", "value": "{\"n\": 12, \"kinds\": {\"info tab\": 6, \"warn\": 2}, \"ok\": true}"}}]}}
  *  @gallery-flow fold tests/gallery-flows/AnswerBodyEmbed.mjs {"text": "Counts per kind:\n\n![the counts by kind](@tool:abcdef5:out)\n\nThat is all.", "run": {"hash": "g1", "steps": [{"seq": 1, "step": 1, "tool": "python_exec", "token": "abcdef5", "result": "{\"n\": 12, \"kinds\": {\"info tab\": 6, \"warn\": 2}, \"ok\": true}", "renderOut": {"type": "python-out", "value": "{\"n\": 12, \"kinds\": {\"info tab\": 6, \"warn\": 2}, \"ok\": true}"}}]}}
+ *  @gallery embedded code revising {"text": "The script:\n\n![the revised script](@tool:abcdef5:in)\n\nThat is all.", "run": {"hash": "g3", "steps": [{"seq": 1, "step": 1, "tool": "exec", "token": "9d3822f", "result": "1", "renderIn": {"type": "code", "lang": "javascript", "text": "const n = 1;\nreturn n;"}}, {"seq": 2, "step": 2, "tool": "exec", "token": "abcdef5", "result": "2", "renderIn": {"type": "code", "lang": "javascript", "text": "const n = 1 + 1;\nreturn n;", "revision": {"ref":"9d3822f","tool":"exec","seq":1,"label":"the timeline survey","before":"const n = 1;\nreturn n;","claim":"Counts both lists."}}}]}}
  *  @gallery embedded code {"text": "The script:\n\n![the script that counted](@tool:abcdef5:in)\n\nThat is all.", "run": {"hash": "g2", "steps": [{"seq": 1, "step": 1, "tool": "python_exec", "token": "abcdef5", "result": "42", "renderIn": {"type": "python-in", "mode": "script", "code": "q = [1, 2, 3]\nreturn sum(q) * 7"}}]}}
  */
 export function AnswerBody({ text, run, cls = "card-answer", scope }: { text: string; run: Session; cls?: string; scope?: readonly AgentStep[] }) {

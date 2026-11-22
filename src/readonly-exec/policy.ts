@@ -149,7 +149,7 @@ const BY_KIND: Record<MethodKind | "*", readonly string[]> = {
     // scoped at all: `select` picks columns here and CHANGES THE PAGE'S TEXT SELECTION on an `<input>`, so it
     // could never have joined a flat list. Each returns plain data or another facade, reads nothing outside
     // the table, and mutates nothing — the facade itself refuses writes.
-    table: ["col", "select", "records", "head"],
+    table: ["col", "select", "records", "head", "copy"],
     // An `ml.embed` result (embedding.ts): a unit vector and the two comparisons on it. Each is O(dimensions x
     // candidates), charged before it runs (evaluator.ts `preflight`), and neither reads anything but other embeddings.
     embedding: ["dot", "rank"],
@@ -230,6 +230,7 @@ export const NO_CONVERSION: Readonly<Record<string, Readonly<Record<string, stri
     tokenlist: { forEach: "callback", keys: NONE, values: NONE, entries: NONE },
     console: { log: "recorded through printable(), never converted", info: "as log", warn: "as log", error: "as log", debug: "as log" },
     embedding: { dot: "arguments are validated as embeddings by preflight", rank: "as dot" },
+    table: { copy: NONE },
     ObjectCtor: { keys: "property reads, not conversion", values: "as keys", entries: "as keys", fromEntries: "as keys", assign: "as keys" },
     ArrayCtor: { from: "its first argument is an iterable judged by `iterates` (an array-like included), its mapper by onlyOurFunctions", isArray: DATA, of: DATA },
     PromiseCtor: { all: DATA, allSettled: DATA },
@@ -503,7 +504,51 @@ export const ANSWER_METHODS = new Set(["add", "remove", "clear", "dump"]);
 // `schema` is here rather than in ALLOWED_METHODS deliberately: the facade is dispatched by IDENTITY, so
 // this grants `ml.schema(…)` and nothing else, where allowing the NAME would grant `.schema()` on every
 // object the dialect can reach. Pure — it reads data and returns a type string, spending nothing.
-export const ML_READONLY_METHODS = ["getModel", "config", "models", "capabilities", "ps", "serverTools", "queryAll", "range", "a11y", "dereference", "info", "schema"] as const;
+// `settings` is the person's settings as a free read gives them (docs/spec/MODEL_SETTINGS.md, "`ml.settings()` in a
+// read-only survey"): only the worker's host `ml` of a run the worker built has it, so the facade binds it there and
+// nowhere else, and its secrets are hidden and the values that could ride a free call out are held.
+export const ML_READONLY_METHODS = ["getModel", "config", "models", "capabilities", "ps", "serverTools", "queryAll", "range", "a11y", "dereference", "info", "schema", "settings"] as const;
+
+/** The two `ml.sh` members a survey may call: run a program and read a held output. Everything else on `ml.sh` (`put`, which
+ *  writes) is not here, so a script naming it is not in the dialect and is put to the person whole. The worker's survey has
+ *  them, and no other realm does: a program is run by the worker, from a step it holds. */
+export const SH_READONLY_METHODS: ReadonlySet<string> = new Set(["run", "read"]);
+
+/**
+ * A fresh, plain copy of an argument handed to the host's `ml.sh`: strings, finite numbers, booleans, null, and arrays and
+ * plain objects of those, by own data properties only. A getter, a Proxy, a function, a symbol or anything else the script
+ * built is refused here, so the host reads data and never runs the script's code, and the copy is the only thing it holds.
+ * @param v the script's value
+ * @param depth how far down this is
+ */
+function plainCopy(v: unknown, depth = 0): unknown {
+    if (v === null || typeof v === "string" || typeof v === "boolean") return v;
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    // A String OBJECT (what `ml.dereference` returns) is its string, told by brand and read by `valueOf` on the String prototype, never
+    // through anything the object itself defines.
+    if (typeof v === "object" && v !== null && isStringObject(v)) return String.prototype.valueOf.call(v);
+    if (depth > 4) throw new TypeError("ml.sh: an argument nests too deep");
+    if (Array.isArray(v)) {
+        // An index loop, NOT `map`: `map` skips a hole, so the check below would never see one.
+        const out: unknown[] = [];
+        for (let i = 0; i < v.length; i++) {
+            const d = Object.getOwnPropertyDescriptor(v, i);
+            if (!d || !("value" in d)) throw new TypeError("ml.sh: an argument has a hole or an accessor");
+            out.push(plainCopy(d.value, depth + 1));
+        }
+        return out;
+    }
+    if (v !== null && typeof v === "object" && (Object.getPrototypeOf(v) === Object.prototype || Object.getPrototypeOf(v) === null)) {
+        const out: Record<string, unknown> = Object.create(null);
+        for (const k of Object.keys(v)) {
+            const d = Object.getOwnPropertyDescriptor(v, k);
+            if (!d || !("value" in d)) throw new TypeError("ml.sh: an argument has an accessor");
+            out[k] = plainCopy(d.value, depth + 1);
+        }
+        return out;
+    }
+    throw new TypeError(`ml.sh: an argument must be plain data (strings, numbers, booleans, arrays, plain objects), got ${typeof v}`);
+}
 
 /** The read-only members that read the PAGE, so a worker-side evaluation has none of them and defers to the page. */
 const PAGE_ML_METHODS: ReadonlySet<string> = new Set(["queryAll", "a11y"]);
@@ -563,6 +608,23 @@ export function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown,
             // you are on reused no grant, so it is not reported as one.
             if (!(r as { live?: unknown }).live) reused?.push(String(url));
             return r;
+        };
+    }
+    // `ml.table(src, opts)` — a whole table the survey owns (docs/spec/ML_TABLE.md). Judged by the host's source rule
+    // before it reads: a page table, a pointer or a URL already in the fetch cache is free; a Sheet or an unfetched URL
+    // is refused here and goes to the person. The source is resolved ONCE (`_tableSurvey`) and the read is of that
+    // resolution, so a source the page shapes (an accessor answering differently each read) cannot be one kind to the
+    // ask and another to the read. The worker has no page, so the member is absent there, and reaching it defers to the
+    // page like any absent member. Only the three options the host reads are passed, as a fresh copy, never the
+    // script's own object.
+    const tableSurvey = (ml as Record<string, unknown>)["_tableSurvey"];
+    if (!worker && typeof tableSurvey === "function") {
+        out.table = (src: unknown, opts?: unknown): unknown => {
+            const s = (tableSurvey as (src: unknown) => { asks: string | null; read: (o: object) => Promise<unknown> }).call(ml, src);
+            if (s.asks) throw new Denied(s.asks);
+            const o = opts && typeof opts === "object" ? opts as object : {};
+            const own = (k: string): unknown => Object.getOwnPropertyDescriptor(o, k)?.value;
+            return s.read({ raw: own("raw") === true, ...(typeof own("delimiter") === "string" ? { delimiter: own("delimiter") as string } : {}), ...(typeof own("header") === "boolean" ? { header: own("header") as boolean } : {}) });
         };
     }
     // `ml.pipe(text, stages)` — the `grep | head` line scanner, which models reach for constantly, often in place of
@@ -674,6 +736,20 @@ export function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown,
             // it builds (a unit vector a string) is bounded by EMBED_CALL_INPUTS; reading one costs a step an element.
             return (hostEmbed as (i: unknown) => unknown).call(ml, many ? texts : texts[0]);
         };
+    }
+    // `ml.sh` — run a program, or read what one printed. The worker's survey only: the host's `sh` is the worker's own call
+    // (sw-shell-call.ts), which judges EACH call at the time it is made (a policy or the built-in default lets it run, no
+    // opinion raises a nested ask the script waits on, a deny throws), so the script's being free says nothing about what its
+    // calls are allowed to do. Rebuilt here from the two names and called with a plain copy of the arguments, never the
+    // script's own objects; `put` is not on it. Dispatched by IDENTITY (`onSh` in evaluator.ts), like `ml.answer`.
+    const hostSh = (ml as Record<string, unknown>)["sh"];
+    if (worker && hostSh && typeof hostSh === "object") {
+        const sh: Record<string, unknown> = Object.create(null);
+        for (const name of SH_READONLY_METHODS) {
+            const fn = (hostSh as Record<string, unknown>)[name];
+            if (typeof fn === "function") sh[name] = (...args: unknown[]): unknown => (fn as (...a: unknown[]) => unknown).apply(hostSh, args.slice(0, 2).map((x) => x === undefined ? undefined : plainCopy(x)));
+        }
+        if (Object.keys(sh).length) out.sh = Object.freeze(sh);
     }
     // `ml.answer` — the run's curated answer set (a curate-only facade: add/remove/clear/dump/length, built by
     // the CALLER via makeAnswerFacade so this interpreter stays dependency-free + DOM-free). Mutating your OWN

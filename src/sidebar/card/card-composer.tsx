@@ -20,6 +20,7 @@ import { STEP_BUDGETS } from "../../agent/step-budget";
 import { toHost } from "../parent-channel";
 import { imagesRefusal, promptLine } from "../../contract/contract-run";
 import { BringHereList } from "./card-bring";
+import { TurnChips, useTurnScan } from "../transcript/turn-scan-ui";
 
 // The composer's model control: a chip showing the run's model (the per-call pick, else the default) that
 // opens a dropdown of the allowed models. Picking a row overrides the model FOR THIS RUN; the ★ persists it
@@ -132,6 +133,8 @@ export function ComposerCard() {
     const att = useImageAttach(() => back?.imgs ?? [], {
         files: { target: () => "agent", accepts: () => !appendTo || services().acceptsFiles(appendTo), acceptsPdf: () => !appendTo || services().acceptsPdf(appendTo), initial: () => back?.files ?? [] },
     });
+    // Registered values in the draft (SECRET_HANDLES.md): chips with "send as is"; a detection never blocks the send.
+    const scan = useTurnScan(text, att.docs, appendTo);
     const budget = composerMaxSteps.value;   // the step budget (persists across opens)
     // "Bring a session here" (MOVE_RUN.md): the body lists this browser's sessions instead of the task input. A new task
     // only, and only where the surface sits in a tab (the HUD).
@@ -145,14 +148,14 @@ export function ComposerCard() {
     const close = () => { composerOpen.value = false; composerElement.value = null; composerTarget.value = { mode: "new" }; };
     const send = () => {
         const t = text.trim();
-        const files = att.sendable;
+        const files = att.sendable, asIs = scan.asIs();
         if (!t && !att.imgs.length && !files.length && !el) return;   // allow an image-only, file-only OR element-only task
         if (imagesRefusal(att.imgs.length)) return;   // the strip says why
         // APPEND mode ("add to current run"): route to the open session — the page steers a running loop
         // (say) or starts a follow-up turn (run), and folds any element context into the message. No model
         // pre-flight (the run already resolved one). Optimistically flip it to working so the card morphs now.
         if (target.mode === "append") {
-            toHost({ __mlSidebarApp: "sessionSend", hash: target.hash, text: t, images: att.imgs, ...(files.length ? { files } : {}), elementContext: el || undefined });
+            toHost({ __mlSidebarApp: "sessionSend", hash: target.hash, text: t, images: att.imgs, ...(files.length ? { files } : {}), ...(asIs ? { asIs } : {}), elementContext: el || undefined });
             const s = sessionMap.get(target.hash);
             if (s) { s.status = "pending"; s.ended = false; s.lastTs = Date.now(); rev.value++; }
             close();
@@ -181,7 +184,7 @@ export function ComposerCard() {
         setTimeout(() => { if (composerStarting.value === t0) composerStarting.value = 0; }, 10000);
         // Kept until the worker takes the run: a refusal (`__mlStartRefused`) reopens the composer with all of it.
         composerDraft.value = { text, imgs: att.imgs, files, element: el };
-        toHost({ __mlSidebarApp: "startRun", task: t, maxSteps: composerMaxSteps.value, model: model || undefined, vision, stream: composerStream.value || undefined, images: att.imgs, ...(files.length ? { files } : {}), elementContext: el || undefined });
+        toHost({ __mlSidebarApp: "startRun", task: t, maxSteps: composerMaxSteps.value, model: model || undefined, vision, stream: composerStream.value || undefined, images: att.imgs, ...(files.length ? { files } : {}), ...(asIs ? { asIs } : {}), elementContext: el || undefined });
         close();
     };
     return (
@@ -199,9 +202,10 @@ export function ComposerCard() {
             <div class="card-body">
                 {el ? <ElementPill ctx={el} onRemove={() => (composerElement.value = null)} /> : null}
                 <ThumbStrip imgs={att.imgs} loading={att.loading} onRemove={att.remove} />
-                <FileStrip docs={att.docs} reasons={att.reasons} onRemove={att.removeDoc} />
+                <FileStrip docs={att.docs} reasons={att.reasons} onRemove={att.removeDoc} scans={att.docs.map((_, i) => scan.file(i))} />
+                <TurnChips chips={scan.chips} onToggle={scan.toggle} unreadable={scan.unreadable} />
                 <textarea ref={ref} class="card-cmp-input" rows={3}
-                    placeholder={el ? "Ask about the selected element…" : "Ask window.ml to do something on this page… (paste an image or a file to attach)"}
+                    placeholder={el ? "Ask about the selected element…" : "Ask window.ml to do something on this page…"}
                     value={text}
                     onInput={e => { setText((e.target as HTMLTextAreaElement).value); if (err) setErr(""); }}
                     onPaste={att.onPaste} onDragOver={att.onDragOver} onDrop={att.onDrop}

@@ -8,8 +8,8 @@
 // `origin: "proposed"`, so it describes sandboxed calls only (B5) until its evidence run passes.
 
 import type { HostFacts, HostPathArg, HostPathFact } from "./host-protocol";
-import { shippedOnlyRefusal, validateManifest, type ProgramManifest } from "./program-manifest";
-import { effectsText, manifestFor, quoteArg, type ShFacts } from "./sh-call";
+import { revealingName, shippedOnlyRefusal, validateManifest, type CommandSpec, type ProgramManifest } from "./program-manifest";
+import { effectsText, manifestFor, quoteArg, revealsText, type ShFacts } from "./sh-call";
 import { manifestKey, type ManifestOrigin, type ManifestRequest } from "./stored-manifests";
 
 /** The longest draft the tool takes, as JSON. */
@@ -143,6 +143,9 @@ export function draftRequest(d: ManifestDraft, facts: HostFacts, root: string, r
             scope = "workspace";
         }
     }
+    // Ruling 31: the marker only narrows, so a draft for a program known to show other processes (by name or by the file
+    // the host resolved) gets it whatever it said.
+    if (revealingName(manifest, e ? undefined : facts.program.path)) manifest.reveals = "processes";
     const problems = validateManifest(manifest);
     if (problems.length) return { error: `Error: not a valid program manifest: ${problems.slice(0, 5).join("; ")}` };
     const shippedOnly = shippedOnlyRefusal(manifest);
@@ -170,6 +173,40 @@ export function callsOfDraft<C extends HostFacts>(r: ManifestRequest, calls: rea
  *  it would then go without a card. `skipped` says why it was not resolved. */
 export type DraftReading = { argv: string[]; facts: ShFacts; free: boolean } | { argv: string[]; skipped: string };
 
+/** A subcommand name the draft card quotes: a plain word (`remote`, `ls-files`, `v2.list`); any other is counted. */
+const PLAIN_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
+/** How many argument-order readings the draft card lists before "and N more". */
+const ARG_ORDER_SHOWN = 6;
+
+/** How each overlay of a flavoured draft reads an argument after an operand, in words, whatever is detected: under
+ *  `stop` such an argument is a file name, which the person should know before approving (`stopShadow` makes a
+ *  declared writing flag there ask, but a flag the draft does not declare is simply a file). Human-facing. */
+export function argOrderText(m: Pick<ProgramManifest, "program" | "flavours" | "command">): string {
+    if (!m.flavours) return "";
+    // A subcommand's name is the manifest's own text: only a plain word is quoted into the note, so a name cannot write
+    // a sentence the person reads as the card's (red team on #1963); the rest are counted, and the list is capped.
+    const said: string[] = [];
+    let unnamed = 0;
+    const walk = (c: CommandSpec, path: string) => {
+        for (const name of ["gnu", "bsd"] as const) {
+            const order = c.flavour?.[name]?.argOrder;
+            if (order) said.push(`${name.toUpperCase()} ${path} reads an argument starting with - after an operand ${order === "stop" ? "as a file name, -- included (stop)" : "as a flag (permute)"}`);
+        }
+        for (const [sub, sc] of Object.entries(c.subcommands ?? {})) {
+            if (PLAIN_NAME.test(sub)) walk(sc, `${path} ${sub}`);
+            else unnamed++;
+        }
+    };
+    walk(m.command, m.program);
+    const shown = said.slice(0, ARG_ORDER_SHOWN);
+    if (said.length > shown.length) shown.push(`and ${said.length - shown.length} more`);
+    if (unnamed) shown.push(`${unnamed} subcommand${unnamed === 1 ? "" : "s"} whose name is not a plain word, not described here`);
+    said.splice(0, said.length, ...shown);
+    const gnu = m.flavours.gnu ? " Its GNU reading is never used: a stored manifest's probe is not run." : "";
+    const bsd = m.flavours.bsd ? " Its BSD reading applies only to the macOS system program." : "";
+    return ` Flavours: ${said.length ? `${said.join("; ")}.` : "no overlay changes the argument order."}${gnu}${bsd}`;
+}
+
 /**
  * The card's note: what the person is asked to store, and the DERIVED block, said to be derived. Human-facing.
  * @param r the entry
@@ -181,7 +218,7 @@ export function draftNote(r: ManifestRequest, forced: string | undefined, readin
     const key = manifestKey(r.manifest);
     const where = r.scope === "global" ? "for every workspace" : `for the workspace ${r.root}`;
     const pinned = r.manifest.entrypoint ? `the script's sha256 ${r.manifest.entrypoint.sha256.slice(0, 12)}` : `${r.pin!.path} as it is now (fingerprint ${r.pin!.fingerprint})`;
-    const head = `Proposed by the model: a manifest for ${key}, stored ${where}${forced ? ` (${forced})` : ""}, pinned to ${pinned}; a change to it makes its calls ask again.`;
+    const head = `Proposed by the model: a manifest for ${key}, stored ${where}${forced ? ` (${forced})` : ""}, pinned to ${pinned}; a change to it makes its calls ask again.${argOrderText(r.manifest)}`;
     const free = readings.filter((x): x is Extract<DraftReading, { facts: ShFacts }> => "facts" in x && x.free);
     const lines = readings.slice(0, 5).map((x) => `${x.argv.map(quoteArg).join(" ")}: ${"skipped" in x ? `not read (${x.skipped})` : `${effectsText(x.facts.effects)}, ${x.free ? "free" : "asks"}`}`);
     const derived = !readings.length
@@ -192,5 +229,8 @@ export function draftNote(r: ManifestRequest, forced: string | undefined, readin
         : !free.length
             ? "Approved, it describes calls under the OS sandbox only, where its claims are enforced; with no free call to re-run, it stays that way."
             : `Approved, it describes calls under the OS sandbox only, where its claims are enforced. Then the ${free.length} free call${free.length === 1 ? " is" : "s are"} re-run under the sandbox with writes refused; if every one exits as the manifest says with nothing changed, and its recorded run created, modified or removed no file one of its arguments names, it describes calls without the sandbox too. A write inside a folder it names, or to a file no argument names, is not seen.`;
-    return `${head} ${derived} ${after}`;
+    const reveals = r.manifest.reveals
+        ? ` It declares reveals: "processes"${revealingName(r.manifest, r.pin?.path) ? ", added whatever the draft said" : ""}: ${revealsText(r.manifest.program)}, so a call that would be free still asks until ${r.manifest.program} is in Programs that may show other processes.`
+        : "";
+    return `${head}${reveals} ${derived} ${after}`;
 }

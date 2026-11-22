@@ -20,10 +20,10 @@ const LOOPBACK = new Set(["localhost", "127.0.0.1", "0.0.0.0", "[::1]", "::1"]);
 /** A GitHub token by its documented shape (`ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_` and a fine-grained `github_pat_`): the
  *  credential the process host injects into a credentialed `gh` call, whose value the worker never holds, so it is
  *  matched by shape wherever a program printed it (`gh auth token`, `gh auth status -t`). */
-const GITHUB_TOKEN = /\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{22,255})\b/g;
+export const GITHUB_TOKEN = /\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{22,255})\b/g;
 
 /** What stands in for one. */
-const GITHUB_TOKEN_PUT = "[a GitHub token]";
+export const GITHUB_TOKEN_PUT = "[a GitHub token]";
 
 /** Shorter than this, an API key is a placeholder (`ollama`, `EMPTY`, `sk-1234`) and also an ordinary word. */
 const MIN_KEY = 12;
@@ -134,15 +134,31 @@ const ERROR_KEY = /error$/i;
  * @returns the response, copied where something changed
  */
 export function scrubErrors<T>(value: T, secrets: readonly SecretSub[], depth = 6): T {
-    if (!secrets.length || depth < 0 || value == null || typeof value !== "object") return value;
+    if (!secrets.length) return value;
+    return mapErrorStrings(value, (s) => scrubSecrets(s, secrets), depth);
+}
+
+/**
+ * A response with `f` applied to every string under an error key, at any depth: the walk `scrubErrors` does, for a
+ * caller that scrubs with more than the config's secrets.
+ * @param value the response
+ * @param f what each error string becomes
+ * @param depth how deep to look
+ * @returns the response, copied where something changed
+ */
+export function mapErrorStrings<T>(value: T, f: (s: string) => string, depth = 6, inside = false): T {
+    // `inside`: the walk is under an error key, so every string below it is error text (`{ error: { message } }`,
+    // `{ error: [ ... ] }`), not only one whose own key ends in "error".
+    if (typeof value === "string") return (inside ? f(value) : value) as T;
+    if (depth < 0 || value == null || typeof value !== "object") return value;
     if (Array.isArray(value)) {
         let changed = false;
-        const out = value.map((v) => { const s = scrubErrors(v, secrets, depth - 1); if (s !== v) changed = true; return s; });
+        const out = value.map((v) => { const s = mapErrorStrings(v, f, depth - 1, inside); if (s !== v) changed = true; return s; });
         return (changed ? out : value) as T;
     }
     let out: Record<string, unknown> | null = null;
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-        const s = ERROR_KEY.test(k) && typeof v === "string" ? scrubSecrets(v, secrets) : scrubErrors(v, secrets, depth - 1);
+        const s = mapErrorStrings(v, f, depth - 1, inside || ERROR_KEY.test(k));
         if (s !== v) (out ??= { ...(value as Record<string, unknown>) })[k] = s;
     }
     return (out ?? value) as T;

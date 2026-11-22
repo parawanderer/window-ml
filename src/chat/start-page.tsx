@@ -17,7 +17,8 @@ import { IconSend, IconWarn } from "../sidebar/icons";
 import { modelCache, SeesImagesToggle, visionUnreported } from "./sees-images";
 import { setVisionChoice, visionChoices } from "./view-mode";
 import { visionFor } from "../vision-choice";
-import { FileStrip, ThumbStrip, sentFile, useImageAttach } from "../sidebar/transcript/composer";
+import { TurnChips, useTurnScan } from "../sidebar/transcript/turn-scan-ui";
+import { FileStrip, ThumbStrip, sentFile, useImageAttach, type PendingFile } from "../sidebar/transcript/composer";
 import { imagesRefusal, type SentFile } from "../contract/contract-run";
 import { cursorTipOn } from "../sidebar/ui-kit";
 import type { ChatStore } from "./chat-store";
@@ -63,6 +64,15 @@ function StartField({ boxOf }: { boxOf: () => Element | null }) {
     return <canvas class="chat-start-field" ref={canvas} aria-hidden="true" />;
 }
 
+/** Each attached doc's upload progress, by the doc's place in the start page's strip. A progress index counts the
+ * command's files, which are the sendable docs (a refused or unread one is not sent): each doc takes the upload at
+ * its position among the sendable ones, the same test `useImageAttach` filters by. */
+export function uploadsForDocs(docs: PendingFile[], reasons: (string | undefined | null)[], uploads: FileProgress[]): (FileProgress | undefined)[] {
+    const pos = new Map<number, number>();
+    docs.forEach((d, i) => { if (!reasons[i] && sentFile(d)) pos.set(i, pos.size); });
+    return docs.map((_, i) => (pos.has(i) ? uploads.find((p) => p.index === pos.get(i)) : undefined));
+}
+
 /** The start page: a pill to type in, and the choices a start needs on one row inside it. */
 export function StartPage({ store, onStarted, initialKind, initialRuntime, extras, narrow, back }: { store: ChatStore; onStarted: (key: string) => void; initialKind?: StartKind;
     /** the device to arrive on, where the start began at one (a runtime's `+` in the list). Ignored where that
@@ -96,6 +106,8 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
     });
     useEffect(() => { saveDraftImages("start", att.imgs); }, [att.imgs]);
     useEffect(() => { saveDraftFiles("start", att.docs.map(sentFile).filter((f): f is SentFile => !!f)); }, [att.docs]);
+    // Registered values in the draft (SECRET_HANDLES.md): chips with "send as is", where this host can scan; never a block on the start.
+    const scan = useTurnScan(text, att.docs, rt?.id ?? "");
     const [busy, setBusy] = useState(false);
     const [uploads, setUploads] = useState<FileProgress[]>([]);   // state: ui — the files of a start still uploading
     const [askingPage, setAskingPage] = useState(false);
@@ -158,18 +170,19 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
     const streaming = kind === "agent";
     // Text, or an image or a file alone: the start commands accept any of them (session-commands.ts).
     const ready = (!!text.trim() || att.imgs.length > 0 || att.sendable.length > 0) && !imagesRefusal(att.imgs.length) && !busy && rt.online && (kind === "chat" || (pick.ready && blocked.kind === "ok"));
+    const uploadsByDoc = uploadsForDocs(att.docs, att.reasons, uploads);
     const start = async (): Promise<void> => {
         if (!ready) return;
         setBusy(true);
-        const images = att.imgs, files = att.sendable;
+        const images = att.imgs, files = att.sendable, asIs = scan.asIs();
         // A file going ahead in chunks reports each accepted one, drawn under its chip until the start has its answer.
-        const progress = (p: FileProgress) => setUploads((u) => (u.some((x) => x.name === p.name) ? u.map((x) => (x.name === p.name ? p : x)) : [...u, p]));
+        const progress = (p: FileProgress) => setUploads((u) => (u.some((x) => x.index === p.index) ? u.map((x) => (x.index === p.index ? p : x)) : [...u, p]));
         try {
             const r = kind === "chat"
-                ? await store.send({ type: "chat.start", runtime: rt.id, text: text.trim(), ...(images.length ? { images } : {}), ...(files.length ? { files } : {}), ...(model ? { model } : {}), ...(unreported && vision ? { vision: true as const } : {}) }, { progress })
-                : await store.send({ type: "agent.start", runtime: rt.id, task: text.trim(), ...(images.length ? { images } : {}), ...(files.length ? { files } : {}), target: pick.target(), ...(model ? { model } : {}), ...(unreported && vision ? { vision: true as const } : {}), ...(streaming ? { stream: true as const } : {}) }, { progress });
+                ? await store.send({ type: "chat.start", runtime: rt.id, text: text.trim(), ...(images.length ? { images } : {}), ...(files.length ? { files } : {}), ...(asIs ? { asIs } : {}), ...(model ? { model } : {}), ...(unreported && vision ? { vision: true as const } : {}) }, { progress })
+                : await store.send({ type: "agent.start", runtime: rt.id, task: text.trim(), ...(images.length ? { images } : {}), ...(files.length ? { files } : {}), ...(asIs ? { asIs } : {}), target: pick.target(), ...(model ? { model } : {}), ...(unreported && vision ? { vision: true as const } : {}), ...(streaming ? { stream: true as const } : {}) }, { progress });
             // A refusal is already a notice; what was typed stays, to be changed and tried again.
-            if (r.ok) { saveDraft("start", ""); saveDraftImages("start", []); saveDraftFiles("start", []); att.clear(); onStarted(`${r.data.session.runtime}:${r.data.session.hash}`); }
+            if (r.ok) { saveDraft("start", ""); saveDraftImages("start", []); saveDraftFiles("start", []); att.clear(); scan.reset(); onStarted(`${r.data.session.runtime}:${r.data.session.hash}`); }
         } finally { setBusy(false); setUploads([]); }
     };
     // THE MODEL: in the box's row where the page is wide enough to hold it, at the TOP of the page on a phone. There the
@@ -247,7 +260,8 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
                 {narrow ? <div class="chat-start-above">{row}{pick.urlField}</div> : null}
                 <div class="chat-start-box" onDragOver={att.onDragOver} onDrop={att.onDrop}>
                     <ThumbStrip imgs={att.imgs} loading={att.loading} onRemove={att.remove} />
-                    <FileStrip docs={att.docs} reasons={att.reasons} onRemove={att.removeDoc} progress={uploads} />
+                    <FileStrip docs={att.docs} reasons={att.reasons} onRemove={att.removeDoc} progress={uploadsByDoc} scans={att.docs.map((_, i) => scan.file(i))} />
+                    <TurnChips chips={scan.chips} onToggle={scan.toggle} unreadable={scan.unreadable} />
                     <input ref={att.fileRef} type="file" accept={att.fileAccept} multiple style="display:none" aria-hidden="true" tabIndex={-1}
                         onChange={(e) => { att.addFiles((e.target as HTMLInputElement).files); (e.target as HTMLInputElement).value = ""; }} />
                     <textarea ref={box} rows={1} value={text} aria-label={kind === "agent" ? "Task" : "Message"}

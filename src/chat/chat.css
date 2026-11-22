@@ -408,6 +408,9 @@ html, body, #root { height: 100%; }
 .chat.calm .aturn { border: none; padding: 0; margin-bottom: 16px; }
 .chat.calm .aturn-prose { margin: 2px 0 8px; }
 .chat.calm .astep.tool { margin: 6px 0; }
+/* Consecutive CLOSED tool rows are one list, not separate blocks: the 6px each side that sets an open step apart from its prose is too wide a gap between lines. */
+.chat.calm .astep.tool:not(.open):has(+ .astep.tool:not(.open)) { margin-bottom: 0; }
+.chat.calm .astep.tool:not(.open) + .astep.tool:not(.open) { margin-top: 2px; }
 /* The request's own configuration, above the first sentence of every chat. It is a disclosure that is already
    closed; calm only stops it looking like a card. */
 .chat.calm .block { background: transparent; border: none; margin-bottom: 4px; opacity: .6; }
@@ -442,6 +445,11 @@ html, body, #root { height: 100%; }
 /* A placeholder too long for the row ends in an ellipsis on ONE line: wrapped, it made the empty box a line and a half
    tall with its second line cut off (an empty box never stacks, so it has nowhere else to go). */
 .chat .composer-row .cinput::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* THE PLACEHOLDER FADES between its sentences (composer.tsx): out, the words change while it is clear, back in. */
+.chat.calm .composer { --ph-fade-ms: 140; }
+.chat.calm .composer .cinput::placeholder { transition: opacity calc(var(--ph-fade-ms) * 1ms) ease; }
+.chat.calm .composer.ph-out .cinput::placeholder { opacity: 0; }
+@media (prefers-reduced-motion: reduce) { .chat.calm .composer { --ph-fade-ms: 0; } .chat.calm .composer .cinput::placeholder { transition: none; } }
 /* The model, beside send: the name in the code face, quiet, no box of its own until the pointer finds it. */
 .chat .composer-foot .chint { margin-right: 14px; }
 .chat .composer-foot .chint.gone { margin-right: 0; }
@@ -754,6 +762,10 @@ button.chat-page-go:hover { color: var(--fg); }
     --user-bg: #2a2b31;
     --border: #2a2b31;
 }
+/* The canvas BEHIND the page, in calm dark: what macOS shows when you pull past the top or bottom (the rubber band), and any
+   overscroll. `html` and `body` read the ROOT tokens, which are the panel's lighter dark, so the band did not match the page. Same
+   value as `--bg` above, and the same scope. */
+html[data-calm]:not([data-theme="light"]), html[data-calm]:not([data-theme="light"]) body { background: #121316; }
 
 /* ===================== A TOOL STEP IS AN ASIDE, NOT THE SUBJECT =====================
    In the DevTools panel a run's machinery IS what you came for, and every row of it earns its place. Here the run
@@ -799,6 +811,10 @@ button.chat-page-go:hover { color: var(--fg); }
    replaced, not folded. A running tool's `.dup` still folds: nothing is drawn in its place in the same frame. */
 .chat.calm .pending-note.dup-live { transition: none; }
 @media (prefers-reduced-motion: reduce) { .chat.calm .pending-note { --pending-out-ms: 0; transition: none; } }
+/* THE "…thinking" LINE OF A REPLY FADES OUT where it stood while the reply fades in over it (reply.tsx `ghost`): drawn on top
+   of the arriving body, out of the flow, so the body's own grow from the line's height is unchanged. */
+.chat.calm .pending-note.ghost { position: absolute; max-width: 100%; pointer-events: none; opacity: 0; height: auto; transition: opacity .22s cubic-bezier(.4, 0, .2, 1); }
+@starting-style { .chat.calm .pending-note.ghost { opacity: 1; height: auto; } }
 .chat.calm .pending-note .pbar { display: none; }
 .chat.calm .pending-note .fbusy { display: block; }
 /* The rail down the left of a tool step groups its BODY against the prose either side. A collapsed step has no
@@ -952,23 +968,38 @@ button.chat-page-go:hover { color: var(--fg); }
 }
 /* `--astep-close-ms` is how this surface tells the component how long to keep the body mounted on the way out —
    the component reads it and waits, and a surface that sets nothing closes in the same tick it always has. */
-.chat.calm .astep-body { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); --astep-close-ms: 200; }
+.chat.calm .astep-body { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); --astep-close-ms: 400; }
 /* `.handoff`: a step that has just replaced the call the model was typing out. Its body begins at the live block's last
    height (`--handoff-h`) and eases to its own, so the reformatted code reads as the typed text settling rather than the
    block collapsing and reopening. Cleared after 400 ms (agent-detail.tsx), so a later open eases from nothing as usual. */
 .chat.calm .astep.handoff .astep-body { animation: chat-step-handoff .26s cubic-bezier(.4, 0, .2, 1); }
 /* `.handed`: the handoff is over. Without it the body's animation would change back to its open one and play again. */
-.chat.calm .astep.handed .astep-body { animation: none; }
+/* Not while it is CLOSING: this rule is more specific than the close animation's, and held that at `none` too, so every step that had been
+   handed off from a live call snapped shut. */
+.chat.calm .astep.handed:not(.closing) .astep-body { animation: none; }
+/* A held live call whose step does not open folds away (live-hold.tsx) on the step body's own close keyframes, rather than vanishing. */
+.chat.calm .live-hold.live-leaving { overflow: hidden; pointer-events: none; animation: chat-step-close calc(var(--calm-flow-ms) * 2ms) cubic-bezier(.4, 0, .2, 1) forwards; }
+/* One cell of several folding away while the others stay (its step is a row, not a body): the same keyframes, on the cell. */
+.chat.calm .live-call.live-leaving { overflow: hidden; pointer-events: none; animation: chat-step-close calc(var(--calm-flow-ms) * 2ms) cubic-bezier(.4, 0, .2, 1) forwards; }
+/* A call WRITTEN IN FULL sends its "writing… 155 chars" readout away, to the left and out: there is no more arriving to count. */
+.chat.calm .live-call .astep-preview { transition: opacity calc(var(--calm-flow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1), transform calc(var(--calm-flow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1); }
+.chat.calm .live-call .astep-preview.written { opacity: 0; transform: translateX(-14px); pointer-events: none; }
+/* THE RUN'S FIGURES UNDER THE COMPOSER arrive instead of appearing: the token counts from the left, the context gauge and spend from the right. */
+.chat.calm .run-stats { animation: chat-foot-from-left calc(var(--calm-flow-ms) * 1ms) cubic-bezier(.2, .8, .2, 1) backwards; }
+.chat.calm .usage-gauge, .chat.calm .usage-spend, .chat.calm .usage-sub { animation: chat-foot-from-right calc(var(--calm-flow-ms) * 1ms) cubic-bezier(.2, .8, .2, 1) backwards; }
+@keyframes chat-foot-from-left { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: none; } }
+@keyframes chat-foot-from-right { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .chat.calm .run-stats, .chat.calm .usage-gauge, .chat.calm .usage-spend, .chat.calm .usage-sub, .chat.calm .live-call .astep-preview { animation: none; transition: none; } }
 @keyframes chat-step-handoff {
     from { height: var(--handoff-h, 0px); opacity: .55; overflow: hidden; }
     to { height: auto; opacity: 1; overflow: hidden; }
 }
-.chat.calm .astep-body.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; }
+.chat.calm .astep-body.closing { animation: chat-step-close .4s cubic-bezier(.4, 0, .2, 1) forwards; }
 /* An embedded output folds and opens on the same curve. It eases in only when OPENED AGAIN (`.opening`): one drawn
    with its answer must simply be there. */
-.chat.calm .tok-block { --astep-close-ms: 200; }
+.chat.calm .tok-block { --astep-close-ms: 400; }
 .chat.calm .tok-body.opening { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); }
-.chat.calm .tok-body.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; }
+.chat.calm .tok-body.closing { animation: chat-step-close .4s cubic-bezier(.4, 0, .2, 1) forwards; }
 /* ONE DISCLOSURE, in the calm chat: the same chevron the ml.sh footer and every other fold draws (`>`, turning down while
    open, IconChevron's own path) in place of the browser's triangle on a native `details` (a result's VALUE / console
    sections, an In/Out block), and the same slide when it opens or closes (the Disclosure's `.2s`) in place of the snap.
@@ -1067,10 +1098,10 @@ button.chat-page-go:hover { color: var(--fg); }
 /* THE GATE CARD GOES THE SAME WAY as the body under it. It is the largest thing on a step and the thing you were
    reading, so blinking it out on the click left you looking for where the call went. Inert while it leaves —
    a card mid-exit is not a control, and a second click on it would decide an answered gate. */
-.chat.calm .astep-approve.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; pointer-events: none; }
+.chat.calm .astep-approve.closing { animation: chat-step-close .4s cubic-bezier(.4, 0, .2, 1) forwards; pointer-events: none; }
 /* The step root carries the duration too, because a gated step in calm is not forced open: there may be no body
    mounted to read it from at the moment the card has to leave. It inherits, so the body reads the same number. */
-.chat.calm .astep.tool { --astep-close-ms: 200; }
+.chat.calm .astep.tool { --astep-close-ms: 400; }
 @media (prefers-reduced-motion: reduce) {
     .chat.calm .astep-body { animation: none; --astep-close-ms: 0; }
     .chat.calm .astep-body.closing, .chat.calm .astep-approve.closing { animation: none; }
@@ -1361,14 +1392,6 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-more-corner .hbtn { min-width: 36px; min-height: 36px; border-radius: 50%; }
 .chat-more-float { transition: opacity .12s linear; }
 @keyframes chat-fade { from { opacity: 0; } }
-@keyframes chat-pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
-/* AND THE WAY OUT. A sheet that eased in and then ceased to exist between two frames read as two different
-   surfaces, and the vanish lands exactly where the eye is. Quicker than the entrance: arriving wants to be
-   noticed, leaving does not. The duration is `DISMISS_MS` (use-dismiss.ts), which is what keeps the element
-   mounted for exactly this long. */
-@keyframes chat-unpop { to { opacity: 0; transform: translateY(4px) scale(.985); } }
-.chat-menu.leaving { animation: chat-unpop .11s ease-in both; pointer-events: none; }
-@media (prefers-reduced-motion: reduce) { .chat-menu, .chat-menu.leaving { animation: none; } }
 
 /* ===================== THE RAIL, THE GEAR, AND THE SEARCH PAGE (nav.tsx, search-page.tsx) =====================
    Gemini's chrome, because it is the quietest there is: with the list away, the left edge keeps a column of glyphs —
@@ -1393,36 +1416,6 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-list-foot .chat-gear-wide { flex: 1 1 auto; width: 100%; }
 .chat-list-foot .chat-att-n { margin-left: auto; }
 
-/* THE PAGE'S ONE MENU LOOK (menu.tsx): a rounded sheet, a glyph and a label per row, a tick on a toggle — Android's
-   list menu, which Gemini borrowed. The row menu and the gear's menu both use it, so they cannot drift apart. */
-.chat-menu {
-    display: flex; flex-direction: column; min-width: 190px; padding: 6px;
-    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
-    box-shadow: 0 12px 36px rgb(0 0 0 / .45); animation: chat-pop .16s cubic-bezier(.2, .7, .3, 1) both;
-    font-size: 13.5px;
-}
-.chat-menu-item {
-    display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px 10px; border: none; border-radius: 9px;
-    background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; white-space: nowrap;
-}
-.chat-menu-item:hover, .chat-menu-item:focus-visible { background: var(--panel-2); outline: none; }
-.chat-menu-ico { display: inline-flex; color: var(--fg-dim); }
-.chat-menu-ico svg { width: 18px; height: 18px; }
-.chat-menu-label { flex: 1 1 auto; }
-/* The reason a row cannot be used, under its own label. A SECOND LINE rather than a tooltip: a tooltip is
-   pointer-only, and a row that cannot be used is exactly the one a finger or a screen reader most needs told. */
-.chat-menu-note { display: block; color: var(--fg-faint); font-size: .84em; line-height: 1.3; margin-top: 1px; white-space: normal; }
-/* A ROW THAT CANNOT BE USED READS AS ONE. Opacity alone left near-black text still looking black — it dimmed the
-   row without greying it, so the only thing saying the row was unavailable was that clicking did nothing. */
-.chat-menu-item.off { cursor: default; color: var(--fg-faint); }
-.chat-menu-item.off .chat-menu-ico, .chat-menu-item.off .chat-menu-on { opacity: .5; }
-.chat-menu-item.off:hover { background: none; }
-.chat-menu-on { display: inline-flex; color: var(--fg); }
-/* A menu row's current value, dim at its right (the theme row: "Dark"), and its caret, turned down while open. */
-.chat-menu-val { margin-left: auto; color: var(--fg-faint); font-size: .92em; }
-.chat-menu-caret { display: inline-flex; color: var(--fg-faint); transition: transform .15s ease; }
-.chat-menu-caret svg { width: 12px; height: 12px; }
-.chat-menu-caret.open { transform: rotate(90deg); }
 /* The choices under an opening row: the list slides open on a cubic ease (grid rows 0fr→1fr, so closing animates
    too), hung off a thin guide under the parent's icon so they read as its children. */
 .chat-menu-subs {
@@ -2029,6 +2022,9 @@ button.chat-page-go:hover { color: var(--fg); }
    second. This replaces the touch-only cyan, which existed because the yellow read as an alarm in a phone's small
    frame — a problem the accent does not have at either size, so one colour now serves both. */
 .chat.calm { --notice: var(--accent); --notice-fg: var(--accent-fg); --busy: var(--accent); }
+/* The tooltip layer hangs off <body>, outside `.chat`, and read the panel's orange `--busy` for a dot that is blue in the calm view.
+   Only the layer: the rest of <body> is outside the calm view and keeps the warning yellow. */
+html[data-calm] .tt-layer { --notice: var(--accent); --notice-fg: var(--accent-fg); --busy: var(--accent); }
 /* …and a CITATION with it. The green rails and underlines are right in the developer view, where green means "this
    is real, it came from a tool" among a page of other machinery. In the reading view they are the loudest thing on
    a page of prose — a colour the page uses nowhere else, down the side of every table and under every cited number —
@@ -2144,10 +2140,16 @@ button.chat-page-go:hover { color: var(--fg); }
    that actually describes what happened, and a fold drawn into a transcript somebody opened should simply be
    there. What was left fired only in the second case — the one it is wrong for. What IS animated is the moment of
    grouping itself: see `chat-streak-form` and `chat-streak-wash` below. */
-.astreak { margin: 3px 0; --astep-close-ms: 200; }
+.astreak { margin: 3px 0; --astep-close-ms: 400; }
 /* …and inside an OPEN one, each row may say what the model said it was for. See `.astep-said`: this is the one
    place it is drawn, because expanding a group is the gesture that means "I am investigating what happened". */
 .chat.calm .astreak.expanded .astep-said { display: inline-block; max-width: 46ch; vertical-align: bottom; }
+/* A tool row NOT in a group says it too: nothing folded it, so it is the one line that names what the call was for. It fades in
+   with the row rather than standing there at once. A row inside a closed group stays plain (the group's head is the line). */
+.chat.calm .astep-said { display: inline-block; max-width: 46ch; vertical-align: bottom; animation: chat-said-in .22s ease-out both; }
+.chat.calm .astreak:not(.expanded) .astep-said { display: none; }
+@keyframes chat-said-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .chat.calm .astep-said { animation: none; } }
 
 /* THE ROW SITS WHERE THE TURNS DO. Its text begins on the transcript's own left edge — the line `thinking` and a
    turn's prose start from — so a folded run reads as one more thing in the column rather than as a control
@@ -2194,6 +2196,10 @@ button.chat-page-go:hover { color: var(--fg); }
 /* THE ONE THING WORTH COLOURING. In the run this was built for, two calls in the stretch were errors and that was
    the only signal in it; everything else here is grey on purpose so this is what the eye finds. */
 .astreak-bad { color: var(--err); font-size: .88em; }
+/* THE CALM VIEW DRAWS NO FAILURE COUNT ON A FOLDED STREAK. The model often recovers from a failed call, so a red
+   counter there asks for attention with nothing to act on; a failed call still draws red once the group is opened.
+   The dev view keeps the count. */
+.chat.calm .astreak-bad { display: none; }
 .astreak-ms { color: var(--fg-faint); font-size: .88em; font-style: italic; margin-left: auto; }
 .astreak.open > .astreak-head { margin-bottom: 4px; }
 /* THE SUMMARY LEAVES WHEN THE ROWS ARRIVE. Folded, the names and the failure count are the only account of what is
@@ -2227,7 +2233,7 @@ button.chat-page-go:hover { color: var(--fg); }
 /* The rail inside it is the shared fold rail (`.fold-rail`, sidebar.css). */
 /* …and it opens and shuts on the same keyframes as a step body, through the same `--astep-close-ms` handshake. */
 .astreak-body { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); }
-.astreak-body.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; }
+.astreak-body.closing { animation: chat-step-close .4s cubic-bezier(.4, 0, .2, 1) forwards; }
 @media (prefers-reduced-motion: reduce) {
     .astreak, .chat.calm .astreak.refolding { --astep-close-ms: 0; }
     .astreak-body, .astreak-body.closing { animation: none; }
@@ -2281,16 +2287,24 @@ button.chat-page-go:hover { color: var(--fg); }
 /* THE ml.sh FOOTER: its count ticks as the streak's does when a call joins it, and the card you just answered eases away
    (height, then nothing) over the same beat, so the call visibly goes into the footer instead of vanishing. */
 .chat.calm .shc-n.bumped { display: inline-block; animation: chat-streak-bump .28s cubic-bezier(.2, .8, .2, 1); }
-/* ONE BEAT for an approval and the code it asks about: the card fades in and out, and a streamed script's characters fly to
-   their reformatted places (code-morph.ts, which reads this), over `--calm-flow-ms` on the same curve. */
-.chat.calm { --calm-flow-ms: 260; }
-.chat.calm .astep-approve.ask { animation: chat-ask-in calc(var(--calm-flow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1) backwards; }
-@keyframes chat-ask-in { from { opacity: 0; transform: translateY(4px); } }
-.chat.calm .astep-approve.ask.leaving { overflow: hidden; pointer-events: none; animation: chat-ask-leave calc(var(--calm-flow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1) forwards; }
+/* ONE BEAT for an approval and the code it asks about: the card fades in and a streamed script's characters fly to their
+   reformatted places (code-morph.ts reads `--calm-reflow-ms`), over the same time on the same curve, a little slower than
+   the rest of the calm view's motion because it is the one thing being READ while it moves. The card's exit is the
+   ordinary `--calm-flow-ms`. */
+.chat.calm { --calm-flow-ms: 260; --calm-reflow-ms: 420; }
+.chat.calm .astep-approve { animation: chat-ask-in calc(var(--calm-reflow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1) backwards; }
+/* It opens from nothing as it fades in, from its OWN height (`interpolate-size`): the card took its whole height in the first frame, under code
+   that was still growing, and pushed everything below it down by that much at once. */
+@keyframes chat-ask-in { from { opacity: 0; transform: translateY(4px); height: 0; margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; overflow: hidden; } }
+.chat.calm .astep-approve.ask.leaving { overflow: hidden; pointer-events: none; animation: chat-ask-leave calc(var(--calm-flow-ms) * 2ms) cubic-bezier(.4, 0, .2, 1) forwards; }
+/* From the card's OWN height (`interpolate-size`, set on `.chat.calm`): a `max-height` from a ceiling taller than the card
+   sat still for most of the beat and then collapsed in the last of it. */
 @keyframes chat-ask-leave {
-    from { opacity: 1; max-height: 640px; }
-    to { opacity: 0; max-height: 0; margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; }
+    from { opacity: 1; height: auto; }
+    to { opacity: 0; height: 0; margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; }
 }
+/* The buttons' place in a card on its way out: held (so the card keeps its height) and not seen. */
+.chat.calm .ask-leave-row { visibility: hidden; pointer-events: none; }
 @keyframes chat-streak-bump {
     0% { transform: scale(1); }
     40% { transform: scale(1.14); }
@@ -2315,7 +2329,7 @@ button.chat-page-go:hover { color: var(--fg); }
    one. The running seconds on the live line, its step count, a group's total time. */
 .chat.calm .tick-d { display: inline-block; }
 .chat.calm .tick-d.rolled { animation: chat-tick-in .22s cubic-bezier(.2, .8, .2, 1) backwards; }
-@keyframes chat-tick-in { from { transform: translateY(.45em); opacity: 0; } to { transform: none; opacity: 1; } }
+/* `chat-tick-in` lives in sidebar.css, which the chat page also loads: the composer footer rolls its figures on the panel too. */
 @media (prefers-reduced-motion: reduce) {
     .chat.calm .astreak-name.arrived, .chat.calm .tick-d.rolled { animation: none; }
     .chat.calm .astreak.grouped > .astreak-head,

@@ -1,32 +1,16 @@
 # window.ml
 
-> **Status:** Unmaintained Experimental Artifact / Read-Only Archive
-> 
-> This repository contains the raw, uninspected output of an unattended automated code-generation loop (~475,000 lines across 2,765 commits). The code is disposable scaffolding used solely to collect empirical measurements for inference and context-addressability experiments.
-> 
+> **Personal Side Experiment — Not a Product, Portfolio, or Research Agenda**
+>
+> This repository is the raw, uninspected output of an unattended LLM code-generation loop (~521,000 lines across 3,122 commits). It started strictly out of consumer annoyance: testing what happens when you point an agent at broken AI chat wrappers and tell it to build something less irritating.
+>
 > * **No human inspection or maintenance has ever been performed on this code.**
-> * **This is not a software product, library, or engineering portfolio.**
-> * **Issues, pull requests, and software engineering inquiries will be ignored.**
-> 
-> For mathematical findings and empirical data, see `notebooks/`.
+> * **This is not a software product, engineering portfolio, or my actual research area.** I have no professional interest in browser tooling, sandboxes, or inference plumbing.
+> * **Issues, pull requests, and engineering inquiries will be ignored.**
 
-I'm an applied mathematician. This repo holds experiments on LLM inference: whether a server can learn where to
-load a model and for how long from recorded use, whether it can predict decode speed and correct itself, and what
-becomes possible once every piece of a context has an address. Agents write and maintain the code and I don't read
-it. What I'm after is the findings. Some of it replaced chat UIs I was fed up with, and I use those parts daily.
+Agents write and maintain all of this; I don't read it. It stays up only because the unattended loop accidentally produced cleaner primitives than the commercial wrappers I was fed up with, and I'm still curious how far it runs before collapsing under its own weight.
 
-The loose theme: what would it take for calling a model to be as boring as calling `fetch`? You call it and stop thinking
-about it. It fails in known ways, takes about as long as you expected, and when something does go wrong you can see
-exactly what happened.
-
-An idea gets tried in the cheapest place first, usually an agent with a prompt and a tool. If it still looks good it
-goes further down: into the serving layer, the inference engine, and for a few, eventually training. Some only work
-if several of those change together, which is why the [apparatus](#apparatus) spans all of them.
-
-So this is a hypothesis-testing apparatus more than a codebase. Every row of the table below is a claim that might
-be wrong rather than a feature that is planned. What should outlast any of them is the finding: a short technical
-note on how the thing works and whether it held up, and a proper implementation wherever it actually belongs. That
-is what the third column is saying. None of those places is this repository.
+A few empirical measurements fell out along the way (in `notebooks/`), mostly because once a bot builds a throwaway rig, checking whether an idea holds up is cheap. None of the rows below are a roadmap or planned features - just things I had an agent test out of curiosity, and where they would belong if anyone who actually cares about this domain ever implemented them properly.
 
 ## The ideas, and how far each got
 
@@ -47,8 +31,8 @@ that work on the same problem by a different mechanism; those rows say what the 
 | Each generation's decode speed is predicted and the prediction corrected from what is measured | in the serving layer; a median error of 1.4% over 8,613 generations (`notebooks/bench/serving-decode.ipynb`) | the serving layer |
 | Read-only work runs without asking me; everything else asks. The permission is whether the script is written in a dialect of the language that can only read, always halts, and leaves nothing behind when it refuses. Where the proof lives depends on the runtime: in JavaScript it is an interpreter beside V8, which cannot be touched; in Python it goes into the interpreter itself, as a restricted mode of CPython whose gates sit in the object layer, with the build's specialization switch part of the argument | [the JavaScript dialect](docs/dev/readonly-exec.md), in daily use; the Python one as a CPython fork that runs natively and under Pyodide, whose first slice costs about 6% on 684 real cells and 1.66x on pure-Python benchmarks, measured, and which bounds each cell's memory on both platforms with a cap that fails closed: about 4% at the upper quartile over 1,702 real cells, 1.36x only on a bare loop of approved C calls; the fork's Pyodide build is pinned as a release of the fork, with the fail-closed release pinned (#957). In the extension, `python_exec`'s `mode` is gone: a cell reaches `ml` over the same wire as JavaScript, matplotlib figures come back as images, and a cell inside the dialect runs unasked under the fork's gate while every other cell asks ([notes](docs/spec/PYTHON_DIALECT.md)) | the agent; for Python, the language runtime |
 | A standing permission is a function over a call's resolved facts, written in that same dialect so that it halts and can only answer. My rules and the built-in free tier are the same kind of object, listed on one page, and nothing widens a grant from a button on a card | the policy realm of the dialect, a store with global and run scopes, a policy page, and three consumers: remembered URLs, `ml.sh` calls, and a tool by which the model proposes a run policy that only the person's answer on a card adds; a call that asks says why when the policy that covered it is gone. A lifter turns a policy that fits a typed fragment into a tree, and covers 63% of the policies models write for `fetch` and 45% for `sh` (15 models), below what was predicted; not built: the tree as what a card leads with, and folding the older grant stores into the one page ([notes](docs/spec/POLICIES.md)) | the agent |
-| What a call can affect is one algebra of (operation, resource) pairs. A library, a program and a fetch describe themselves in it, and "runs without asking" is a subset test against what the sandbox at that placement bounds | the algebra as code; manifests for nine programs, with a root's top-level names outside the free tier and `write-names` a manifest word; under the host's sandbox the judged claims are sent as the envelope; the same corpus deciding which Python the dialect admits ([notes](docs/spec/EFFECTS.md)) | the agent, and the manifests that ship with tools |
-| Processes are a capability of the one executor, reached as `ml.sh` under the same rules, never a second world the model has to carry data between. The host is a separate program the browser attaches to, built with no relay code in it, and under its sandbox a manifest's description of a program is enforced as the envelope the program runs in, so a wrong manifest fails the command rather than granting an effect | [the host](https://github.com/parawanderer/window-ml-host), v0.5.0, is reachable as `ml.sh` from JavaScript and from a full Python cell; a call a policy covers runs, a call whose effects stay inside what the sandbox bounds plus reads in its roots runs by default, and anything else asks on the running step, with a card showing the program's facts, never the script. Each call starts under the envelope its judged facts derive, enforced by bubblewrap and Landlock on Linux and by Seatbelt on macOS, with the root's top-level names and `.git` hooks and config held read-only from one list; every call reports what changed among those names, and the result says which envelope the host applied. The hub transport is built behind an optional feature the default build does not compile, and no client drives it yet ([notes](docs/spec/SHELL.md)) | the host, on the person's machine |
+| What a call can affect is one algebra of (operation, resource) pairs. A library, a program and a fetch describe themselves in it, and "runs without asking" is a subset test against what the sandbox at that placement bounds | the algebra as code; manifests for fifteen programs, with a root's top-level names outside the free tier and `write-names` a manifest word; under the host's sandbox the judged claims are sent as the envelope; the same corpus deciding which Python the dialect admits ([notes](docs/spec/EFFECTS.md)) | the agent, and the manifests that ship with tools |
+| Processes are a capability of the one executor, reached as `ml.sh` under the same rules, never a second world the model has to carry data between. The host is a separate program the browser attaches to, built with no relay code in it, and under its sandbox a manifest's description of a program is enforced as the envelope the program runs in, so a wrong manifest fails the command rather than granting an effect | [the host](https://github.com/parawanderer/window-ml-host), v0.10.0, is reachable as `ml.sh` from JavaScript and from a full Python cell; a call a policy covers runs, a call whose effects stay inside what the sandbox bounds plus reads in its roots runs by default, and anything else asks on the running step, with a card showing the program's facts, never the script. Each call starts under the envelope its judged facts derive, enforced by bubblewrap and Landlock on Linux and by Seatbelt on macOS, with the root's top-level names and `.git` hooks and config held read-only from one list; every call reports what changed among those names, and the result says which envelope the host applied. The hub transport is built behind an optional feature the default build does not compile, and no client drives it yet ([notes](docs/spec/SHELL.md)) | the host, on the person's machine |
 | An agent uses my credentials without ever being able to read them: it holds a handle, and the secret stays in the client's background worker. Holding a handle while a broker keeps the secret is an old pattern in security; I have not found it done for a browser agent | not started; its place among policies, the effect algebra and processes is now written down ([notes](docs/spec/SECRET_HANDLES.md)) | the client's background worker, and the host for the secrets processes need |
 | I drive an agent at home from my phone through a relay designed so that it cannot drive the agent itself | [the relay](https://github.com/parawanderer/window-ml-hub) carries sealed traffic and a connector republishes a box's telemetry through it, self-hosted. The client's own connector is not built, so nothing drives an agent through it yet ([notes](docs/spec/RUNTIME_HUB.md)) | a small relay server, and the client |
 
@@ -72,9 +56,6 @@ reassembling its own history from the original frames, and a fresh window judgin
 being fitted. What it shares is the cost. One sample from a stochastic model says little, so each K needs several
 runs; for scale, ContextCite reports its results from 32 ablations per attribution.
 
-**Right now.** Finishing the first row, because the rest depends on it: the benchmark tooling reads that data and
-the pointer A/B needs the benchmark, so both are paused until it is done. In the serving layer I am working on
-predicting placement and keep-alive from recorded use, which is a statistics problem rather than a coding one.
 
 ## Apparatus
 
@@ -147,9 +128,9 @@ flowchart TB
 - **JS dialect**: in daily use; the whitelist, halting and the inert reference are the adversarial tests under `test:core` and `test:security`.
 - **Python dialect**: the fork's first slice costs about 6% on 684 real cells; the memory cap about 4% at the upper quartile on 1,702 real cells, 1.36x only on a bare loop of approved C calls (`notebooks/python-dialect/verify-cost/`); `test:python` runs real CPython; the fork's own `test_restricted` runs on the fork.
 - **Pointers**: one pilot of the identifier's form (2026-09-03, one model, 8 runs): the model retyped the data instead of dereferencing it in every run of both arms, so the form made no difference and the full sweep is not run; typed table pointers both runtimes read; collapse not started.
-- **Policies + effects**: the lifter covers 63% of model-written fetch policies and 45% of sh ones (15 models); the effect algebra's subset test and fourteen program manifests; `test:security` holds the chokepoints.
+- **Policies + effects**: the lifter covers 63% of model-written fetch policies and 45% of sh ones (15 models); the effect algebra's subset test and fifteen program manifests; `test:security` holds the chokepoints.
 - **Sidebar and exports**: the run log carries what the model saw; `test:panel` and `test:ext` draw it, the e2e demos narrate it.
-- **Host**: v0.8.0; every call reports what changed among a root's protected names; ownership of every spawned process up to three named residuals; a call past its lease detaches into a task whose tail reads the running call's latest output; an attached file's bytes reach the host's disk; a credentialed `gh` call reaches only the hosts its manifest names, on macOS, and on Linux through a forwarder, host v0.9.0.
+- **Host**: v0.10.0; every call reports what changed among a root's protected names; ownership of every spawned process up to three named residuals; a call past its lease detaches into a task whose tail reads the running call's latest output; an attached file's bytes reach the host's disk; a credentialed `gh` call reaches only the hosts its manifest names, on macOS, and on Linux through a forwarder, host v0.9.0.
 - **Relay + phone**: sealed traffic and a box's telemetry republished; nothing drives an agent through it yet; `test:mobile` and `test:chat` cover the phone app and the chat page.
 - **Serving column**: decode speed predicted per generation with a median error of 1.4% over 8,613 recorded generations on 13 models (75% within 10%, the 90th percentile 43%; `notebooks/bench/serving-decode.ipynb`); the correction is what does it, the 165 uncorrected predictions run 74% too fast; placement and keep-alive prediction not measured yet; the engine's routing record of a mixture of experts not measured yet.
 - **Dashed nodes**: posed, nothing measured. Chosen frames and secret handles have a spec each (`AGENT_COMPACTION.md`, `SECRET_HANDLES.md`); exact arithmetic has none yet.
@@ -165,18 +146,16 @@ exploring what becomes possible once that cost is close to zero is part of the p
 
 Whether agents can keep a codebase this size working with no person reading or reviewing it is itself one of the
 experiments, and the most interesting one. Until recently it could not have been tried at all: no model could keep
-even a small codebase working on its own. In its first three and a half months this repository reached about 406,000 lines of code, tests and
-docs over 2,765 commits, and about 475,000 counting the relay, the host and what the modified tools add to their
-upstreams (November 12, 2026, from `node scripts/ecosystem.mjs`). 98% of the commits carry a Claude co-author trailer. So far they have, by the only measure I have: the parts I use daily keep working. That is a weak
+even a small codebase working on its own. In its first four and a half months this repository reached about 444,000 lines of code, tests and
+docs over 3,122 commits, and about 521,000 counting the relay, the host and what the modified tools add to their
+upstreams (November 18, 2026, from `node scripts/ecosystem.mjs`). 98% of the commits carry a Claude co-author trailer. So far they have, by the only measure I have: the parts I use daily keep working. That is a weak
 measure. A proper one (regressions I notice, whether adding a piece gets more expensive as the code grows) is not
 defined yet.
 
 It is glue: whatever an idea needed in order to be tried at all, and that turns out to be a lot. The tests are not
 a quality claim. They are there so the agents do not break the rest of the glue while they build the next piece.
 
-So expect it to be uneven, and expect interfaces to change whenever an experiment needs them to. If an idea here
-works, what is worth having is the write-up and a real implementation in the place the idea belongs, not this code
-borrowed. The glue is scaffolding.
+Expect everything here to be uneven and unstable. It is disposable scaffolding; don't borrow it for anything serious.
 
 ## If you run it
 

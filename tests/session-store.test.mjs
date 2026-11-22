@@ -2,7 +2,7 @@
 // full. The IndexedDB backend is replaced by a map, so the policy is tested without a database.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { SessionStore, planEviction, planExpiry, sizeOf, STORE_BUDGET_BYTES } from "../src/session/session-store.ts";
+import { SessionStore, planEviction, planExpiry, sizeOf, storedBytes, STORE_BUDGET_BYTES } from "../src/session/session-store.ts";
 
 const T = { timeout: 5000 };
 
@@ -11,21 +11,36 @@ const ev = (hash, n, over = {}) => ({ kind: "chat-result", id: `${hash}-${n}`, t
 
 /** A backend in memory, counting its calls so batching is visible. */
 function backend() {
-    const rows = new Map(), events = new Map();
-    const calls = { append: 0, remove: 0, rows: 0 };
-    return {
+    const rows = new Map(), events = new Map(), history = new Map(), meta = new Map();
+    const calls = { append: 0, remove: 0, rows: 0, puts: 0, writes: [] };
+    const be = {
+        failNext: false,
+        /** every append fails while set: a full disk or a quota */
+        failAll: false,
         rows: async () => { calls.rows++; return [...rows.values()]; },
-        append: async (row, from, list) => {
+        append: async (row, from, list, hw) => {
             calls.append++;
+            if (be.failNext || be.failAll) { be.failNext = false; throw new Error("disk full"); }
             rows.set(row.hash, row);
+            if (hw) {
+                calls.writes.push({ hash: row.hash, puts: hw.puts.map(([p]) => p), cut: hw.cut, meta: hw.meta });
+                const hist = history.get(row.hash) ?? [];
+                if (hw.cut != null) hist.length = Math.min(hist.length, hw.cut);
+                for (const [pos, m] of hw.puts) { hist[pos] = m; calls.puts++; }
+                history.set(row.hash, hist);
+                if (hw.meta) meta.set(row.hash, hw.meta);
+            }
             const have = events.get(row.hash) ?? [];
             list.forEach((e, i) => { have[from + i] = e; });
             events.set(row.hash, have);
         },
         events: async (hash) => [...(events.get(hash) ?? [])],
-        remove: async (hashes) => { calls.remove++; for (const h of hashes) { rows.delete(h); events.delete(h); } },
-        _rows: rows, _events: events, calls,
+        historyRange: async (hash, from, to) => (history.get(hash) ?? []).slice(from, to),
+        runMeta: async (hash) => meta.get(hash) ?? null,
+        remove: async (hashes) => { calls.remove++; for (const h of hashes) { rows.delete(h); events.delete(h); history.delete(h); meta.delete(h); } },
+        _rows: rows, _events: events, _history: history, _meta: meta, calls,
     };
+    return be;
 }
 
 test("events are written in batches, and read back in the order they arrived", T, async () => {
@@ -182,7 +197,9 @@ test("a history is what a session would be CONTINUED from, and the newest one is
     // A history is the whole of it, not an append: the newest replaces the last.
     const h = await store.history("aaaa0001");
     assert.deepEqual(h.messages.map((m) => m.content), ["first", "second"]);
-    assert.equal(be._rows.get("aaaa0001").history.messages.length, 2, "and it reached the disk");
+    assert.equal(be._rows.get("aaaa0001").historyCount, 2, "and it reached the disk");
+    assert.equal(be._rows.get("aaaa0001").history, undefined, "as records, not as a field of the row");
+    assert.deepEqual(be._history.get("aaaa0001").map((m) => m.content), ["first", "second"]);
 
     // A worker that restarted can continue what it saved.
     const next = new SessionStore(be, { flushMs: 5 });
@@ -203,7 +220,8 @@ test("a history written between turns reaches the disk without an event to carry
     store.putHistory("aaaa0001", { kind: "chat", session: { hash: "aaaa0001", messages: [{ role: "user", content: "hi" }], save: true } });
     await store.flush();
     assert.equal(be.calls.append, appends + 1);
-    assert.equal(be._rows.get("aaaa0001").history.kind, "chat");
+    assert.equal(be._meta.get("aaaa0001").kind, "chat");
+    assert.equal((await store.history("aaaa0001")).kind, "chat");
     assert.equal(be._rows.get("aaaa0001").count, 1, "and it did not invent an event");
 });
 
@@ -359,7 +377,8 @@ test("a step or a result is written on the next tick; only streamed deltas wait 
 
     store.putHistory("aaaa0001", { kind: "chat", session: { messages: [] } });
     await new Promise((r) => setTimeout(r, 20));
-    assert.ok(be._rows.get("aaaa0001").history, "a history too: without it the chat cannot be continued");
+    assert.equal(be._rows.get("aaaa0001").form, 2, "a history too: without it the chat cannot be continued");
+    assert.ok(be._meta.get("aaaa0001"), "its runmeta record reached the disk");
 });
 
 test("a chat turn's live previews wait for the batch, as an agent's do", T, async () => {
@@ -370,4 +389,224 @@ test("a chat turn's live previews wait for the batch, as an agent's do", T, asyn
     store.put(summary("aaaa0001"), preview(2));
     await new Promise((r) => setTimeout(r, 20));
     assert.equal(be.calls.append ?? 0, 0, "a streaming chat does not write a transaction per preview");
+});
+
+// --- the history as records (SESSION_HISTORY_STORE.md slice 2) ---
+
+const msg = (n, content = `m${n}`) => ({ role: n % 2 ? "assistant" : "user", content });
+const agentH = (messages, extra = {}) => ({ kind: "agent", messages: [...messages], ...extra });
+
+test("history writes are O(changed): 50 checkpoints of 2 appended messages put each position once", T, async () => {
+    const be = backend();
+    const store = new SessionStore(be, { flushMs: 60_000 });
+    const messages = [];
+    const payload = { goal: "same" };
+    store.put(summary("aaaa0001", { status: "running" }), ev("aaaa0001", 0));
+    for (let i = 0; i < 50; i++) {
+        messages.push(msg(messages.length), msg(messages.length));
+        store.putHistory("aaaa0001", agentH(messages, { payload }));
+        await store.flush();
+    }
+    assert.equal(messages.length, 100);
+    assert.equal(be.calls.puts, 100, "every position was put exactly once across all appends, not once per checkpoint");
+    assert.equal(be.calls.writes.filter((w) => w.meta).length, 1, "runmeta written once while its payload is unchanged");
+    assert.equal((await store.history("aaaa0001")).messages.length, 100);
+    assert.equal(be._rows.get("aaaa0001").historyCount, 100);
+});
+
+test("a replaced message is put again, alone; a new object with the same content is not", T, async () => {
+    const be = backend();
+    const store = new SessionStore(be, { flushMs: 60_000 });
+    const m = [msg(0), msg(1), msg(2)];
+    store.put(summary("aaaa0001", { status: "running" }), ev("aaaa0001", 0));
+    store.putHistory("aaaa0001", agentH(m));
+    await store.flush();
+    be.calls.writes.length = 0;
+
+    store.putHistory("aaaa0001", agentH([m[0], { role: "assistant", content: "replaced" }, m[2]]));
+    await store.flush();
+    assert.deepEqual(be.calls.writes.map((w) => w.puts), [[1]], "only the replaced position");
+    assert.equal((await store.history("aaaa0001")).messages[1].content, "replaced");
+
+    be.calls.writes.length = 0;
+    store.putHistory("aaaa0001", agentH([m[0], { ...(await store.history("aaaa0001")).messages[1] }, m[2]]));
+    await store.flush();
+    assert.deepEqual(be.calls.writes.map((w) => w.puts), [[]], "same content in a new object: nothing to put");
+});
+
+test("a same-length change is put again, and a message that cannot be serialized always is", T, async () => {
+    // The print is what decides a position whose object is new: a change of the same length must not be read as
+    // the same message, and a message with no print (JSON.stringify throws) must never match one.
+    const be = backend();
+    const store = new SessionStore(be, { flushMs: 60_000 });
+    const odd = { role: "user", content: "x", n: 1n };
+    store.put(summary("aaaa0001", { status: "running" }), ev("aaaa0001", 0));
+    store.putHistory("aaaa0001", agentH([{ role: "user", content: "abcd" }, odd]));
+    await store.flush();
+    be.calls.writes.length = 0;
+    store.putHistory("aaaa0001", agentH([{ role: "user", content: "abce" }, { ...odd }]));
+    await store.flush();
+    assert.deepEqual(be.calls.writes.map((w) => w.puts), [[0, 1]], "both positions: a same-length change, and one with no print");
+});
+
+test("a shorter history deletes the tail, and the shorter one is what reads back", T, async () => {
+    const be = backend();
+    const store = new SessionStore(be, { flushMs: 60_000 });
+    const m = [msg(0), msg(1), msg(2), msg(3)];
+    store.put(summary("aaaa0001", { status: "running" }), ev("aaaa0001", 0));
+    store.putHistory("aaaa0001", agentH(m));
+    await store.flush();
+    be.calls.writes.length = 0;
+    store.putHistory("aaaa0001", agentH(m.slice(0, 2)));
+    await store.flush();
+    assert.equal(be.calls.writes[0].cut, 2);
+    assert.deepEqual(be.calls.writes[0].puts, []);
+    assert.deepEqual((await store.history("aaaa0001")).messages, m.slice(0, 2));
+    assert.equal(be._history.get("aaaa0001").length, 2, "and nothing stale is left on disk");
+    assert.equal(be._rows.get("aaaa0001").historyCount, 2);
+});
+
+test("checkImmutable: a message mutated in place after it was written is reported, naming the position", T, async () => {
+    const be = backend();
+    const errors = [];
+    const store = new SessionStore(be, { flushMs: 60_000, checkImmutable: true, onError: (e) => errors.push(e) });
+    const m = [msg(0), msg(1), msg(2)];
+    store.put(summary("aaaa0001", { status: "running" }), ev("aaaa0001", 0));
+    store.putHistory("aaaa0001", agentH(m));
+    await store.flush();
+    assert.deepEqual(errors, [], "an honest writer is not reported");
+
+    m[1].content = "mutated in place";
+    store.putHistory("aaaa0001", agentH(m));
+    await store.flush();
+    assert.equal(errors.length, 1);
+    assert.match(errors[0].message, /position 1\b/);
+});
+
+test("once a session settles, the next history write puts every position again", T, async () => {
+    const be = backend();
+    const store = new SessionStore(be, { flushMs: 60_000 });
+    const m = [msg(0), msg(1), msg(2)];
+    store.put(summary("aaaa0001", { status: "running" }), ev("aaaa0001", 0));
+    store.putHistory("aaaa0001", agentH(m));
+    await store.flush();
+    // The settling write itself: the row is no longer live afterwards, so nothing is remembered.
+    store.put(summary("aaaa0001", { status: "done" }), ev("aaaa0001", 1));
+    store.putHistory("aaaa0001", agentH([...m, msg(3)]));
+    await store.flush();
+    be.calls.writes.length = 0;
+
+    store.putHistory("aaaa0001", agentH([...m, msg(3)]));
+    await store.flush();
+    assert.deepEqual(be.calls.writes.map((w) => w.puts), [[0, 1, 2, 3]], "all four, though the same objects");
+    assert.equal(be.calls.writes[0].cut, 4);
+});
+
+test("the budget counts the history: a row whose historyBytes pushes it over is evicted, a protected one never", () => {
+    const row = (hash, lastTs, bytes, historyBytes, over = {}) => ({ hash, summary: summary(hash, over), lastTs, createdTs: lastTs, bytes, count: 1, form: 2, historyBytes });
+    const rows = [row("a", 1, 100, 400), row("b", 2, 100, 0), row("c", 3, 100, 0)];
+    assert.deepEqual(planEviction(rows, { budgetBytes: 700 }), [], "700 stored, 700 budget");
+    assert.deepEqual(planEviction(rows, { budgetBytes: 699 }), ["a"], "the history alone is what put it over");
+    assert.deepEqual(planEviction(rows, { budgetBytes: 699, protect: ["a"] }), ["b"], "protected is skipped");
+    assert.deepEqual(planEviction([row("a", 1, 100, 5000, { pinned: true })], { budgetBytes: 100 }), [], "a pin is never evicted");
+    assert.equal(storedBytes(rows[0]), 500);
+});
+
+test("a failed write is reported, rolls the row back, and the next write starts the history over", T, async () => {
+    const be = backend();
+    const failures = [];
+    const store = new SessionStore(be, { flushMs: 60_000, onWriteFailed: (f) => failures.push(f) });
+    const m = [msg(0), msg(1)];
+    store.put(summary("aaaa0001", { status: "running" }), ev("aaaa0001", 0));
+    store.putHistory("aaaa0001", agentH(m));
+    await store.flush();
+    const rowBefore = { ...be._rows.get("aaaa0001") };
+
+    m.push(msg(2), msg(3));
+    store.put(summary("aaaa0001", { status: "running" }), ev("aaaa0001", 1));
+    store.putHistory("aaaa0001", agentH(m));
+    be.failNext = true;
+    await store.flush();
+    assert.equal(failures.length, 1);
+    assert.equal(failures[0].hash, "aaaa0001");
+    assert.equal(failures[0].events, 1);
+    assert.equal(failures[0].positions, 2);
+    assert.match(failures[0].error, /disk full/);
+    assert.equal((await store.open()).find((r) => r.hash === "aaaa0001").count, 1, "the row's count is back to what is stored");
+    assert.deepEqual(be._rows.get("aaaa0001"), rowBefore, "and nothing reached the disk");
+
+    be.calls.writes.length = 0;
+    store.put(summary("aaaa0001", { status: "running" }), ev("aaaa0001", 2));
+    await store.flush();
+    assert.deepEqual(be.calls.writes.map((w) => w.puts), [[0, 1, 2, 3]], "the whole history again, since nothing is trusted");
+    assert.equal(be.calls.writes[0].cut, 4);
+    assert.deepEqual((await store.history("aaaa0001")).messages, m, "the newest history");
+    assert.equal(be._rows.get("aaaa0001").count, 2, "the event after the failed batch continues at the right seq");
+    assert.deepEqual([...be._events.get("aaaa0001").keys()], [0, 1]);
+    assert.equal(be._events.get("aaaa0001")[1].content, "answer 2");
+});
+
+test("a failure that persists is reported once per session until a write succeeds, though the report is itself a write", T, async () => {
+    // The worker says a failure on the session by ingesting a note, which puts an event and flushes at once
+    // (sw-sessions.ts, noteUnsaved). Reported on every failure, an always-failing disk fails, reports and fails again
+    // without end: 171 failed appends in 200 ms before the bound.
+    const be = backend();
+    const failures = [];
+    let store;
+    let seq = 1;
+    store = new SessionStore(be, { flushMs: 60_000, onWriteFailed: (f) => { failures.push(f); store.put(summary(f.hash, { status: "running" }), ev(f.hash, seq++)); } });
+    store.put(summary("aaaa0001", { status: "running" }), ev("aaaa0001", 0));
+    store.put(summary("aaaa0002", { status: "running" }), ev("aaaa0002", 0));
+    be.failAll = true;
+    await store.flush();
+    await new Promise((r) => setTimeout(r, 200));
+    await store.flush();
+    assert.deepEqual(failures.map((f) => f.hash).sort(), ["aaaa0001", "aaaa0002"], "each session reported once");
+    assert.ok(be.calls.append <= 4, `the write and its note's write, per session: ${be.calls.append} appends`);
+
+    // Still failing, the run's own next event is not reported again.
+    store.put(summary("aaaa0001", { status: "running" }), ev("aaaa0001", seq++));
+    await store.flush();
+    assert.equal(failures.length, 2);
+
+    // A write that succeeds re-arms the report for that session only.
+    be.failAll = false;
+    store.put(summary("aaaa0001", { status: "running" }), ev("aaaa0001", seq++));
+    await store.flush();
+    be.failAll = true;
+    store.put(summary("aaaa0001", { status: "running" }), ev("aaaa0001", seq++));
+    store.put(summary("aaaa0002", { status: "running" }), ev("aaaa0002", seq++));
+    await store.flush();
+    await new Promise((r) => setTimeout(r, 50));
+    await store.flush();
+    assert.equal(failures.filter((f) => f.hash === "aaaa0001").length, 2, "reported again after its success");
+    assert.equal(failures.filter((f) => f.hash === "aaaa0002").length, 1, "the other session, never written since, is not");
+});
+
+test("a chat history round-trips: messages from `history`, everything else from `runmeta`", T, async () => {
+    const be = backend();
+    const store = new SessionStore(be, { flushMs: 60_000 });
+    const session = { hash: "aaaa0001", messages: [{ role: "user", content: "hi" }, { role: "assistant", content: "hello" }], model: "m1", save: true };
+    store.put(summary("aaaa0001"), ev("aaaa0001", 0));
+    store.putHistory("aaaa0001", { kind: "chat", session });
+    await store.flush();
+    assert.deepEqual(be._meta.get("aaaa0001"), { kind: "chat", session: { hash: "aaaa0001", model: "m1", save: true } }, "no messages in runmeta");
+    assert.deepEqual(be._history.get("aaaa0001"), session.messages);
+    assert.deepEqual(await store.history("aaaa0001"), { kind: "chat", session });
+    const again = new SessionStore(be, { flushMs: 60_000 });
+    await again.open();
+    assert.deepEqual(await again.history("aaaa0001"), { kind: "chat", session }, "and after a restart");
+});
+
+test("an archive move is handed the session's history as its third argument", T, async () => {
+    const be = backend();
+    let now = 10 * DAY;
+    const got = [];
+    const store = new SessionStore(be, { flushMs: 5, now: () => now, retainMs: () => 5 * DAY, archive: { enabled: () => true, move: async (row, events, history) => { got.push([row.hash, events.length, history]); } } });
+    store.put(summary("aaaa0001", { lastTs: 1 * DAY }), ev("aaaa0001", 0, { ts: 1 * DAY }));
+    store.putHistory("aaaa0001", agentH([msg(0), msg(1)]));
+    store.put(summary("aaaa0002", { lastTs: 1 * DAY }), ev("aaaa0002", 0, { ts: 1 * DAY }));
+    await store.flush();
+    await store.sweep();
+    assert.deepEqual(got.sort((a, b) => a[0].localeCompare(b[0])), [["aaaa0001", 1, agentH([msg(0), msg(1)])], ["aaaa0002", 1, null]]);
 });

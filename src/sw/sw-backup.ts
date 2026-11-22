@@ -22,6 +22,7 @@ function realDeps(): BackupDeps {
         call: archiveCall,
         liveRows: async () => (sessionStore ? sessionStore.open() : []),
         readEvents: async (hash) => (sessionStore ? sessionStore.read(hash) : []),
+        readHistory: async (hash) => (sessionStore ? sessionStore.history(hash) : null),
         storage: async (): Promise<StorageSnapshot> => ({ sync: await area("sync"), local: await area("local"), session: await area("session") }),
         writer: chromeStorageWriter(chrome.storage),
     };

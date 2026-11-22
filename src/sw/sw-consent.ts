@@ -52,6 +52,17 @@ export type PendingApprovalDescriptor = PendingApprovalBase & (
 // A default "ui" run's gate can't be silently approved from outside — the driver must declare intent.
 export const externallyResolvable = (d: PendingApprovalDescriptor): boolean => d.routing === "both" || d.routing === "external";
 
+/**
+ * The pending gates an external approver may see (`__mlApprovals.list()`), as it sees them. A nested ask's `facts` are
+ * the raw copy a policy judges, kept in this worker only: the approver gets the kept copy (`arguments`) in that field
+ * too, as `run.approvals` does (sw-asks.ts).
+ * @returns the externally resolvable descriptors
+ */
+export function externalApprovals(): PendingApprovalDescriptor[] {
+    return [...pendingApprovals.values()].map((v) => v.descriptor).filter(externallyResolvable)
+        .map((d) => d.facts === undefined ? d : { ...d, facts: d.arguments as typeof d.facts } as PendingApprovalDescriptor);
+}
+
 interface PendingApproval { resolve: (d: ApprovalDecision) => void; descriptor: PendingApprovalDescriptor; }
 
 /** A Map that says when it changed: every path that opens or closes a gate writes the map, so its listeners hear all. */
@@ -108,7 +119,9 @@ export function rejudgePending(): number {
     for (const [key, { descriptor: d }] of [...pendingApprovals]) {
         // Facts without resolved effects are left to the person: a person's `allow` that never reads `c.effects` would
         // otherwise answer a call whose effects nobody resolved, the case the built-in default sends to a card.
-        if ((d.consumer !== "fetch" && d.consumer !== "sh") || !d.facts || d.facts.effects === undefined) continue;
+        if ((d.consumer !== "fetch" && d.consumer !== "sh" && d.consumer !== "setting") || !d.facts || d.facts.effects === undefined) continue;
+        // A guarded setting always asks the person, in both directions (MODEL_SETTINGS.md): no policy answers its card.
+        if (d.consumer === "setting" && d.facts.class !== "ordinary") continue;
         const j = judgeCall(d.runId, d.consumer, d.facts, d.placement);
         if (!j.by || j.by === "builtin" || (j.decision !== "allow" && j.decision !== "deny")) continue;
         const said = `the policy "${j.by.label}" ${j.decision === "deny" ? "refuses" : "allows"} it`;

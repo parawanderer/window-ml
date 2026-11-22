@@ -190,7 +190,7 @@ own approval gate") gets the same treatment as the approved list, and an approve
 
 **What it grants, which is why it is separate.** Plain approval lets a page spend the person's models. Self-approval lets
 the page's own `approve()` stand in for the extension's approval card: it can approve its own `exec`, clicks and typing,
-`python_exec` in full mode, and fetches made with the person's cookies. Those are the gains `tests/redteam.test.js`
+`python_exec` cells outside the Python dialect, and fetches made with the person's cookies. Those are the gains `tests/redteam.test.js`
 lists. It is a decision to let a site act as the person with nothing in between.
 
 **Keyed by ORIGIN.** Today it is keyed by host, so a host on it is trusted over plain `http://` too, where anyone who can

@@ -59,8 +59,9 @@ export interface TokenValue {
     label?: string;
     t: number;
     step: number;
-    /** The step's SEQ, when it has one — what a UI needs to scroll back to the call this came from. `step`
-     *  is the loop's own counter and several records can share it; `seq` addresses one row. */
+    /** The step's STORED seq (the loop's per-turn counter plus the turn's `seqBase`), when it has one: the
+     *  one `data-astep-seq` carries. `step` is the loop's own counter and several records can share it;
+     *  `seq` addresses one row. */
     seq?: number;
 }
 

@@ -156,21 +156,21 @@ export function makeWorkerRun(runId: string): void {
 /** TEST-ONLY (`__mlEvictForTest`): forget the hand-overs held in memory, as an eviction does; storage keeps them. */
 export function dropHandedMemoryForTest(): void { handedToWorker.clear(); }
 
-/** The tools that ask the person to store or install something the model asked for (a policy, a program manifest, a
- *  Python package): only a run the worker BUILT offers them, so a page's run never becomes a way to ask for one. */
-export const PROPOSAL_TOOLS: ReadonlySet<unknown> = new Set(["propose_policy", "propose_manifest", "python_install"]);
+/** The tools only a run the worker built offers: they ask the person to store or change something the model drafted
+ *  (a policy, a program manifest, a Python package, a setting change), so a page's run never becomes a way to ask for one. */
+export const WORKER_ONLY_TOOLS: ReadonlySet<unknown> = new Set(["propose_policy", "propose_manifest", "python_install", "change_setting"]);
 
-/** A run's tools without the {@link PROPOSAL_TOOLS}: what a page-built run keeps when it is handed to the worker, in every
- *  copy of it that is stored (here, and `storedP` in sw-run-host.ts). */
-export function withoutProposals<T extends { name?: unknown }>(tools: T[]): T[] {
-    return Array.isArray(tools) ? tools.filter((t) => !PROPOSAL_TOOLS.has(t?.name)) : tools;
+/** A run's tools without the {@link WORKER_ONLY_TOOLS}: what a page-built run keeps when it is handed to the worker, in
+ *  every copy of it that is stored (here, and `storedP` in sw-run-host.ts). */
+export function withoutWorkerOnly<T extends { name?: unknown }>(tools: T[]): T[] {
+    return Array.isArray(tools) ? tools.filter((t) => !WORKER_ONLY_TOOLS.has(t?.name)) : tools;
 }
 
 /** Set a run's in-memory record to the worker's (its settled snapshot and its rebuild). */
 function markWorkerRun(runId: string): void {
     const stored = bgRuns.get(runId);
     // A page-built run never offers propose_policy (`pageStartPayload` drops it); the hand-over must not make one that does.
-    if (stored) stored.p = { ...stored.p, builtBy: "worker", tools: withoutProposals(stored.p.tools), ...(stored.p.rebuild ? { rebuild: { ...stored.p.rebuild, builtBy: "worker" } } : {}) };
+    if (stored) stored.p = { ...stored.p, builtBy: "worker", tools: withoutWorkerOnly(stored.p.tools), ...(stored.p.rebuild ? { rebuild: { ...stored.p.rebuild, builtBy: "worker" } } : {}) };
     const rb = runRebuilds.get(runId);
     if (rb) runRebuilds.set(runId, { ...rb, builtBy: "worker" });
 }
@@ -625,6 +625,17 @@ defineState({
 function workerFiles(runId: string): FilePointer[] {
     const p = bgRuns.get(runId)?.p;
     return p?.builtBy === "worker" && Array.isArray(p.files) ? p.files : [];
+}
+
+/**
+ * The files attached to a session, read without making a pointer store for it: its live store's shelf, else the run's
+ * payload (a worker evicted since). Empty for a session this worker does not know.
+ * @param runId the session's run id
+ * @returns its attached files
+ */
+export function attachedFilesOf(runId: string): FilePointer[] {
+    const live = tokensByRun.get(runId);
+    return live ? live.files.all() : workerFiles(runId);
 }
 
 /** This run's pointer store, created on the first turn and REUSED by every later turn of the same session. A store

@@ -136,10 +136,30 @@ export function tableSpecs(tables: unknown): { name: string; src: string | Eleme
 }
 
 /**
- * Resolve ONE `tables` source to a loaded DataFrame spec `{ name, source, data }`, dispatching
- * by the value's shape: `'current'` or a Google Sheets URL → fetch its CSV; anything else →
- * a DOM selector/Element (a page table). `source` carries the provenance for the debug
- * render's label + tooltip. Page-side; async (sheets go through the background fetch).
+ * The URL a `tables` source names when it is a PATH on the page's site (`/sales.csv`, `./data.csv`, `../data.csv`),
+ * resolved against the page, or null when it is not one: a URL, a CSS selector, `current`, or a page not on the web. A
+ * path is told from a selector by how it starts, since no CSS selector starts with `/`, `./` or `../`; `x.csv` IS a
+ * selector (element `x`, class `csv`) and stays one. `//host/x` is protocol-relative, another origin, and is not a path.
+ * The one rule for both hosts: the page's `_loadTable` and the worker's loader (worker-tools.ts `workerTable`), so a
+ * source loads the same table, or is refused with the same reason, wherever the run's Python runs.
+ * @param src the source as the model wrote it
+ * @param pageHref the URL of the page the run is on
+ * @returns the absolute URL on the page's origin, or null
+ */
+export function sitePathUrl(src: string, pageHref: string): string | null {
+    if (!/^(?:\.{1,2})?\/(?!\/)/.test(src)) return null;
+    let page: URL;
+    try { page = new URL(pageHref); } catch { return null; }
+    if (!/^https?:$/.test(page.protocol)) return null;
+    const url = new URL(src, page);
+    return url.origin === page.origin ? url.href : null;
+}
+
+/**
+ * Resolve ONE `tables` source to a loaded DataFrame spec `{ name, source, data }`, dispatching by the value's shape:
+ * `'current'` or a Google Sheets URL → fetch its CSV; a path on the page's site (`sitePathUrl`) → the run's fetched copy
+ * of it; anything else → a DOM selector/Element (a page table). `source` carries the provenance for the debug render's
+ * label + tooltip. Page-side; async (sheets go through the background fetch).
  */
 export const _loadTable = async function(this: MlApi, name: string, src: string | Element | TableValue, raw = false): Promise<LoadedTable> {
     // A TABLE BY VALUE: a pointer's table the loop resolved, or a table a page script already holds. Whole tables
@@ -167,10 +187,9 @@ export const _loadTable = async function(this: MlApi, name: string, src: string 
     // re-parse, and no `read_csv` in the sandbox (which has no network anyway). The cache is the gate:
     // a URL that was never fetched is refused rather than fetched, so this cannot become an egress that
     // skips the approval `fetch_url` went through.
-    // A path on this page's site ("/sales.csv", "./data.csv") is that URL: no selector starts with "/" or "./", and
-    // models pass the path the task named after fetch_url read it absolute. Only on a web page; the cache stays the gate.
-    if (typeof src === "string" && /^\.?\/(?!\/)/.test(src) && typeof location !== "undefined" && /^https?:$/.test(location.protocol))
-        src = new URL(src, location.href).href;
+    // A path on this page's site ("/sales.csv", "./data.csv") is that URL (`sitePathUrl`, which the worker's loader
+    // shares): models pass the path the task named after fetch_url read it absolute. The cache stays the gate.
+    if (typeof src === "string" && typeof location !== "undefined") src = sitePathUrl(src, location.href) ?? src;
     if (typeof src === "string" && /^https?:\/\//i.test(src) && !googleSheetCsvUrl(src)) {
         const cached = mlFetchCache.get(src);
         if (cached?.table) {

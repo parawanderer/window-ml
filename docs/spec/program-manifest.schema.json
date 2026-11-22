@@ -42,6 +42,15 @@
       "description": "What the credentialed profile may connect to. Only beside `credential`.",
       "$ref": "#/$defs/ManifestNetwork"
     },
+    "reveals": {
+      "description": "The program shows other processes: their command lines, users, open files and sockets (`ps`, `lsof`, `top`). A call that would otherwise be free asks unless the person listed the program in `shellRevealsAllow` (PROGRAM_MANIFEST.md, \"Programs that reveal other processes\"). It only narrows, so any manifest may carry it.",
+      "type": "string",
+      "const": "processes"
+    },
+    "flavours": {
+      "description": "The implementations the manifest tells apart (PROGRAM_MANIFEST.md, \"Flavours\"); absent, one description for every implementation, as before the field. Only with `version.range` `\"*\"`.",
+      "$ref": "#/$defs/ManifestFlavours"
+    },
     "command": {
       "description": "The program's top-level command: its effects, path operands, flags and subcommands.",
       "$ref": "#/$defs/CommandSpec"
@@ -125,6 +134,77 @@
         "ports"
       ],
       "additionalProperties": false
+    },
+    "ManifestFlavours": {
+      "type": "object",
+      "description": "How each declared flavour is recognised: `gnu` by a version probe (run only under the OS sandbox, and only for a shipped manifest: a stored one's author chose what it prints), `bsd` by being the system's own program (no run).",
+      "properties": {
+        "gnu": {
+          "description": "GNU: the probe's `args` (`--version`), a regex anchored with `^` whose group 1 is the version in its stdout, and the range of versions the overlays were written against; a version outside it is undetected.",
+          "type": "object",
+          "properties": {
+            "probe": {
+              "type": "object",
+              "properties": {
+                "args": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "minItems": 1
+                },
+                "pattern": {
+                  "type": "string",
+                  "minLength": 1,
+                  "format": "regex",
+                  "pattern": "^\\^"
+                },
+                "range": {
+                  "type": "string",
+                  "pattern": "^\\s*(?:>=|<=|>|<|=)?\\d+(?:\\.\\d+)*(?:\\s+(?:>=|<=|>|<|=)?\\d+(?:\\.\\d+)*)*\\s*$"
+                }
+              },
+              "required": [
+                "args",
+                "pattern",
+                "range"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "probe"
+          ],
+          "additionalProperties": false
+        },
+        "bsd": {
+          "description": "BSD: the system whose own program it is (`macos`: a file in SYSTEM_PROGRAM_DIRS).",
+          "type": "object",
+          "properties": {
+            "system": {
+              "type": "string",
+              "const": "macos"
+            }
+          },
+          "required": [
+            "system"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "gnu"
+          ]
+        },
+        {
+          "required": [
+            "bsd"
+          ]
+        }
+      ]
     },
     "CommandSpec": {
       "type": "object",
@@ -271,6 +351,27 @@
           "items": {
             "type": "string"
           }
+        },
+        "script": {
+          "description": "The command's first operand is a program in this language unless a `script` flag gave one (`sed 's/a/b/' f`, `awk '{print $1}' f`): the text is checked by its narrow grammar (script-grammar.ts), and one outside it makes the call `unknown`. For `awk`, an operand that is an assignment (`n=1`) is not a path.",
+          "type": "string",
+          "enum": [
+            "sed",
+            "awk"
+          ]
+        },
+        "flavour": {
+          "description": "What one detected flavour adds to this command (PROGRAM_MANIFEST.md, \"Flavours\"): only in a manifest that declares `flavours`, keyed by a flavour it declares.",
+          "type": "object",
+          "properties": {
+            "gnu": {
+              "$ref": "#/$defs/FlavourOverlay"
+            },
+            "bsd": {
+              "$ref": "#/$defs/FlavourOverlay"
+            }
+          },
+          "additionalProperties": false
         }
       },
       "required": [
@@ -295,6 +396,42 @@
             "not": {
               "required": [
                 "primaries"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "script"
+            ]
+          },
+          "then": {
+            "properties": {
+              "paths": {
+                "type": "object",
+                "properties": {
+                  "operandsFrom": {
+                    "const": 1
+                  }
+                },
+                "required": [
+                  "operandsFrom"
+                ]
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "subcommands"
+                  ]
+                },
+                {
+                  "required": [
+                    "syntax"
+                  ]
+                }
               ]
             }
           }
@@ -357,6 +494,21 @@
         "recursive": {
           "description": "With this flag the command walks its directory arguments (`ls -R`).",
           "type": "boolean"
+        },
+        "values": {
+          "description": "The only values the flag is described with (BSD `sed -i ''`: `[\"\"]`); any other value makes the call `unknown`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "attachedValue": {
+          "description": "A short flag whose value is the rest of its argument, empty when bare, and never the next argument (GNU `sed -i`, `-i.bak`).",
+          "type": "boolean"
+        },
+        "script": {
+          "description": "The value is a script in the command's `script` language (`sed -e`), checked by its grammar (script-grammar.ts).",
+          "type": "boolean"
         }
       },
       "additionalProperties": false,
@@ -405,6 +557,131 @@
               "value": {
                 "const": true
               }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "attachedValue"
+            ],
+            "properties": {
+              "attachedValue": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "value"
+                  ],
+                  "properties": {
+                    "value": {
+                      "const": true
+                    }
+                  }
+                },
+                {
+                  "required": [
+                    "optionalValue"
+                  ],
+                  "properties": {
+                    "optionalValue": {
+                      "const": true
+                    }
+                  }
+                },
+                {
+                  "required": [
+                    "valueIsPath"
+                  ]
+                },
+                {
+                  "required": [
+                    "valueIsDir"
+                  ],
+                  "properties": {
+                    "valueIsDir": {
+                      "const": true
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "values"
+            ]
+          },
+          "then": {
+            "anyOf": [
+              {
+                "required": [
+                  "value"
+                ],
+                "properties": {
+                  "value": {
+                    "const": true
+                  }
+                }
+              },
+              {
+                "required": [
+                  "optionalValue"
+                ],
+                "properties": {
+                  "optionalValue": {
+                    "const": true
+                  }
+                }
+              },
+              {
+                "required": [
+                  "attachedValue"
+                ],
+                "properties": {
+                  "attachedValue": {
+                    "const": true
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "script"
+            ],
+            "properties": {
+              "script": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "value",
+              "pathsFrom"
+            ],
+            "properties": {
+              "value": {
+                "const": true
+              },
+              "pathsFrom": {
+                "const": 0
+              }
+            },
+            "not": {
+              "required": [
+                "valueIsPath"
+              ]
             }
           }
         },
@@ -520,6 +797,38 @@
           }
         }
       ]
+    },
+    "FlavourOverlay": {
+      "type": "object",
+      "description": "What one flavour adds to a command. Overlays only ADD: a flag in both the core and an overlay is a validator error.",
+      "properties": {
+        "flags": {
+          "description": "Flags only this flavour accepts with this meaning; with a detected flavour the table is the core's and these.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/FlagSpec"
+          },
+          "propertyNames": {
+            "pattern": "^-{1,2}[A-Za-z0-9][A-Za-z0-9-]*$"
+          }
+        },
+        "argOrder": {
+          "description": "How this flavour reads an argument starting with `-` after an operand: `\"permute\"` as a flag, `\"stop\"` as an operand (a file name). Absent, the core's `optionsFirst` holds.",
+          "type": "string",
+          "enum": [
+            "permute",
+            "stop"
+          ]
+        },
+        "harden": {
+          "description": "Hardening arguments for this flavour only (GNU `--sandbox`), after the core's; flags of the core or this overlay.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
     },
     "ManifestVersion": {
       "type": "object",
@@ -657,6 +966,27 @@
         "required": [
           "credential"
         ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "flavours"
+        ]
+      },
+      "then": {
+        "required": [
+          "version"
+        ],
+        "properties": {
+          "version": {
+            "properties": {
+              "range": {
+                "const": "*"
+              }
+            }
+          }
+        }
       }
     },
     {

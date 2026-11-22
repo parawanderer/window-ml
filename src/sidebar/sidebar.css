@@ -826,6 +826,11 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 }
 .set-field input:focus, .set-field select:focus { outline: none; border-color: var(--accent); }
 .set-field input:disabled { opacity: .5; cursor: not-allowed; }
+/* A SECRET'S TEXT BOX: the input fills the row and the eye sits inside its right end, so the box is the same width as every other field. */
+.secret-input { position: relative; display: flex; }
+.secret-input > input { flex: 1; min-width: 0; padding-right: 34px; }
+.secret-input > .secret-eye { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); }
+.secret-input > .secret-eye:disabled { opacity: .4; cursor: default; }
 .set-field input.err { border-color: var(--err); }
 /* Model combobox (ModelPicker): a text input + a caret that drops the full server model list (filtered by
    what's typed). Replaces the native <datalist>, which hid non-matching entries + closed on re-render. */
@@ -992,6 +997,22 @@ textarea.cinput { resize: none; overflow-y: auto; line-height: 1.5; font: inheri
 /* The files waiting in a composer, as a row of pills beside the image thumbnails. */
 .cfiles { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .cfiles .el-pill { margin-bottom: 0; }
+/* The registered values found in a composer's draft (`TurnChips`): a row of outlined chips, each naming one value with a control
+   to send it as is. The name only, never the value. Quiet until chosen, then the accent says it will go as it is. */
+.tchips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+/* One registered value found in the draft: its name and its "send as is" control, outlined until chosen. */
+.tchip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 1px 4px 1px 8px; line-height: 1.5;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--panel); font-size: 0.85em; color: var(--fg-dim); }
+.tchip.on { border-color: var(--accent); }
+/* The value's registry name on its chip, cut with an ellipsis when long; never the value. */
+.tchip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono, ui-monospace, monospace); font-size: 0.95em; }
+/* The control on a chip, and on a file's chip with a count: text, so it needs no name of its own, and the panel's tip says what it does. */
+.tchip-as { flex: 0 0 auto; padding: 0 6px; border: none; border-radius: 999px; background: transparent; color: var(--fg-faint);
+  font: inherit; font-size: 0.95em; cursor: pointer; white-space: nowrap; }
+.tchip-as:hover, .tchip-as:focus-visible { color: var(--fg); background: var(--bg); }
+.tchip-as[aria-pressed="true"] { color: var(--accent); }
+.file-pill .file-scan { margin-left: 2px; }
+.tchips-note { color: var(--fg-faint); font-size: 0.85em; }
 /* Context-usage gauge (bottom-right of the composer): a small dial icon + a thin
    bar + the figure — outlined track, colour only in the fill. */
 .usage-gauge { gap: 5px; }
@@ -1009,6 +1030,13 @@ textarea.cinput { resize: none; overflow-y: auto; line-height: 1.5; font: inheri
 .spend-warn svg { width: 12px; height: 12px; }
 /* One fact per line in the spend chip's tooltip */
 .spend-line { display: block; }
+/* THE FOOTER'S FIGURES ROLL (`Ticking`, ui-kit.tsx): the same `chat-tick-in` roll the chat page's live line uses, moved here from chat.css
+   so the panel and the DevTools panel draw it as well. `min-width` holds "100%" so the bar does not slide when 9% becomes 10%. */
+.usage-pct { display: inline-block; min-width: 4ch; text-align: right; }
+.usage-gauge .tick-d, .usage-sub .tick-d { display: inline-block; }
+.usage-gauge .tick-d.rolled, .usage-sub .tick-d.rolled { animation: chat-tick-in .22s cubic-bezier(.2, .8, .2, 1) backwards; }
+@keyframes chat-tick-in { from { transform: translateY(.45em); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .usage-gauge .tick-d.rolled, .usage-sub .tick-d.rolled { animation: none; } .usage-fill { transition: none; } }
 .usage-sub { margin-left: 6px; color: var(--fg-faint); font-size: 0.78em; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* --------------------------- shared bits -------------------------------- */
@@ -1791,11 +1819,10 @@ details.io[open] > summary .io-preview { display: none; }
 /* A header button + a small menu under it (the export-format picker). Anchored
    right so it can't spill past the panel's edge on a narrow sidebar. */
 .menuwrap { position: relative; display: inline-flex; align-items: center; }
-/* It ARRIVES the way the page's own menus do (`chat-pop`, chat.css) — the two sit a few pixels apart in a dock's
-   tab bar, and one popping in while the other snapped read as two different controls. Its own keyframes rather
-   than the page's: this menu is also drawn in the DevTools panel, where that stylesheet is not loaded. */
+/* It ARRIVES the way the page's own menus do (`chat-pop`, with `.chat-menu` below) — the two sit a few pixels apart
+   in a dock's tab bar, and one popping in while the other snapped read as two different controls. */
 @keyframes menu-pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
-/* And the way out — see the same pair in chat.css. The element is held for `DISMISS_MS` (use-dismiss.ts) to make
+/* And the way out — see the same pair with `.chat-menu` below. The element is held for `DISMISS_MS` (use-dismiss.ts) to make
    room for it; a menu that vanished between two frames read as a different surface from the one that arrived. */
 @keyframes menu-unpop { to { opacity: 0; transform: translateY(4px) scale(.985); } }
 .menu.leaving { animation: menu-unpop .11s ease-in both; pointer-events: none; }
@@ -2114,6 +2141,11 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 .r-ts.hoverable { cursor: help; }
 .r-ts.hoverable:hover { opacity: 1; color: var(--fg-dim); }
 .r-ts-line { flex: 1 1 auto; white-space: pre-wrap; word-break: break-word; }
+/* An http(s) address in tool output (output-links.ts): the output's own colour with the underline that says it is a link,
+   so a log full of them does not turn into a wall of blue. */
+a.out-link { color: inherit; text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 2px; cursor: pointer; }
+a.out-link:hover { text-decoration-thickness: 2px; }
+a.out-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
 /* Midnight: the gutter shows time only, so a day change gets its own divider — without it 00:00:01 sits
    directly under 23:59:58 and reads as one second later. */
 .r-ts-day { display: flex; align-items: center; gap: 8px; margin: 5px 0 3px; user-select: none; -webkit-user-select: none; }
@@ -2187,7 +2219,9 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
     .hbtn:hover:not(.on) { background: transparent; color: var(--fg-dim); }
     .icon-btn:active, .hbtn:active { background: var(--panel-2); color: var(--fg); }
 }
-.dot { width: 0.67em; height: 0.67em; border-radius: 50%; flex: 0 0 auto; }
+/* The status dot: a round mark whose colour says a step or session's state, and which eases to a new colour (pending to ok) rather than cutting. */
+.dot { width: 0.67em; height: 0.67em; border-radius: 50%; flex: 0 0 auto; transition: background-color .35s ease; }
+@media (prefers-reduced-motion: reduce) { .dot { transition: none; } }
 .dot.pending { background: var(--busy); animation: pulse 1s infinite; }
 .dot.ok { background: var(--ok); }
 .dot.err { background: var(--err); }
@@ -2312,6 +2346,10 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 /* Raw In args tree: a corner copy button (a tree isn't drag-selectable like the old text block). Small
    left inset so the flush-left braces don't hug the block edge; right room so text never runs under copy. */
 .jt-args { position: relative; padding: 1px 22px 1px 2px; }
+/* The arguments of a call still being written wear the box the written code does (`.code`), from their first frame, and the
+   caret rides at the end of the last value (live-call.tsx places it): below the tree it read as another line to come. */
+.live-call .jt-args { background: var(--code-bg, var(--bg)); border: 1px solid var(--border); border-radius: 5px; padding: 6px 22px 6px 8px; }
+.live-call .jt-args > .live-caret { position: absolute; margin: 0; }
 /* The copy control for an output cell's RAW view. On the cell, not inside it: it used to sit in the
    scrolling element and slid away with the text — on a wide line, right off the edge. Same reasoning as the
    find bar beside it, and it yields to the find bar when that is open, since only one of them can own the
@@ -2351,6 +2389,11 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 .mrow { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .who { font-weight: 600; color: var(--kind); font-size: 0.92em; }
 .utext { white-space: pre-wrap; word-break: break-word; color: var(--fg); }
+/* A registered value's place in a message you sent (`RedactedMark`): its name where the worker put `[REDACTED:<NAME>]`, as a small inline marker. */
+.utext-mark { padding: 0 6px; border: 1px solid var(--border); border-radius: 999px; background: var(--panel); color: var(--fg-dim);
+  font-family: var(--mono, ui-monospace, monospace); font-size: 0.85em; cursor: default; }
+/* The quiet line under a message whose registered values were sent as they were (`SentAsIs`). */
+.sent-asis { margin: 2px 0 0; color: var(--fg-faint); font-size: 0.8em; cursor: default; }
 /* A LONG message, folded (user-text.tsx): its first lines, fading into the bubble, and a round chevron at the text's
    bottom right that opens it. Anchored to the TEXT, not the bubble, so it never sits on the images sent with it. */
 .utext-wrap.long { position: relative; }
@@ -3288,6 +3331,8 @@ html[data-focus] .action-verb { font-weight: 500; }
 .fold-rail:hover::before { background: color-mix(in srgb, var(--fg) 32%, transparent); }
 .fold-rail-cite::before { background: color-mix(in srgb, var(--cite) 70%, transparent); }
 .fold-rail-cite:hover::before { background: var(--cite); }
+/* `.fold-rail-still`: the rail of a call still being written (live-call.tsx), drawn but not a control: no hover, no click. */
+.fold-rail-still { pointer-events: none; cursor: default; }
 @media (prefers-reduced-motion: reduce) { .fold-rail::before { transition: none; } }
 /* NOT A TAP TARGET on a phone: each place that draws one has a full-width header or row that does the same, and an
    11px strip beside the content is a mis-tap there. The line stays; only the click goes. */
@@ -3521,7 +3566,9 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .tok-chip { display: inline-flex; align-items: center; gap: 5px; padding: 0 6px; cursor: pointer;
     font-size: 0.72em; line-height: 1.6; color: var(--fg-dim); background: none;
     border: 1px solid var(--border); border-radius: 999px; }
-.tok-chip code { font-family: var(--mono, ui-monospace, monospace); font-size: 1em; color: var(--fg-dim); }
+/* No ground of its own: in prose `.md code` paints an inline-code grey and padding, which made the same chip draw
+   differently inline than in a step. */
+.tok-chip code { font-family: var(--mono, ui-monospace, monospace); font-size: 1em; color: var(--fg-dim); background: none; padding: 0; }
 /* A fixed-size glyph rather than a hover-only word: the chip is right-aligned, so anything that changes its
    width on hover slides the pointer text sideways under the cursor that just arrived at it. The copy and
    check icons share a box, so the confirmation does not move it either. */
@@ -3795,6 +3842,9 @@ button.ui-step-now:hover { background: var(--panel-2); color: var(--fg); }
     opacity: 0.35; transition: opacity 0.15s ease;
 }
 .code-block:hover .code-tools, .code-tools:focus-within { opacity: 1; }
+/* `.code-body`: the code part of a block that REVISES another call (CodeBody), the positioning box for `.code-tools`
+   so the toolbar sits over the code and not over the REVISES header above it. */
+.code-body { position: relative; }
 /* A command to paste (CopyableCode): one line, so the copy button sits beside it rather than over its end. */
 .copyable-code .code { padding: 3px 28px 3px 7px; }
 /* Above a code theme's `pre code.hljs { padding: 1em }`, also where a page scopes the theme under `:root:not(…)`. */
@@ -3810,7 +3860,7 @@ button.ui-step-now:hover { background: var(--panel-2); color: var(--fg); }
    toolbar steps aside while it is open. */
 .code-block:focus { outline: none; }
 .code-block:focus-visible { outline: 1px solid var(--fg-faint); outline-offset: 1px; }
-.code-block:has(> .code-find) > .code-tools { display: none; }
+.code-block:has(> .code-find) > .code-tools, .code-block:has(> .code-find) > .code-body > .code-tools { display: none; }
 /* The find bar's holder: a ZERO-HEIGHT sticky row, so the bar stays in view while you read further down a block
    taller than the panel, and takes no room from the code. The bar itself is positioned inside it as usual. */
 .code-find { position: sticky; top: 4px; height: 0; z-index: 4; }
@@ -3851,17 +3901,29 @@ button.ui-step-now:hover { background: var(--panel-2); color: var(--fg); }
    the block would make the reader parse one thing as two. */
 .r-diff { margin: 0 0 6px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .r-diff-head { display: flex; align-items: center; gap: 6px; padding: 4px 8px; background: var(--panel); flex-wrap: wrap; }
-.r-diff-tri { background: none; border: 0; padding: 0; cursor: pointer; color: var(--fg-faint); display: flex; }
-.r-diff-tri svg { transition: transform 0.15s ease; }
-.r-diff-tri.open svg { transform: rotate(90deg); }
+/* The header's right end: the view switch (code | diff | split) and the maximise button. `auto` margin pushes
+   the pair to the edge; when the row wraps in a narrow panel they wrap together. */
+.r-diff-tools { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.r-diff-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.r-diff-segbtn {
+    font: inherit; font-size: 0.78em; line-height: 1; padding: 3px 8px; cursor: pointer;
+    color: var(--fg-dim); background: var(--bg); border: 0;
+}
+.r-diff-segbtn + .r-diff-segbtn { border-left: 1px solid var(--border); }
+.r-diff-segbtn:hover { color: var(--fg); }
+.r-diff-segbtn.on { color: var(--fg); background: color-mix(in srgb, var(--accent) 22%, var(--panel)); }
+/* Below the width where two columns fit, `split` is drawn as `diff` (SPLIT_MIN_PX): its button stays, dimmed, so the choice is still visible. */
+.r-diff-segbtn[data-fallback]:not(.on) { opacity: 0.6; }
+.r-diff-max { padding: 1px 3px; }
+.r-diff-max svg { width: 13px; height: 13px; }
 .r-diff-lbl { font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-faint); }
 /* The chrome comes from `.tok-chip` (the shared PointerChip) — it IS a pointer, so it must not read as a
    different kind of thing here. Only the things specific to sitting in a header row are set locally. */
 .r-diff-ref { padding: 1px 8px; }
-.r-diff-stat { margin-left: auto; font-size: 0.82em; font-variant-numeric: tabular-nums; }
+.r-diff-stat { font-size: 0.82em; font-variant-numeric: tabular-nums; }
 .r-diff-add { color: var(--ok); }
 .r-diff-del { color: var(--err); }
-.r-diff-same { margin-left: auto; font-size: 0.82em; color: var(--fg-faint); font-style: italic; }
+.r-diff-same { font-size: 0.82em; color: var(--fg-faint); font-style: italic; }
 /* The model's CLAIM. It shares the HEADER's ground and its quiet grey, because it is part of the same
    band — the header says what this diff is, the claim says what the model thinks it did, and giving the
    second its own colour made it read as a warning about the step rather than as a caption. Its TAG carries
@@ -3871,6 +3933,31 @@ button.ui-step-now:hover { background: var(--panel-2); color: var(--fg); }
 .r-diff-claim { padding: 4px 8px; font-size: 0.9em; color: var(--fg-dim); background: var(--panel); border-top: 1px solid var(--border); }
 .r-diff-claim-tag { font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-faint); margin-right: 4px; }
 .r-diff-body { margin: 0; border-top: 1px solid var(--border); border-radius: 0; }
+/* The code view sits in the same box under the header; its own block has no frame to double up. */
+.r-diff > .code-body, .r-diff > .code-block { border-top: 1px solid var(--border); }
+.r-diff-view { min-width: 0; }
+/* SPLIT: one row per pair of cells, a grid of two equal columns so a wrapped cell stretches its partner and the
+   two sides stay row for row. A filler cell is blank ground, tinted like nothing, which says "no line here". */
+.dsplit .sline { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.dsplit .sline-gap { display: block; color: var(--fg-faint); font-style: italic; text-align: center; }
+.scell { display: flex; align-items: stretch; min-width: 0; }
+.scell-new { border-left: 1px solid var(--border); }
+.scell-del { background: color-mix(in srgb, var(--err) 13%, transparent); }
+.scell-add { background: color-mix(in srgb, var(--ok) 13%, transparent); }
+.scell-del .dsign { color: var(--err); }
+.scell-add .dsign { color: var(--ok); }
+.scell-fill { background: color-mix(in srgb, var(--fg-faint) 8%, transparent); }
+/* One number column per side (the pair's own old/new), not the unified view's two. */
+.scell .dno { border-right: 1px solid var(--border); margin-right: 8px; }
+/* THE MAXIMISED VIEW, in the shared modal (dialog.tsx): the card grows to the room the panel has and scrolls inside. */
+.chat-dialog:has(.r-max) { width: min(1200px, 100%); max-height: calc(100vh - 32px); overflow: auto; padding: 12px; }
+/* The maximised revises view's title row: what is shown, and the close button. */
+.r-max-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.r-max-head h2 { margin: 0; font-size: 0.95em; font-weight: 600; word-break: break-word; }
+/* The content of the maximised revises view (the code, the diff or the split) in the shared modal: the claim keeps its frame. */
+.r-max .r-diff-claim { margin-bottom: 8px; border: 1px solid var(--border); border-radius: 6px; }
+/* The maximised view itself, flush in the modal card. */
+.r-max-body pre.code { margin: 0; }
 /* ONE ROW OF A DIFF — the gutter's two line numbers, the +/- sign, then the text. A flex row so the
    numbers stay put when the text wraps, which is what lets a diff row, a margin note and a failure mark
    all name the same line and be read straight down. */
@@ -4670,10 +4757,125 @@ html[data-calm] .task-say > .task-dev, html[data-focus] .task-say > .task-dev { 
     border-radius: 8px; box-shadow: 0 6px 24px rgba(0, 0, 0, .35); font-weight: normal; text-align: left; cursor: auto;
 }
 .hc-text { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; font-size: .92em; color: var(--fg); tab-size: 4; }
-=======
 /* `.code-morph`: the characters of a reformatted script flying from where the live call had them to their new places
    (code-morph.ts). The real text is hidden while they fly; the layer is removed when they land. */
 pre.code.morphing { position: relative; }
 pre.code.morphing:not(.numbered) > code, pre.code.morphing .lcode { visibility: hidden; }   /* a numbered block keeps its gutter */
 .code-morph { position: absolute; inset: 0; pointer-events: none; white-space: pre; }
 .code-morph > span { position: absolute; }
+
+/* change_setting's card (card/setting-card-view.tsx): both values in full, never capped or scrolled away. */
+.setcard { display: flex; flex-direction: column; gap: 6px; font-size: .92em; line-height: 1.4; }
+.setcard-name { font-weight: 600; }
+.setcard-tip, .setcard-sync, .setcard-once { color: var(--fg-dim); }
+.setcard-reason { font-weight: 600; }
+.setcard-val { display: grid; grid-template-columns: 3.5em 1fr; gap: 2px 8px; }
+.setcard-val-label { color: var(--fg-dim); }
+.setcard-val-lines { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.setcard-line { font-family: var(--mono, ui-monospace, monospace); font-size: .9em; overflow-wrap: anywhere; white-space: pre-wrap; }
+.setcard-why-text { overflow-wrap: anywhere; }
+
+/* ----------------------------- the one menu look ------------------------------
+   Here rather than in chat.css because the sidebar draws it too: the detail view's per-session menu holds the same
+   `SessionActions` as the chat page's rows (docs/spec/SESSION_SUMMARY.md). chat.css keeps its placement rules. */
+@keyframes chat-pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
+/* AND THE WAY OUT. A sheet that eased in and then ceased to exist between two frames read as two different
+   surfaces, and the vanish lands exactly where the eye is. Quicker than the entrance: arriving wants to be
+   noticed, leaving does not. The duration is `DISMISS_MS` (use-dismiss.ts), which is what keeps the element
+   mounted for exactly this long. */
+@keyframes chat-unpop { to { opacity: 0; transform: translateY(4px) scale(.985); } }
+.chat-menu.leaving { animation: chat-unpop .11s ease-in both; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .chat-menu, .chat-menu.leaving { animation: none; } }
+/* THE PAGE'S ONE MENU LOOK (menu.tsx): a rounded sheet, a glyph and a label per row, a tick on a toggle — Android's
+   list menu, which Gemini borrowed. The row menu and the gear's menu both use it, so they cannot drift apart. */
+.chat-menu {
+    display: flex; flex-direction: column; min-width: 190px; padding: 6px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: 0 12px 36px rgb(0 0 0 / .45); animation: chat-pop .16s cubic-bezier(.2, .7, .3, 1) both;
+    font-size: 13.5px;
+}
+.chat-menu-item {
+    display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px 10px; border: none; border-radius: 9px;
+    background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; white-space: nowrap;
+}
+.chat-menu-item:hover, .chat-menu-item:focus-visible { background: var(--panel-2); outline: none; }
+.chat-menu-ico { display: inline-flex; color: var(--fg-dim); }
+.chat-menu-ico svg { width: 18px; height: 18px; }
+.chat-menu-label { flex: 1 1 auto; }
+/* The reason a row cannot be used, under its own label. A SECOND LINE rather than a tooltip: a tooltip is
+   pointer-only, and a row that cannot be used is exactly the one a finger or a screen reader most needs told. */
+.chat-menu-note { display: block; color: var(--fg-faint); font-size: .84em; line-height: 1.3; margin-top: 1px; white-space: normal; }
+/* A ROW THAT CANNOT BE USED READS AS ONE. Opacity alone left near-black text still looking black — it dimmed the
+   row without greying it, so the only thing saying the row was unavailable was that clicking did nothing. */
+.chat-menu-item.off { cursor: default; color: var(--fg-faint); }
+.chat-menu-item.off .chat-menu-ico, .chat-menu-item.off .chat-menu-on { opacity: .5; }
+.chat-menu-item.off:hover { background: none; }
+.chat-menu-on { display: inline-flex; color: var(--fg); }
+/* A menu row's current value, dim at its right (the theme row: "Dark"), and its caret, turned down while open. */
+.chat-menu-val { margin-left: auto; color: var(--fg-faint); font-size: .92em; }
+.chat-menu-caret { display: inline-flex; color: var(--fg-faint); transition: transform .15s ease; }
+.chat-menu-caret svg { width: 12px; height: 12px; }
+.chat-menu-caret.open { transform: rotate(90deg); }
+
+/* `.sum-page`: the session summary page (session-summary.tsx, docs/spec/SESSION_SUMMARY.md): title, id, a tab strip and the
+   open tab, drawn in a dialog on every surface. A line is a label and its value; a field with no source has no line. */
+.sum-page { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+/* `.sum-title`: the session's title at the top of its summary page. */
+.sum-title { margin: 0; overflow-wrap: anywhere; }
+/* `.sum-hash`: the session's id under its title on the summary page, dim and monospace. */
+.sum-hash { color: var(--fg-faint); font-family: var(--mono, ui-monospace, monospace); font-size: .85em; }
+/* `.sum-tabs`: the summary page's tab strip (summary, resources, files, access). */
+.sum-tabs { display: flex; gap: 4px; margin: 8px 0 4px; border-bottom: 1px solid var(--border); }
+/* `.sum-tab`: one tab in the summary page's strip; `.on` marks the open one. */
+.sum-tab { padding: 6px 10px; border: none; border-bottom: 2px solid transparent; background: none; color: var(--fg-dim); font: inherit; cursor: pointer; }
+.sum-tab:hover, .sum-tab:focus-visible { color: var(--fg); outline: none; }
+.sum-tab.on { color: var(--fg); border-bottom-color: var(--fg); }
+/* `.sum-panel`: the open tab's body on the summary page, held at a height so switching tabs does not jump the card. */
+.sum-panel { min-height: 120px; }
+/* `.sum-lines`: the summary tab's label/value lines as a two-column grid. */
+.sum-lines { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 6px 0; }
+/* `.sum-line`: one summary-tab line, a `dt` label and its `dd` value, laid into the grid's two columns. */
+.sum-line { display: contents; }
+.sum-line dt { color: var(--fg-dim); }
+.sum-line dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+/* `.sum-resources`: the summary page's resources tab: the session's resource panel (or the line saying why there is none), then its usage. */
+.sum-resources { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+/* `.sum-box`: the frame the resources tab holds the device's resource panel in. */
+.sum-box { min-width: 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+/* `.sum-usage`: the resources tab's usage part: the chart over its totals. */
+.sum-usage { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+/* `.sum-chart`: the usage chart's figure: the SVG and its legend. */
+.sum-chart { margin: 0; }
+/* `.sum-chart-box`: the usage chart's SVG and the reading box laid over its plot. */
+.sum-chart-box { position: relative; }
+/* `.sum-plot`: the box over the usage chart's plot (placed in percent of the viewBox) that takes the pointer and the arrow keys. */
+.sum-plot { position: absolute; cursor: crosshair; touch-action: pan-y; outline: none; }
+.sum-plot:focus-visible { box-shadow: 0 0 0 1px var(--accent); border-radius: 2px; }
+/* `.sum-sw-prompt`: the usage chart tooltip's swatch for prompt tokens: the mark's own circle and colour (with `.tc-sw`). */
+.sum-sw-prompt { background: var(--accent); border-radius: 50%; }
+/* `.sum-sw-completion`: the usage chart tooltip's swatch for completion tokens: the mark's own diamond and colour (with `.tc-sw`). */
+.sum-sw-completion { background: var(--warn); transform: rotate(45deg) scale(.85); }
+.sum-chart svg { width: 100%; height: auto; display: block; }
+/* `.sum-grid`: a gridline of the usage chart, recessive. */
+.sum-grid { stroke: var(--border); stroke-width: 1; }
+/* `.sum-axis`: an axis label of the usage chart, in the muted ink. */
+.sum-axis { fill: var(--fg-faint); font-size: 9px; }
+/* `.sum-m-prompt`: the usage chart's prompt mark, a circle. */
+.sum-m-prompt { fill: var(--accent); stroke: var(--bg); stroke-width: 1.5; }
+/* `.sum-m-completion`: the usage chart's completion mark, a diamond. */
+.sum-m-completion { fill: var(--warn); stroke: var(--bg); stroke-width: 1.5; }
+/* `.sum-legend`: the usage chart's legend row; the marks carry identity, the words stay in the text ink. */
+.sum-legend { display: flex; gap: 14px; color: var(--fg-dim); font-size: .85em; }
+/* `.sum-key`: a legend swatch, the same shape as its mark. */
+.sum-key { display: inline-block; width: 8px; height: 8px; margin-right: 5px; }
+.sum-key.prompt { background: var(--accent); border-radius: 50%; }
+.sum-key.completion { background: var(--warn); transform: rotate(45deg) scale(.85); }
+/* `.sum-empty`: the one line a summary-page tab with nothing drawn says: what it would hold, and why it is empty. */
+.sum-empty { color: var(--fg-faint); margin: 10px 0; }
+/* The detail header's per-session menu (session-menu.tsx): the one menu look, hung under its button like `.menu`. */
+.sb-session-menu { position: absolute; top: calc(100% + 5px); right: 0; z-index: 20; }
+
+/* `.sum-hc`: the body of a session row's hover card (SessionHoverCard): wraps normally, because the row's title it hangs from is a nowrap ellipsis line. */
+.sum-hc { white-space: normal; min-width: 180px; }
+/* `.sum-hc-title`: the session's title, as the heading of its hover card. */
+.sum-hc-title { font-weight: 600; margin-bottom: 4px; overflow-wrap: anywhere; }

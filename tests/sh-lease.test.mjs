@@ -565,7 +565,7 @@ test("session release cancels a running task on the host with reason session-rel
     assert.equal(host.calls.filter((c) => c.call === "cancel" && c.args.id).length, 1, "release left the call running");
     await new Promise((res) => setTimeout(res, 150));
     const recs = (await runLog.forRun("run-release")).filter((e) => e.subsystem === "task");
-    assert.deepEqual(recs.map((e) => [e.kind, e.reason]), [["cancelled", "session-release"]], "no parked record, and the reason is the release's");
+    assert.deepEqual(recs.map((e) => [e.kind, e.reason]).filter(([k]) => k !== "ended"), [["cancelled", "session-release"], ["dropped", "late-result"]], "no parked record, the reason is the release's, and the late result is dropped with a record (slice C)");
     const next = liveRun("run-release");
     assert.deepEqual(next.inbox(), [], "a result of an ended session reached a later turn");
     await endTasks("run-release");

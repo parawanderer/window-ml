@@ -79,8 +79,27 @@ export class SessionServer {
             command: CommandHandler;
             /** every event a saved session holds, oldest first; absent when nothing is saved (session-store.ts) */
             stored?: (hash: string) => Promise<MlDebugEvent[]>;
+            /** a row as it may leave: every index update and snapshot crosses it (the worker's by-value scrub,
+             *  sw-scrub.ts `forRow`); absent → as the index holds it */
+            row?: (row: SessionSummary) => SessionSummary;
         },
     ) {}
+
+    /** A row as a page or a sink is sent it. */
+    private shown(row: SessionSummary): SessionSummary {
+        return this.opts.row ? this.opts.row(row) : row;
+    }
+
+    /** Every row as a page or a sink is sent it: the hub's list, `session.list`, the HUD's bring-here list. */
+    shownList(): SessionSummary[] {
+        return this.index.list().map((r) => this.shown(r));
+    }
+
+    /** Send every row again, as each may now be sent (the registry was read or changed): a row withheld or sent before
+     *  a value was registered is replaced where every page and sink holds it. */
+    reshow(): void {
+        for (const session of this.index.list()) this.broadcastIndex({ type: "upsert", session });
+    }
 
     /**
      * Feed every index change and every session's stream from now on to `sink`, whether or not a page is watching: the
@@ -115,7 +134,7 @@ export class SessionServer {
         switch (msg.type) {
             case "sessions":
                 client.index = true;
-                this.post(client, { type: "index", update: { type: "snapshot", runtime: this.opts.runtime().id, sessions: this.index.list() } });
+                this.post(client, { type: "index", update: { type: "snapshot", runtime: this.opts.runtime().id, sessions: this.shownList() } });
                 return;
             case "events": {
                 if (typeof msg.sub !== "number" || typeof msg.hash !== "string") return;
@@ -209,7 +228,7 @@ export class SessionServer {
             const messages = live();
             for (const sink of this.sinks) {
                 for (const id of out.evicted) sink.index({ type: "remove", id });
-                if (out.summary) sink.index({ type: "upsert", session: out.summary });
+                if (out.summary) sink.index({ type: "upsert", session: this.shown(out.summary) });
                 for (const message of messages) sink.stream(hash, message);
             }
         }
@@ -217,7 +236,7 @@ export class SessionServer {
         for (const client of this.clients) {
             if (client.index) {
                 for (const id of out.evicted) this.post(client, { type: "index", update: { type: "remove", id } });
-                if (out.summary) this.post(client, { type: "index", update: { type: "upsert", session: out.summary } });
+                if (out.summary) this.post(client, { type: "index", update: { type: "upsert", session: this.shown(out.summary) } });
             }
             for (const [sub, s] of client.subs) {
                 if (s.hash !== hash) continue;
@@ -240,6 +259,13 @@ export class SessionServer {
     pageGone(tabId: number, opts: { closed: boolean }): void {
         const rows = this.index.pageGone(tabId, opts);
         for (const session of rows) this.broadcastIndex({ type: "upsert", session });
+    }
+
+    /** A tab's top frame moved (the browser's report); send the rows whose current page changed, and return them. */
+    pageMoved(tabId: number, url: string): SessionSummary[] {
+        const rows = this.index.pageMoved(tabId, url);
+        for (const session of rows) this.broadcastIndex({ type: "upsert", session });
+        return rows;
     }
 
     /** A session the client asked to keep (`ephemeral` absent on the command that started it). Returns the events it
@@ -308,7 +334,8 @@ export class SessionServer {
         return true;
     }
 
-    private broadcastIndex(update: SessionIndexUpdate): void {
+    private broadcastIndex(raw: SessionIndexUpdate): void {
+        const update: SessionIndexUpdate = raw.type === "upsert" ? { type: "upsert", session: this.shown(raw.session) } : raw;
         for (const sink of this.sinks) sink.index(update);
         for (const client of this.clients) if (client.index) this.post(client, { type: "index", update });
     }

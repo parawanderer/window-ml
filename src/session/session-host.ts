@@ -297,6 +297,19 @@ export interface SessionSummary {
     pendingApprovals: number;
     /** the page the session started on; absent for a chat with no page */
     page?: { url: string; title?: string; tabId?: number };
+    /**
+     * The page a worker-hosted run's tab moved to after it started, when that is not the page it started on: from the
+     * browser's own navigation report, never a page's claim. Kept once the run ends, as the page it was last on.
+     * Absent: still on the page it started on, or not known (a page-hosted session, a runtime that does not report it).
+     * No title: the report carries none.
+     */
+    currentPage?: { url: string };
+    /**
+     * The session this one was forked from (`handle.fork()`, `history.fork()`), when the runtime could check it: the
+     * parent was on the same tab. Absent: not a fork, or not known. Not `lineage`, which is a session another
+     * session STARTED (a subagent).
+     */
+    forkedFrom?: SessionId;
     /** survives a restart of the runtime; false for an ephemeral console or page-script session */
     saved: boolean;
     /**
@@ -438,6 +451,9 @@ export type Command =
      *  an idle agent or chat. Text, images, or both. */
     | {
         type: "session.send"; session: SessionId; text: string; images?: ImageDataUrl[]; files?: WireFile[]; elementContext?: ElementContext; idempotencyKey?: IdempotencyKey;
+        /** the exemption tokens of the values the person chose to send as is (ruling 39, the composer's chip): honoured
+         *  only from this browser's own chat page, ignored from a hub device, whose turn is scrubbed. */
+        asIs?: string[];
         /** `true`: the person says the chat's model sees images, so they go to it unprobed. Without it, images for a
          *  model whose vision is not known are refused (`unsupported`) when no reader model is set. A chat's only:
          *  an agent run's vision is decided at `agent.start`. */
@@ -498,6 +514,9 @@ export type Command =
         ask?: string }
     | {
         type: "chat.start"; runtime: RuntimeId; text: string; images?: ImageDataUrl[]; files?: WireFile[];
+        /** the exemption tokens of the values the person chose to send as is (ruling 39, the composer's chip): honoured
+         *  only from this browser's own chat page, ignored from a hub device, whose turn is scrubbed. */
+        asIs?: string[];
         model?: string; system?: string; think?: boolean | null;
         /** `true`: the person says the model sees images, so they go to it unprobed. Without it, images for a model
          *  whose vision is not known are refused (`unsupported`) when no reader model is set. */
@@ -508,6 +527,9 @@ export type Command =
     }
     | {
         type: "agent.start"; runtime: RuntimeId; task: string; images?: ImageDataUrl[]; files?: WireFile[]; target: AgentTarget;
+        /** the exemption tokens of the values the person chose to send as is (ruling 39, the composer's chip): honoured
+         *  only from this browser's own chat page, ignored from a hub device, whose turn is scrubbed. */
+        asIs?: string[];
         model?: string; maxSteps?: number;
         /** {@link ClientUi}: what the sending client says it can show. A claim; absent from an older client. */
         ui?: ClientUi;
@@ -939,8 +961,9 @@ export type HostStatus =
     | { state: "offline"; reason?: string; retryAt?: number };
 
 /** How far one attached file's upload has got, for a host that sends files ahead in chunks (the hub's `file.put`):
- *  `fraction` is the share of its chunks the runtime has accepted, 0 to 1 (`uploadFraction`, file-frame.ts). */
-export interface FileProgress { name: string; fraction: number }
+ *  `fraction` is the share of its chunks the runtime has accepted, 0 to 1 (`uploadFraction`, file-frame.ts). `index` is
+ *  the file's position among the files of the command being sent (0-based): names can repeat, positions cannot. */
+export interface FileProgress { name: string; index: number; fraction: number }
 
 /** What a send may carry beside its command: a cancel, and where a file's upload reports how far it has got. A host
  *  that sends files inline reports nothing. */

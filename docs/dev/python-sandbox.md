@@ -1,6 +1,6 @@
 # The Python sandbox and bench
 
-Implementation notes for `python_exec` (offscreen Pyodide), its capability modes, the Python bench and its editor, moved out of AGENTS.md on 2026-09-12 so they are read when that code is being
+Implementation notes for `python_exec` (offscreen Pyodide), its hardened workers, the Python bench and its editor, moved out of AGENTS.md on 2026-09-12 so they are read when that code is being
 changed rather than loaded into every session. AGENTS.md keeps the repository's working rules and the traps that
 bite; this file keeps how the subsystem works and why it is built that way. Paths name files by their bare name,
 as in AGENTS.md — they are all under `src/`.
@@ -33,8 +33,10 @@ can `pd.merge` them; keys validated as Python identifiers by `pyVarNameError`, s
 (the same accommodate-don't-fight tack as the read_csv redirect; `tables` is a reserved key). A map sent as a JSON
 STRING (`"{\"df\": \"https://…\"}"`, how glm-4.7-flash reads the schema's `oneOf`) is that map (`tablesMapFromJson`,
 dom.ts); the loader and the consent check both decode through it, or a sheet inside the string would skip its card. A
-path on the page's site (`/sales.csv`, `./x.csv`) is resolved against the page and read from the fetch cache like the
-absolute URL. A map key that is not a variable name (models key the map by the URL itself) loads under a name
+path on the page's site (`/sales.csv`, `./x.csv`, `../x.csv`) is resolved against the page and read from the fetch cache
+like the absolute URL, by one rule on both hosts (`sitePathUrl`: the page's `_loadTable` and the worker's `workerTable`,
+which until 2026-11-19 sent a path to the DOM reader as a selector). No CSS selector starts with `/`, `./` or `../`;
+`x.csv` is a selector, and `//host/x` or a path the URL parser takes off the page's origin is not a path. A map key that is not a variable name (models key the map by the URL itself) loads under a name
 derived from it (`derivedTableName`: `…/sales.csv` → `sales`) with the key as its alias; a reserved name is still
 refused. Each source auto-dispatches by shape
 (`_loadTable`): **a `<table>`/ARIA-grid selector** is walked page-side (`extractTable`,
@@ -128,7 +130,7 @@ namespace the running cell's prelude named (`__main__._ml_load_ns`), never from 
 run with no image of its own is not handed another run's, and `from PIL import Image` in a cell neither loses
 the redirect nor leaks one. The bench names none (`None`), so for it the real loader runs. And when that CAN'T resolve it — data preloaded but the code still errors trying to
 (re)load it (`read_excel`/`read_json`/`open`/`requests`, an ambiguous name across many tables, a
-URL in readonly), the tool **appends a redirect hint** ("use `df`/`img` directly") as the
+URL, which the locked-down worker has no way to load), the tool **appends a redirect hint** ("use `df`/`img` directly") as the
 fallback, catching any hallucinated load pattern on the failure. The tool
 description frames the sandbox as "appending a cell to a live Jupyter notebook" (img/img_np/df
 are pre-loaded) with a df/img snippet. Output (stdout/value/error) is capped by `clipOut`
@@ -160,7 +162,7 @@ tool's model-facing text (hints, clipping, `cast`) and the bench's pretty-printe
 **matplotlib: a figure comes back as an image** (the `FIGURES` block of the epilogue, `python-runtime.ts`):
 
 - **Loaded at start, never pre-imported.** The wheels cost ~0.3 s of cold start; `import matplotlib.pyplot` costs
-  ~2.4 s (it builds its font list) and is paid only by a script that plots. Not loaded on import, because a readonly
+  ~2.4 s (it builds its font list) and is paid only by a script that plots. Not loaded on import, because a locked-down
   worker has no `fetch` after its lockdown and Pyodide's loader needs it.
 - **Its `prepare`** picks the headless Agg backend before anything imports pyplot, and silences the warning Agg gives
   for `plt.show()`, which a script written for a notebook calls.
@@ -173,10 +175,10 @@ tool's model-facing text (hints, clipping, `cast`) and the bench's pretty-printe
   allocates the gigapixels), since an artist far outside the figure grows that box; the padding is fixed at 0.1 in.
 - **Every figure is closed after every cell**, a failed one included, so a run's next cell does not draw it again.
   Not against the cell itself: one that patches `plt.close` keeps its figures open for the next cell of its PRINCIPAL
-  (a readonly worker is one principal's; the `full` one is everyone's, the shared-interpreter residual below).
-- **The epilogue catches `BaseException`**: it runs the cell's own objects outside the cell's try. In the readonly
-  worker the cancel is the host's and runs after the whole script whatever it raised; in the `full` worker the
-  wrapper's cancel runs BEFORE the epilogue (#998), so the catch is belt and braces there.
+  (a worker is one principal's).
+- **The epilogue catches `BaseException`**: it runs the cell's own objects outside the cell's try. The
+  cancel is the host's and runs after the whole script whatever it raised (the unlocked `full` worker, which kept the
+  wrapper's cancel running BEFORE the epilogue (#998), is unreachable now).
 - **No module it brings in holds the JavaScript bridge**: `tests/python-matplotlib.test.mjs` walks everything those
   modules reach under the lockdown, after a cell tried every backend, the check a new package with a `prepare` owes.
 
@@ -186,10 +188,10 @@ text-only driver gets the vision reader's description through `ml.chat` with `im
 told so. Without it, an image costs the model nothing, and it is still drawn for the person. In a worker-hosted run,
 the run's `ml.chat` with `images` is the vision chat `look` uses (`workerVisionChat`).
 
-**Two capability modes (agent-declared) + auto-approve.** The tool takes `mode`:
-`"readonly"` (default) runs in a **locked-down** worker — one Worker (one realm) per PRINCIPAL:
-a worker-hosted run (`run:<id>`), a page (`page:<tabId>`), or one of our own surfaces (`own`).
-`"full"` is a separate worker that is never locked. A principal change spawns a new worker;
+**One mode: a hardened worker per principal, then membership decides the card.** The tool takes no `mode` (see
+"There is no `mode`" below). Every cell runs in a **locked-down** worker, one Worker (one realm) per PRINCIPAL:
+a worker-hosted run (`run:<id>`), a page (`page:<tabId>`), or one of our own surfaces (`own`). A cell inside the
+read-only dialect runs with no card; one outside it asks, and gets the full gated `ml`. A principal change spawns a new worker;
 the old one's kept bench namespace dies with it (the bench's "sandbox restarted" banner), and a
 respawn writes the `pyodide/respawn` housekeeping record (`docs/dev/housekeeping.md`). The
 lockdown is `lockdownReadonly` (`src/python/lockdown.ts`), one boot step that never undoes:
@@ -240,8 +242,8 @@ closure over captured callables and plain values, never modules, and the worker 
 cancel as ONE coroutine through it (`hostRunScript`, `cancelPath`). Two reasons, both measured: a cell's code is
 compiled in the wrapper's globals, so `global _ml_cell_revoke; _ml_cell_revoke = lambda: None` undid a cancel that
 lived in the wrapper (its timer ran after the result); and a cancel called from JavaScript after `runPythonAsync`
-resolved let what the cell had queued (a microtask, a `call_soon`) run first. The `full` worker, never locked, keeps the
-wrapper's cancel. What the cancel's tasks print goes to its own buffer, appended to the cell's stdout; its refusal is
+resolved let what the cell had queued (a microtask, a `call_soon`) run first. (The `full` worker, never locked and unreachable now, kept
+the wrapper's cancel.) What the cancel's tasks print goes to its own buffer, appended to the cell's stdout; its refusal is
 appended to the cell's error and the value dropped. In this order: restore the running loop; SPEND every task
 (`cancel()`, then let the loop turn, so its coroutine takes the `CancelledError` and finishes; a task that catches it
 and awaits again is cancelled again, at most 8 rounds, and one still pending refuses the cell's result with an error
@@ -299,8 +301,8 @@ no-op, counted and recorded in the run log (`python`/`dropped`), because a THROW
 refused in that cell. Revoke comes after the spend, never before it: webloop's own wakeups are once-callables the cell
 made, and a task's step revoked first never runs to take its cancel. Sound only while a cell cannot reach `pyodide_js`
 (an approved cell can today: two `{ todo }` tests, the red team's lane). The strip, the harness capture and the wrapper are
-**escape-tested against real Pyodide** (`tests/redteam-python-sandbox.test.mjs`): a readonly
-cell cannot reach `eval`/`Function`/`fetch`/`importScripts`, a patched `ast.parse` never
+**escape-tested against real Pyodide** (`tests/redteam-python-sandbox.test.mjs`): a cell
+cannot reach `eval`/`Function`/`fetch`/`importScripts`, a patched `ast.parse` never
 receives a later cell's source, popping `sys.modules["_ml_harness"]` does not hand the next
 cell the import fallback, and `loadPackage` of a wheel still works after the strip. There is **no `mode`**
 (removed 2026-10-19, lane 7): every cell runs in a hardened worker, inside the read-only dialect (no card) or outside
@@ -316,9 +318,36 @@ worker drives with `autoApprovePython` on:
    marked `inside` (`grantRunPython`). `runPython` passes `inside` to the worker only for a `runGated` caller.
 2. The worker loads the allow tables once (`dialectSetup` in `python-dialect-run.ts`, from `dialect-data.ts`, which bundles
    `notebooks/python-dialect/data/`). It refuses to run anything inside on a core without `_restricted`, or one whose
-   `_restricted.build()` reports specialization, tier 2 or a JIT. On such a core every cell asks.
+   `_restricted.build()` reports specialization, tier 2 or a JIT. On such a core every cell asks. **The fork has no
+   file gate**: `open` is a refused builtin, and a lifted leaf that opens a path itself is kept out only by the fork's
+   deny-list (`restricted._EFFECTFUL`) or by an entry check. A leaf in `DIALECT_BUFFER_ARGS` (`DataFrame.to_string`,
+   `Series.to_string`, each marked `write(buffer arg) when buf= is given` in the manifest) is re-registered by
+   `_ml_buffer_args` with a check that refuses the parameter bound to anything but None, so the call asks; `tests/python-dialect-buffer-args.test.mjs` enumerates every
+   admitted callable's path, file or buffer parameter. **A C callee's write
+   is invisible to the ownership check**, which sees only the interpreter's own store sites (an item assignment, an
+   in-place operator, a listed mutator read off an unowned value). So a module function or ufunc taking `out` is in
+   `DIALECT_OUT_ARGS`, re-registered with a check that refuses `out` bound to anything but None. A C method with an
+   argument that can write is not listed at all (`UNLISTED` in make-corpus-count.py, `ndarray.round`): a checker on a
+   C method does not survive a `*` or `**` call, which reaches the gate as the bound builtin rather than the descriptor
+   its tables key on. `tests/python-dialect-out-args.test.mjs` enumerates both.
+   **The fork's `load_manifests` admits reading each standard-library name but registers no call**, so `decimal.Decimal`,
+   `io.StringIO` or `csv.reader` was refused inside although `manifest-stdlib.json` lists it. `_ml_stdlib` registers
+   each listed callable from its row (lifted; fresh when the row returns fresh), its kind's listed methods, and a listed
+   Python class's dunders lifted (`csv.DictReader`); a name in `DIALECT_STDLIB_REFUSED` (`random.choice`, which
+   advances the shared generator) refuses with its reason. **A listed pandas property runs its getter under the gate**,
+   which refused its reads of pandas internals (`df.values` was dead inside), so `_ml_lifted_reads` moves each pure one
+   from its kind's table to the kind's dynamic rule, which the gate reads lifted. On pandas 3.0.2 that is five getters,
+   each one expression with no argument and no write: `DataFrame.shape` (`len(self.index), len(self.columns)`),
+   `DataFrame.values` (`self._mgr.as_array()`), `Series.values` (`self._mgr.external_values()`), `Index.values` (its
+   data) and `Series.iloc` (a new `_iLocIndexer` over the receiver). `Series.iloc` reads items through its
+   indexer and never writes one: the barrier would judge the indexer, not the Series. `Series.dtype` and
+   `DataFrame.dtypes` are not listed: `str()` of a numpy dtype imports from C under the cell's frame, which has no
+   `__builtins__`, so it raises KeyError (#2040). `tests/python-dialect-vocab.test.mjs` holds every listed stdlib name to a call
+   that runs inside or a reason. Both functions go when the fork does this itself.
 3. `wrapUserScript(…, inside)` runs the cell through `run_cell` (`INSIDE_CELL`, `python-dialect-run.ts`) in a COPY of the namespace that holds no `_` name.
-   A bare trailing expression gets `return ` spliced in at its own column, so the value matches the full path.
+   A bare trailing expression gets `return ` spliced in at its own column, so the value matches the full path. Decimal
+   arithmetic sets the thread context's sticky flags from C, which no ownership check sees, so the context's flags and
+   traps are put back after the run, refused or not, and a later cell never reads what an inside cell computed.
 4. If it finishes, its bindings are copied back, except a builtin's name or one starting with `_`, and only if every
    new binding and the value are DATA (`_ml_not_inert`, an allowlist on the exact type: scalars, the builtin containers,
    numpy arrays, pandas frames, series and indexes, object values walked), or exactly what the cell's own import
@@ -472,7 +501,7 @@ announces itself). Six things are load-bearing:
   to the script: a run queued behind an 8s one was killed three seconds into its own work, and on a loaded CI
   runner a first `time.sleep(4)` was killed by the boot alone, both with "simplify the computation".
 - **Always locked down, and only from our own surfaces** (the `PYTHON_EXEC` choke point, `sender.url`): analysis
-  can import a compiled module to inspect it, which must not reach the network even in `full` mode, and a
+  can import a compiled module to inspect it, which must not reach the network, and a
   page is refused rather than handed a new kind of request to the one sandbox.
 - **Budgeted, with the static list as the floor** (`withRemote`, cm-editor.ts, 350 ms): the first request
   after warming loads Jedi and falls back, the next word gets it. Asked once per WORD — `validFor` narrows the
@@ -496,22 +525,48 @@ ROOT C ([`docs/spec/PYTHON_DIALECT.md`](../spec/PYTHON_DIALECT.md), "The namespa
 - **Lives as long as the RUN, not the turn** (ruled 2026-11-13): a run id is stable across the turns of a session, and the
   run's own worker (`run:<id>`) keeps its dict between them. `settle()` (`sw-run-host.ts`, once per turn) calls
   `endPythonTurn`, which sends `PY_END_TURN { run, ms }` (`ms` is the `pythonIdleMinutes` setting, default 10, in ms): the
-  offscreen document posts `deleteRun` only to the OTHER principals holding a dict for the run (the shared `full` worker:
-  a dict left there is readable from another full-mode run's cell), ends the run's keep, marks it in `endedRuns` and
+  offscreen document posts `deleteRun` only to the OTHER principals holding a dict for the run (a code path for the
+  unreachable shared `full` worker, where a left dict was readable from another run's cell), ends the run's keep, marks it in `endedRuns` and
   re-arms the own worker's idle clock with the between-turns delay. It keeps `runPrincipals`, `runNsVars` and `nsLoss`.
 - **Ends** at session release and archive: `deletePythonRun` sends `PY_DELETE_RUN { run, principal: "run:<id>" }`, which the
   offscreen document forwards to every principal's worker as `deleteRun` (destroying the dict) and clears its own
   `runPrincipals`, `runNsVars` and `nsLoss` entries. Called from `forgetRun` (`background.ts`, a deleted session), the
   session store's eviction as deleted or archived (`sw-sessions.ts`), and `releaseSessionTokens` (`sw-runs.ts`; a hook,
   `onSessionRelease`, since sw-python imports sw-runs). Also lost: the idle reap, a kill, the offscreen document closing.
-- **Loss is told.** `killWorker` (timeout, start timeout, crash) records `nsLoss` for every run `runPrincipals` lists on
-  the killed worker, whether or not one of its cells ever returned a scope manifest; the run's next cell opens its
-  stdout with `namespace reset at <ISO time>: <timeout|start-timeout|crashed>` and the result carries `nsReset`. The
-  offscreen document closing loses the dict without a record: the note comes only from a kill the document saw.
+- **Loss is told.** `killWorker` (timeout, start timeout, crash, the kernel's death) records `nsLoss` for every run
+  `runPrincipals` lists on the killed worker, whether or not one of its cells ever returned a scope manifest; the run's
+  next cell opens its stdout with `namespace reset at <ISO time>: <timeout|start-timeout|crashed|the interpreter
+  crashed>` and the result carries `nsReset`. A cell refused as outside the dialect does not take the line: its result is
+  discarded and the cell is asked again outside, which gets it. The offscreen document closing loses the dict without a
+  record: the note comes only from a kill the document saw.
+- **The kernel's death (ruling 26).** A fatal Pyodide error ends the interpreter, not the cell, in two shapes. A trap in a
+  wasm call (pillow's `PIL._imagingtk`, "function signature mismatch") answers the cell, after which every call throws
+  "Pyodide already fatally failed". A JS stack overflow in the parser never settles the cell's promise: the `RangeError`
+  escapes as an unhandled rejection on the worker's `self`, never as `error` and never as the host's `worker.onerror`
+  (measured in Chromium 2026-11-18, `tests/e2e/python-kernel-death.spec.mjs`). The worker (`python-worker.ts`) listens
+  for both events at module load, before the lockdown strips `addEventListener`, and after any failed cell. It kills the
+  kernel only on Pyodide's own verdict: it calls the interpreter once, and only "already fatally failed" counts, so an
+  ordinary rejection a cell's code left unhandled, after which the interpreter still answers, kills nothing (a
+  denial of service on the namespace otherwise). The dead worker answers the running cell and every later message with
+  `fatal: true`; the offscreen document gives the cell `kernelDied` (the cause, and that the run's variables, functions
+  and imports are gone) and kills the worker with reason `kernel-death`, so the next cell starts a fresh interpreter
+  and opens with the loss line. The cause is what Pyodide's own fatal-error handler caught (`_api.on_fatal`, set at
+  boot before the lockdown), not a rejection's reason or the cell's answer (those stand in only for a Pyodide without the
+  hook): an approved (outside-the-dialect) cell can queue
+  `js.Promise.reject("…")` or raise text of its own beside the crash (row in `tests/python-kernel-death.test.mjs`). Such
+  a cell can still reach Pyodide's internals and so choose it; a cell inside the dialect cannot. `boundCause` makes it one
+  line of at most 300 characters, the last non-empty one (the exception a traceback ends with, never the cell's source
+  lines above it). Both deaths measured answer one line ("function signature mismatch", "Maximum call stack size exceeded"); the bound is for the fallback, whose length
+  the cell decides. Pyodide is not patched. The namespace-released record (the async lane's one writer,
+  reason "kernel-death") is to be called beside that kill in `offscreen.ts` once the writer is on main.
+- **Differs from CPython: how deep a source may nest.** CPython raises `RecursionError` for a too-deep expression;
+  Pyodide's parser overflows the JS stack first, which is fatal. Measured with `compile("obj" + ".a" * N + "()")`: a
+  Chromium worker compiles N = 3,000 and dies at 10,000 (2026-11-18); Node under the test harness also compiles 3,000
+  and dies at 30,000, while an import through `importlib` in Node dies near 2,000-3,000 (deeper stack per level).
 - **The state registry:** `python.run-namespace` (`defineState`, offscreen, audience `model`); its `read` is the last
   cell's scope manifest (`bench.vars`: names and type names).
-- **Deleting reaches every worker holding the run's dict**, the shared `full` one included (`runPrincipals` in
-  `offscreen.ts`), and empties the dict first, since the run's own functions keep it alive through `__globals__`.
+- **Deleting reaches every worker holding the run's dict** (`runPrincipals` in `offscreen.ts`; the unreachable shared
+  `full` one included), and empties the dict first, since the run's own functions keep it alive through `__globals__`.
 - **The `full` worker is unreachable from the service worker** since `mode` went (`runPython` always sends `hardened: true`); its branch in `offscreen.ts` and `python-worker.ts` stays for the Pyodide-build lanes to delete. The residual it carried (two full-mode runs sharing one interpreter) is gone with it.
 - **Not done:** an eviction rule by size (the dict is bounded by the worker's memory only).
 
@@ -531,7 +586,7 @@ browser: every worker-hosted run that ran Python kept a whole Pyodide realm. Now
   of a run BETWEEN turns (`PY_END_TURN` seen, no cell of a live turn since: a cell stamped `turnLive` puts the run back on
   the live clock) waits the person's `pythonIdleMinutes` (DevTools Settings, default 10; 0 never reaps it) and the next
   cell says `idle between turns`. Either loss is also one `agent-note` line in the run's transcript (`PY_REAPED` →
-  `noteRunLine`, `sw-run-start.ts`), besides the run-log record. The bench (`own`) and the `full` worker are never reaped.
+  `noteRunLine`, `sw-run-start.ts`), besides the run-log record. The bench (`own`) is never reaped (nor was the `full` worker, which nothing starts now).
   The clock is set through `longTimeout` (`py-reap.ts`), in steps of at most `MAX_TIMER_MS` (2^31-1 ms): a setting of
   35792 minutes or more would otherwise wrap inside `setTimeout` and reap at once.
 - **A keep** is a worker-hosted turn asking, through `python_exec` `keep: true`, to hold its worker through idle gaps
@@ -565,8 +620,9 @@ names persist).
 "A run's namespace", above), and six things make that safe for the bench:
 - **Its own namespace, not main.** Main belongs to a `python_exec` with no run, which wipes it every call — so the
   first agent run would have erased a person's variables, and could have read them.
-- **One namespace per MODE.** A `full` run can keep a live handle to the browser's network functions in a
-  variable; carried into a `readonly` run it would quietly end the sandbox. Nothing crosses between them.
+- **One namespace per REALM.** The bench's two namespaces (`benchNs` in `python-worker.ts`, keyed by `hardened`) never
+  mix: a handle to the browser's network functions kept in the unlocked one would quietly end the sandbox if carried
+  into the locked one. Every call is hardened now, so the unlocked one is dead.
 - **Top-level names are declared `global`** in the wrapper, chosen by Python's own `symtable` rather than a
   list of statement shapes. Without it `x = 1` is a local of `_user` and vanishes at the end of the run. A name
   a nested function declares `nonlocal` stays local, or the script would not compile.
@@ -613,7 +669,7 @@ flags moved the failure to `NameError: pa`. Measured in Node, loading it at star
 are pyarrow-backed from the first).
 
 `PyPackage.prepare` runs once, before the lockdown, right after the start-up packages load (`PY_STARTUP_PREPARE`, in
-`getPyodide`, then `lockdownReadonly`). pyarrow needs it: its `unix_timezones` dependency does `import js` at import time, and a `readonly`
+`getPyodide`, then `lockdownReadonly`). pyarrow needs it: its `unix_timezones` dependency does `import js` at import time, and a locked-down
 run has no `js` — while its prelude's `import pandas` imports pyarrow. Importing it first, where `js` exists, puts
 it in the module cache; but that module then HOLDS `js` as an attribute, and `import unix_timezones;
 unix_timezones.js` would hand a locked-down script the global scope the strip removed, so `prepare` deletes it.
@@ -647,7 +703,7 @@ reach it through the factory's closure, so a JsProxy there would be one in the n
 harness's references captured before any cell ran, never the importable `json`/`base64`, which a cell may patch.
 Tested under real CPython against a fake transport: `tests/ml-facade.test.mjs`.
 
-## Installing a package (`python_install`, slices 2 to 4 of docs/plan/repl/PACKAGES_INSTALL.md)
+## Installing a package (`python_install`, slices 2 to 4b of docs/plan/repl/PACKAGES_INSTALL.md)
 
 Offered to a run the worker builds (`OFFER_PYTHON_INSTALL`, `sw-run-start.ts`). An install belongs to that run: its
 readonly cells can import it, and nothing else can.
@@ -669,23 +725,97 @@ readonly cells can import it, and nothing else can.
   control, bidi and invisible characters replaced and listed beside their field. The export does the same.
 - **A lock row is in the core only when the extension ships its file** (`pkg-shipped.gen.ts`, generated at build from
   `pyodide-wheels/` by `scripts/gen-pkg-shipped.mjs`). The extension ships the start-up set's closure, not the lock;
-  any other lock row refuses the card as `not-shipped`. A shipped lock file is already in every readonly worker (the
+  any other lock row refuses the card as `not-shipped`. A shipped lock file is already in every locked-down worker (the
   start-up set and its lazy tooling load at boot), so approving one installs nothing.
 - **An approval installs into the run** (`installApproved`): each new wheel's archive is checked before anything
   unpacks it (`pkg-archive.ts`: paths, symlinks, `.pth`, site hooks, RECORD, an inflation bound, import names the lock,
   the dialect or an earlier install already takes); then a CANDIDATE readonly worker (`offscreen.ts` `installTest`) is
   handed the run's installs and the new wheels after its lockdown and imports each new top-level module in a hardened
   cell (`pkg-install-test.ts`), with a 60 s deadline from spawn and the run's Stop. Only when it passes are the wheels
-  added to the run's record (`sw-pkg-installs.ts`, `chrome.storage.session`). Every failure leaves the run as it was.
-- **The run's own worker gets the wheels at its next cell.** Every readonly cell of the run carries the record; the
+  added to the run's record (`sw-pkg-installs.ts`, `chrome.storage.session`), and only when that record is still the
+  one the call read: a call whose candidate ran while another install of the run landed is refused (`concurrent`),
+  since it was neither tested beside that install nor checked against its names. Every failure leaves the run as it was.
+- **The platform scan is a note, never a refusal** (`pkg-scan.ts`, a port of `notebooks/python-packages/scan.py`). It is
+  its own hardened cell in the candidate, after the unpack and before the import cell, so no package code has run when
+  it reads the sources: `ast` over the `.py` files of the call's and the run's earlier wheels only (a lock package is
+  not its business), import-time code only, guards and `sys.platform` decided as the core sees them, one level into the
+  package's own functions, bounded in modules and bytes. Its core tables (the stdlib modules the core lacks, the
+  attributes its stdlib modules expose) are `pkg-core.gen.ts`, generated at build from the notebook's `core.json` by
+  `scripts/gen-pkg-core.mjs` (run by the build and by `npm run typecheck`), which fails when the tables are absent,
+  empty or measured on another core than the pin; re-measure with `node notebooks/python-packages/probe.mjs core`. What comes back is read keeping only names
+  (`pkg-scan-note.ts` `readScan`, each cut to 120 characters and an ellipsis, since a function's name is the package's to choose), so
+  nothing the package wrote reaches the model: on a pass the findings are a note
+  after the result, on a failed import they follow the error when they are reached from the failing module, and the
+  run log keeps them as `detail.scan`. A source too deep for the parser or for the walk (a call chain of about 1,000
+  attributes passes the recursion limit) is unparsed and skipped; from about 2,000 the parser overflows the JS stack
+  and kills the interpreter; the worker answers that cell as the kernel's death (the fatal error escapes it, and the
+  worker's listener catches it), so a scan that kills it is a scan that failed, and an import that kills it ends the
+  install as `died` with the bare cause, never the run's namespace-lost text: a candidate is not the run's interpreter. A scan that fails leaves the import test to decide, in a fresh worker, and the run log says
+  `detail.scanLost`. The deadline and Stop end the whole candidate: the end is checked after every await before a cell
+  (each mirror read, the scan), and `runInWorker` posts nothing for an ended candidate, so no later cell starts in a
+  fresh worker, where it would have no timer of its own. Stop pressed while the candidate runs fails the install even
+  when the import passes after it (`installApproved` reads the signal before the result). A Stop before the test is
+  sent starts nothing (`offscreenTester` checks the signal before and after `ensureOffscreen`); one that overtakes the
+  test's message finds no candidate, and the document keeps it by run for 5 s (`earlyStops`, dropped with the run,
+  capped at 64), refusing the test that follows.
+- **The run's own worker gets the wheels at its next cell.** Every cell of the run carries the record; the
   offscreen document reads the wheels that worker lacks from the mirror (re-hashed) and the worker unpacks them after
   its lockdown, before the cell (`installWheels`). The namespace is kept. A respawned or reaped worker gets them the
   same way. A wheel that fails to unpack fails that cell before it runs, and the next cell tries again.
 
+## `/files` in Python (FILE_ATTACHMENTS.md, "`/files`: the layout, `ml.fs`, Python's mounts and the backup")
+
+A worker-hosted run's worker (`run:<hash>`, and no other principal: not a page's, the bench's, `library` or an install's
+candidate) mounts the session's files at `/files` with an Emscripten file system type of our own (`files-mount.ts`).
+Every operation is a request to the ONE ranged reader in the offscreen document (`files-reader.ts`, the shape agreed
+with the session-store lane), over route A's synchronous channel (`files-wire.ts`): a posted request, the reply in
+shared memory, and a sliced `Atomics.wait` (20 ms slices) that a Stop ends with EINTR, which Python raises as
+`KeyboardInterrupt`. `files-host.ts` gives each such worker its channel at spawn, its session fixed to the run's, and
+disposes it when the worker dies, which aborts every write still open.
+
+- **Built at boot, before the lockdown.** Every cell of a worker-built run runs in a locked-down worker, outside the
+  dialect too, so the requester keeps `post` and the shared buffers in its closure, as the relay does. The mount is
+  rebuilt at the start of every cell (`remount`), so a cell never trusts a stat or a cached chunk the last one read.
+- **Nothing whole.** Reads go through 32 fixed slots of one 512 KiB chunk (16 MiB), never a buffer per chunk; Python
+  3.14 buffers 128 KiB, so a read can span two chunks. Small writes are coalesced into one chunk per request.
+- **Commits on close** (ruling 75): `close()` is `closeWrite` plus `commitTx` of a txn of one; a failed cell keeps what
+  it closed. A refused write (ENOSPC) fails its writer: later writes raise the same errno and the close aborts, so no
+  file lands with part of what was written. A per-cell commit stays possible (the txn shape covers it) and is not built.
+- **Refusals are the reader's.** Where a run may write is the reader's to say, and the mount passes its errno through
+  unchanged: EROFS at the root and in `attached/`, free under `agent/` (ruling 86). The modes carry write bits on
+  purpose: Emscripten checks them before calling the mount and would say EACCES where the answer is EROFS. A symlink and
+  a hard link are EPERM (this core's `os` has no `link`; the node op refuses anyway). A refused first `open` drops the
+  directory's listing, so the next lookup asks the reader, which has no such file: no phantom is left in the mount.
+- **The working directory is `/files/agent`**, the reader's `home`, posted with the channel's memory and entered at
+  every mount, so a relative `open()` lands where the run writes; `../attached/` reads, and never writes.
+- **A hidden file is refused in the reader's words**, since the model acts on the text and an errno carries none. The
+  mount keeps this cell's EACCES messages by path; `open`, `io.open` and `os.open`, wrapped at boot
+  (`FILES_OPEN_WORDS`), set the `PermissionError`'s `strerror` from them, and a failed cell's error is rewritten from
+  them too (`inWords`) for a refusal no `open` saw. The wrappers are switched in only for a cell outside the dialect,
+  the originals back for one inside. Not `sys.monitoring`: the cancel's spend owns it and refuses a cell that leaves a
+  tool registered (lockdown.ts).
+- **A Stop never waits on the reader.** Requests are served one at a time, but when the worker abandons the one in
+  flight, the queue moves past it at once with a fresh scratch buffer, so a read that never returns holds nothing after
+  the first Stop; its late answer is dropped and what it opened is released.
+- **Not on until the reader exists.** `setFilesReader` (files-host.ts) is called by the reader's owner; until then no
+  worker gets a channel and Python sees no `/files`. Tests run the real worker against an in-memory reader on a second
+  thread (`tests/files-mount-py.test.mjs`, `tests/fixtures/files-channel-fake.mjs`).
+
+## `input()` and `getpass()` (proposed, not built)
+
+Today nothing sets Pyodide's stdin (`pyodideLoadOptions`, `python-env.ts`), and the cell's Worker has no `prompt` for
+Pyodide's default to call, so `input()` and `getpass.getpass()` read EOF and raise `EOFError` (measured on stock Pyodide
+under Node; the restricted core in the worker is guessed to match). The proposal replaces both at kernel start: the call
+resolves at once as `waiting-input`, the model answers with `task send` or hands it to the person with `task escalate`,
+and a `getpass` answer is a session secret the model is never shown. It is written in
+`docs/spec/SHELL_INTERACTIVE.md`, "Typed input: who answers a program's prompt". A page's own `prompt()` is left
+alone.
+
 ## Traps
 
 - **A worker-hosted run keeps one namespace across its cells; every other call is stateless** (a page's `ml.pythonExec`, a page-hosted agent).
-- **`readonly` mode hardens the sandbox and may auto-approve; `full` always asks.**
+- **Every cell runs hardened; membership in the dialect, decided by running it, is what skips the card.** There is no
+  `mode`: a cell outside the dialect asks, whatever it does.
 - **The lock is not what ships.** `pyodide-lock.json` names 354 packages; the extension ships the 25 of the start-up
   set's closure (`pkg-shipped.gen.ts`). Anything that treats a lock entry as present on disk is wrong for the other 329.
 - **A Python callable a cell gave JavaScript is REVOKED at the cell's cancel, never destroyed** (`cell-gate.ts`): a

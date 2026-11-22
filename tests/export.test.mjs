@@ -273,6 +273,16 @@ test("a nested ask exports as a note naming what it would run and how it ended, 
     assert.match(md, /"sandboxed": true/, "the facts it was judged on are in the export");
 });
 
+test("a waiting ask's facts are left out of the Markdown export too: the note says it waits, and no registered value is written", () => {
+    const a = { id: "a1", kind: "sh", facts: { argv: ["curl", "-H", "Authorization: Bearer tok-9f8e7d6c5b4a3210"] }, state: "pending", raisedAt: 1000 };
+    const s = { hash: "abc", kind: "agent", model: "m", tag: "session", createdTs: 1, lastTs: 2, status: "running", turns: [], task: "t",
+        steps: [{ step: 1, seq: 1, ts: 1, tool: "exec", arguments: { js: "x" }, approval: "user", pending: true, asks: [a] }], answers: [] };
+    const { md } = serializeSession(s);
+    assert.match(md, /asked \(sh/, "positive control: the ask is in the export");
+    assert.doesNotMatch(md, /tok-9f8e7d6c5b4a3210/);
+    assert.match(md, /its facts are exported once it is answered/);
+});
+
 test("an allowed shell ask that ran exports the card's outcome lines: the sandbox applied and what changed during it", () => {
     const outcome = { ran: "host-sandbox", envelope: { write: "today", exec: "any" }, asked: { write: "roots", exec: "program-only" },
         protectedChanged: [{ root: "/w", name: ".git/hooks/pre-commit", change: "created" }] };
@@ -297,6 +307,15 @@ test("an ml.sh call that ran without asking exports a note with the argv the hos
     assert.match(md, /Sandbox applied: write none, exec program-only/);
     assert.match(md, /Protected names: none changed during this call/);
     assert.equal(md.match(/ran without asking/g).length, 1, "a span with no unasked record is not a line");
+});
+
+test("an ml.sh call that ran without asking exports a Held line for each file the sandbox held unreadable", () => {
+    const shCalls = [{ program: "ls", durationMs: 4, unasked: { by: "default", argv: ["ls"], hiddenSecrets: ["/w/.env", "/w/.netrc"], outcome: { ran: "host-sandbox", envelope: null, protectedChanged: [] } } }];
+    const s = { hash: "abc", kind: "agent", model: "m", tag: "session", createdTs: 1, lastTs: 2, status: "ok", turns: [], task: "t",
+        steps: [{ step: 1, seq: 1, ts: 1, tool: "exec", arguments: { js: "x" }, result: "0", approval: "user", shCalls }], answers: [] };
+    const { md } = serializeSession(s);
+    assert.match(md, /Held: \/w\/\.env \(unreadable to this call\)/);
+    assert.match(md, /Held: \/w\/\.netrc \(unreadable to this call\)/);
 });
 
 test("a cited table, a returned frame and a loaded frame held as a prefix say the source's row count in both sinks", async () => {

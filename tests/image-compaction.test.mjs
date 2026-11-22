@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { collectPngs, replaceImages, isOpaque, samePixels, WEBP_LOSSLESS } from "../src/session/image-compact.ts";
 import { SessionStore } from "../src/session/session-store.ts";
-import { imageCompactor, compactionJob } from "../src/sw/sw-image-compact.ts";
+import { imageCompactor, compactionJob, compactionPaused } from "../src/sw/sw-image-compact.ts";
 import { jobStatus } from "../src/job-registry.ts";
 
 const T = { timeout: 10000 };
@@ -75,13 +75,23 @@ const summary = (hash, over = {}) => ({ id: { runtime: "local", hash }, kind: "a
 const ev = (hash, n, over = {}) => ({ kind: "agent-step", id: hash, ts: 1000 + n, save: true, session: { hash, turn: 0 }, step: n, seq: n, tool: "look", ...over });
 
 function backend(seed = []) {
-    const rows = new Map(seed.map((r) => [r.hash, r])), events = new Map();
+    const rows = new Map(seed.map((r) => [r.hash, r])), events = new Map(), history = new Map(), meta = new Map();
     return {
         rows: async () => [...rows.values()],
-        append: async (row, from, list) => { rows.set(row.hash, row); const have = events.get(row.hash) ?? []; list.forEach((e, i) => { have[from + i] = e; }); events.set(row.hash, have); },
+        append: async (row, from, list, hw) => {
+            if (hw) {
+                const hist = history.get(row.hash) ?? [];
+                if (hw.cut != null) hist.length = Math.min(hist.length, hw.cut);
+                for (const [pos, m] of hw.puts) hist[pos] = m;
+                history.set(row.hash, hist);
+                if (hw.meta) meta.set(row.hash, hw.meta);
+            }
+            rows.set(row.hash, row); const have = events.get(row.hash) ?? []; list.forEach((e, i) => { have[from + i] = e; }); events.set(row.hash, have); },
         events: async (hash) => [...(events.get(hash) ?? [])],
-        remove: async (hashes) => { for (const h of hashes) { rows.delete(h); events.delete(h); } },
-        _rows: rows, _events: events,
+        historyRange: async (hash, from, to) => (history.get(hash) ?? []).slice(from, to),
+        runMeta: async (hash) => meta.get(hash) ?? null,
+        remove: async (hashes) => { for (const h of hashes) { rows.delete(h); events.delete(h); history.delete(h); meta.delete(h); } },
+        _rows: rows, _events: events, _history: history,
     };
 }
 const fakeEncode = async (url) => webpOf(url);
@@ -214,7 +224,8 @@ test("the row's history, what a resume sends the model, is never touched", T, as
     await store.flush();
     await store.compactImages("aaaa0011", fakeEncode);
     assert.equal(messages[0].images[0], png(1));
-    assert.equal(be._rows.get("aaaa0011").history.messages[0].images[0], png(1));
+    assert.equal(be._history.get("aaaa0011")[0].images[0], png(1), "on the disk too");
+    assert.equal((await store.history("aaaa0011")).messages[0].images[0], png(1));
 });
 
 // --- the background pass ---
@@ -244,6 +255,33 @@ test("the pass waits for the writes to stop, compacts every candidate, and logs 
     assert.equal(done.bytes, per[0].bytes + per[1].bytes);
     assert.equal(records[0].detail.sessions, 2);
     assert.deepEqual(store.compactable(), []);
+});
+
+test("a paused compactor starts no quiet timer on a kick, and a pass asked for still runs", T, async () => {
+    // The node:vm harness pauses the worker's compactors (__ML_PAUSE_COMPACTION): a test that saved a session must not
+    // get a pass 15 s later, nor a process held open waiting for one.
+    const store = new SessionStore(backend());
+    const records = [];
+    const c = imageCompactor(store, { encode: fakeEncode, record: (r) => records.push(r), quietMs: 10, paused: true });
+    store.put(summary("bbbb0009"), ev("bbbb0009", 0, { feedback: { image: png(1) } }));
+    await store.flush();
+    c.kick();
+    assert.equal(c.status().nextDue, undefined, "no timer is due");
+    await new Promise((r) => setTimeout(r, 40));
+    assert.equal(records.length, 0, "the kick ran nothing");
+    await c.pass();
+    assert.equal(records.at(-1)?.kind, "compact-pass-done");
+    assert.deepEqual(store.compactable(), []);
+});
+test("compactionPaused reads the harness's switch, and only `true` pauses", () => {
+    const g = globalThis;
+    try {
+        assert.equal(compactionPaused(), false);
+        g.__ML_PAUSE_COMPACTION = "yes";
+        assert.equal(compactionPaused(), false);
+        g.__ML_PAUSE_COMPACTION = true;
+        assert.equal(compactionPaused(), true);
+    } finally { delete g.__ML_PAUSE_COMPACTION; }
 });
 
 test("a pass whose encoder fails stops at once and logs it, leaving every session for the next", T, async () => {

@@ -3,7 +3,7 @@
 // approval / grant / host-access chrome, the JSON-tree tool-def viewer, the agent-options block, nav
 // dividers, and the run container (AgentRunView / LiveStream / PendingNote). Extracted from app.tsx; it
 // sits above ./reply (uses ReplyBubble) and the ui-kit / answer-render / render-panel / debug-reducer layers.
-import { ArrivingMsg, PROMPT_RAW_TIPS, RawToggle, SentContext, SentImages, UserActions, UserText } from "./user-text";
+import { ArrivingMsg, PROMPT_RAW_TIPS, RawToggle, SentAsIs, SentContext, SentImages, UserActions, UserText } from "./user-text";
 import type { ComponentChildren } from "preact";
 import { services } from "../services";
 import { useState, useEffect, useRef, useContext } from "preact/hooks";
@@ -33,6 +33,7 @@ import { Disclosure } from "../disclosure";
 import { Hash } from "../copy-hash";
 import { FeedbackBlock, ReusedBlock } from "./answer-render";
 import { foldStreaks, StepStreak, InStreak } from "./step-streak";
+import { isSettling, isYoung, noteSteps, noteStreamed } from "./step-settle";
 import { FoldRail } from "./fold-rail";
 import { AskList } from "./ask-card";
 import { ShCalls } from "./sh-calls";
@@ -44,10 +45,11 @@ import { StartAskCard, SiteWaitPrompt } from "../card/card-start";
 import { hostOf } from "../../agent-start";
 import { JsonNode, type JsonSchemaNode } from "./json-tree";
 import { LiveCall } from "./live-call";
+import { HeldLive, HeldStep, foldPauseOwed, noteFold } from "./live-hold";
 import { liveCallView } from "./live-call-view";
 import { isRefusedPkgCard } from "../card/pkg-card-view";
 export { JsonNode, JtKey, jtPreview, type JsonSchemaNode } from "./json-tree";
-import { RenderPanel, OutputCell, SeenSplit, RanFor, RunningFor, inLineMap, type CodeCtx } from "./render-panel";
+import { RenderPanel, OutputCell, SeenSplit, PlainOutput, RanFor, RunningFor, inLineMap, type CodeCtx } from "./render-panel";
 import { ReplyBubble } from "./reply";
 import { noteLiveAnswer } from "./streaming-md";
 import { CodeExplain, IntentSentence, codeOf, intentFor } from "./summaries";
@@ -56,6 +58,7 @@ import { EarlierInThread, tail } from "./transcript-window";
 import type { AgentTurnGroup } from "../debug-reducer";
 import { ApprovalRow } from "./approval-row";
 import { useRawView } from "../raw-view";
+import { useHeightEase } from "../ease-height";
 
 // A Jupyter-style In:/Out: block: a gutter label + content, collapsible on its
 // own (a grey inline preview shows when collapsed). If a descriptor targets THIS
@@ -358,6 +361,9 @@ function TokenChip({ token }: { token: string }) {
     );
 }
 
+/** How long, in ms, a step that has just settled stays open before the reading view folds it. */
+const SETTLE_DWELL_MS = 900;
+
 /** ONE TOOL CALL in a run — the header (name, status, approval badge, live preview), the approval gate
  *  when it is waiting on you, and both I/O halves when it is open. The step is where the two render
  *  descriptors meet, so it is also what passes the failing line and the reflow map from the Out to the
@@ -447,7 +453,14 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
     // …EXCEPT a code tool, whose sentence says only WHERE it runs. The source is the thing being judged and no
     // sentence stands in for it, so it unfurls either way. This used to ride on `intentFor` returning null for a
     // code tool; now that it returns one, the rule has to say what it meant.
-    const forcedOpen = awaiting && !(intent && !codeOf(st) && focusMode.value);
+    // A nested ask waiting inside this running step: the step reads as needing approval while it does.
+    const askWaiting = !!st.pending && !!st.asks?.some((a) => a.state === "pending" && !a.external);
+    // …and a CODE step holds itself open while a command it started waits on the person: that card asks about one call
+    // inside the code, and over a folded row it does not say which. This is the step's own state, not something the
+    // gate's `decide` has to remember: the gate may be answered from the footer or by a remembered grant, and the step
+    // then arrives here shut.
+    const holdsForAsk = askWaiting && !!codeOf(st);   // in every view: the code is the context the card's command came from
+    const forcedOpen = (awaiting && !(intent && !codeOf(st) && focusMode.value)) || holdsForAsk;
     const open = expanded || forcedOpen;
     // CLOSING A STEP, on a surface that animates it shut. The body is unmounted the moment it closes, so there is
     // nothing left to animate — the way to give it a way out is to keep it mounted for exactly as long as the
@@ -461,8 +474,30 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
     const rootRef = useRef<HTMLDivElement>(null);
     const { closing, close, cancel } = useCloseAnimation(rootRef);
     const closeOnSettle = useRef(false);
-    useEffect(() => { if (closeOnSettle.current && !st.pending) { closeOnSettle.current = false; close(() => setExpanded(false)); } });
+    // The step folds a moment AFTER it settles, not in the render its result arrives in: the result was drawn and gone in the same
+    // breath, and a reader approving a call never saw what it returned.
+    // state: ui — the pending fold of a settled step
+    const settleTimer = useRef(0);
+    useEffect(() => {
+        if (closeOnSettle.current && !st.pending) {
+            closeOnSettle.current = false;
+            // The next model turn often starts streaming while this step is still open: it waits for the fold (the dwell, then the close) and a beat more.
+            noteFold(SETTLE_DWELL_MS + 400);
+            settleTimer.current = setTimeout(() => close(() => setExpanded(false)), SETTLE_DWELL_MS) as unknown as number;
+        }
+    });
+    useEffect(() => () => clearTimeout(settleTimer.current), []);
+    // `handed` holds the body's open animation still for a step that has just taken over from a live call. It ends with the step's
+    // being open: kept past a fold, the next unfurl played no animation at all (it snapped open, where every other step eased).
+    useEffect(() => { if (!open && handed) setHanded(false); }, [open, handed]);
+    // What the body holds, as far as its height is concerned: the running output, the result, the commands it ran. A change in any of
+    // them eases the body to its new height in the calm view, where it used to jump.
+    useHeightEase(bodyRef, `${st.pending ? 1 : 0}${awaiting ? 1 : 0}${decided ? 1 : 0}${st.approval ?? "-"}${st.result == null ? 0 : 1}${st.asks?.length ?? 0}.${st.shCalls?.length ?? 0}${st.renderOut ? 1 : 0}`, focusMode.value && !closing);
+    // Once a command has asked, the code stays open after it is answered too (the rest of the script is still running). The
+    // reading view folds it when the step settles, as it does after its own approval; the panel never folds a step by itself.
+    useEffect(() => { if (holdsForAsk) { if (focusMode.value) closeOnSettle.current = true; setExpanded(true); } }, [holdsForAsk]);
     const toggle = (): void => {
+        clearTimeout(settleTimer.current);   // a hand on the step ends the wait to fold it
         // `forcedOpen`, not `awaiting`: a step that CANNOT close has nothing to animate, but a gated step in calm
         // closes like any other and was snapping shut while every step beside it eased. It read as a different
         // control on the one step you are most likely to be poking at.
@@ -490,7 +525,7 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
         // A CODE STEP STAYS OPEN while it runs: the program it starts (an `ml.sh` inside the cell) asks next, and a card
         // over a collapsed row does not say which code wants it. It folds when the step settles (`closeOnSettle`).
         if (focusMode.value && codeOf(st) && st.pending) { closeOnSettle.current = true; setExpanded(true); setFading(true); setTimeout(() => setFading(false), 220); }
-        else if (focusMode.value) { setFading(true); close(() => { setFading(false); setExpanded(false); }); }
+        else if (focusMode.value) { noteFold(400); setFading(true); close(() => { setFading(false); setExpanded(false); }); }
         else setExpanded(true);
         if (hash && st.seq != null) decidedSteps.add(stepKey(hash, st.seq));
         void decideGate(st, hash!, st.seq!, ok, persist, feedback);   // fetch_url: grant its host in-gesture, then post
@@ -509,8 +544,6 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
     // `gate`, not `awaiting`: everything the card SAYS has to stay put while it animates away, or its last beat
     // on screen is a different card — the intent sentence replaced by the generic question, the grant note gone.
     const gate = awaiting || fading;
-    // A nested ask waiting inside this running step: the step reads as needing approval while it does.
-    const askWaiting = !!st.pending && !!st.asks?.some((a) => a.state === "pending" && !a.external);
     // Whether the RUNTIME would still act on it — the other reducer over the same events. A run that died without a
     // terminal event leaves this client's step `awaitingApproval` for ever, so the card is drawn with live buttons
     // over a gate nothing holds.
@@ -528,7 +561,9 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
     // call. The step keeps its own state; only the live chrome is withheld.
     const cut = !!st.pending && !live;
     const inFlight = !!st.pending && !cut;
-    const railed = focusMode.value && !forcedOpen;
+    // The rail is drawn on a gate held open too, STILL (it cannot be folded yet): the line is there through the whole approval and
+    // becomes the control in place when the call is decided, instead of appearing under the click.
+    const railed = focusMode.value;
     const sheetGrants = gate ? externalSheetGrant(st.arguments) : [];
     const showGrants = gate && hasPersistGrants(st.grants);
     return (
@@ -545,6 +580,7 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
                     while the dot is what the eye is on when the question is asked. `toolMs` is the TOOL's clock and
                     not the step's, because a step's time is mostly a human standing at an approval gate. */}
                 <Dot status={inFlight ? "pending" : toolFailed(st.result) ? "err" : "ok"} ts={st.ts} ms={st.toolMs}
+                    tip={inFlight && !cut && (awaiting || askWaiting) ? (awaiting ? "Waiting for your approval to run it." : "Running, and waiting for your answer to the command it started.") : undefined}
                     warn={cut ? (awaiting ? "The run ended before anyone answered, so this call never ran." : "The run ended before this call finished.") : undefined} />
                 {/* Tool-authored short summary (contract MlTool.summary) → hover tooltip, both surfaces. */}
                 {/* THE MODEL'S OWN ACCOUNT of this call (the reserved `title` argument), where it wrote one. It is a
@@ -569,8 +605,8 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
             {open
                 ? <div class={`astep-body${closing ? " closing" : ""}${railed ? " railed" : ""}`} ref={bodyRef}>
                     {/* The reading view's fold rail, as an open group has: the line that says where this call ends
-                        closes it. Not on a gate held open, which cannot close. */}
-                    {railed ? <FoldRail onFold={toggle} tip="Collapse this call" /> : null}
+                        closes it. A gate held open wears it still: nothing closes it yet. */}
+                    {railed ? <FoldRail onFold={forcedOpen ? () => {} : toggle} tip="Collapse this call" cls={forcedOpen ? "fold-rail-still" : undefined} /> : null}
                     {issues ? <div class="tt tt-row arg-issues"><IconWarn /><span>arg schema: {issues.join("; ")}</span><span class="tt-pop wrap left" role="tooltip">The args don't match this tool's parameter schema.</span></div> : null}
                     {st.reused?.length ? <ReusedBlock reused={st.reused} /> : null}
                     {args || inRender
@@ -601,7 +637,7 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
                                 // LIVE tool output (ctx.stream — console.log / print) filling in Jupyter-style while it runs.
                                 ? <div class="astep-streaming"><SeenSplit text={st.streamOutput} seen={liveCutoff(st)} live marks={st.streamMarks} /></div>
                                 : <span class="dim">running…</span>)
-                            : (st.modelResult ?? st.result) ? <Code text={st.modelResult ?? st.result ?? ""} lang="text" /> : <span class="dim">(no output)</span>}
+                            : (st.modelResult ?? st.result) ? <PlainOutput text={st.modelResult ?? st.result ?? ""} /> : <span class="dim">(no output)</span>}
                         rawText={inFlight ? undefined : (st.modelResult ?? st.result ?? "") || undefined} />
                     {st.feedback ? <FeedbackBlock fb={st.feedback} /> : null}
                     {/* The step's POINTER, when the run minted one — a first-class handle the model reads its
@@ -701,7 +737,7 @@ export function AgentTurn({ turn, max, hash }: { turn: AgentTurnGroup; max?: num
             {turn.half === "tools" ? null : <div class="aturn-head"><StepPill step={turn.localStep} max={max} /></div>}
             {turn.reasoning ? <ThoughtBlock thought={turn.reasoning} tokens={turn.reasoningTokens} /> : null}
             {turn.thought ? <TurnProse text={turn.thought} ts={turn.thoughtTs} /> : null}
-            {turn.tools.map((st, i) => <ToolStep key={`${st.tool}-${i}`} st={st} hash={hash} slot={i} />)}
+            {turn.tools.map((st, i) => <HeldStep key={`${st.tool}-${i}`} st={st} slot={i} young={isYoung(hash ?? "", st)}><ToolStep st={st} hash={hash} slot={i} /></HeldStep>)}
         </div>
     );
 }
@@ -850,10 +886,11 @@ export function UserBubble({ text, ts, images, steer, display, site, task, pin }
             <div class={`msg user${shown || display ? "" : " no-text"}${site ? " from-site" : ""}${task ? " from-task" : ""}`} data-prompt={pin}>
                 {/* A message a SITE sent carries its name, never "you" (docs/spec/SITE_ACCESS_SLICE3.md, Q2a). */}
                 <div class="mrow"><span class="who">{task ? `task ${task}` : site ? hostOf(site) : "you"}</span>{steer ? <SteerSeen seen={!!steer.seen} /> : null}{display ? <RawToggle raw={raw} onRaw={setRaw} tips={PROMPT_RAW_TIPS} /> : null}<span class="sp" />{shown ? <UserActions text={shown} editable={!task} /> : null}<Stamp ts={ts} /></div>
-                {shown ? <UserText text={shown} /> : null}
+                {shown ? <UserText text={shown} marks={!raw} /> : null}
             </div>
             <SentImages images={images} />
             {display && !raw ? <SentContext context={display.context} /> : null}
+            <SentAsIs names={display?.asIs} />
         </ArrivingMsg>
     );
 }
@@ -1055,6 +1092,11 @@ export function AgentRunView({ s }: { s: Session }) {
     // appears to do nothing. Which is the exact failure `reveal` exists to prevent.
     const r = rev.value;
     const runLive = services().stillLive(s.hash);
+    // A step still moving (just decided, or just started) is not grouped yet; when the first of them is let go, this draws again.
+    if (s.liveStream?.calls?.length) noteStreamed(s.hash, s.liveStream.step);
+    const foldWait = foldPauseOwed();
+    const settleIn = noteSteps(s.hash, s.steps || []);
+    useEffect(() => { const ms = Math.min(settleIn || Infinity, foldWait || Infinity); if (ms === Infinity) return; const t = setTimeout(() => { rev.value++; }, ms + 20); return () => clearTimeout(t); });
     const items: { pos: number; ts: number; el: preact.JSX.Element; weight?: number }[] = [
         { pos: -1, ts: s.createdTs, el: <UserBubble key="task" pin="task" text={s.task || ""} ts={s.createdTs} images={s.taskImages} display={s.taskDisplay} site={s.site} /> },
         // A RUN OF THE SAME TOOL folds into one row in the reading view — eight `exec` rows with empty previews say
@@ -1065,7 +1107,7 @@ export function AgentRunView({ s }: { s: Session }) {
         // reader's own messages. A fold that spans one leaves that item rendering below the whole block, which is
         // how a "stopped at its step cap" seam ended up under the seven steps it sat in the middle of.
         ...((runGoing => focusMode.value
-            ? foldStreaks(groups, { live: runGoing, all: groupAllTools.value, breaks: [...answers.map(a => a.atStep), ...(s.says || []).map(m => m.atStep)] })
+            ? foldStreaks(groups, { live: runGoing, all: groupAllTools.value, settling: (st) => isSettling(s.hash, st), breaks: [...answers.map(a => a.atStep), ...(s.says || []).map(m => m.atStep)] })
             : groups)(s.status === "pending" && runLive)).map(g =>
             "kind" in g
                 // `live` is the same answer `foldStreaks` is given, and it is what lets the streak tell a fold
@@ -1085,7 +1127,8 @@ export function AgentRunView({ s }: { s: Session }) {
             ts: r.ts,
             el: <ResumeDivider key={`r${i}-${r.id}`} r={r} />,
         })),
-        ...(s.answers || []).map((a, i) => ({ pos: a.atStep + 0.5, ts: a.ts, el: answer(a, `a${i}`, i) })),
+        // The newest answer waits out the pause after a collapse, like the stream it came from (live-hold.tsx): a model that finishes inside the fold would draw it over the motion.
+        ...(s.answers || []).map((a, i) => ({ pos: a.atStep + 0.5, ts: a.ts, el: answer(a, `a${i}`, i), held: i === (s.answers?.length ?? 0) - 1 && foldWait > 0 })).filter((it) => !it.held),
         // A task's result is drawn twice and CSS shows one: the calm line, or the dev view's labelled bubble (task-line.tsx).
         ...(s.says || []).map((sy, i) => ({ pos: sy.atStep + 0.5, ts: sy.ts, el: sy.task
             ? <div key={`s${i}`} class="task-say"><TaskResultLine task={sy.task} text={sy.text} end={sy.taskEnd} /><div class="task-dev"><UserBubble pin={`s${i}`} text={sy.text} ts={sy.ts} task={sy.task} /></div></div>
@@ -1104,7 +1147,7 @@ export function AgentRunView({ s }: { s: Session }) {
             <AgentOptionsBlock s={s} />
             <EarlierInThread sessionKey={s.hash} hidden={hidden} />
             {drawn.map(it => it.el)}
-            {s.liveStream && runLive ? <LiveStream ls={s.liveStream} s={s} /> : null}
+            {runLive ? <HeldLive ls={s.liveStream} landed={(step) => callsLanded(s, step)} render={(ls, rest, leaving) => <LiveStream ls={ls} s={s} rest={rest} leaving={leaving} />} /> : null}
             <StartAskCard s={s} />
             <SiteWaitPrompt s={s} />
             {/* THE RUN SAYS HOW IT ENDED, or the transcript simply stops. A run that died without a terminal event
@@ -1124,7 +1167,7 @@ export function AgentRunView({ s }: { s: Session }) {
 // `.aturn` group (StepPill + a live `ThoughtBlock`, ticking count, expand to watch), the reply into the real
 // `ReplyBubble` in streaming mode (model chip + content + a live pulse). Cleared the instant the step's real
 // events land (the reducer nulls liveStream on agent-step/agent-result).
-export function LiveStream({ ls, s }: { ls: NonNullable<Session["liveStream"]>; s: Session }) {
+export function LiveStream({ ls, s, rest, leaving }: { ls: NonNullable<Session["liveStream"]>; s: Session; /** only the calls that have no step yet: the turn's thinking is drawn by the turn that has landed */ rest?: boolean; /** call indexes folding away */ leaving?: ReadonlySet<number> }) {
     if (!ls.reasoning && !ls.content && !ls.calls?.length) return null;
     if (ls.content) noteLiveAnswer(s.hash);
     // AN ANSWER WRITTEN AS A CALL is the reply all the same. The reading view draws it as one (the words fading in, and
@@ -1139,15 +1182,25 @@ export function LiveStream({ ls, s }: { ls: NonNullable<Session["liveStream"]>; 
                 place its step takes once the call is parsed. */}
             {ls.reasoning || ls.calls?.length
                 ? <div class="aturn">
-                    <div class="aturn-head"><StepPill step={ls.localStep ?? ls.step} max={s.maxSteps} /></div>
-                    {ls.reasoning ? <ThoughtBlock thought={ls.reasoning} tokens={ls.reasoningTokens} live /> : null}
-                    {(ls.calls || []).map((c) => <LiveCall key={c.index} call={c} />)}
+                    {rest ? null : <div class="aturn-head"><StepPill step={ls.localStep ?? ls.step} max={s.maxSteps} /></div>}
+                    {ls.reasoning && !rest ? <ThoughtBlock thought={ls.reasoning} tokens={ls.reasoningTokens} live /> : null}
+                    {(ls.calls || []).map((c) => <LiveCall key={c.index} call={c} leaving={leaving?.has(c.index)} queued={rest} />)}
                   </div>
                 : null}
             {ls.content ? <ReplyBubble content={ls.content} status="ok" model={s.model} profile={sessionProfile(s)} ts={ls.step /* unused while streaming */} streaming /> : null}
             {answerText && !ls.content ? <div class="live-answer"><ReplyBubble content={answerText} status="ok" model={s.model} profile={sessionProfile(s)} ts={ls.step} streaming /></div> : null}
         </>
     );
+}
+
+/**
+ * How many of the calls the model wrote in turn `step` have a step now (one per call, in order), and Infinity once nothing more
+ * will come of them: the run has ended, or a later turn has begun. What the held live cells wait on.
+ */
+export function callsLanded(s: Session, step: number): number {
+    const steps = s.steps || [];
+    if (s.ended || steps.some((st) => st.step > step)) return Infinity;
+    return steps.filter((st) => st.step === step && st.tool && !isYoung(s.hash, st)).length;
 }
 
 /**

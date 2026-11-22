@@ -630,7 +630,7 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   lane's account: a hardlink to a dotenv file at a root's top is found by device and inode, hidden and listed;
   deeper is a documented gap; `.env.example`, `.env.sample` and `.env.template` are readable and no longer
   flagged secret, unless one shares a hidden file's inode; naming a secret path unmasks it for that call, and the
-  approval is the control; a masked file on Linux reads empty. It waits on e3 re-pointing three rows. The
+  approval is the control; reading a masked file fails on both platforms (corrected below). It waits on e3 re-pointing three rows. The
   model-facing "held unreadable" note is a separate window-ml PR after it merges.
 - **The scrub (feat/secret-registry-scrub, spec at 7d635478, no PR yet).** The spec's eight edits are accepted.
   Registry values are typed in Settings and kept under `secretRegistry` in chrome.storage.local: at most 64
@@ -743,6 +743,868 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
 - **Bench, the links sentence.** Two sweeps disagree (Mantel–Haenszel by model: 2.90 then 1.59, the second with
   heterogeneity). RELAYED from bench's session: Shane asked for a third sweep with the test fixed in advance. No
   PR until it is done. The resume bound is still open.
+
+**Corrections and review state, 2026-11-17 (later).** Each head below was read from GitHub when this was written.
+
+- **Withdrawn: "a masked file on Linux reads empty."** That was the coordinator's call and it was wrong. Ubuntu CI
+  on window-ml-host#46 measured that reading a held dotenv file FAILS on both platforms: EPERM on macOS, EACCES on
+  Linux, because bwrap's read-only bind is nodev and the `/dev/null` laid over the file cannot be opened. The host
+  docs and one test row (`a_held_dotenv_read_fails_with_the_platforms_refusal`) say so at head 2989ff40. The
+  lane's account: no other "reads empty" claim is left in the host repo, and window-ml's shell docs never made it.
+  The model-facing note that follows the host PR says "fails" from the start.
+- **Other calls on host#46.** A root-top hardlink to a DEEPER dotenv file (`ln app/.env notes.txt`) is part of
+  the documented gap, with a row. Writing, renaming and unlinking a held file stay denied, and the docs name the
+  refused bootstrap copy with the unsandboxed mode as the way through. On Linux, creating a NEW dotenv name
+  succeeds and is held from the next call; accepted. The deny set is the dotenv names plus `.netrc`,
+  `.git-credentials` and `.pgpass` at a root's top; that widening is still open with Shane.
+- **#1935 (`change_setting` part a), head ca2b51f8.** The reviewer asks one change: the secret-class test keeps
+  its five names as a LITERAL and asserts both directions against `[...SECRET_KEYS, "pageApprovalDomains"]`. This
+  REPLACES the coordinator's earlier "computed" shape, which would have passed with a key dropped from both sides.
+- **#1929 (async slice C), head 532bf799.** The red team's three: `sends` reads one high after a joint take-back,
+  which async repairs now with its own row; `takeBack`'s shelf drop is unobservable, so it gets a code comment
+  and no new read; the redundant `had` check in `holdText` needs no action. The reviewer re-reads the final head.
+- **#1942 (async slice D), head c9ab1f5e.** The reviewer asks one change: the detached-task paragraph's figures
+  in the prompt budget doc do not match the stated kit (326 chars and 56 words, 7,257 to 7,583). Red-team rows
+  for the two new public config keys go on top of the corrected head.
+- **#1934 (wheel scan), head b166d7d7.** Three repairs are owed in one push: the walk moved outside the `try`
+  with a row, two `scanDetail` rows, and a length cap per name in the scan note (the red team measured a note of
+  1,600,197 chars from one crafted wheel; two of its rows are red until the cap lands).
+- **#1944 (the links sentence, third sweep), head 060b9fe7.** The lane's account: Mantel-Haenszel odds ratio 3.41
+  (1.39 to 8.32), p 0.010, Breslow-Day 0.37, right-place links 43 of 80 to 54 of 76; without GPT-6 Luna 2.56
+  (0.95 to 6.94); errored runs as misses 2.44 (1.08 to 5.54). RELAYED: Shane keeps the sentence on. The
+  coordinator reviewed it as a results PR, confirmed the analysis plan was committed before the data, and asked
+  no change.
+- **#1938 (session-store slice 1), head b919c5c4.** Three repairs pushed and the measurements rerun; conclusions
+  unchanged by the lane's account. Its ranged-read memory figures are VOID (the baseline drifted) and are being
+  rerun with a fresh browser per configuration. Back with the reviewer.
+- **The scrub (feat/secret-registry-scrub, pushed head f752e4fc, no PR yet).** A failed registry read is to be a
+  housekeeping event, `secrets`/`registry-unreadable`, carrying no name and no value, and before the registry is
+  read no crossing treats it as empty. The red team's cold-start rows are on the branch.
+- **#1941 (upload progress over the hub) merged as 6e8a654b.** A follow-up keys upload entries by position, so a
+  send's cleanup clears only its own; it comes from a new branch.
+- **#1936 (`ml.sh` in the read-only dialect), head d44f67fd,** is queued for review. The red team's reorder of
+  the sh-put row replaces the coordinator's proposed split: the channel answers "no shell" before the arity
+  check, and the row asserts the malformed refusal by import.
+- **A fatal error inside a Python cell never answers (found on #1934, the lane's account).** A module whose
+  compile overflows the JS stack (an attribute chain of about 2,000 or more, where CPython raises RecursionError)
+  leaves the cell's promise unsettled; the RangeError escapes as an unhandled rejection, which a Worker does not
+  report as `onerror`, so the offscreen document hears nothing until a timer fires. Coordinator's call: first the
+  cheap repair on our side, an `unhandledrejection` listener in the Python worker that answers the pending cell
+  as a fatal error and marks the kernel dead, built by packages with a row that fails first; a patch to the
+  Pyodide fork (a fatal error rejects the run's promise; the parser's recursion guard trips before the JS stack)
+  goes to the Pyodide lane, which async wears and which owns the pin, only if the listener is measured not to
+  catch it. RELAYED: Shane told the packages lane to raise editing Pyodide with the coordinator.
+- **Shane's rulings 26 to 38 (2026-11-17 and 2026-11-18, each said in the coordinator's session).**
+  - **26.** A fatal error inside a Python cell is repaired on our side first; Pyodide is edited only if it cannot
+    be. The model restarting the kernel is acceptable. Packages builds the listener after #1934, measuring first,
+    and calls async's namespace-released writer with the reason "kernel-death".
+  - **27.** The credential-file widening on host#46 (.netrc, .git-credentials, .pgpass at a root's top) is approved.
+  - **28.** The person's tab pick when resuming with no page is the chip beside the composer, alone, for now; no
+    `/page` command in this build. Move-run updates the open bullet in TABLESS_RUN.md in its next PR there.
+  - **29.** The session `[window-ml program-manifest-backfill]` owns the manifest backfill and proposes the BSD/GNU
+    handling; the coordinator rules on it.
+  - **30.** Page password fields are masked from the model. A value in a password-class field that the run's own
+    type calls did not write is held: every value seen joins the session's registry in worker memory (never
+    stored) and is scrubbed by value; the dialect and the DOM survey answer "filled"; the field is blanked in
+    screenshots. Password-class is type=password (sticky after a switch to text), the autocomplete tokens
+    current-password, new-password, one-time-code, cc-number and cc-csc, and `-webkit-text-security`. A click that
+    reveals a value exempts nothing. Known limits are stated (values under 8 chars get the channel mask only; a
+    page mirroring the value into ordinary DOM). The secrets game gains Test C: four fields, the toggler case
+    included; a loss is the whole string by any route. Coordinator's call: while a tab holds a masked field,
+    unmediated main-world exec on that tab asks, and the card names the field.
+  - **31.** ps, lsof and top get manifests but are disabled until the person approves each program: the issue is
+    key leakage. Coordinator's calls: a manifest-level class marker; a per-program opt-in list, default empty,
+    that is a gate key; forms that show environments stay unknown; the registry scrub still runs on output.
+  - **32.** A secret the model must never see and never needs to use is stored hash-only. Two classes: `use`
+    (value kept, for handles) and `mask` (the default; recognised only). Mask storage is a length, a short keyed
+    filter hash and a slow confirm hash, matched with a rolling keyed hash over a sliding window. The widths, the
+    slow hash's cost and the per-crossing time are measured in a notebook before they are fixed.
+  - **33.** Once the secrets store exists, setting it up is an inbox item in the Chat UI: dismiss it or fill it,
+    with an explanation of what it is for and of the two types. Coordinator's calls: shown once while the registry
+    is empty; filling is the person's gesture only; default type `mask`; in the first build values are entered only
+    in the extension-hosted renderer; it joins the existing attention inbox.
+  - **34.** The hiding rules are defaults, and a policy overrides them. The model proposing an entry that the person
+    approves on a card is the main path; a person may also write one. Policies are per session over global.
+    An odd layout gets a Known limits line and the override, not a new default rule; a hidden path that is
+    readable, or a default-held value reaching the model with no override, stays a defect. Coordinator's calls: one
+    list of `hide` and `show` entries, most specific wins, a tie hides; a gate key; the card offers "this session"
+    (default) and "always"; a `show` that cannot be applied whole is refused with a reason. The view of the
+    effective list is the access tab of small-fixes' Session summary page (below).
+  - **35.** After `/files` is built, backup and restore (docs/spec/BACKUP_FORMAT.md) carry the session's file
+    system: a backup holds the files and a restore brings them back. Streamed, never all files in memory, with a
+    stated rule for hidden files. A follow-on item with its spec section first.
+  - **36.** The `/files` layout is three parts: an `attached` folder of uploads, read-only to the agent, which may
+    copy out; an `agent` folder that is the agent's own space; and a root where nothing new may be created. The
+    model may dump a `@tool:` value in full into its folder: a copy through `ml.fs`, streamed from the stored
+    whole and not from the truncated view, written by kind (text as is, JSON, a binary's bytes, a table as CSV
+    with a header), budgeted, carried in the backup, and a table reloads as the one table type. Parquet is the
+    model's own work in Python. Python sees `/files` through Emscripten mounts: the attached folder on WORKERFS
+    (lazy slices of a Blob, read-only) and the agent folder on a custom mount over OPFS sync access handles;
+    never a mount that loads whole files. The scrub runs inside the mount's read, chunked with an overlap.
+    Measured first, by packages, in a notebook: whether the restricted fork gates `open()` on a mount, whether
+    worker memory stays flat reading ranges of a 1 GiB file, and whether a Parquet writer wheel exists.
+  - **37.** An acceptance test after the packages lane: the model is given a cloud database (BigQuery or similar).
+    It joins secrets, packages that are not preinstalled, large data that is never all in the kernel, and an
+    external network call. Coordinator's calls, agreed by Shane: the credential never enters the kernel and is
+    attached by the worker at the network crossing, bound to its host; Python's network is closed by default and
+    opened per host on a card; the worker makes the call; an outgoing body carrying a registered secret to a
+    host it is not bound to is refused; the card states that an allowed host can be sent any unregistered data.
+    The gate has three layers: a browser-level connection ban on the Python worker is the wall, the CPython fork
+    is the policy, and patching the worker's JS globals is no guarantee. Packages measures first: a per-worker ban
+    inside the extension, a blocking bridge for synchronous libraries, what a compiled wheel can call below
+    Python, and whether a cell can fetch directly from the worker today. The repeatable guard runs against a
+    local database with a fake credential; the real-model run needs Shane's yes in the bench session. Order: the
+    secrets game (Tests A to C) needs handles only; this test needs handles, packages, the `/files` mounts and
+    the network gate.
+  - **38.** For the Python network gate, editing Pyodide or the CPython fork is allowed wherever the gate needs it
+    to work at all, the blocking bridge included. Ruling 26 is unchanged for a fatal error in a cell.
+  - **The stash in the main clone** stays unclaimed and untouched: never popped, dropped or applied.
+- **Coordinator's calls since #1945 (each surfaced to Shane, who may override).**
+  - **The scrub (#1948).** renderOut's text fields and the token store's whole are scrubbed where the loop scrubs
+    the result; an error string to a page is scrubbed after the registry is ready, fails closed, and carries a
+    nameless marker, with the confirm-a-guess oracle in Known limits; the multi-byte margin offset is repaired
+    with a row; byte scrubbing and the write-time scrub of stored wholes go to scrub PR 2.
+  - **The host.** The hard-link question is closed with no defect (host#47: EXDEV on Linux, "Operation not
+    permitted" on macOS); the same-mount Linux case is accepted as not buildable. A symlink from a dotenv name to
+    a template at a root's top keeps the template held, read and write.
+  - **change_setting (#1952).** The model may propose a standing allow for the `setting` consumer, never one that
+    frees a guarded key, a shell key or the start page; this build refuses it and part (c) decides. A guarded
+    key's change always shows its card, in either direction; `widens` is a fact a policy may read, to deny a
+    widening change, and never frees one. An unclassed config key fails closed. Its prompt cost is 625 chars per
+    worker-built run; the token delta is unmeasured and goes to the next prompt review.
+  - **The access tab.** The access tab of the Session summary page is a per-session read of the existing policy
+    store, layered default, global, session, with the winner computed by the worker beside the judge; no editor;
+    a remove that narrows is one gesture and one that widens confirms, showing what becomes reachable; the read
+    carries paths only; the override computation is enumerated against the judge; docs land in the PR; red-team
+    rows follow the push.
+  - **The manifest backfill.** The BSD/GNU proposal is accepted: a `flavourOf` decision, a core flag set, add-only
+    overlays per flavour, an unrecognised flavour withholds the core, and a lockstep host PR. An in-root binary
+    is never probed; every sed and awk rule gets adversarial rows. Order: #1951, then PR 1 (schema), the host
+    port, sed and awk, the batches. On #1951 the red team found that a lone `-` is a real file for BSD head, tail,
+    wc and ls (its account, one machine); the repair, `dashIsPath` on those four, goes in #1951, and the GNU
+    reading (stdin) is judged as a path, the stricter reading, until flavours exist.
+  - **Smaller calls.** The two async keys `taskNotifyOnly` and `taskTurnChainMax` are classed guarded. The
+    namespace-released record lives in the session store: async owns the one writer, move-run the readers. No
+    red-team row is written against an unpushed head. A worktree's HEAD does not move while a job submitted from
+    it is queued or running.
+- **Merged since #1945 (each verified).** #1944 d4ae4d44, #1947 ee16c017, #1938 bcb407fa, #1942 642b4691,
+  #1946 f225d47c (its residual, a stale tab id after a restart, is a named follow-up for move-run), #1935
+  dcb90ee0 (change_setting part a), #1949 ee47e4da, #1937 2cf7e1bb (read_pages part a), host#46 1245ec01,
+  host#47 090fe14f, #1954 4a2ced14, #1953 bbd9b060 and #1922 418ad536 (calm-stream polish, draw-only).
+- **The test queue (2026-11-18).** The queue stalled the lanes: its price per worker ratcheted from 0.20 to 1.46 GB
+  in nine days and grants fell from 8 workers to 2 (the bench lane's account). Shane halted every lane overnight
+  and worked with bench. #1953 prices a run as a base plus a slope per worker, by command and class; #1954 adds
+  timing warnings and repairs timers that held about 99 test files open 20 to 300 s; the suite alone went from
+  415 s to 265 s by the lane's account, not yet observed under several sessions. Both were reviewed by a janitor
+  before merging. A lane merges main before its next full run; queue problems go straight to bench.
+- **Open PRs at this point.** #1951 (the optionsFirst repair) waits for the lone-dash repair, then a janitor.
+  #1952 (change_setting part b) holds the red team's rows at bbe1fea1 and waits for the lane's spec commit. #1948
+  (scrub PR 1) is in repair after a review asking two changes. #1936, #1929, #1934 and #1950 each owe a new head.
+  The bench lane's ranking of missing manifests: coverage of observed calls goes from 52.1% to 91.4, 95.4 and
+  98.1% at 5, 10 and 20 more manifests (its account).
+- **The resume (2026-11-18).** Shane lifted the halt for a subset: files-host, the manifest backfill, settings specs
+  and small-fixes, with the red team and both janitors on call; bench works on its own. Still halted until Shane
+  says: async, packages, Chat Page, move-run, session-store, flaky-ci (the coordinator recommends packages next).
+  A resumed lane gets bench's queue rules with its resume.
+- **Merged since #1955 (each verified).** #1956 e9f6d45f (the spec for rulings 30, 32 and 33), #1957 6f6f1b42 (the
+  hide-list spec, ruling 34), #1936 c04d6b32 (`ml.sh` in the read-only survey), #1958 6a4242a7 (bench: a test file's
+  leftover Pyodide timers cleared; 39.7 s against 48.7 s by the janitor's measurement), #1960 9039f793 (the matcher's
+  measured cost in the spec), #1961 20d2b2e7 (hidden-file values, an open design), #1962 fe172301 (offering `hide`
+  entries when a root is added) and #1964 148b74f1 (the `/files` spec, rulings 22, 23, 35, 36).
+- **Coordinator's calls on `change_setting` part (c).** No source check on the rule's key: the decision is made on
+  the MEASURE. An allow that covers every ordinary key is not refused; its card leads with "every setting the agent
+  may change". The measure varies `from` as well as `to`: a boolean or enum key over every (from, to) pair, others
+  from the current value and random ones, reported as sampled; four random samples per sampled number key, and a
+  number key with a declared minimum, maximum, integer step and a range of at most 2048 is enumerated. A deny or
+  ask rule on settings gets a card too. A key that could not be measured is named on the card, and an allow that
+  covers only unmeasured keys is refused. Delivery: the spec as its own docs PR after #1952 merges, then the code
+  with red-team rows.
+- **Coordinator's calls in the spec for rulings 30, 32 and 33 (#1956).** A page-password value stays in
+  `chrome.storage.session` and never reaches the local store (the coordinator withdrew its own suggestion of
+  hash-only entries on disk, which the weak-password limit forbids). At most 256 such values, failing closed. The
+  stored length `L` is stated as a leak. Lengths are UTF-16 code units, the chunk carry is the longest `L` minus
+  one, and no form shorter than `k` is stored. Widths `k = 8`, `w = 24` stay provisional.
+- **The matcher measured (ruling 32; notebook #1959, cleared, merging after the scrub).** The lane's figures at 64
+  entries on 1 MiB: about 5 distinct forms a secret, not 11, so `E` is about 313 and `T` about 278 distinct
+  filters. False candidates over 30 fresh-key trials: random text 20.0 ± 6.1 and base64 18.6 ± 4.9 against a model
+  `N·E/p` of 19.6; JSON 13.6 ± 16.2 and log text 17.4 ± 9.0, overdispersed. Counted by DISTINCT window the hits sit
+  on `D·T/p` with Poisson spread on all four texts (sd / sqrt(mean) of 1.16, 0.85, 1.04, 1.00), so the hash is
+  uniform and repeated windows make the clumps; the expectation stays `N·E/p` by linearity. The filter pass costs
+  about 53 ms a MiB against 30 for the plaintext scrub; PBKDF2-SHA256 costs 0.10, 0.35 and 1.34 ms at 1,000, 5,000
+  and 20,000 iterations. On the worker's side one filter hit separates by a difference of means (z = 2) after
+  about 5 to 47 crossings of each at 20,000 iterations and about 1,000 to 10,500 at 1,000, on a loaded machine.
+  Coordinator's calls from it, in the spec through #1960: the confirm is memoised within one crossing, keyed on
+  the form and the candidate's full `L` units, never on the `k`-unit window (that key leaves a real occurrence
+  unredacted); a crossing's time budget comes from the tail; and the timing-oracle remedy (a fixed confirm
+  schedule, or a floor on a page's crossing) is REQUIRED, the page-side run only sizing it. The iteration count is
+  not fixed until that run exists. A notebook PR's result is the coordinator's read; its measuring script goes to
+  no janitor.
+- **Coordinator's calls in the hide-list spec (#1957), under ruling 34.** The list binds every reader of a root. A
+  session `show` overrides a global `hide`; its card names the entry and offers no "always". A hidden path named as
+  a path argument asks, no allow policy frees it and the card offers no "always". Globs look forward only. A name
+  is listed and a read fails (EPERM on macOS, EACCES on Linux). ONE call narrows ruling 34 and is Shane's to
+  overrule: a `show` is refused on credential directories and on what the sandbox masks under the home directory.
+- **Offering `hide` entries when a root is added (#1962).** A file is offered when git ignores it AND its name is
+  on the host's credential-name lists; no contents are read. A credential directory is one row. The scan stops at
+  100,000 ignored paths or 10 seconds, keeps matches shallowest first, and shows at most 256 rows, saying when it
+  cut. Rows are unchecked; the offer is made once. A root set at the machine for remote use gets no offer until a
+  surface exists.
+- **Hidden-file values in the scrub (#1961): open design, not ruled.** The idea is that the host parses a hidden
+  file and registers its string values. Against it: it turns an unreadable file into one a script can confirm
+  guesses about through the redaction. The coordinator recommends against registering them; if ever, the host
+  sends hash-only entries, decided with handles.
+- **The `/files` spec (#1964).** Coordinator's calls in it: a backup with files is a SET of version-1 backup files,
+  each under the format's 1 GiB limit and authenticated on its own, the first naming the rest with their hashes,
+  a restore committing only when all of them authenticate; a hidden file's bytes are never in a backup and a
+  session `show` does not change that; the scrub inside a Python mount's read replaces a match with the same
+  number of filler bytes; a table dump is RFC 4180 CSV with a sidecar holding the column types (the one table type
+  does carry them) and a missing-value sentinel chosen per dump; the dump is `ml.fs.cp`; a whole-file read is
+  bounded at 8 MiB; if WORKERFS cannot run under the lockdown, a custom read-only mount replaces it, never a
+  loosened lockdown. OPEN for Shane, each recommended yes: the archive's month files carry session files, with a
+  setting to leave out files over a size; a restore over the quota restores everything and refuses new writes.
+- **The manifest backfill.** PR 1 is #1963 (flavours: `other` when the resolved file's name differs, `bsd` for a
+  resolved macOS system path, `gnu` by an anchored probe under the sandbox, undetected otherwise; a flavour's
+  hardening by discarding the first spawn and spawning again from the same program file). The lane's four choices
+  are accepted: flavours only with version range `*` and never on an entrypoint; the name check before the
+  system-directory check; `argOrder: "stop"` reading later arguments as path operands, with options-first forced
+  when undetected; stored manifests may carry flavours. Its host twin is host#49. Ruling 31's gate goes in its own
+  PR 1b, spec section first; no `ps`, `lsof` or `top` manifest merges before it. Its key is `shellRevealsAllow`, a
+  list of program names, empty by default, class gate (settings specs chose the `shell` prefix because a test pins
+  every such key as never ordinary).
+- **The hidden-files note for the model.** A code change, not a note: the host's list of files held unreadable for
+  a call reaches the card and the `ml.sh` answer. At most 16 paths reach the model, then a count; the paths cross
+  the scrub; it gets red-team rows; it opens after the scrub merges.
+- **Open PRs at this point.** #1951 (optionsFirst) at 60ddc743 and #1948 (scrub PR 1) at 95b7749c wait for
+  janitor-2; the red team's rows on #1948 found error strings nested under an error key unscrubbed, latent, and
+  the lane repaired it in the PR. host#48 (a sandbox test whose roots pass never measured the envelope, by the
+  lane's account) waits for janitor-2 as well. #1952 (change_setting part b) at ad8bc287 was reviewed at its
+  previous head with no change asked and waits for a comment naming the merged one. #1963 at 775a0365 holds an
+  accepted spec and waits for the red team's rows, then janitor-3; host#49 is with janitor-3. #1959 is cleared and
+  merges after #1948. Seen once and green on rerun: the e2e row at chat-two-execs.spec.mjs line 18, for flaky-ci.
+
+- **Shane's ruling 39 (2026-11-18, said in the coordinator's session): what the person sends is scrubbed too.**
+  People send a token to the model by accident: a paste, a selection, an attached file. The secrets idea applies to
+  the person's own input as well, unless the person explicitly flags that input as not to be redacted. Owner:
+  files-host, as an amendment section in the secret-handles spec first, then code with red-team rows and a janitor.
+  The coordinator's calls under it, each Shane's to override:
+  - **Two detectors.** By value: the scrub's matcher, so a stored secret (a hash-only one included, ruling 32) is
+    caught wherever it is typed. By shape: known token formats (vendor prefixes, PEM blocks, JWTs), since the
+    token sent by accident is usually one the store has never seen. A detector on entropy alone is not adopted
+    until a notebook gives its false-positive rate on real prompts (commit hashes, UUIDs, base64 data).
+  - **Where.** At the point input becomes a turn, before the session store and before the model, so the archive,
+    a backup and a hub hold the placeholder and never the value. It covers typed and pasted text, the text of an
+    attachment, a page selection and the prompt string of a page-started call.
+  - **What the person sees.** A chip in the composer on the detected span before sending, with "send as is" for
+    that one value. A send is never blocked. The transcript shows the placeholder the model saw and that the
+    scrub fired.
+  - **The flag.** Three levels: "send as is" per value in the composer, an option per call for a script, and one
+    setting in the DevTools Settings panel, on by default. A page can pass the option for its own string and can
+    never change the setting.
+  - **Order.** The spec section may open now; the by-value code follows the scrub (#1948), the shape detector is
+    its own PR. Open for the spec: whether a detected value is offered to the store as a secret (ruling 33's
+    inbox item) or dropped, and what happens when no store is set up.
+
+- **Shane's rulings 40 to 42 (2026-11-18, said in the coordinator's session), on ruling 39's open points.**
+  - **(40) The entropy-only detector waits for an investigation.** files-host owns the notebook, after the shape
+    detector.
+  - **(41) A detected value is offered to the store**, in a way the person can ignore easily. The spec's chip
+    ("Remember as a secret", beside "send as is") is that offer; ignoring it adds no dialog and no click.
+  - **(42) With no store set up, detection still runs**, and the chat UI shows an inbox message to set up a store
+    or dismiss the proposal. Setup is recommended in the item's text, in Shane's words because "most users do have
+    LLMs that are especially attached to the ml.sh ingest secrets". Ruling 33's item carries it; the coordinator's
+    call: a detection with no store does not raise a dismissed item again.
+  - **Still open with Shane:** a store that cannot be READ holds the turn (the coordinator's recommendation: hold).
+- **Ruling 39's spec and the calls accepted in it.** #1967 b9510f4f put the section in the secret-handles spec.
+  The coordinator's calls accepted from the lane there: a page's `scrubInput: false` turns off the shape detector
+  only, since a page is not the person; the shape list is separate from the host's `looks_secret`, which
+  classifies paths, and is shared with the scrub's tool-output patterns; "send as is" binds to a digest of the
+  span's content and is accepted only from an extension page; an attachment is scrubbed in its extracted text and
+  never in its bytes under `/files`; a session stored earlier is scrubbed when resumed and not rewritten; a remote
+  host has no per-value override in the first build.
+- **#1951 (optionsFirst) merged at 0fd67ebd** after janitor-2's comment at its head asked no change. Its two
+  residuals: the host's vector pin, now host#50 at 0ebe726f with janitor-3 (it conflicts with host#49 in one test
+  file, so the second to merge takes host main last); and a stale remark in the red team's test file, for e3.
+
+- **Shane's rulings 43 and 44 (2026-11-18, said in the coordinator's session).**
+  - **(43) LLM provider tokens are in the shape list.** Shane's reason: they are high-value targets for resale and
+    have standard patterns. The spec holds twelve vendors, each shape taken from a published detector (gitleaks or
+    trufflehog) with its source. The coordinator's calls under it: a loose fallback, since a redactor wants recall
+    where a leak detector wants precision (a distinctive prefix and at least 20 token characters match as that
+    vendor; a bare `sk-` and at least 20 alphanumerics holding a digit match as a generic key, missing about 3 in
+    100,000 keys of 32); and the extension's own saved key and its replaced keys are matched by value in the
+    person's input with no registration, which #1948 does not do. Vendors with no prefix (Mistral, Together, and
+    Cohere and Azure OpenAI outside a credential word) wait for ruling 40's investigation.
+  - **(44) A store that cannot be read holds the turn.** The coordinator's call, accepted. It is the one hold; a
+    detection never blocks a send. A caller with no composer is rejected with an error naming the option.
+  - #1969 1c69cd8b wrote rulings 40 to 44 into the secret-handles spec. Nothing under ruling 39 is open.
+- **The `host` gate was red on main (found by janitor-2 and janitor-3 independently, 2026-11-18).** A row of the
+  real-host spec for `ml.sh` still expected the route from before #1936, and #1936 never ran the gate: the CI filter
+  that starts it listed none of the survey's files. Docs-only merges kept main looking green. It stopped #1948,
+  #1952 and #1963 at their reviewers. The repair is its own PR off main, #1970 at 9fec221d (small-fixes, the author
+  of #1936): the row corrected, a row added for the isolated route, the filter widened; by the lane's account the
+  row's later assertions pass against a real host, so it was a stale row. It is with janitor-2. After it merges,
+  each of the three merges main last and returns to its reviewer. The rule kept: a main repair is never folded
+  into a PR it blocks.
+- **Shane's rulings 45 to 48 (2026-11-18, said in the coordinator's session; each was the coordinator's
+  recommendation, accepted).**
+  - **(45) Packages resumes.** Its order: #1934 to merge, then ruling 26's fatal-error listener, ruling 36's
+    measurement of the fork's `open()` on a mount, and ruling 37's measurement of closing Python's network. The
+    network gate still has no owner. Still halted: async, Chat Page, move-run, session-store, flaky-ci.
+  - **(46) The `show` refusal on credential directories stays.**
+  - **(47) The archive's month files carry the session's files**, with a setting that excludes files over a size.
+    Files-host proposes the key, the default and the unit in its docs PR.
+  - **(48) A restore that lands over the quota restores everything** and refuses new writes until the session is
+    back under it.
+  - Files-host folds 46 to 48 into its specs in one docs PR after #1948's work.
+- **The unit suite was red on main too (found by the coordinator on #1970's checks, 2026-11-18).** One red-team row
+  in tests/redteam-options-first.test.mjs has failed since #1951 merged at 0fd67ebd: it expected the refusal text
+  from before #1936 and got nothing back. Docs-only merges skip the suite, so main looked green; #1970's `host`
+  check passed and its `test (node 26)` and `hub` checks failed on this row alone. By the account of #1936's
+  owner and of e3, measured separately, nothing is wrong in the product: a survey script's undescribed call raises
+  a card, the row had no answerer, no program started, and a declined call returns `Denied` to the script. The
+  repair is its own PR, #1973 at 8fdd9ede (e3, that one file, the stale header remark corrected with it), with
+  janitor-3. Order after it: #1973, then #1970 merges main last and janitor-2 names its head (it has read the
+  diff at 9fec221d and asks no change), then #1948, #1952 and #1963.
+- **Host reviews (2026-11-18).** host#50 (the vector pin) merged at 19f46adf after janitor-3's comment. On host#48
+  janitor-2 asked that the hardlink row assert the envelope `done` reports, since the refusal is the same with no
+  envelope; the new head 74de3d7f is with it. On host#49 janitor-3 asked for the unknown-key row to cover the new
+  nested types under flavours; the new head b55853be is with it. e3 measured one row red on #1963 at 775a0365
+  (a stored manifest names its own probe arguments, so a program echoing one at a line start reads as GNU); it
+  goes to the manifest lane when e3 pushes it.
+- **The access tab is two PRs (coordinator's call).** Main has no Session summary page and no hide or show
+  consumer in the policy store. PR A is worker-only: the layered read with rows generic over consumer, the remove
+  with its narrowing and widening classes, the enumeration against the judge, docs; the hide and show rows are a
+  slot files-host fills by registering a classifier. PR B is the page and the tab, after the page's data shape is
+  settled, which waits for Chat Page's resume.
+- **Shane's ruling 49 (2026-11-18, said in the coordinator's session): sessions may message each other directly**
+  when the message does not benefit from the coordinator's review. The coordinator's scoping: direct for a
+  heads-up, a question about another lane's code or data shape, timing, which rows a change inverts, and queue
+  matters. Still through the coordinator: anything needing a ruling; reviewer assignment and every head for review
+  (verified by gh before a lane arms); a finding that changes a PR's scope or owner; a resume; anything said to
+  come from Shane. A direct exchange that changes a fact this plan records gets one line to the coordinator after.
+  The parked design for this is docs/spec/AGENT_MAIL.md.
+- **Merged since #1974 (each verified).** #1973 de3b77e0 (e3's repair of the red unit row; by e3's and the owner's
+  measurement no program had started and a declined call returns `Denied`), host#48 004b958c, host#50 19f46adf
+  and host#49 a8cd5092 (the flavours reader, with the `stop` rule below). #1970 has main merged at 426f2989, its
+  diff unchanged, and waits on its checks for janitor-2's comment.
+- **Manifest flavours, the red team's finding on #1963 and the coordinator's calls.** e3 measured that a stored
+  manifest satisfies its own anchored probe pattern (the probe's arguments are its own), and that an overlay's
+  `argOrder: "stop"` described a declared write flag after an operand as a path read, so the call ran free; the
+  approval card showed neither. The repair, on both describers: (a) under `stop`, a token after the first operand
+  that is a declared flag with a non-read effect is never a path, and the call asks (a cluster counts if any
+  letter does; a `--` before any operand still ends options); (b) the draft card states each overlay's
+  `argOrder`; (c) the flavour probe runs only for a shipped manifest, the lane's rule, accepted in place of an
+  output filter that a `printf` escape defeats. A stored manifest's `version.args` has the same weakness for its
+  version range; it predates #1963 and is a named follow-up of the lane's, with a Known limits line. The repair
+  inverts four of e3's rows, which e3 rewrites. No shipped manifest declares flavours until sed and awk, so the
+  probe's re-spawn path has no end-to-end row until then.
+- **The platform scan, #1934 (packages).** Janitor-2 found that a Stop or the deadline landing while a candidate
+  reads its wheels still started the import in a fresh worker with no time limit, and that a late passing import
+  was recorded after Stop. e3 then found that a Stop landing before the candidate registers started one anyway.
+  The coordinator's call on the last: both sides (the worker sends no test on an aborted signal; the document
+  remembers a stop for a run with no candidate, by run). The naming head 967535d1 is with janitor-2.
+- **Ruling 26, #1976 (packages).** Measured in Chromium by the lane: a listener on the worker sees the stack
+  overflow that leaves a cell and every later cell unanswered, so no Pyodide patch. Only Pyodide's own "already
+  fatally failed" verdict, read by one trivial run after a failed cell (median 78 microseconds by the lane's
+  account), kills the kernel; an ordinary unhandled rejection kills nothing. An older defect repaired with it: a
+  cell refused as outside the dialect swallowed the namespace-reset line. Whichever of #1934 and #1976 merges
+  second reconciles the one test they share. With e3 and janitor-2.
+- **The access tab's worker part, #1975 (small-fixes).** The coordinator's calls on the later page PR: the host seam
+  is `sessionPolicies(key)`, `removePolicy(key, id, confirm?)` and one `policies-changed` event, pending Chat
+  Page's yes; extension host only in the first build; no second read for the confirm; a policy's source behind a
+  disclosure; a broken policy shown. Asked in review and built: a consumer whose judge is not strictest-wins
+  registers its order (ruling 34's hide and show); a removal's reach is stated for a global row, and a global
+  allow's removal stays one gesture; a classifier can only add caution; a policy whose script breaks keeps its
+  place by strictness and is shown as one that may not be applied. Open with Shane: what the Session summary page
+  holds besides this tab and who builds its shell (the coordinator recommends small-fixes, starting with this tab
+  alone).
+- **The ruling 31 gate, #1977 (the manifest lane).** A manifest marker for a program that reveals other processes,
+  a gate key listing the programs the person lets run free, and a third answer on the card that lists one
+  program. Accepted: a page never reads or sets the list, and an allow policy does not stand in for it. Asked in
+  the spec review: a stored or proposed manifest must not be able to drop the marker, and the host's handling of
+  the marker stated. With janitor-3 and e3.
+- **The UI batch, #1971 (small-fixes), went to a janitor**, not ruling 13: it changes placement logic, narrows one
+  end-to-end assertion and adds an eye toggle on secret fields. Janitor-2 found the toggle stayed on when the
+  saved key changed from outside; repaired, the head 8b07ea57 is with janitor-2.
+- **Shane's ruling 50 (2026-11-18, confirmed in the coordinator's session): what the Session summary page holds.**
+  The page opens from the "..." menu, the home tab is the summary, and on a phone it is the same page as a
+  dismissable overlay; hovering gives a short form. Summary: title and hash, state (running, paused, waiting on an
+  ask, idle), kernel loaded and the time left before a pause or a kill, last message time, context size against
+  the model's window and history size, agent or not, model and runtime, current page, capabilities, start time,
+  open asks, tokens and cost so far, the fork's parent. Resources: the session's slice of the resource panel.
+  Files: count, bytes against the quota (ruling 48), what the archive leaves out by size (ruling 47), the list.
+  Access: the policies in effect, the host attached and its roots, the programs listed to show processes, hide
+  and show entries (ruling 34), secret handles by name only, whether the page's origin is approved, Python
+  network open or closed, installed Python packages. The list is open: Shane adds and cuts as things come up.
+  Coordinator's calls under it: small-fixes builds the shell, the summary tab and the resources tab (Chat Page is
+  halted); files-host the files tab after its scrub chain; the access tab ships alone first (PR B); session-store
+  stays halted, so the first version draws only what a store answers today and a field with no source draws
+  nothing. Order: a spec, docs/spec/SESSION_SUMMARY.md, from small-fixes with a have or needs-new-data mark per
+  field (the coordinator reviews it); PR B; the shell; resources; files; new fields when session-store resumes.
+- **One describer for an `ml.sh` call: open with Shane, investigation approved (2026-11-18).** The manifest lane
+  proposes replacing the extension's describer and the host's with the host's Rust compiled to WebAssembly. Shane:
+  undecided, the lane may investigate; two copies of one thing drift, and `riskyRegex` (the extension's and the
+  Python fork's port) is a second case. Approved: a spike after sed and awk land that runs the Rust describer
+  over the shared vectors and lists every difference, changing nothing shipped. It must answer what a call does
+  before the module has loaded after a worker wake, the pin and a loud absence, what replaces the cross-check two
+  implementations give, the size, and whether the approach serves `riskyRegex`.
+- **sed and awk manifests (coordinator's calls).** awk declares only the BSD flavour, so a Linux awk (gawk, mawk,
+  busybox) asks; flavours for those are a named follow-up. The host gets a lockstep PR from the lane's own host
+  clone (the script key, both sed scanners, the awk check, the vector pin); both heads come to the coordinator
+  together and the host's merges first. The lane's account: the two sed delimiter scanners agree on 1,735
+  measured regexes, and GNU sed truncates a `w` file at parse time, so a `w` command is never free.
+- **Merged 2026-11-18, each verified:** #1970 (34534127, the host gate's repair), #1934 (1c1f0507, the packages
+  platform scan), #1971 (f3ef4728, the UI batch), #1980 (a2d24bdb, a leaked timer in the orphan-cleanup test),
+  #1981 (ee67a765, the root README's figures at November 18).
+- **In review, 2026-11-18.** #1975 (access tab, PR A): janitor-3 found no fallback when a registered order throws
+  or contradicts itself; the coordinator's call, now in the spec: strictness for that pair, every removal in the
+  view classed `widens`, the read always answers; repaired at d7a960dc. #1976 (the kernel-death listener, ruling
+  26): janitor-2 and e3 both found the crash line carries the worker's error text unbounded; packages repairs, and
+  adds the row #1934 left (an install approved with a signal already aborted). #1977 (ruling 31's gate): the three
+  revealing programs are matched by manifest name and by the resolved file's name, a draft gets the marker forced
+  and a stored manifest without it is refused; `pgrep`, `htop` or a renamed copy are marked only by their author
+  (a stated limit); the version probe of a revealing program is judged with the marker; refusing a stored probe's
+  arguments outright is a follow-up. #1963 (manifest flavours): subcommand names are shown only when they are
+  plain words, others are counted, not quoted (accepted); e3's rows are green at 02c6942d. #1948 (the scrub) is
+  back with janitor-2 at 91e24caa; #1979 (the test-timings false positive) is with janitor-3.
+- **Shane's ruling 51 (2026-11-19): packages owns the Python network gate.** Closed by default (ruling 37). Order
+  for the lane: the ruling 36 measurement, the ruling 37 measurement, then the gate, spec first, with a red-team
+  pass by e3.
+- **Shane's ruling 52 (2026-11-19): session-store is resumed.** Its order, the coordinator's: slice 2 of
+  `docs/spec/SESSION_HISTORY_STORE.md` (the `history` and `runmeta` stores, the writer, the upgrade, `onError`,
+  `historyBytes`); then the Session summary's fields (the fork parent at `fork()`, the current page, the history
+  size per session on `SessionSummary`; labels `@hub-compat` and `@mobile`, with the session contract's diff);
+  then slice 3 onward. Still halted, resumed only on Shane's word: async, Chat Page, move-run, flaky-ci.
+- **Shane's ruling 53 (2026-11-19): the Session summary shows usage over time and totals (tokens, cost), and the
+  energy a local model drew with its cost.** The coordinator first called measured power absent and unowned; that
+  was wrong, and Shane corrected it: the patched backend reports power and the bench already integrates it per
+  generation and session (`tests/e2e/bench/electricity.mjs`). Owner of the energy line: bench. The coordinator's
+  calls: the attribution becomes one module under `src/spend/` that the bench and the page both import; an absent
+  reading draws nothing, never an estimate from rated wattage; the worker holds the event stream while a local
+  runtime generates for a session and until that stretch closes, panel or no panel, only when the runtime reports
+  power. The spec is #1986 (open, changes asked: the ruling written in, what an evicted worker leaves, the order
+  of work). The usage rows and the network owner go into `docs/spec/SESSION_SUMMARY.md` in a docs PR by
+  small-fixes (not yet open).
+- **Shane's ruling 54 (2026-11-19): the coordinator decides the order in which sessions build things.** Shane:
+  "you have a better overview of the dependencies than I do". Each order is written here and surfaced in one line.
+- **Security defect on main, 2026-11-19 (the packages lane's account; e3 is reproducing it).** A cell inside the
+  Python read-only dialect, which runs unasked, writes cell-chosen text to any path in the worker's filesystem
+  through `DataFrame.to_string(buf=<path>)` and the `Series` form: `notebooks/python-dialect/data/manifest-pandas.json`
+  and `notebooks/python-dialect/leafpass.py` declare both pure. A fresh worker is enough, since pandas loads at
+  start-up. Measured on restricted core 35bd1d69 at main 7f7783ec. Not measured: whether a planted module is then
+  imported by a later cell or by the harness. The coordinator's order (ruling 54): packages repairs it first, as
+  its own PR, ahead of the ruling 36 notebook; a call that binds `buf` by keyword or by position falls outside
+  the dialect; one test walks every admitted name for a path, buffer or file parameter, the 25 of 161 names the
+  lane could not resolve included; e3 writes the red-team rows on that branch and probes the import chain,
+  argument spreads and what survives a restart; janitor-3 reviews. A second defect, failing closed: inside the
+  dialect `np.array([1, 2]).sum()` raises `KeyError: '__builtins__'`; packages owns it as a later PR over every
+  numpy reduction, and stops before any change to the core's pin.
+- **Merged 2026-11-19, each verified:** #1982 (efed571d, the plan), #1983 (7f7783ec, the Session summary spec,
+  ruling 50), #1984 (d06ff26a, rulings 46 to 48 in the file, backup and policy specs; `archiveFileMaxMB` defaults
+  to 100 MB and 0 means no limit, the coordinator's call), #1963 (0ff1b911, manifest flavours), #1952 (5a84a3c1,
+  `change_setting` and `ml.settings()`, part b), #1948 (e8508959, the secret scrub by value). With #1948 merged,
+  H11 is released (ruling 18); files-host's order after it: #1959 (the matcher notebook), the `hiddenSecrets`
+  note, ruling 39's code, the shape detector.
+- **In review, 2026-11-19.** #1977 (ruling 31's gate): janitor-3 found that a `shellRevealsAllow` of the wrong
+  type fails open; the coordinator's call: repaired inside #1977, which adds the gate, as one checked function
+  that every reader uses and that answers an empty list on a wrong type; the lane adds two rows (a string value
+  still asks, an object value answers cleanly), e3 then flips its todo row, janitor-3 names the final head.
+  #1975 (access tab, PR A) and #1979 (the test-timings false positive): janitor-3 asked one test row each. #1976
+  (the kernel-death listener) is with janitor-2 at 3031bf4c; its repair bounds the crash line and adds the
+  aborted-signal install row (item 7 of the install spec). #1985 (the spec for `change_setting` part (c)): the
+  coordinator asked that the residual of a sampled key be stated, since a rule matching one value of a sampled
+  number key reads "none" for that key and is off the card. The sed and awk manifests may open now that #1963
+  merged (the lane's account: a new shared vector kind, `flavoured/`, 25 calls).
+- **Session summary shell (small-fixes; the coordinator's calls, 2026-11-19).** The sidebar's detail header uses a
+  `ChatStore`, so there is one `SessionActions` list; the sessions port comes through a `services()` member that
+  the overlay and DevTools supply; the store closes its port when the last detail view unmounts. The PR is not
+  draw-only and goes to a janitor through the coordinator. Open: who owns the Python kernel-state fields (kernel
+  loaded, the deadline).
+- **Packages, ruling 36 (the lane's account, 2026-11-19).** The restricted fork has no file gate today. The
+  measurement's results come as a notebook, its head to the coordinator.
+- **Shane's ruling 55 (2026-11-19): a library's inert data types are declared in that library's manifest.** The
+  dialect runner names no library, and the default bundling of numpy and pandas is no exception: "any new library
+  addition should be contained in its own files that get opted into". `_ml_not_inert` in
+  `src/python/python-dialect-run.ts` hard-codes numpy and pandas types today; that moves. Owner: packages.
+- **Shane's ruling 56 (2026-11-19): argument-conditioned effects are data in the library manifest.** A leaf whose
+  effect depends on an argument (`buf` bound, `inplace` true, `out` bound) is declared in the manifest and enforced by
+  the extension through `allow_call`, in one spec with ruling 55. The fork's hard-coded stand-ins come out at a later
+  core rebuild. Cost does not become a real function now: the size cap and the wall-clock kill stay.
+- **Shane's ruling 57 (2026-11-19): outside data is never modified in the original, only in a copy.** The lane's
+  account (packages): this holds at the source today, since every route into a run's namespace (`tables`, `df`,
+  `img`, stored pointer tables, `ml`) builds a fresh Python copy and none is a live handle. Inside the kernel the
+  loader redirects (`pd.read_csv(name)`, `Image.open(name)`) return the same object each time, so a re-read after an
+  approved edit returns the edited value. Coordinator's call: a re-read returns the original; it goes in the spec
+  ruling 58 leads to.
+- **Shane's ruling 58 (2026-11-19): the goal is that the model edits its own Python kernel values without approval
+  prompts.** Shane's framing: in JS the approval protects ownership (the page's DOM) and termination; in Python every
+  kernel value is the model's, so the read-only interpreter protects termination (step budget, memory cap) and
+  effects that leave the kernel, not ownership. An approved cell has no step budget and is ended only by the timeout.
+  The existing block is not removed now. The lane's account (packages, measured on the pinned core): an inside cell
+  may already mutate what an earlier inside cell made, under the fork's undo log (Python/restricted.c:1386-1531 in
+  the fork: a whole-object snapshot on the first write to an owned value older than the run, replayed on refusal).
+  Refused today: mutation of a value a full-mode cell made or the harness injected. A cell refused part-way reruns
+  from the top on the full path, which is why an unlogged write would apply twice. The candidate design: plain data
+  from those two sources joins the owned set. Spec first, not built.
+- **Shane's ruling 59 (2026-11-19): count why read-only Python cells ask before designing ruling 58's change.**
+  Owner: bench, as a notebook from run records that already exist; no real-model run. Its head to the coordinator.
+- **Python dialect defects found 2026-11-19 (the lane's account, packages), and the coordinator's calls.** The
+  manifests' `leaves` rows are read by nobody at run time; enforcement is hard-coded in the fork's
+  Lib/restricted.py.
+  (1) `DataFrame.to_string(buf=<path>)` and `Series.to_string(buf=…)` wrote any worker path unasked: #1991 (the
+  repair), a check that refuses the parameter bound to anything but None, with an enumeration of every admitted
+  callable's path, file or buffer parameter.
+  (2) `out=` wrote into an array the cell does not own (`np.sum(m, axis=0, out=b)`, `np.abs(x, out=b)`,
+  `ndarray.round(out=b)`): a C callee's write is invisible to the ownership check, which sees only the interpreter's
+  store sites. #1993 (the repair) refuses `out` on every admitted module function and ufunc.
+  (3) A `*` or `**` call reaches the gate as the bound builtin, so no checker on a C method survives it. Call:
+  `round` leaves the ndarray kind now (`a.round()` asks); the fork's call lookup is repaired at the next rebuild.
+  Interim manifest rule: a C method with an argument that can write is not listed.
+  (4) Of the 8 listed ndarray methods, `any`, `max`, `mean` and `sum` error inside: the fork lifts only Python
+  functions, never a C method descriptor. Repair: `allow_call` on the four with the same checks (PR C).
+  (5) The freeze (PR B2): every numpy array older than the cell is set read-only before an inside cell runs, thawed
+  when its undo copy is taken, and restored after. Measured: numpy's flag stops every `out` route and a cell cannot
+  turn it back on. pandas (copy on write) and Pillow have no equivalent; the ownership check stays their barrier.
+  (6) The undo copy of an array or frame is not counted against the 256 MiB cap. Call: B2 totals a cell's undo
+  copies in bytes and refuses a write whose copy would pass the cap's value, before copying; the cell asks.
+  Packages' order: #1991, #1993, B2, C, one docs PR on what a library manifest carries (rulings 55 and 56, the
+  interim lists' home, the fork follow-ups), its code, ruling 36's notebook, ruling 37's measurement, the network
+  gate. Reviewer: janitor-3; e3 writes rows on each branch.
+- **Settings rules, part (c) (`propose_policy` with consumer `setting`): the coordinator's calls (2026-11-19).** One
+  budget of 1,000,000 steps for the whole measure (about 5,100 evaluations); over it, refused at check time. Measured
+  once; the measure travels with the proposal; no cache by source. The rule's own literals (with plus and minus one,
+  after constant folding) join the measured values. Refused at check time: an unknown `c.key` literal, a literal
+  outside the key's domain or type, and a rule that breaks on any tried (key, from, to); the text names the count, up
+  to three keys, the break and the repair. Exact coverage for the fragment is not scheduled. The spec text rides in
+  the same PR. Owner: settings specs.
+- **Snapshot H11 and H13 as merged (#1988, c79aa0e1).** `docs/spec/FILE_ATTACHMENTS.md`: an untracked path the host's
+  secret-name matcher catches enters neither tree and is listed as withheld; a tracked one that changed is listed
+  "changed, contents withheld"; a blob under an ordinary name is withheld when its id equals the blob of a matched
+  path in either tree. Stated limits: a hard link, a copy of an untracked secret file, an edited copy, a secret in
+  an ordinary file. Coordinator's call, Shane may override: the exact-copy blob-id rule. The host side is
+  window-ml-host#51, with e3's four rows.
+- **Merged 2026-11-19.** #1985 (15b88764), #1986 (76885deb, the energy section of `docs/spec/SESSION_SUMMARY.md`),
+  #1987 (cf8436b0), #1988 (c79aa0e1), #1959 (1119c481, the matcher notebook), #1976 (f23d0ccb, a cell that kills
+  Pyodide is answered as the kernel's death).
+- **Main repairs open 2026-11-19.** #1990 (bench): a protoc 36.2 install changed the generated header's version
+  line, so `tests/proto.test.mjs` and `tests/events-proto.test.mjs` went red locally in every clone; the comparison
+  now ignores that line. #1994 (settings specs): a conflict-marker line in `src/sidebar/sidebar.css` from #1921
+  dropped one rule; a check that refuses such lines follows from small-fixes as its own PR.
+- **The sed and awk manifests (#1989, with window-ml-host#52), 2026-11-19.** A program inside an argument is
+  described by a narrow grammar; text outside it is unknown and asks; the flavoured vectors design is accepted. The
+  host PR merges first, by hand. #1977 (the reveals gate): its red-by-design row is e3's to edit.
+- **Shane's ruling 60 (2026-11-19): `ml.fs` replaces `ml.files` outright.** Nothing built or model-facing uses
+  `ml.files`; one directory gets one file API. #1999 (session-store, the `/files/` amendment and its notebook) says so.
+- **Shane's ruling 61 (2026-11-19): a session list row scrubs every registered secret, sent "as is" or not.** Ruling
+  39's exemption covers the model and the store; the row is one of the other crossings. The cost is stated in the
+  spec: a phone's transcript shows a sent-as-is value while its list row shows the marker. #2008.
+- **Shane's ruling 62 (2026-11-19): the multi-cell task's wording is the coordinator's call.** The call: both wordings,
+  neutral and staged, as two arms on the same models.
+- **Shane's ruling 63 (2026-11-19): widen the read-only Python vocabulary first; ruling 58's design waits.** Shane, in
+  the coordinator's session: "when you start using these models on real tasks you will see them want to reuse variables
+  across cells more like you do in jupyter notebooks". So ruling 58's design is not shelved on the csv-total sample.
+  Order: packages widens the vocabulary, then bench measures the multi-cell task, then ruling 58's design.
+- **Ruling 59's count (#1997, bench, notebooks/python-dialect, 2026-11-19).** 129 cells, 58 runs, 6 models, one task
+  (csv-total). 46 cells show no card. First refusals: `pd.read_csv` unlisted 41, an unlisted attribute or leaf 14
+  (`df.columns` and `df.shape` are not in the pandas manifest), an unlisted call 13, an operation on None 8, a generator
+  expression 5, a refusal caught by library code 2, a mutation of an unowned value 0. A syntactic count behind the
+  first refusal: 83 refused cells, 1 store, 0 on plain data. Correction: the bench has a start-surface option
+  (`cellSurface`), so the earlier "start-surface gap" item is void.
+- **The vocabulary work (packages, by ruling 63).** One PR of manifest data and rows: the inert read attributes the
+  replay names, each with its count. `pd.read_csv` gets a design note to the coordinator before it is built (what a
+  read-only cell may read, rulings 56 and 57). Generator expressions are an evaluator change: an assessment only.
+  Order for packages: B2 (the numpy freeze), this, then C, the docs PR and ruling 36's notebook.
+- **The multi-cell task (bench).** Four generated files (sales 3,000 rows, returns about 300, targets 20, regions 4);
+  the answer is the manager, the pair and the shortfall to the cent. Required: a unique top pair with a stated margin,
+  and cents stable under summation order. Bench builds the fixture, the checker and a fake-model smoke with three edit
+  cases (injected, inside-made, asked-made) now. The real sweep runs after the vocabulary PR merges and needs Shane's
+  yes in bench's own session.
+- **Secrets findings of 2026-11-19, owner files-host, each its own PR, all before H12.**
+  - #2006: a nested ask's facts, why, note and outcome are kept through the stored scrub. Only the live card shows raw
+    facts; the chat page, phone, store, exports, DevTools ring and replay hold `[REDACTED:<NAME>]`.
+  - #2007: the utility model's calls (a session's title made from its task, every `side.call`) cross the by-value scrub
+    and are not sent when the scrub cannot run. This was the one path where a registered value reached a model backend.
+  - #2008: a session row is scrubbed at every exit from the worker (found by session-store on #2003). Every string but
+    the identifiers is scrubbed, so a field added later is covered. The model reads no summary row (lane's account).
+  - #2003 (session-store, `forkedFrom` and `currentPage` on the summary) does not merge before #2008.
+- **Coordinator's calls, 2026-11-19 (each overridable by Shane).**
+  - B2 (the numpy freeze): a view an inside cell makes of a frozen older array stays read-only after the cell; the way
+    out is `w.copy()`; documented.
+  - `/files/` mounts are lazy at every size, with no eager mount under a threshold (#1999's figures: lazy 51, 169 and
+    219 MiB against eager 262 MiB, 1.0 GiB and 2.0 GiB at 1, 4 and 8 sessions).
+  - session-store's order: the summary fields (#2003), history size after #1995, then #1999's slice 1 (the ranged
+    reader). Slices 2 and 3 are unassigned; slice 2 waits on files-host's hide-list rule.
+  - A flaky phone test (the pinned-row long press, chat-web.spec.mjs) was measured, not assumed: lifts 4 of 10 on main,
+    6 of 10 on #2002, 10 of 10 with the preceding swipe skipped. The press landed on a list still flinging. The repair
+    is its own PR (#2005), never folded into #2002.
+- **Open PRs added 2026-11-19 and their readers.** janitor-2: window-ml-host#51, #2007, #2008, #2006, #1995, #1997,
+  #1998, #2001 (propose_policy consumer `setting`), #2003, #2004 (the conflict-marker check). janitor-3: #1979, #2000
+  (events.proto re-pin, energy step 1), #2005, #1975, #1977, #1991, #1993, #2002 (the Session summary shell), #1999.
+  e3's rows, in order: #1989, #2007, #2008, #2006, #2001, #1998, #2003, #1991, #1993.
+- **Merged 2026-11-19.** #1990, #1994, #1992 (usage rows in the Session summary spec), window-ml-host#52 (sed and awk,
+  host side; #1989 waits on e3's rows).
+- **Shane's ruling 64 (2026-11-19): the multi-cell sweep runs 10 repeats, under a decision rule written first.** 10
+  repeats per arm and model: 20 runs per arm, 60 in all. The unit is the run, not the cell. The rule, fixed before
+  any run: build ruling 58 if at least a quarter of the counted runs in the hinted arms have a refused edit on a
+  value an earlier cell made; drop it if under a tenth do; in between, read which edits they are. A counted run is
+  one whose first cell loads the files through `tables`. The sweep still needs Shane's yes in bench's own session.
+- **Shane's ruling 65 (2026-11-19): window-ml-flaky-ci is resumed, as a third janitor and for flaky tests that block
+  other lanes.** Its first work: the 900 s hang of `tests/python-bench-stop.test.mjs` and retries on CI's apt steps
+  (the coordinator's infra call, after an Ubuntu mirror outage turned #2005 and #2007 red), each its own PR; then
+  the reviews of #2004, #2000, #1997, #1999 and #1995. async, Chat Page and move-run stay halted.
+- **Shane's ruling 66 (2026-11-19): the one-describer spike starts as soon as #1989 merges**, ahead of the manifest
+  lane's version-probe follow-up. The decision itself stays open until the spike reports. The awk splice is its
+  evidence both ways: two repairs and a ruling to keep the ports equal, and a defect both ports shared with no
+  vector carrying it.
+- **Shane's ruling 67 (2026-11-19): small-fixes takes a calm-view UI batch beside its queue**, which stays first. A
+  piece whose files pass ruling 13's line merges on green; the revises chip's navigation and the HUD's dismissal
+  across a same-site navigation are behaviour and state, and go to a janitor.
+- **Rulings of the afternoon of 2026-11-19 (coordinator, infra, each overridable by Shane).**
+  - The read-only Python vocabulary (ruling 63), from packages' note on bench's replay (#1997; 129 cells, 46 inside;
+    the lane's counterfactual with read_csv served: 84). It is built as two PRs by packages.
+    - V1: the inert attributes (DataFrame columns, shape, dtypes; Series dtype and iloc, read-only; np.rint under
+      #1993's out check; Series.str only with the methods the corpus names), plus the stdlib manifest's callables made
+      callable inside. The fork's manifest loader admits a stdlib name as an attribute and never as a call, so
+      decimal.Decimal, io.StringIO, io.BytesIO and csv.DictReader have never run inside. V1 registers them on
+      window-ml's side from the manifest, with an ENUMERATED row (every stdlib name callable or carrying a reason) and
+      an AGREE row. Decimal's context flags and traps are saved and restored around a cell: arithmetic sets them on a
+      shared context the ownership check cannot see (probed). V1 starts on main after #1993 merges. The fork repair is
+      issue #2010; window-ml's copy is dropped at the next core bump.
+    - V2: `pd.read_csv` of a source this call loaded through `tables` is answered from the text the worker already
+      fetched (kept per source, capped), parsed with an allowlist of keywords, and of a buffer the cell owns.
+      Everything else asks, a URL not in `tables` included (25 of the 41 replayed read_csv cells). The return is a
+      new frame; the original is never handed out (ruling 57).
+    - `sum((generator), start)`: a fork change at the next core bump, not now (5 cells, 4 of them behind Decimal).
+  - The multi-cell measurement (ruling 62, the coordinator's wording). Three arms: the neutral and the staged wording,
+    each ending "Fetch each file with fetch_url and pass the four URLs to python_exec's `tables`.", and the neutral
+    wording without it. The notebook sorts each run by the route its first cell took and counts refused edits only in
+    runs that load through `tables`, per cell and per run with denominators. Built as #2011 (bench). The fixture as
+    built: 611 returns, 10 target pairs, one top pair 10 points of target ahead, whole cents.
+  - The sweep's gate: V1, V2 and #2012 on main, and Shane's yes in bench's own session. Its size and its decision
+    rule are ruling 64.
+  - A defect bench's probe found: in a worker-built run a site path in `tables` went to the DOM reader as a selector.
+    The repair is #2012 (bench): one rule on both hosts, read from the run's fetches only, nothing fetched.
+  - H12 (window-ml-host#54, files-host), the lane's calls accepted, in `docs/spec/FILE_ATTACHMENTS.md`: the
+    before-hash cache keyed by the whole stat with a 2 GiB budget per snapshot; "not captured" means out of the tree,
+    tracked or not; FIFOs, sockets and devices found by type and never opened; `WALK_CAP` counts tracked and
+    untracked files and is checked before any read.
+- **Findings of the afternoon of 2026-11-19, each with its owner.**
+  - #1989 (sed and awk): an awk keyword split by a backslash-newline passed the check when the awk's flavour is
+    undetected (janitor-2). The check now also reads the text with every such splice removed. e3's failing row first,
+    then the manifest lane's repair; the host port is window-ml-host#53. The lane's account: no live call reaches
+    that function on host main.
+  - #2007 (the utility-call scrub): the HUD's block summary reaches the utility model from an extension frame
+    unscrubbed, and the worker's scrub misses a tool call's arguments (janitor-2). files-host repairs both and
+    enumerates every caller of the utility backend, each with a row or a reason.
+  - The flaky row at line 364 of `tests/redteam-python-sandbox.test.mjs` is the row, not the sandbox (e3): a timer
+    already due fires inside the cancel's loop turn, which the cancel ruling allows. #2013 asserts the phase a
+    callback ran in; one that runs after the result returns still fails.
+  - e3's plant probe: a file planted under an admitted Python package never runs. Its one write, a bound
+    `to_string` called with a `buf` spread, ran on main and is the defect #1991 repairs.
+  - `tests/python-bench-stop.test.mjs` hung for 900 s once on #2005's CI. No owner yet; a second hang goes to Shane.
+- **Merged 2026-11-19, each verified.** #2009 (b06d2cf8, the plan), #1979 (71f2016e, test timings),
+  window-ml-host#51 (20b394ea, H11), #1977 (d7a799da, the reveals gate, ruling 31).
+- **Shane's rulings 68 to 76 (2026-11-19, in the coordinator's session).**
+  - (68) python_exec stops injecting tables. A Python cell asks for its data: `await ml.table("#sales")`, mirroring
+    the tool in JS. It returns a TableLike, not rows. "`ml.table(ml.fetch(<a csv>))` should arguably work." Approval
+    reuses the rule the tool call's prompt has for a table reference: permitted only if the person approved it. The
+    model writes the table to its `/files` if it wants to keep it.
+  - (69) A cell writes its own files unasked. "The limit is the limit for the virtual file system in general."
+  - (70) A source given to `ml.table` is judged exactly as python_exec's `tables` argument judges it today.
+  - (71) `pd.read_csv(<source>)` stays served from the run's fetches; a URL the run did not fetch asks.
+  - (72) For a table too large to load: reuse an existing engine that does not load all the data into memory, if
+    one fits; do not write one from scratch.
+  - (73) async and Chat Page each finish their one old PR (#1929; #1950) and then pause.
+  - (74) The coordinator may restart the async lane where it is relevant again. Used once: #1929, then Python's
+    `/files` mount, and nothing else.
+  - (75) "Your call is fine on the /files for now." The coordinator's calls it covers, each overridable:
+    - one store (the shelf) for agent/ and attached/, on route A's type; async builds Python's mount on it;
+    - a full cell commits each file when it is CLOSED, and a cell that fails keeps the files it closed;
+    - an attempt INSIDE the dialect holds its closed files in one transaction and commits it only if the attempt
+      succeeds. A refusal or a failure aborts it, as the attempt's namespace already rolls back: the refused
+      attempt is rerun after the person answers, and a file kept from it would exist under a cell they may deny.
+      (Narrowed by the coordinator after the ruling and told to Shane the same evening.)
+  - (76) The quota is the DevTools Settings flag `filesQuotaMB`, default 1024, owned by session-store. The model may
+    propose a change to it; a change always asks the person.
+- **`/files`: owners, order and the reader (coordinator, under rulings 54 and 75).**
+  - session-store: the ONE ranged reader and `ml.fs`, as three PRs after #1995 and #1999 and ahead of the history
+    size PR: the reader with a ranged scrub; `ml.fs` reads; `ml.fs` writes with the quota, ENOSPC and the atomic
+    commit, a copy from an `@tool:` value into agent/ included.
+  - async: Python's mount on that reader. attached/ is read-only (EROFS); close() is closeWrite plus the commit of
+    a transaction of one.
+  - packages: the Python `await ml.fetch` and `await ml.table`, and the list of writers a read-only cell may call.
+  - The reader, agreed by session-store and async: in the offscreen document, keyed by volume ("files", later
+    "history"); the session comes from the channel's run record; Node-shaped errors; a stale channel id answers
+    EBADF. Reads: stat, a paged opendir, open (the fd pins a version, and reads it until close even after another
+    commit), read (at most 512 KiB, scrubbed inside the read with length kept), close. Writes sit in a transaction:
+    begin, openWrite, a positioned write, truncate, closeWrite, rename, unlink, mkdir, rm, then commit (one IndexedDB
+    transaction) or abort. The quota is checked on every write. The last commit wins, with a run-log note.
+  - #1999 (session-store, the spec amendment) carries the owners, the one store, the key and the commit point. The
+    coordinator named its spec at b93f7328; its scripts are with flaky-ci.
+  - session-store's account, for the design note below: a person cannot upload into agent/ but can rename, move
+    and delete there; the shelf can keep a removed or overwritten version by reference, with no bytes copied.
+- **The `ml.table` design note (packages, #2021, ML_TABLE.md beside this file once merged).** Nothing is built from
+  it until Shane rules. The coordinator read 7de3b989 and asked ten changes; the next head opens with one table of
+  decisions for Shane:
+  - how a read-only cell awaits: the dialect has no Await node and the fork's cell runner is synchronous, so
+    `await ml.table` is a fork change and a core rebuild, or a synchronous call over JSPI (to be costed);
+  - what Python gets: the lane recommends a pandas DataFrame, which departs from ruling 68's TableLike;
+  - whether `tables` stays as shorthand for `ml.table`;
+  - a nested ask for a Sheet whose id is computed in code;
+  - whether rm, mv and an overwrite in `/files` run unasked (the lane: only for a file this run made), and whether
+    a removed file is restorable (then: counts toward the quota, how long kept, not in the backup);
+  - whether a fetch stops parsing a table by default. The lane's account: a 60 MB CSV costs 1.16 s and about 600 MB
+    of transient heap on its eager parse; detection alone costs 0.1 ms;
+  - the engine for very large files. The lane's account, on 11.7 million rows: pyarrow (already shipped) reads
+    Parquet within 24 MiB of baseline; its CSV groupby reached 443 MiB, over the cell's 256 MiB cap, so a large CSV
+    is converted to Parquet first. DuckDB and Polars were not measured;
+  - two inference rules on the person's data: a 2-decimal column read as exact decimal, and dtypes from a prefix.
+  - Two corrections to ruling 68's brief, accepted: no read-only cell can await today; today's approval check reads
+    only the `tables` argument and collects only Sheet ids, so the code scan is new work that only hoists sources
+    onto the card, and the rule itself runs at call time on the resolved value.
+  - Unassigned until the ruling: the JS `ml.table`, and the fork's cell runner.
+- **CI on 2026-11-19 (ruling 65: window-ml-flaky-ci owns it).**
+  - Red checks sorted by cause from the job logs: an apt mirror outage in "Install Playwright Chromium";
+    the hang in `tests/python-bench-stop.test.mjs`; the flaky row "P2-bound mutation and the C-function path, in child
+    processes" in `tests/redteam-python-sandbox.test.mjs` (the control child is killed at its 10 s limit while
+    loading packages, janitor-3's measurement); and e2e rows that fail under load in
+    `tests/e2e/chat-two-execs.spec.mjs`, `tests/e2e/chat-web.spec.mjs`, `tests/e2e/bench-dock.spec.mjs`,
+    `tests/sh-delete-manifests.test.mjs` and `tests/backup-section.test.mjs`.
+  - #2018 (flaky-ci): apt retries and job timeouts. #2022 (flaky-ci): the hang. The lane's account: the stage was a
+    cell inside WASM, and the guard's kill line was lost because it was written on the event loop; the boot and each
+    cell get their own 180 s guard. Both with janitor-2.
+  - #2013 (e3): the P2 row. Its first repair failed that row in CI; the second (a3dba4b3) starts a child's limit at
+    a READY line. janitor-3 names it only if the row passes in CI.
+- **Findings of the evening of 2026-11-19, each with its owner.**
+  - #2006 (the stored-ask scrub, files-host): the worker's approvals list returns raw facts while
+    `docs/spec/SECRET_HANDLES.md` says otherwise (janitor-2). The coordinator's ruling: the list maps the scrubbed
+    facts, with a row that fails on base, and the scrub's pass-through past depth 8 fails closed, with a row.
+  - #2008 (the session-row scrub, files-host): change asked (janitor-2); the storage report's largest rows go
+    through the row-text scrub and a subtree past the depth is withheld. e3 holds seven rows for the repair head.
+  - #2015 (HUD dismissal, small-fixes): no row exercised the load gate (janitor-2). The row is written.
+  - #2011 (the reshaping task, bench): the amount checker accepted a grouped or digit-adjacent amount (janitor-3);
+    repaired at 0879f5d2. The coordinator named the notebook; residue: an alias made through a non-bare right-hand
+    side, or past depth 8, still counts as a hit.
+  - #1993 (the `out=` checker, packages): its own manifest row was stale; removed at dc6643b8.
+  - #2017 (the revises chip's target, small-fixes) adds a logic module, so it fails ruling 13 and goes to review.
+    #2016, #2019 and #2020 are draw-only and pass it.
+- **Queues at the end of 2026-11-19.** janitor-2: #2018, #2022, #1989 (24606799), #2001; re-names for #2015, #2006,
+  #2007, #2008 and window-ml-host#54 on new heads. janitor-3: #1993, #2013, #2011's code, #2012 after e3's rows, #2000,
+  #1991, #2005, #2002. flaky-ci's reviews: #2017, #1999's scripts, #1995, #1997. e3: #2008, #2012, #1993, #1991, #2006,
+  #2001, #1998, #2003, window-ml-host#54, and a guard row over every built bundle.
+- **Merged 2026-11-19 (evening), each verified.** #2014 (293e3bf7, the plan), #1975 (f7b8ab06, a session's
+  effective policies as rows), #2004 (773be7f7, the conflict-marker check), window-ml-host#53 (cd82e8cc, the awk
+  splice check).
+- **Shane's rulings 77 to 85 (2026-11-19, said in the coordinator's session): the nine questions of the `ml.table`
+  note.** The note is `docs/plan/repl/ML_TABLE.md`; the spec is packages' #2028 (docs/spec/ML_TABLE.md, merged as 5a2eb664).
+  - **77.** To "take the synchronous route, t = ml.table(src), with no fork change": "Sure." The call blocks over
+    JSPI. The requirement that comes with it: while an inside cell is suspended, nothing but its own awaited chain
+    runs Python on its namespace. Packages' account: a second run message is held by `runChain`; an asyncio task
+    cannot exist for an inside cell; if a scheduler is ever admitted inside, the hold is built first. e3's rows come
+    with the first PR that adds the member.
+  - **78.** A Python cell gets a pandas DataFrame: "2 is fine". JS keeps `TableLike`.
+  - **79.** `tables`: "I would honestly get rid of it and in any test data rewrite those with the
+    `name = ml.table(src)` call if it is used in any tests. Too confusing/too much for the model to keep track of.
+    What I like about the functions is that it lets the model look up and discover what it actually needs when it
+    does." `tables` and `tableRaw` leave `python_exec`; tests, fixtures and bench specs are rewritten to the call.
+  - **80.** A computed Sheet in an approved cell: "your call is fine, just throw an error if it fails. If the user
+    approves it you would reuse the same preserved store of approved URLs as the static analysis." A nested ask; a
+    refusal raises in the cell; an approval goes in the one store.
+  - **81.** Where a cell writes: "every model run has its own private `/files` that other models can't access
+    (letting another model access another model's files would be a separate topic for later; deferred right now)".
+    "Attachments always stay read-only for the model, and the user can delete them from the UI if they want to."
+    "the owner of `/files/*` is the user with readonly permissions for the model, except for `/files/agent/*` which
+    is owned by the agent." The folder name in this ruling is corrected by ruling 86.
+  - **82.** Lazy parse on fetch: "6 is fine if the model is told it's not the full table".
+  - **83.** Dtypes from a prefix: "That's fine, maybe warn the model if we didn't read all the column types that
+    it's a guess based on whatever and how it can investigate further or get a more accurate cast."
+  - **84.** pyarrow past the memory cap, a large CSV converted to Parquet: "Yeah that's fine".
+  - **85.** Money as exact decimal only when the cell names the column or the header names a currency: "Sure".
+- **Shane's rulings 86 to 88 (2026-11-19, said in the coordinator's session).**
+  - **86. The writable folder.** "Sorry typo. That is meant to be `/files/agent/<model slop file>` So every model
+    has `/files/`. It's like the home directory. Currently multiple models don't see each other's file system."
+    - The coordinator's reading: no per-model subfolder. `/files` is one private file system per session, as #1999
+      specs it. The model writes under `/files/agent/` (its own subfolders allowed); rm, mv and overwrite are free
+      there. The rest of `/files` is the person's and read-only to the model.
+    - Open with Shane: a second model in the same session sees the first's files under this reading. Asked; not
+      answered.
+    - Withdrawn (the coordinator had relayed them from a wrong reading of ruling 81): a per-model folder, ENOENT for
+      another model's folder, EACCES at agent/ itself.
+  - **87.** Removing `tables` also removes `ml.pythonExec`'s page option: "Yeah".
+  - **88. The multi-cell sweep stays.** The coordinator first recommended dropping the sweep and ruling 58 as moot
+    under `ml.table`. Bench corrected it: ruling 64's hit class is an edit on a value an EARLIER CELL made, never the
+    injected table, so removing injection makes the sweep more central. The coordinator withdrew the recommendation.
+    Shane then quoted the original question and said "Sure your answer is fine." The coordinator reads that as the
+    corrected position and has asked Shane to say if they meant drop. Nothing is dropped.
+    - The sweep's gate is now: `ml.table` on main, the first vocabulary PR on main, Shane's yes in bench's own
+      session. The instrument (the hint sentence, the tables route classes, the injected names) is rewritten to the
+      call, and each run records whether the cell calling `ml.table` finished inside the dialect. Bench's sweep
+      preparation is frozen until then.
+- **Coordinator's calls on `/files` after rulings 75 and 86 (2026-11-19).**
+  - **The commit point.** A full cell commits each file on close. An attempt INSIDE the dialect is one transaction:
+    its closed files commit only if the attempt succeeds, and a refusal or a failure aborts them, as its namespace
+    rolls back. The transaction stays uncalled until the note's item 7 writers land. A read on an open descriptor
+    returns its pinned version until close.
+  - **The reader's premise, corrected by async.** A run's cells go to the run's own worker, so the session is fixed
+    per worker and comes from the channel's run record. The `full`, `own` and page workers get no mount. This
+    replaces session-store's amendment (one worker, several sessions), which the coordinator had accepted.
+  - **Rows for slice 1's spec.** A handle from another session, or used between cells, answers EBADF. Setting the
+    session is offscreen-only. An open writer counts against its own session's quota, and its pending part is
+    discarded when the worker drops that session's namespace without a close, or the worker goes. A non-run worker
+    opening the files volume is refused.
+  - **The layout.** The working directory and relative `ml.fs` paths resolve against `/files/agent/` (this amends
+    #1999's "against /files/"). The `/files/` root and attached/ answer EROFS to the model. `ml.fs.cp`'s destination
+    is under `/files/agent/`. The model makes no entry at the `/files/` level. The quota is per session. No
+    restorable rm.
+  - session-store's account: a person cannot upload into agent/ but can rename, move and delete there from the files
+    panel.
+- **The `ml.table` build order (the coordinator's call, ruling 54).** The spec PR (#2028); the JS member; the Python
+  member with the hold and the `tables` removal; `read_csv` from kept bytes; the `/files` writers; the lazy table.
+  The JS member's owner is packages (the coordinator's call); V1 goes first if both are ready.
+  - #2028 merged as 5a2eb664 (verified): the coordinator asked five changes at e940a898 and named dda4405d. The spec
+    is `docs/spec/ML_TABLE.md`. Two figures in it are provisional: `MATERIALISE_CAP_BYTES` (100 MiB of source bytes)
+    and `LAZY_GROUP_CAP` (100 000). The CSV to Parquet conversion's memory bound is unmeasured; the measurement is
+    owed before the lazy-table PR.
+- **Findings and heads, 2026-11-19 (late).**
+  - #2018 (flaky-ci, apt retries and job timeouts): janitor-2 asked a change at d525852c. The 480 s attempt timeout
+    is under the day's green installs (517 to 652 s). The coordinator's call: retry on the outage signature, or 900 s
+    twice with the caps composed. A new head is owed.
+  - #2007 (the utility-call scrub, files-host): a third raw crossing (`meteredChat`) found and scrubbed, head
+    dd3bb79a.
+  - #2020 (small-fixes): its e2e failed on a real change (an empty mailbox now draws a `.jt-empty` leaf); the
+    assertion is updated, no test removed, so it stays under ruling 13.
+  - New PRs: #2022 (flaky-ci, the python-bench-stop hang, 5cc8002b, janitor-2 first); #2024 (small-fixes,
+    `CodeRevision.seq`, a0da4866, flaky-ci); #2026 (async, Python's `/files` mount, be71384d, held for review until
+    #1999 merges, dormant until session-store's reader is set).
+  - Repair heads: #1950 19b06faa, #1929 fcdcaf42, #2006 ac9d34f5, #2008 49a72a4d, #2013 a3dba4b3, #2015 b8f1fd2e.
+  - No CI repair has merged yet: #2018 has a change asked, #2022 and #2013 are in review.
+- **Queues, 2026-11-19 (late).** janitor-2: #2022, #1989, #2007, #2015, #1950, #2001, #1998; it holds #2003 until
+  #2008 merges. janitor-3: #1993, #2013, #2005 (green at d7a022ec), #2011's code, #2012 after e3's rows, #2000, #1929,
+  #1991, #2002; later #2026. flaky-ci: the #2018 repair, then #2017, #1999's scripts, #2024, #1995, #1997. e3:
+  #2012's rows and #1993's alias rows, then #2008, #2006, #2007, #1991, #2001, #1998, #2003, window-ml-host#54.
+  files-host builds H13 locally and opens no PR until window-ml-host#54 merges.
+- **Merged 2026-11-19 (late), each verified.** #2021 (7982acee, the `ml.table` note), #2023 (72e299cd, the plan),
+  #2025 (ae046b18, JSPI measured), #2027 (e2afbc85, rulings 77 to 84 in the note), #2016 (c3ba3a03, calm view hides
+  the failed count), #2019 (e0fd7ab3, the revises chip's background).
+- **H13, the snapshot report (the coordinator's calls, 2026-11-19).** files-host built it locally on host#54's
+  branch and asked seven questions; all accepted, written into FILE_ATTACHMENTS.md under H13. Orphans are H13b, a
+  later host change. Three conditions: an orphan's `ended` carries a null diff with a reason, never an absent one;
+  a patch left out past 1000 withheld paths is stated in the body and summary; the protocol doc states that a pipe
+  snapshots its first stage's repository only. The report is always on (the lane's measurement: about 170 ms a call
+  on a clone this size). No PR until host#54 merges; e3's rows before a janitor names it.
+- **Heads and reviews, 2026-11-19 (night), each verified.**
+  - e3's rows landed: #2008 at bb0540ac (to janitor-2), #2012 at 122b1b45 (to janitor-3), #1993 at 05310d04 (the
+    head is owed by packages, then janitor-3).
+  - #2002 at 5a025ce6 (a merge of main), to janitor-3. #2020's head is 2633dbd8; it passes ruling 13.
+  - #2018 at 9db4ab83: the repair janitor-2 asked (two 900 s attempts, retried on the outage signature); back to
+    janitor-2 when green.
+  - #2017: flaky-ci asked one change at f17b2258 (a multi-turn row that fails under the old expression).
+  - #2030 (e3, the answer-bundle guard row over every top-level bundle) at ce8deba9: flaky-ci reviews.
+- **Merged 2026-11-19 (night), each verified.** #2028 (5a2eb664, the `ml.table` spec), #2029 (7ac7141d, the plan),
+  #2005 (f25c57c2, the pinned-row long press test).
+- PARKED 2026-11-20 (Shane, in the coordinator's session): keeping personal details out of screenshots beyond the
+  exact text layer (three modes, a pixel layer through Apple's on-device recogniser, one measurement first).
+  Not scheduled, nobody assigned: [PARKED_SCREENSHOT_MASKING.md](PARKED_SCREENSHOT_MASKING.md).
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like

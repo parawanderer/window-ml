@@ -51,10 +51,22 @@ export interface SidebarServices {
     /** Answer a site's start card (docs/spec/SITE_ACCESS_SLICE3.md 1.1). Only the surfaces that may show the card have
      *  it: the HUD card, the overlay and the DevTools panel (Q7). Absent elsewhere, and the card is then not drawn. */
     answerStart?(requestId: string, decision: "allow" | "always" | "deny"): void;
+    /** Add a program to `shellRevealsAllow`, as the person's own action on a card's "Always allow" (PROGRAM_MANIFEST.md,
+     *  ruling 31); resolves once it is written. Only the extension's own frames have it: absent, the card draws the two
+     *  answers only (the chat page and the phone). */
+    revealsAllow?(program: string): Promise<void>;
     /** A message to a session: steers a running agent, or starts its next turn. Resolves when the host knows whether it
      *  was taken, so the composer can put the text back on a failure (drafts.ts); never rejects. `progress` hears how
      *  far each file's upload has got, on a surface that sends files ahead in chunks (the hub); others never call it. */
-    sendToSession(session: string, text: string, images?: string[], files?: SentFile[], progress?: (p: FileProgress) => void): Promise<SendOutcome>;
+    sendToSession(session: string, text: string, images?: string[], files?: SentFile[], progress?: (p: FileProgress) => void, asIs?: string[]): Promise<SendOutcome>;
+    /**
+     * Scan a draft for the registered values a send would take out (`SCAN_TURN`, SECRET_HANDLES.md "What the person sees"):
+     * `texts` is the typed words, then each text file's contents. Resolves with the worker's answer as it came (read it with
+     * `readScan`), or null when this host cannot ask. ABSENT where the scan cannot be asked: the hub host, the web build and
+     * the phone get no chip, since the worker that scrubs is this browser's. `scope` is the session's key, or a runtime's id
+     * on the start page, so a host that holds several runtimes asks only for the one that is this browser's. Never rejects.
+     */
+    scanTurn?(texts: string[], scope: string): Promise<unknown>;
     /**
      * Does the runtime behind this session take text files with a message (`capabilities.attachFiles`)? A runtime
      * without it would IGNORE a `files` field and send the message without them, so the composer refuses a file
@@ -124,6 +136,11 @@ export interface SidebarServices {
      * client does not. A null answer is "cannot price here", never "free".
      */
     priceCalls: ((calls: import("../spend/price-book").CallToPrice[]) => Promise<import("../spend/price-book").CallCost[] | null>) | null;
+    /** Open a port to this browser's session server (`SESSIONS_PORT`), for a view that needs the session index and
+     *  its commands where the surface holds no `ChatStore` (the detail header's per-session menu,
+     *  docs/spec/SESSION_SUMMARY.md). NULL where the surface already has a store of its own (the chat page, a phone)
+     *  or reaches no worker. The caller owns the port and closes it. */
+    connectSessions: (() => import("../session/session-server").PortLike) | null;
     /** Open this client's Settings filtered to a field ("Electricity price"), for a warning that names what to set.
      *  Null where these settings are not this surface's to change. */
     findSetting: ((query: string) => void) | null;
@@ -198,6 +215,7 @@ const UNAVAILABLE: SidebarServices = {
     hostAccess: null,
     sheetTitle: async () => null,
     priceCalls: null,
+    connectSessions: null,
     findSetting: null,
     openAddress: null,
     savePref() {},

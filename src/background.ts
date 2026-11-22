@@ -22,7 +22,7 @@ import { browserInfo, cropDataUrl } from "./util";   // the fork's settings sche
 import { workerRaster } from "./raster";
 import { ensureDebuggerAttached, releaseDebugger, cdpClick, cdpScreenshot, cdpShadowResolve } from "./sw/sw-cdp";   // CDP/debugger layer (strict-CSP exec, trusted click/type, host-grant-free screenshot)
 import { CAPTURE_RETRIES, CAPTURE_RETRY_MS, captureOwnTab, NOT_SHOWING } from "./sw/sw-capture";
-import { buildWorkerTools, workerSpend } from "./sw/worker-tools";
+import { buildWorkerTools, workerSpend, runChat } from "./sw/worker-tools";
 import { captureRunTab, workerShot, workerVisionChat, dropAllVisionMemory } from "./sw/worker-vision";   // the worker's vision pieces, test-only until a tool uses them
 import { workerVisionHost, onWorkerHost, useRasterForTest } from "./sw/worker-vision-host";   // the worker's vision host: the verify uses it; the hook below drives it directly
 import { workerAnswerMedia, workerMint, workerPythonImage } from "./sw/worker-media";   // the answer's media and python's image in the worker: the hook below drives them
@@ -33,7 +33,7 @@ import { fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw/sw-f
 import { executeServerTool, serverToolResult } from "./sw/sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw/sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw/sw-events";
-import { configureSessionCommands, handleSessionTitle, ingestSessionEvent, keepSession, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw/sw-sessions";   // the cross-tab session index the chat page reads
+import { configureSessionCommands, handleSessionTitle, ingestSessionEvent, sessionPageMoved, keepSession, liveHeldSessions, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw/sw-sessions";   // the cross-tab session index the chat page reads
 import { backupAction, backupFailure } from "./sw/sw-backup";   // backup and restore, for Settings
 import { folderAction } from "./sw/sw-archive";   // the session archive's folder, for Settings
 import { ensureHubRuntime, hubDevices, hubLog, hubState, revokeHubDevice, stopHubRuntime } from "./sw/sw-hub";   // this browser as a runtime on a hub
@@ -42,10 +42,10 @@ import { handleRunLogDump } from "./sw/sw-run-log";
 import { handleRunStateDump } from "./sw/sw-run-state";
 import { releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw/sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { costCalls } from "./sw/sw-prices";
-import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants } from "./sw/sw-consent";
+import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, externalApprovals, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants } from "./sw/sw-consent";
 import { syncPresence, isVisible, presence, injectRunTools, injectPageScripts, SITE_REQUESTS_KEY } from "./sw/sw-presence";
 import { isExtensionSender, senderFacts, editSiteAccess, pageRefusal, agentRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, upgradeNotice, dismissUpgradeNotice } from "./sw/sw-site-access";
-import { policiesReady, forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView } from "./sw/sw-policies";
+import { policiesReady, forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView, sessionPolicies, removeFromSession } from "./sw/sw-policies";
 import { POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "./sw/policy-valid";
 import { addManifest, manifestView, removeManifest } from "./sw/sw-manifests";
 import { librariesReady, removeLibrary, storedLibraries } from "./sw/sw-libraries";
@@ -53,7 +53,7 @@ import { checkDraft } from "./sw/sw-manifest-proposal";
 
 import { bringableSessions, bringHere } from "./sw/bring-here";
 import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, contextByRun, turnByRun, workerRunsStarting, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, senderOwnsRun, reconcileTabPins, startingControllers, abortStart, startingOwnedBy } from "./sw/sw-runs";
-import { cancelPageTasks, detachTask, dropAllTaskMemory, taskAction, type TaskOutcome } from "./sw/sw-tasks";
+import { cancelPageTasks, detachTask, dropAllTaskMemory, resetTaskChain, taskAction, type TaskOutcome } from "./sw/sw-tasks";
 import { syncTaskRows } from "./sw/sw-task-rows";
 import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
@@ -70,8 +70,10 @@ import { FilesRefused, cleanFiles, isPdfFile, pdfToPageRun, textFiles } from "./
 import { adoptOnTab } from "./sw/adopt-run";
 import { pageRebuild } from "./agent/run-assembly";
 import { runControlPayloadError } from "./sw/run-payload-check";
-import { forPage } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets
-import { pythonPrewarm, pythonExec, pythonInterrupt, relayPyStdout, deletePythonRun, dropPythonLibraries, pythonReaped, pythonStarted, pythonDone } from "./sw/sw-python";
+import { asIsTokens, forBackendFromPage, forPage, forTurn, scanTurn } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets; a page's model request, without a registered secret
+import { TurnUnreadable } from "./secret-registry";
+import { secretRegistryOp } from "./sw/sw-secret-registry";
+import { pythonPrewarm, pythonExec, pythonInterrupt, relayPyStdout, deletePythonRun, dropPythonLibraries, pythonReaped, filesAttached, filesSecretForms, pythonStarted, pythonDone } from "./sw/sw-python";
 import { focusLineFor } from "./sw/sw-focus";
 import { chatHashFor, openChatPage } from "./sw/sw-open-chat";
 import { eventSession, pageMayWrite, withoutPageWhy, WORKER_ONLY_KINDS, type WorkerClaim } from "./event-admission";   // what a page may add to a session the worker speaks for
@@ -98,7 +100,7 @@ const inflight = new Map<string, AbortController>();
 (globalThis as unknown as { __mlApprovals?: unknown }).__mlApprovals = {
     // Only OPTED-IN gates (approvalRouting "both"/"external") are visible/resolvable here — a default "ui"
     // run stays human-only, so an orchestrator can't approve a run that never asked to be driven externally.
-    list: (): PendingApprovalDescriptor[] => [...pendingApprovals.values()].map(v => v.descriptor).filter(externallyResolvable),
+    list: (): PendingApprovalDescriptor[] => externalApprovals(),
     resolve: (key: string, decision: boolean | ApprovalDecision): boolean => {
         const entry = pendingApprovals.get(key);
         if (!entry || !externallyResolvable(entry.descriptor)) return false;   // unknown, or a UI-only gate
@@ -117,7 +119,7 @@ void housekeeping.start();
 // rehydrate — so a run that came back keeps its own tab — release the ones that did not.
 void hydrationDone.then(() => reconcileTabPins());
 // The value store's idle sweep: now, and on an alarm, since a worker evicted mid-run never releases what its session held.
-startValueSweeps();
+startValueSweeps(liveHeldSessions);   // its first pass releases held rows no session can end any more
 
 // TEST-ONLY (reachable only from the SW realm via serviceWorker.evaluate, like __mlApprovals — no page can
 // reach it, and nothing in prod calls it): simulate an MV3 eviction by dropping all in-memory run state, then
@@ -155,6 +157,10 @@ startValueSweeps();
     replayTabs: [...runReplayBuffer.keys()], deref: [...derefByRun.keys()], context: [...contextByRun.keys()], turns: [...turnByRun.keys()],
     starting: [...new Set([...workerRunsStarting, ...startingControllers.keys()])], sessions: sessionServer.index.list().map((s) => s.id.hash),
 });
+// TEST-ONLY (SW realm only): the payloads a run's next message is recorded on (the live turn's and the stored one), as
+// the files' ids and the message count each carries (tests/task-starts-turn.test.mjs: a message taken back leaves neither).
+(globalThis as unknown as { __mlRunPayloadsForTest?: unknown }).__mlRunPayloadsForTest = (hash: string): Array<{ files: string[]; sends: number | undefined }> =>
+    [turnByRun.get(hash)?.().payload, bgRuns.get(hash)?.p].filter((p): p is StartRunPayload => !!p).map((p) => ({ files: (p.files ?? []).map((f) => f.id), sends: p.sends }));
 // TEST-ONLY (SW realm only, like the two above): keep a session past the worker's life, as a run the user started with
 // `persistUiRuns` on is kept, without starting one through a surface.
 // A nested ask raised from inside a running step, as a consumer (ml.sh) raises one: what the surfaces, SET_APPROVAL and
@@ -170,7 +176,7 @@ startValueSweeps();
 (globalThis as unknown as { __mlUserRunActionForTest?: unknown }).__mlUserRunActionForTest = (hash: string, action: "send" | "continue", body: { text?: string; surface?: string }, origin?: import("./contract/contract-run").PromptOrigin) => userRunAction(hash, action, body, undefined, origin);
 
 // TEST-ONLY (SW realm only): detach a task of a run by hand, as an executor does, and get its id and a function that ends
-// it with an outcome. A test of what a FINISHED task does (parks, shows on the session's row) needs one without driving ml.sh or Python.
+// it with an outcome. A test of what a FINISHED task does (starts a turn, parks, shows on the session's row) needs one without driving ml.sh or Python.
 (globalThis as unknown as { __mlDetachTaskForTest?: unknown }).__mlDetachTaskForTest = (runId: string, tool = "ml.sh"): { id: string; finish: (o: Partial<TaskOutcome>) => void; read: () => Promise<unknown> } => {
     let end!: (o: TaskOutcome) => void;
     const settled = new Promise<TaskOutcome>((res) => { end = res; });
@@ -195,7 +201,7 @@ startValueSweeps();
 // state its sub-call spend is counted in; `spend` reads it back.
 (globalThis as unknown as { __mlWorkerVisionForTest?: unknown }).__mlWorkerVisionForTest = {
     captureRunTab, workerShot, workerVisionChat, workerVisionHost, onWorkerHost, spend: workerSpend, checkVerifyRequest, workerLook, workerLocate,
-    workerAnswerMedia, workerPythonImage, workerMint,
+    workerAnswerMedia, workerPythonImage, workerMint, runChat,
     // A vm has no OffscreenCanvas: a test draws the worker's crops with a recorder of its own.
     useRaster: useRasterForTest,
     seedRun: (runId: string, tabId: number) => { buildWorkerTools(runId, tabId, () => "", ["fetch_url"]); },
@@ -204,6 +210,8 @@ startValueSweeps();
 if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
     chrome.webNavigation.onCommitted.addListener((d) => {
         if (d.frameId === 0) tabPageUrl.set(d.tabId, d.url);
+        // A worker-hosted run on the tab is on this page now (SessionSummary.currentPage).
+        if (d.frameId === 0) sessionPageMoved(d.tabId, d.url);
         // Its side panel follows the new document's presence (sw-side-panel.ts), and so does where a run's UI goes.
         if (d.frameId === 0) void notePage(d.tabId, d.url);
         // The old document is gone and any page-hosted run in it with it: drop what that tab was entitled to read.
@@ -220,7 +228,7 @@ if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
         // After noteNavigating, which takes the document being left from the barrier: a re-adopt from it is refused.
         if (d.frameId === 0 && typeof d.documentId === "string") navBarrier.noteDocument(d.tabId, d.documentId);
     });
-    chrome.webNavigation.onHistoryStateUpdated?.addListener((d) => { if (d.frameId === 0) tabPageUrl.set(d.tabId, d.url); });
+    chrome.webNavigation.onHistoryStateUpdated?.addListener((d) => { if (d.frameId === 0) { tabPageUrl.set(d.tabId, d.url); sessionPageMoved(d.tabId, d.url); } });
 }
 // A site taken off the approved set while a run its own page built is going (owner's decision 2026-10-12): the run is the
 // worker's from here, as when it navigates onto a site that may not use window.ml (nav-handover.ts). Every path that
@@ -430,10 +438,13 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         const sentFiles = cleanFiles(message.files);
         // A run the worker built is driven from here: the page never carries the person's message (sw-run-start.ts).
         if ((message.action === "send" || message.action === "continue") && typeof message.hash === "string") {
-            void userRunAction(message.hash, message.action, { text: message.text, images: message.images, ...(message.files != null ? { files: message.files } : {}), surface: message.surface, maxSteps: message.maxSteps }, message.tabId)
+            // The person's exemption tokens ("send as is", ruling 39) only from an extension page's sender; never to a page.
+            const asIs = isExtensionSender(sender) ? asIsTokens(message.asIs) : undefined;
+            void userRunAction(message.hash, message.action, { text: message.text, images: message.images, ...(message.files != null ? { files: message.files } : {}), surface: message.surface, maxSteps: message.maxSteps, ...(asIs ? { asIs } : {}) }, message.tabId)
                 .then((mine) => { if (!mine) toPage(); }, (e) => {
                     // As on USER_RUN_ACTION: a refused turn is said in the run's step list, never handed to the page.
-                    if (e instanceof ImagesRefused || e instanceof FilesRefused || e instanceof PageGone) { noteRefusedTurn(message.hash as string, e.message, typeof message.tabId === "number" ? message.tabId : undefined); return; }
+                    // A store that cannot be read holds the message (ruling 44): said, never handed to the page unscrubbed.
+                    if (e instanceof ImagesRefused || e instanceof FilesRefused || e instanceof PageGone || e instanceof TurnUnreadable) { noteRefusedTurn(message.hash as string, e.message, typeof message.tabId === "number" ? message.tabId : undefined); return; }
                     toPage();
                 });
             return;
@@ -728,10 +739,17 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // A page's steer, or its wait for the person, is a turn of the site's own (sw-page-turn.ts `pageInject`): gated by
         // the start card's rules, shown with the site's name, and never stamped as typed on an extension surface.
         if (sender.tab?.id != null && !isExtensionSender(sender)) { pageInject(p, sender, personClaimed(message)).then(sendResponse, () => sendResponse({ data: false })); return true; }
-        const inbox = runInboxes.get(p.runId);
-        const injected = !!(inbox && inbox.tabId === sender.tab?.id && typeof p.text === "string");
-        if (injected) inbox!.queue.push({ id: p.sayId, text: p.text, ...(p.origin ? { origin: p.origin } : {}) });
-        sendResponse({ data: injected });
+        // The person's own word (an extension frame's), scrubbed by registered value before it is queued (ruling 39);
+        // its `scrubInput: false` sends it as it is. The inbox is read after the scrub, which a turn can end during.
+        const live = (): boolean => { const inbox = runInboxes.get(p.runId); return !!(inbox && inbox.tabId === sender.tab?.id && typeof p.text === "string"); };
+        if (!live()) { sendResponse({ data: false }); return true; }
+        void forTurn({ off: p.scrubInput === false, asIs: asIsTokens(p.asIs) }).then((scrub) => {
+            if (!live()) { sendResponse({ data: false }); return; }
+            const text = `${scrub.text(p.text)}${scrub.note()}`;
+            runInboxes.get(p.runId)!.queue.push({ id: p.sayId, text, ...(p.origin ? { origin: p.origin } : {}) });
+            resetTaskChain(p.runId);   // the chain of task-started turns is broken
+            sendResponse({ data: true });
+        }, (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
         return true;
     }
     // A run the USER started from the HUD Commander or right-click menu, sent by the content-script shell on behalf of
@@ -745,7 +763,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     // (or a content script relaying for one) that could add or widen one would be approving itself.
     if (message.type === "POLICIES") {
         if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
-        const p = (message.payload || {}) as { op?: unknown; id?: unknown; effect?: unknown; source?: unknown; label?: unknown; consumer?: unknown };
+        const p = (message.payload || {}) as { op?: unknown; id?: unknown; hash?: unknown; confirm?: unknown; effect?: unknown; source?: unknown; label?: unknown; consumer?: unknown };
         const str = (v: unknown, max: number): string | undefined => (typeof v === "string" && v.trim() && v.length <= max ? v : undefined);
         const effect = p.effect === "allow" || p.effect === "deny" || p.effect === "ask" ? p.effect : undefined;
         // Awaits the store's first storage read: a page that listed policies in an earlier worker life names ids this one
@@ -754,7 +772,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             await policiesReady;
             if (p.op === "add") {
                 const source = str(p.source, POLICY_SOURCE_MAX), label = str(p.label, POLICY_LABEL_MAX);
-                const consumer = p.consumer === "sh" ? "sh" : p.consumer === undefined || p.consumer === "fetch" ? "fetch" : undefined;
+                const consumer = p.consumer === "sh" || p.consumer === "setting" ? p.consumer : p.consumer === undefined || p.consumer === "fetch" ? "fetch" : undefined;
                 if (!source || !label || !effect || !consumer) { sendResponse({ error: "a policy needs an effect (allow, deny or ask), a label and its code" }); return; }
                 addGlobalPolicy({ consumer, effect, source, label });
             } else if (p.op === "edit") {
@@ -763,6 +781,20 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             } else if (p.op === "remove") {
                 const id = str(p.id, 100);
                 if (!id || !removePolicy(id)) { sendResponse({ error: "no such policy" }); return; }
+            } else if (p.op === "session") {
+                // One session's effective view (docs/spec/POLICIES.md, "The effective view"): a read, so no change to answer with.
+                const hash = str(p.hash, 100);
+                if (!hash) { sendResponse({ error: "a session hash is needed" }); return; }
+                sendResponse({ data: sessionPolicies(hash) });
+                return;
+            } else if (p.op === "removeChecked") {
+                // A removal from a session's view: a widening one needs `confirm: true`, and refuses with the entry and what it would expose.
+                const hash = str(p.hash, 100), id = str(p.id, 100);
+                if (!hash || !id) { sendResponse({ error: "a session hash and a policy id are needed" }); return; }
+                const r = removeFromSession(hash, id, p.confirm === true);
+                if (!r.removed) { sendResponse(r.why === "confirm" ? { error: "confirm", data: { row: r.row } } : { error: "no such policy" }); return; }
+                sendResponse({ data: sessionPolicies(hash) });
+                return;
             } else if (p.op !== undefined && p.op !== "list") { sendResponse({ error: "unknown op" }); return; }
             sendResponse({ data: policyView() });
         })();
@@ -795,6 +827,23 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     // The tier 3 libraries stored for the read-only Python dialect (READONLY_LIBRARY_MANIFEST.md, "The runtime import
     // loop"): read them, remove one. EXTENSION PAGES ONLY. There is no add here: a library is stored only from a card the
     // person approved. A remove restarts every Python worker that was handed a library (ruling D): nothing unloads a module.
+    // The person's registered secrets (SECRET_HANDLES.md, "The scrub as built"): list, add, remove. EXTENSION PAGES ONLY,
+    // judged by the sender the browser reports; every answer is names and a count, never a value.
+    if (message.type === "SECRET_REGISTRY") {
+        if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
+        secretRegistryOp((message.payload || {}) as { op?: unknown; name?: unknown; value?: unknown }).then(sendResponse, (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
+        return true;
+    }
+    // A composer's draft, scanned for the registered values its send would take out (ruling 39, SECRET_HANDLES.md, "What
+    // the person sees"): spans, names and the tokens "send as is" sends back, never a value. EXTENSION PAGES ONLY, judged
+    // by the sender the browser reports, and refused before the payload is read, so the refusal never differs by the text.
+    if (message.type === "SCAN_TURN") {
+        if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
+        const texts = (message.payload as { texts?: unknown } | undefined)?.texts;
+        if (!Array.isArray(texts) || texts.length > 64 || texts.some((t) => typeof t !== "string")) { sendResponse({ error: "texts must be a list of strings" }); return; }
+        scanTurn(texts as string[]).then((data) => sendResponse({ data }), (e) => sendResponse(e instanceof TurnUnreadable ? { error: e.message, unreadable: true } : { error: "the draft could not be scanned" }));
+        return true;
+    }
     if (message.type === "LIBRARIES") {
         if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
         const p = (message.payload || {}) as { op?: unknown; id?: unknown };
@@ -914,7 +963,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         userRunAction(p.hash, p.action, message.payload, sender.tab.id).then((outcome) => sendResponse({ data: outcome }), (e) => {
             // Images the run may not be sent (vision not known, no reader): said in the run's step list, since this
             // surface has no other place to say it, and answered as handled so the shell does not hand it to the page.
-            if (e instanceof ImagesRefused || e instanceof FilesRefused || e instanceof PageGone) { noteRefusedTurn(p.hash as string, e.message, sender.tab?.id); sendResponse({ data: null, refused: e.message }); return; }
+            if (e instanceof ImagesRefused || e instanceof FilesRefused || e instanceof PageGone || e instanceof TurnUnreadable) { noteRefusedTurn(p.hash as string, e.message, sender.tab?.id); sendResponse({ data: null, refused: e.message }); return; }
             sendResponse({ data: null });
         });
         return true;
@@ -987,6 +1036,8 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     if (message.type === "PY_STARTED") { pythonStarted(message, sender); return false; }
     if (message.type === "PY_DONE") { void pythonDone(message, sender); return false; }
     if (message.type === "PY_REAPED") { pythonReaped(message, sender, noteRunLine); return false; }
+    if (message.type === "FILES_ATTACHED") { sendResponse(filesAttached(message, sender)); return false; }
+    if (message.type === "FILES_SECRET_FORMS") { void filesSecretForms(sender).then(sendResponse); return true; }
     if (message.type === "SERVER_TOOL_EXEC") {
         // Run ONE OpenWebUI-configured tool. CHOKE POINT, and a real one: the fetch spends the user's API
         // key, and the tool it runs is caller-chosen — a hostile page reaching this handler directly could
@@ -1113,7 +1164,11 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         if (rid) inflight.set(rid, ctl);
         const done = () => { if (rid) inflight.delete(rid); };
         // A page's call is its own: it may not file its generation under a run the worker built (sw-runs.ts).
-        fetchLLM(sender.tab ? withoutWorkerSession(message.payload) : message.payload, ctl.signal)
+        // A page's request leaves for the backend with no registered secret in any message, and nothing about it said back.
+        const fromPage = !!sender.tab && !isExtensionSender(sender);
+        // The utility profile's calls (an extension frame's HUD summary included) leave with no registered secret too.
+        (fromPage || message.payload?.extend === "utility" ? forBackendFromPage(withoutWorkerSession(message.payload)) : Promise.resolve(sender.tab ? withoutWorkerSession(message.payload) : message.payload))
+            .then((payload) => fetchLLM(payload, ctl.signal))
             // raw (ml.step) returns { content, tool_calls } as data; normal chat
             // returns the content string, with sources alongside only when present.
             .then((result: any) => {
@@ -1471,7 +1526,9 @@ chrome.runtime.onConnect.addListener((port) => {
         // The same origin gate as a one-shot request: a page's stream is a model call like any other.
         const refusal = port.sender ? await pageRefusal("FETCH_LLM", port.sender) : null;
         if (refusal) { if (!closed) port.postMessage({ type: "error", error: refusal }); return; }
-        streamLLM(port.sender?.tab ? withoutWorkerSession(message.payload) : message.payload, (delta) => { if (!closed) port.postMessage({ type: "chunk", delta }); }, ctl.signal)
+        const fromPage = !!port.sender?.tab && !isExtensionSender(port.sender);
+        (fromPage || message.payload?.extend === "utility" ? forBackendFromPage(withoutWorkerSession(message.payload)) : Promise.resolve(port.sender?.tab ? withoutWorkerSession(message.payload) : message.payload))
+            .then((payload) => streamLLM(payload, (delta) => { if (!closed) port.postMessage({ type: "chunk", delta }); }, ctl.signal))
             .then(({ content, sources, model, reasoning, usage }) => { if (!closed) port.postMessage({ type: "done", content, sources, model, reasoning, usage }); })
             .catch((err) => {
                 const error = String(err?.message || err);
@@ -1524,7 +1581,12 @@ configureStartApproval({ cancelRun: (runId) => { cancelBackgroundRun(runId); } }
 configureSessionCommands({
     // A steer from the chat page goes into the running loop's inbox, the same one a handle's say() reaches through
     // INJECT_MESSAGE, and is shown the way say() shows it: an `agent-say` bubble the loop marks seen when it drains.
-    steer: (hash, text, origin) => steerRun(hash, text, origin),
+    // Scrubbed where it becomes a turn (ruling 39); the bubble shows the words without the model's note.
+    steer: async (hash, text, origin, asIs) => {
+        const scrub = await forTurn({ asIs: asIsTokens(asIs) });
+        const said = scrub.text(text), note = scrub.note(), kept = scrub.sentAsIs();
+        return steerRun(hash, `${said}${note}`, origin, note || kept.length ? { typed: said, context: [], ...(kept.length ? { asIs: kept } : {}) } : undefined);
+    },
     startUserRun: (tabId, req, opts) => startUserRun(tabId, req, opts),
     userRunAction: (hash, action, body, fromTabId, origin) => userRunAction(hash, action, body, fromTabId, origin),
     adoptOnTab,

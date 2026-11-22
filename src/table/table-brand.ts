@@ -28,16 +28,57 @@ export function isTable(x: unknown): boolean {
 
 // A STORED table: a facade over a preview whose whole table is in the value store, so its `col`/`select`/`records` read
 // every row (a request) rather than the rows in hand. The dialect sizes that work by the table's `shape`, not by
-// `rows.length`, which is how it tells the two apart; granted only by `asTable`, like the brand above.
-const stored = new WeakSet<object>();
+// `rows.length`, which is how it tells the two apart; granted only by `asTable`, like the brand above. The map holds
+// the facade's store reader, so a copy of it (`copyTable`) can read the whole table too: the reader is never a
+// property a caller could reach or swap.
+const stored = new WeakMap<object, unknown>();
 
-/** Mark a table facade as stored. Called only by `asTable`. */
-export function brandStored<T extends object>(t: T): T {
-    stored.add(t);
+/** Mark a table facade as stored, with the reader its whole-table reads go through. Called only by `asTable`. */
+export function brandStored<T extends object>(t: T, reader: unknown): T {
+    stored.set(t, reader);
     return t;
 }
 
 /** Is this a facade whose reads go to the value store? */
 export function isStoredTable(x: unknown): boolean {
     return typeof x === "object" && x !== null && stored.has(x as object);
+}
+
+/** The store reader behind a stored facade; undefined for anything else. For `copyTable` only. */
+export function storedReader(x: unknown): unknown {
+    return typeof x === "object" && x !== null ? stored.get(x as object) : undefined;
+}
+
+// A READ-ONLY table (ruling 57, as amended 2026-11-20): what `ml.table` hands out, frozen at every level instead of
+// copied. The set holds the facade and each array or record it is made of (`rows`, every row, `columns`, `shape`,
+// `dtypes`), so the dialect can refuse a write to any of them with the way out, and so freezing the same stored
+// value twice costs nothing the second time.
+const frozenParts = new WeakSet<object>();   // state: plumbing
+
+/** Record a part of a read-only table. Called only by `asTable`. */
+export function markFrozenPart(x: object): void {
+    frozenParts.add(x);
+}
+
+/** Is this a read-only table, or an array or record one is made of? */
+export function isFrozenTablePart(x: unknown): boolean {
+    return typeof x === "object" && x !== null && frozenParts.has(x as object);
+}
+
+/** What a write to a read-only table is told: the facade's traps and the dialect both say it, so a model reads one sentence. */
+export const READ_ONLY_TABLE = "This table is read-only; call .copy() for one you can edit";
+
+// An EDITABLE table: `t.copy()` and what its own `select`/`head` return. Its arrays belong to nobody else, so the
+// dialect lets a script write to them; any other table may share its rows with a store, a cache or its parent.
+const editable = new WeakSet<object>();   // state: plumbing
+
+/** Mark a table facade as the caller's own copy. Called only by `asTable`. */
+export function brandEditable<T extends object>(t: T): T {
+    editable.add(t);
+    return t;
+}
+
+/** Is this a table whose arrays are the caller's alone? */
+export function isEditableTable(x: unknown): boolean {
+    return typeof x === "object" && x !== null && editable.has(x as object);
 }
