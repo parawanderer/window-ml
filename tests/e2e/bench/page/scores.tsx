@@ -14,7 +14,7 @@ import { cloudModels } from "../../../../src/sidebar/palette";
 import { signed, Interval } from "../../../../src/sidebar/interval-bar";
 import { Disclosure } from "../../../../src/sidebar/disclosure";
 import { IconWarn } from "../../../../src/sidebar/icons";
-import { BASIS_WORDS } from "../electricity.mjs";
+import { BASIS_WORDS } from "../../../../src/spend/energy";
 
 declare global { interface Window { __BENCH_SCORES__?: ScoreBoard } }
 
