@@ -45,14 +45,23 @@ test("a running row says it is running, a settled one does not", async () => {
 test("a queued answer shows the worker's sentence, no error, keeps the list open and ends the card after about 2.5 s", async () => {
     const SENTENCE = "The session is running: it moves to this tab when its current step ends.";
     const l = await mountList({ ok: true, queued: SENTENCE });
-    l.row("Running one").click();
-    await tick();
-    assert.ok(root().textContent.includes(SENTENCE), "the sentence is shown");
-    assert.equal(root().querySelector(".card-cmp-err"), null, "it is not an error");
-    assert.ok(root().querySelector(".card-bring-list"), "the list stays open");
-    assert.equal(l.done(), 0, "not done yet");
-    await tick(2700);
-    assert.equal(l.done(), 1, "done after the sentence was readable");
+    // The card's own delay is held and fired by hand, so the test does not wait 2.5 s of real time.
+    const realSetTimeout = globalThis.setTimeout;
+    const held = [];
+    globalThis.setTimeout = (fn, ms, ...rest) => (ms >= 1000 ? (held.push({ fn, ms }), 0) : realSetTimeout(fn, ms, ...rest));
+    try {
+        l.row("Running one").click();
+        await tick();
+        assert.ok(root().textContent.includes(SENTENCE), "the sentence is shown");
+        assert.equal(root().querySelector(".card-cmp-err"), null, "it is not an error");
+        assert.ok(root().querySelector(".card-bring-list"), "the list stays open");
+        assert.equal(l.done(), 0, "not done yet");
+        assert.deepEqual(held.map((t) => t.ms), [2500], "one delay, long enough to read the sentence");
+        held[0].fn();
+        assert.equal(l.done(), 1, "done once it runs out");
+    } finally {
+        globalThis.setTimeout = realSetTimeout;
+    }
 });
 
 test("an immediate move calls onDone at once; a refusal shows the error and not done", async () => {
