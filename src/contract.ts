@@ -72,6 +72,26 @@ export interface JsonSchema {
  *
  *  Underscore-prefixed members are internal plumbing exposed for debugging;
  *  they are NOT part of the stable public API and may change. */
+/** `ml.fs`: Node's `fs/promises` with this session's files as its disk (MlApi `fs`). `/files` (and `/`) is the root:
+ *  `attached/<handle>/<name>` is each file the person attached, read-only, and `agent/` is yours; a relative path resolves
+ *  against `/files/`. Every member returns a promise and answers Node's shapes and error codes (`e.code`, `e.syscall`,
+ *  `e.path`); a file outside this session is `ENOENT`. A registered secret in a file reads as `*` bytes, at its length. */
+export interface MlFs {
+    /** The whole file: a string with an encoding (`utf8`, `latin1`, `base64`, `hex`), else a `Uint8Array`. Past 8 MiB it
+     *  throws `ERR_FS_FILE_TOO_LARGE`: read by range with `open`. */
+    readFile(path: string, options?: string | { encoding?: string }): Promise<string | Uint8Array>;
+    /** A folder's names, or `Dirent`s with `{ withFileTypes: true }`; every level with `{ recursive: true }`. */
+    readdir(path: string, options?: { withFileTypes?: boolean; recursive?: boolean }): Promise<unknown[]>;
+    /** `size`, `mtimeMs`, `birthtimeMs`, `isFile()`, `isDirectory()`; a field it cannot answer is absent. `lstat` is the same. */
+    stat(path: string): Promise<unknown>;
+    /** Open for reading (`"r"`): a handle with `read({ buffer, offset, length, position })` (at most 512 KiB a call),
+     *  `readLines()` (an async iterator of lines), `readFile`, `stat` and `close`. */
+    open(path: string, flags?: "r"): Promise<unknown>;
+    /** Resolves when the path exists; `W_OK` rejects with `EROFS`. Also `opendir`, `realpath`, `constants`, and
+     *  `createReadStream(path, { start, end, encoding, highWaterMark })`: iterate it with `for await`; it has no `on` or `pipe`. */
+    access(path: string, mode?: number): Promise<void>;
+}
+
 /** `ml.sh`: programs on the person's machine, from an approved `exec`, which then runs in an isolated world rather than
  *  the page's (MlApi `sh`). A namespace, not a function: `await ml.sh.run(["cat", "notes.txt"])` takes an argv array,
  *  never a shell string. Every call starts in the first workspace folder and nothing carries over from one call to the
@@ -152,6 +172,12 @@ export interface MlApi {
      *  paths, sandbox): a policy or the built-in default answers, or the person is asked, and the call waits. With no host
      *  answering, a call is refused naming Settings, Extension, Advanced, Programs (ml.sh), where the person installs it. */
     readonly sh?: MlSh;
+    /** Read THIS SESSION's files with Node's `fs/promises` API: `await ml.fs.readFile("/files/attached/<handle>/<name>",
+     *  "utf8")`, `await ml.fs.readdir("/files/attached")`. There only inside an approved `exec` that names `ml.fs`, of a
+     *  run the extension hosts, which then runs in an isolated world; a page's `window.ml` has none. Reads only for now:
+     *  writes reject with `EROFS`, and a `*Sync` or callback form throws `ERR_ML_FS_UNSUPPORTED`. Python reads the same
+     *  files at `/files`. */
+    readonly fs?: MlFs;
     /** Curate the CURRENT run's user-facing answer (what the user sees as the result). A run-bound collection —
      *  valid only WHILE your run is executing; from the console outside a run it throws. Free to call from
      *  `exec` (no approval — curating your own answer is a safe operation). Keep it MINIMAL and matched to the

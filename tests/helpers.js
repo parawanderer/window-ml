@@ -161,7 +161,7 @@ function workerTimers() {
 // lets a test declare contextMenus, which GET_INVOCATION reads as "the right-click entry exists".
 // `holdPolicies` is a promise the policy store's first storage read waits on.
 // `holdRestore` is a promise the worker's read of ALL of local storage (its run restore) waits on.
-function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, onPdfRead, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, siteAgents = "always", userScripts, onTabsGet, holdRestore, onNative, dialectInside, pyInside, holdPolicies, onPyDelete, extensionTabs = [], onPyInstallTest }) {
+function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, onPdfRead, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, siteAgents = "always", userScripts, onTabsGet, holdRestore, onNative, dialectInside, pyInside, holdPolicies, onPyDelete, extensionTabs = [], onPyInstallTest, onFsCall }) {
     const calls = [];
     // chrome.runtime.connectNative: each host name asked for, in order. With `onNative(name, end)`, the test plays the
     // native host: `end.send(msg)` delivers a message to the worker's port, `end.close(why)` disconnects it, and the
@@ -426,6 +426,8 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                     if (msg?.type === "ARCHIVE_OP" && onArchiveOp) return onArchiveOp(msg);
                     // The offscreen document's PDF reader: `onPdfRead(msg)` answers a `PDF_READ` for it.
                     if (msg?.type === "PDF_READ" && onPdfRead) return onPdfRead(msg);
+                    // ml.fs's reads (fs-serve.ts): `onFsCall(msg)` plays the offscreen document's server for FS_CALL and FS_END.
+                    if ((msg?.type === "FS_CALL" || msg?.type === "FS_END") && onFsCall) return onFsCall(msg);
                     // HTML→Markdown for a fetch the worker made: a stand-in for the offscreen document's converter.
                     if (msg?.type === "HTML_TO_MD") { htmlToMd.push(msg.html); return { markdown: `MD(${String(msg.html).replace(/<[^>]*>/g, "").trim()})` }; }
                     return undefined;
