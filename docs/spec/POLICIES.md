@@ -771,7 +771,9 @@ in the policy store, the four defaults as built-in rows, the layer rule and its 
 `policy.files` command, the view's rows (`src/sw/files-hide-view.ts`), and the `/files` reader in the offscreen document
 bound by the resolved list (`src/session/files-hide-rule.ts`), which Python's mount and `ml.fs` both read through. NOT
 built: what the host gets (a `spawn` applies no entry yet, so a `hide` does not bind a program the shell starts, and
-every `files` row in the view says so), the model's proposal card, and the offer when a root is added. In the browser
+every `files` row in the view says so in its label), the model's proposal card, the offer when a root is added, and
+the four defaults in the view of a session with no `files` rule: as for every consumer, a default row appears once the
+consumer has a rule (a stated gap, closed before PR C merges, with the three tests that pin it). In the browser
 copy, which has no symlinks, `default:link-target` and `default:linked-template` hold nothing, and the linked-template
 refusal of a `show` is the host's to make.
 
@@ -922,7 +924,8 @@ hidden until the person picks it, and never all at once by default. The coordina
   through a `spawn`.
 - Naming a hidden path in `pathArgs` asks, names the `hide`, and no `allow` policy frees the ask.
 - The upgrade: there was no earlier hide list, so the fixture is today's policy store, with no `files` rows, read by
-  the new code. Its policies decide as before, and the view shows the four defaults only.
+  the new code. Its policies decide as before. As built (PR A), the view holds no `files` row until a rule exists,
+  then the four defaults first; showing the defaults with no rule is the follow-up below.
 
 **Other sessions' files, later** (ruling 91, 2026-11-20; NOT BUILT AND NOT SCHEDULED). Each session's folder on disk
 is private to it, and the host refuses every other session's folder under `window-ml-files/` by default
