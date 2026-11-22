@@ -89,7 +89,7 @@ export function DetailSessionMenu({ hash }: { hash: string }) {
                     ) : null}
                 </span>
             ) : null}
-            <SessionSummaryDialog store={store} />
+            <SessionSummaryDialog store={store} sidebar />
             <RenameDialog store={store} />
             <DeleteConfirm store={store} />
         </>

@@ -4838,6 +4838,38 @@ pre.code.morphing:not(.numbered) > code, pre.code.morphing .lcode { visibility: 
 .sum-line { display: contents; }
 .sum-line dt { color: var(--fg-dim); }
 .sum-line dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+/* `.sum-resources`: the summary page's resources tab: the session's resource panel (or the line saying why there is none), then its usage. */
+.sum-resources { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+/* `.sum-box`: the frame the resources tab holds the device's resource panel in. */
+.sum-box { min-width: 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+/* `.sum-usage`: the resources tab's usage part: the chart over its totals. */
+.sum-usage { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+/* `.sum-chart`: the usage chart's figure: the SVG and its legend. */
+.sum-chart { margin: 0; }
+/* `.sum-chart-box`: the usage chart's SVG and the reading box laid over its plot. */
+.sum-chart-box { position: relative; }
+/* `.sum-plot`: the box over the usage chart's plot (placed in percent of the viewBox) that takes the pointer and the arrow keys. */
+.sum-plot { position: absolute; cursor: crosshair; touch-action: pan-y; outline: none; }
+.sum-plot:focus-visible { box-shadow: 0 0 0 1px var(--accent); border-radius: 2px; }
+/* `.sum-sw-prompt`: the usage chart tooltip's swatch for prompt tokens: the mark's own circle and colour (with `.tc-sw`). */
+.sum-sw-prompt { background: var(--accent); border-radius: 50%; }
+/* `.sum-sw-completion`: the usage chart tooltip's swatch for completion tokens: the mark's own diamond and colour (with `.tc-sw`). */
+.sum-sw-completion { background: var(--warn); transform: rotate(45deg) scale(.85); }
+.sum-chart svg { width: 100%; height: auto; display: block; }
+/* `.sum-grid`: a gridline of the usage chart, recessive. */
+.sum-grid { stroke: var(--border); stroke-width: 1; }
+/* `.sum-axis`: an axis label of the usage chart, in the muted ink. */
+.sum-axis { fill: var(--fg-faint); font-size: 9px; }
+/* `.sum-m-prompt`: the usage chart's prompt mark, a circle. */
+.sum-m-prompt { fill: var(--accent); stroke: var(--bg); stroke-width: 1.5; }
+/* `.sum-m-completion`: the usage chart's completion mark, a diamond. */
+.sum-m-completion { fill: var(--warn); stroke: var(--bg); stroke-width: 1.5; }
+/* `.sum-legend`: the usage chart's legend row; the marks carry identity, the words stay in the text ink. */
+.sum-legend { display: flex; gap: 14px; color: var(--fg-dim); font-size: .85em; }
+/* `.sum-key`: a legend swatch, the same shape as its mark. */
+.sum-key { display: inline-block; width: 8px; height: 8px; margin-right: 5px; }
+.sum-key.prompt { background: var(--accent); border-radius: 50%; }
+.sum-key.completion { background: var(--warn); transform: rotate(45deg) scale(.85); }
 /* `.sum-empty`: the one line a summary-page tab with nothing drawn says: what it would hold, and why it is empty. */
 .sum-empty { color: var(--fg-faint); margin: 10px 0; }
 /* The detail header's per-session menu (session-menu.tsx): the one menu look, hung under its button like `.menu`. */
