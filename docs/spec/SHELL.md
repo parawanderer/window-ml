@@ -2,7 +2,9 @@
 
 **Status: draft (2026-10-13, refined 2026-10-15). Built so far: the pure core (`src/shell/`), the native port and its
 Settings, and `ml.sh.run`/`ml.sh.read` from an approved exec in an isolated world
-([`docs/dev/shell.md`](../dev/shell.md)). `ml.sh.run`/`ml.sh.read` over the `ml` wire from a full-mode Python cell (the ask on the step that opened the client).
+([`docs/dev/shell.md`](../dev/shell.md)). `ml.sh.run`/`ml.sh.read` over the `ml` wire from a `python_exec` cell (the ask on the step that opened the client).
+Since then: `ml.sh.put` (`src/shell/sh-put.ts`), `ml.sh` in the worker's read-only survey (#1936, c04d6b32), program
+manifests ([`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md)) and the guided host install ("Installing the host").
 Not yet: `pipe`/`glob` forms.** Where processes run and how the model reaches them. The
 mechanism of a single call (typed call to argv, a manifest per program) is summarised under "One call". It rests on
 three specs: [`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md), which DESCRIBES a program (only the free tier waits on it),
@@ -180,7 +182,8 @@ never a page. The model learns which mode a call ran in from the call's result, 
 
 ## Installing the host
 
-**Status: PROPOSED 2026-11-13** (host-setup lane; the coordinator clears this text as spec). Installing the host is
+**Status: PROPOSED 2026-11-13** (host-setup lane; the coordinator clears this text as spec); BUILT 2026-11-14 and 15
+(#1858 ace64f88, #1895 71be63b1, #1903 1581906a; `src/shell/host-install.ts`). Installing the host is
 three terminal steps (fetch the binary, `wmlhost install --extension-id <id>`, check Settings), and an extension can
 neither write the native messaging manifest nor start a binary, so the install cannot happen from inside. What the
 extension can do is make it one paste.

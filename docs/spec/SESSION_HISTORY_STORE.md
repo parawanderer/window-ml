@@ -1,6 +1,6 @@
 # Spec: a session's history is stored whole and read by range
 
-**Status: spec, measured; slice 2 is built (#1995, "BUILT" under it in the slices list), the rest is not; §6a's
+**Status: spec, measured; slice 1 is done (the notebook, #1938) and slice 2 is built (#1995, "BUILT" under it in the slices list), the rest is not; §6a's
 `/files/` recommendation is built in FILE_ATTACHMENTS.md's terms (#2026, #2048, #2058).** Written 2026-11-17 by the
 session-store lane, at the REPL coordinator's brief. Measured against main d3394f0d. The figures marked "measured" were
 run in this lane against the real `SessionStore` (scripts below); the code paths are cited by file and line. Compaction

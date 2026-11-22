@@ -311,10 +311,9 @@ whose add form takes the consumer.
 
 **Who writes a `setting` policy, and what it frees** (as `docs/dev/policies.md`, "The `setting` consumer"). An `allow`
 frees an ORDINARY change only, with no card; a guarded change shows its card whatever a policy says, in both directions,
-and a `deny` refuses either. The person writes one today, on the policy page or in a policy file. `propose_policy` does
-NOT accept consumer `setting` as built: `checkProposal` (`src/sw/policy-proposal.ts`) refuses any consumer but `fetch`
-and `act`, pinned by `tests/propose-policy.test.mjs`, "a proposal for consumer setting is refused". The model asking for
-one is part (c), below ("Proposing a `setting` policy"). No `setting` allow frees a guarded key, a shell key or
+and a `deny` refuses either. The person writes one today, on the policy page or in a policy file. The model asking for
+one through `propose_policy` is part (c), built in #2001 (553915d0; "Proposing a `setting` policy", below). (Until
+2026-11-22 this paragraph said `checkProposal` refused consumer `setting`, which stopped being true with #2001.) No `setting` allow frees a guarded key, a shell key or
 `agentStartPage`: `judgeSettingChange` frees class `ordinary` alone, and every shell key and `agentStartPage` is held to
 a class other than ordinary by `tests/setting-class.test.mjs`, "no shell key and not agentStartPage is ever ordinary".
 
