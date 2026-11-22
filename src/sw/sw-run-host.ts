@@ -1517,7 +1517,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         // RESERVED-surface click: the page couldn't synth-click a cross-origin iframe / sealed
                         // shadow target and handed back a CDP-click coordinate. The click was ALREADY approved
                         // above, and the trusted background performs the CDP click (the page can't). Gated on
-                        // the off-by-default `cdpClick` flag (cdpClick() itself checks the debugger permission).
+                        // the `cdp` flag (on by default; cdpClick() itself checks the debugger permission).
                         // describeElement into a SEALED shadow root, for a run the worker drives: the worker resolves the MODEL's
                         // selector through the debugger and writes the result (tools.ts `sealedDescribe`), where the page used to
                         // send CDP_SHADOW_RESOLVE itself. A page-built run's page resolves its own (an approved site's).

@@ -260,7 +260,7 @@ Every reader goes through it, so none can disagree with the gate:
 | Reader | What it decides |
 | --- | --- |
 | `levelsFor` (`siteDecision`: `pageRefusal`, `SITE_ACCESS`'s `implied`, `sw-run-start.ts` resume, `sw-isolated-exec.ts` `pageApproved`) | the list implies approval for window.ml |
-| `senderTrust` (`sw-consent.ts`) via `senderSelfApproves(selfApprovalFacts(sender))` | `whitelisted`: `CDP_CLICK`, `SERVER_TOOL_EXEC`, `FETCH_SHEET`, full-mode `PYTHON_EXEC`, `FETCH_URL` without a per-call grant; a worker-built run's `fetch_url`, sheet tables and Python, judged by its tab's URL |
+| `senderTrust` (`sw-consent.ts`) via `senderSelfApproves(selfApprovalFacts(sender))` | `whitelisted`: `CDP_CLICK`, `SERVER_TOOL_EXEC`, `FETCH_SHEET`, `PYTHON_EXEC` outside the dialect, `FETCH_URL` without a per-call grant; a worker-built run's `fetch_url`, sheet tables and Python, judged by its tab's URL |
 | `pageApprovalAllowed` (`publicConfig`, which takes the decision as an argument) | `GET_CONFIG`, `workerMl`, a worker run's `agent_api_docs` config: whether a page-hosted `ml.agent` honours the page's own `approve()` |
 
 One of the extension's own frames inside a tab (the overlay sidebar's bench) is judged by its tab's top-frame URL
@@ -545,9 +545,9 @@ sheet, read by the worker like an external one. The page is asked for the source
 code, not its other tables), and a call mixing an image, a sheet and a page table runs whole in the worker, where it
 used to be refused with a two-call steer because its page part ran on the page. Its other tables load without a DOM (a
 table by value, a URL the run's fetch_url read, an external sheet), and the call goes through `runPython`
-(`sw-python.ts`) with the run as the caller. Its approval is the run's CALL grant (`grantRunPython`: the external sheet ids, the full-mode code), set
+(`sw-python.ts`) with the run as the caller. Its approval is the run's CALL grant (`grantRunPython`: the external sheet ids, the code outside the Python read-only dialect), set
 around the one call and never on the tab, so a page cannot read the sheet with the person's cookies or run the approved
-full-mode code itself while it runs. Live stdout goes straight to the call's output.
+out-of-dialect code itself while it runs. Live stdout goes straight to the call's output.
 
 `describeElement` stays a page tool, but its one privileged step does not: a `>>>` path into a SEALED shadow root of a
 run the worker drives comes back as `cdpShadowResolve` instead of the page sending `CDP_SHADOW_RESOLVE`, and the
