@@ -120,6 +120,47 @@ Per cell, not per run: the person approves a cell, or the dialect admits it, one
 spend one more cell by making one more call. A budget per run would make a late, cheap cell fail for what an early
 one spent. The budget measures the worker's work, never the person's time, so a call waiting on a card spends none.
 
+## The members a Python cell has, and the order the rest are built (2026-11-22)
+
+Shane, 2026-11-22, in the coordinator's session: Python is to get the functions that work in JS, and the work starts
+now. The mechanism is built: a cell's `ml` (`src/python/ml-facade.ts`) sends each call by its dotted name and the
+server decides whether the member exists (`membersFor`, `src/sw/sw-ml-wire.ts`). So the mirror is this list of members
+and nothing else. A row here is the record of what a cell can call; a member is added to the server's table and to
+this table in the same PR.
+
+| Member | In JS | In a Python cell | Owner and order |
+| --- | --- | --- | --- |
+| `getModel`, `config`, `models`, `capabilities`, `ps`, `serverTools`, `info`, `schema`, `range`, `dereference` | built | built (the worker survey's own members) | none |
+| `settings` | built | built, for a client bound to a run the worker built | none |
+| `sh.run`, `sh.read`, `sh.put` | built | built, for an approved client a running step of its run opened | none |
+| `names` | no member (JS has `ml.state`) | NOT built; ruling 99 | packages, first |
+| `table` | built (#2043) | NOT built; specified in [`ML_TABLE.md`](ML_TABLE.md), "The member" | packages, second |
+| `fetch` | built | NOT built; specified in [`ML_TABLE.md`](ML_TABLE.md), "The member" | packages, with `table` |
+| `current` | built | NOT built and not specified; [`ASYNC_CALLS.md`](ASYNC_CALLS.md) records it as open. Its `tasks` are reached today by the `Detached` error on `sh.run` and the `task` tool | no owner; a spec section first |
+| `state` | built (the page heap) | NOT built; [`PYTHON_DIALECT.md`](PYTHON_DIALECT.md) specifies the read, by copy or as a pointer | no owner; after `table` |
+| `queryAll`, `a11y` | built | absent: they read the page, and the worker's realm has no page | not planned |
+| `chat`, `click`, a credentialed or rendered fetch | built, each behind its own gate | absent; each comes with its consent path ("Per-call asking") | not scheduled |
+| `fs` | the read members are #2083 | NOT A MEMBER, by design: Python has the `/files` mount and its own `open` and `os` ([`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md), "Python is not this API") | none |
+
+The rules every new member follows (the coordinator's calls):
+
+- **The spelling is the JS one.** A member has the name and the argument order it has in JS, and a keyword where JS
+  takes an options object. A call is synchronous in Python (ruling 77): the facade blocks on the wire answer, inside
+  and outside the dialect.
+- **A member that reads and has no effect does not ask.** Whether a cell calling it stays in the Python dialect is
+  decided where `sh.read` is decided today. A member that needs a change to the dialect's whitelist or to the fork is
+  stopped and brought to the coordinator before the change is made.
+- **A member is gated exactly as it is in JS.** `table` and `fetch` are judged as [`ML_TABLE.md`](ML_TABLE.md) says,
+  by the same function the JS member calls, never by a second copy of the rule.
+- **What a member answers is scrubbed and capped on the server**, as a tool result is, and charged to the cell's one
+  budget ("One budget a cell").
+- **`names()`** answers the cell's namespace as `{ names: [{ name, type }], total }`, sorted by name, at most 50
+  entries, each string one line of at most 64 characters. It reads the list the bench's Variables view already keeps,
+  runs no code of the cell's, and is absent for a stateless call, which keeps no namespace. It is not the retired
+  `ml.current.env`: nothing is added to a result or to the prompt unless the model calls it.
+- **Each member gets a red-team pass** (AGENTS.md, a new `ml.*` member): what a hostile page, a hostile value left in
+  the namespace by an approved cell, and a hostile program's output must not get from it.
+
 ## Related
 
 - [`PYTHON_DIALECT.md`](PYTHON_DIALECT.md): the first new client, and the reason for the handle and copy rules.
