@@ -1,10 +1,10 @@
 # The housekeeping log: what the system decided on its own
 
-**Status: in progress.** Written 2026-09-16. The log store, `ml.__housekeeping()`, service-worker start/eviction
+**Status: built; the open questions at the end are not.** Written 2026-09-16. The log store, `ml.__housekeeping()`, service-worker start/eviction
 inference, the Pyodide pre-warm, cold starts and kills, fetch-cache evictions and the panel view (the first entry in the
 header's ⋮ "More panels" menu) are built (`docs/dev/housekeeping.md`), and so are the value store's `evict` and
-`refuse` events (`docs/dev/pointers.md`). Build it before the value store
-(`docs/spec/POINTER_VALUES.md`), with the Pyodide pre-warm as its first emitter.
+`refuse` events (`docs/dev/pointers.md`). It was to be built before the value store
+(`docs/spec/POINTER_VALUES.md`), with the Pyodide pre-warm as its first emitter; both are built.
 
 ## Why
 

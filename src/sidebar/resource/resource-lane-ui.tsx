@@ -20,10 +20,10 @@ import { filterEvents, countByKind, placeEvents, MIN_EV_SPAN, laneRows, lineageO
 import { type ResourceSample } from "../../resource/resource-model";
 import { type ResourceEvent, eventsIn } from "../../resource/resource-timeline";
 import { scrollToAnswer } from "../transcript/answer-render";
-import { live, eventHover, cursorAt, noteRuns, litBy, holdAxis, hoverAt, releaseAxis, trackCursor, barKey } from "./chart-interaction";
+import { panelView, type ChartView, live, eventHover, cursorAt, noteRuns, litBy, holdAxis, hoverAt, releaseAxis, trackCursor, barKey } from "./chart-interaction";
 import { sampleGraceMs, resourceHistory, laneFilter, sampleGapMs, streamLive } from "./panel-state";
 import { scrollToStepSeq } from "../transcript/step-scroll";
-import { brush, snapDot, zoomRange, ollamaIds, models, laneScoped, predictView, sessionMap, view, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, showLane, laneHidden, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showModels, LANE_SCOPE_KEY } from "../store";
+import { snapDot, zoomRange, ollamaIds, models, laneScoped, predictView, sessionMap, view, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, showLane, laneHidden, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showModels, LANE_SCOPE_KEY } from "../store";
 import { Disclosure } from "../disclosure";
 import { useTipPlacement } from "../use-tip";
 import { hoverModel } from "./vram-focus";
@@ -42,15 +42,15 @@ import { EventTipBody } from "./event-tip";
  *  which is exactly the confusion the stripes exist to prevent.) */
 /** The selection, mirrored. Every track draws the same fractions, so a drag on ONE plot is visibly a drag on
  *  the whole chart — the ranges only mean anything compared across pools. */
-export function BrushOverlay({ runs }: { runs?: ResourceSample[][] } = {}) {
-    const b = brush.value;
+export function BrushOverlay({ runs, view = panelView }: { runs?: ResourceSample[][]; view?: ChartView } = {}) {
+    const b = view.brush.value;
     if (!b) return null;
     // SNAPPED AT RENDER, from the RAW screen fractions the drag stored — the same rule, and for the same
     // reason, as the mark (`snapUnder`). A fraction is a fact about the sample COUNT when it was taken, so an
     // edge resolved once drifts off the dot it was dragged against the moment a poll lands: measured a whole
     // sample apart (a box edge at 0.600 beside a mark at 0.500). Both now answer "which sample is under this
     // screen position" from the same data at the same instant, which is the only way they cannot disagree.
-    const at = (f: number) => (snapDot.value && runs ? snapFraction(runs, f, live.axis, sampleGraceMs())?.frac ?? f : f);
+    const at = (f: number) => (snapDot.value && runs ? snapFraction(runs, f, view.live.axis, sampleGraceMs())?.frac ?? f : f);
     const from = Math.min(at(b.from), at(b.to)), to = Math.max(at(b.from), at(b.to));
     return <div class="rc-brush" style={{ left: `${from * 100}%`, width: `${Math.max(0, to - from) * 100}%` }} />;
 }
@@ -67,7 +67,7 @@ const laneWidthPx = signal(0);
 /** Drag across a plot to select a time range (and release to apply it). The fractions are mapped back to TIME
  *  through the same segmented geometry events are placed with — the axis is not linear, so a range read off
  *  the pixels alone would select a different stretch than the one under the pointer. */
-export const startBrush = (runs: ResourceSample[][]) => (e: PointerEvent) => {
+export const startBrush = (runs: ResourceSample[][], view: ChartView = panelView) => (e: PointerEvent) => {
     if (e.button !== 0) return;
     const el = (e.currentTarget as HTMLElement);
     const box = el.getBoundingClientRect();
@@ -89,29 +89,29 @@ export const startBrush = (runs: ResourceSample[][]) => (e: PointerEvent) => {
      *  Snapped, it is the sample's own stamp, not the axis position read back through `timeAtFraction`,
      *  which would interpolate the very value the snap exists to avoid. */
     const timeAt = (x: number) => {
-        const rs = live.runs ?? runs;
+        const rs = view.live.runs ?? runs;
         if (snapDot.value) {
-            const s = snapFraction(rs, raw(x), live.axis, sampleGraceMs());
+            const s = snapFraction(rs, raw(x), view.live.axis, sampleGraceMs());
             const t = s ? rs[s.run]?.[s.index]?.t : null;
             if (t != null) return t;
         }
-        return timeAtFraction(live.axis, raw(x));
+        return timeAtFraction(view.live.axis, raw(x));
     };
     const startX = e.clientX;
     // RAW screen fractions, snapped where they are DRAWN (BrushOverlay) — see there. Storing the snapped
     // value here is what made the box a claim about a sample count that had already changed.
     const start = raw(startX);
     let moved = false;
-    brush.value = { from: start, to: start };
+    view.brush.value = { from: start, to: start };
     const move = (ev: PointerEvent) => {
         if (ev.buttons === 0) return up(ev);
         moved = true;
-        brush.value = { from: start, to: raw(ev.clientX) };
+        view.brush.value = { from: start, to: raw(ev.clientX) };
     };
     const up = (ev: PointerEvent) => {
         window.removeEventListener("pointermove", move);
         window.removeEventListener("pointerup", up);
-        brush.value = null;
+        view.brush.value = null;
         // A CLICK is not a selection: without this every click on the chart would zoom to an instant. Measured
         // on the RAW positions, because snapped they can collapse onto the same datapoint — which is a real
         // drag across less than one sample, not a click, and the result guard below is what refuses it.
@@ -124,7 +124,7 @@ export const startBrush = (runs: ResourceSample[][]) => (e: PointerEvent) => {
         // segmented, so a perfectly deliberate drag across a densely-sampled stretch can still resolve to a
         // window of a few milliseconds — which draws as an empty plot and reads as the panel breaking.
         const win = clampWindow({ from: a, to: b });
-        if (win) zoomRange.value = win;
+        if (win) view.zoom.value = win;
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);

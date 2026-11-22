@@ -3,7 +3,8 @@
 Status: **steps 1 and 2 done (#448, #451); of step 3, the `ml.current` cut shipped unmeasured (#450), `answer` left
 the default kit (#464), and the tool-output-tokens cut, the `exec`/`fetch_url` split, `locate`'s option texts and (round
 3) `python_exec`'s option texts and the shadow/iframe edge cases shipped measured (below); the pipe-example cut was
-dropped unmeasured, as too small to be worth a sweep.**
+dropped unmeasured, as too small to be worth a sweep; step 4, the panel-bloat cuts, shipped measured (#1867, 5ba6af04),
+all but the pipe section's ("Step 4 result").**
 Started 2026-10-08, updated 2026-11-12 (seven models read the agent prompt for contradictions; `task` offered with `python_exec`, measured).
 
 Every model call carries the system prompt and every tool's schema. This is the plan for making that smaller

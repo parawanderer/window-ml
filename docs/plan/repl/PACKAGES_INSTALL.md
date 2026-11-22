@@ -429,9 +429,10 @@ AS BUILT (slice 4b, item 7 and shapes iv and v of item 10):
 - (v) `PY_INSTALL_TEST` and `PY_INSTALL_STOP` need the extension's own sender id and no tab, like every other
   service-worker message the offscreen document takes (`tests/pkg-install-offscreen.test.mjs`). The run id is not a
   capability: every sender that passes is the extension's own code, and a Stop only kills a candidate.
-- A candidate never gets the session's `/files` mount (FILE_ATTACHMENTS.md, "A session's files as a directory", not
-  built): rollback is discarding the candidate, which holds only if nothing it wrote outlives it, and a failed import's
-  side effects in a writable `/files/` would. Only the run's own worker mounts it.
+- A candidate never gets the session's `/files` mount (FILE_ATTACHMENTS.md, "A session's files as a directory"; built in
+  #2026, where `attachFiles` in `src/python/files-host.ts` gives a channel to a `run:` worker only): rollback is
+  discarding the candidate, which holds only if nothing it wrote outlives it, and a failed import's side effects in a
+  writable `/files/` would. Only the run's own worker mounts it.
 
 **Slice 5, policy-store wiring.** The four facts (`name`, `version`, `source`, `sha256`) reach the policy realm as a
 call's facts. A policy can then allow or deny an install where the card would otherwise ask, and the policy page
