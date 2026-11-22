@@ -709,13 +709,29 @@ if (sessionStore) {
         // The upgrade's pass, in the background: a row not yet moved is resumed from the row meanwhile.
         .then((r) => { void store.migrate().catch(() => 0); return r; })
         .then(() => store.open())
-        .then((rows) => {
-            sessionServer.restored(sessionServer.index.restore(rows.map((r) => ({ summary: r.summary, count: r.count }))));
+        .then(async (rows) => {
+            const openTabs = await tabsOfThisBrowser().catch(() => undefined);
+            sessionServer.restored(sessionServer.index.restore(rows.map((r) => ({ summary: r.summary, count: r.count })), openTabs));
             void recordStorageSnapshot().catch(() => { /* storage unavailable */ });
             // Whatever a previous worker saved and never compacted, sessions from before compaction existed included.
             imageCompaction?.kick();
         })
         .catch(() => { /* no storage: the list is whatever this worker sees from now on */ });
+}
+
+/** The storage.session key a worker sets once it has started in this browser: it outlives an eviction, never a restart. */
+const BROWSER_SEEN_KEY = "ml_sessions_browser_seen";
+
+/**
+ * The ids of every tab open now, for `SessionIndex.restore`; EMPTY when the browser restarted since the rows were
+ * saved, because tab ids start over then and an open tab may hold a closed one's id. A worker that was only evicted
+ * finds its own mark in storage.session and checks the ids against the open tabs instead.
+ */
+async function tabsOfThisBrowser(): Promise<ReadonlySet<number>> {
+    const seen = (await chrome.storage.session.get(BROWSER_SEEN_KEY))[BROWSER_SEEN_KEY] === true;
+    const open = new Set((await chrome.tabs.query({})).flatMap((t) => (typeof t.id === "number" ? [t.id] : [])));
+    await chrome.storage.session.set({ [BROWSER_SEEN_KEY]: true });
+    return seen ? open : new Set();
 }
 
 /** Read the session settings once (retention, budget, titles); never rejects, since a worker without storage keeps

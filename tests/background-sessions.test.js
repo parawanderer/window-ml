@@ -351,6 +351,49 @@ test("session.pin keeps an unsaved session, writes the pin, and a restarted work
     assert.equal(restored?.pinned, true);
 });
 
+// --- a restored row's tab: after an eviction, after a browser restart ---
+
+/** A database holding two saved runs, each on its own tab (41, 42), as a previous worker left them. */
+async function rowsOnTabs() {
+    const { IDBFactory } = require("fake-indexeddb");
+    const { indexedDbBackend } = await import("../src/session/session-store.ts");
+    const idb = new IDBFactory();
+    const be = indexedDbBackend(idb);
+    const now = Date.now();
+    for (const [hash, tabId] of [["tabs0041", 41], ["tabs0042", 42]]) {
+        const summary = { id: { runtime: "local", hash }, kind: "agent", status: "done", createdTs: now, lastTs: now, pendingApprovals: 0, saved: true, page: { url: "https://example.com/" + tabId, tabId } };
+        await be.append({ hash, summary, lastTs: now, createdTs: now, bytes: 10, count: 1 }, 0, [start(hash)]);
+    }
+    return idb;
+}
+
+/** The rows a worker lists once both stored ones are back. */
+async function listedRows(bg) {
+    const page = openPage(bg);
+    for (let i = 0; i < 100 && !(page.rows().has("tabs0041") && page.rows().has("tabs0042")); i++) await new Promise((r) => setTimeout(r, 20));
+    return page.rows();
+}
+
+test("a worker back from an EVICTION drops a stored row's tab that closed meanwhile, and keeps one still open", T, async () => {
+    // The mark a worker leaves in storage.session outlives an eviction, so the ids are this browser's and are
+    // checked against its open tabs: 41 closed while no worker was there, 42 is still open.
+    const bg = loadBackground({ config, indexedDB: await rowsOnTabs(), session: { ml_sessions_browser_seen: true }, openTabs: [{ id: 42, url: "https://example.com/42", title: "42" }] });
+    const rows = await listedRows(bg);
+    assert.equal(rows.get("tabs0041").page.tabId, undefined, "a closed tab is not offered");
+    assert.equal(rows.get("tabs0041").page.url, "https://example.com/41", "the page it worked on still is");
+    assert.equal(rows.get("tabs0042").page.tabId, 42);
+});
+
+test("a worker in a RESTARTED browser drops every stored row's tab, even one whose id an open tab now has", T, async () => {
+    // No mark in storage.session: the browser started over, and so did its tab ids. Tab 42 here is some other page
+    // that was handed the old id, and a row naming it would focus or peek at the wrong tab.
+    const bg = loadBackground({ config, indexedDB: await rowsOnTabs(), openTabs: [{ id: 42, url: "https://other.example/", title: "other" }] });
+    const rows = await listedRows(bg);
+    assert.equal(rows.get("tabs0041").page.tabId, undefined);
+    assert.equal(rows.get("tabs0042").page.tabId, undefined, "an id reused by another tab names nothing of this run");
+    assert.equal(bg.sessionStore.ml_sessions_browser_seen, true, "and the next start in this browser checks instead");
+});
+
 test("every command the contract defines reaches the handler through the port", T, async () => {
     // The port kept its own list of known commands, which went stale: slice 5's commands were built and tested in the
     // handler and answered `unsupported` from here, which is the only way the chat page reaches them.
