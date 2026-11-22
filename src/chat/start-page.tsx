@@ -31,7 +31,7 @@ import { blankStartState } from "./blank-start";
 import { BlankStartDialog } from "./blank-start-dialog";
 import { startableOn, useTargetPick, type StartKind } from "./new-session";
 import { onOpenGround, startField } from "./start-field";
-import { keyUse, knowsKeys, noteKeyUse } from "./view-mode";
+import { calm, keyUse, knowsKeys, noteKeyUse } from "./view-mode";
 
 /** How long a runtime that dropped away still keeps the start page drawn: the extension's worker is stopped by the
  *  browser whenever it idles (about every 30 seconds) and is back within a second, and redrawing the page from
@@ -55,7 +55,8 @@ export function useHeldTrue(on: boolean, ms: number): boolean {
 /**
  * The dot field behind the start page (start-field.ts), calm around the box `boxOf` finds. A canvas fixed over the
  * whole window, under everything (the list draws over it), that takes no pointer events: a press on the page's open
- * ground stirs it. Not on a phone, where it would only cost battery behind a page that is all box.
+ * ground stirs it. Not on a phone, where it would only cost battery behind a page that is all box, and only in the
+ * calm view: the panel's view is a workbench, and a moving ground behind it is decoration it does not want.
  * @gallery none a WebGL animation behind the start page; seen with `node tests/e2e/chat-shots.mjs`
  */
 function StartField({ boxOf }: { boxOf: () => Element | null }) {
@@ -250,7 +251,7 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
             </div>
         ) : null}
         <div class="chat-start-page">
-            {narrow ? null : <StartField boxOf={() => box.current?.closest(".chat-start-box") ?? null} />}
+            {narrow || !calm.value ? null : <StartField boxOf={() => box.current?.closest(".chat-start-box") ?? null} />}
             <div class="chat-start-col">
                 {/* NARROW: the choices sit OUTSIDE the box, above it and across the full width, as the phone app's
                     own start screen has them. Inside it they read as part of the message being composed; they are not

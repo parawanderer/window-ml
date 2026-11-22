@@ -1,6 +1,11 @@
 # Spec (WIP): library manifests for the read-only dialect
 
-**Status: work in progress, nothing built.** Written down on 2026-10-12 from a discussion, to come back to. The
+**Status: work in progress; built for Python only.** Written down on 2026-10-12 from a discussion, to come back to.
+Built: the four manifest files the Python dialect loads (`notebooks/python-dialect/data/manifest-*.json`, read by the
+CPython fork's `restricted.load_manifests`) and their schema ("The shipped files' JSON Schema"), and tier 3 libraries
+through `propose_manifest` with `library` (root K (c2), #1110 7891e866; "As built" below). Not built: a manifest for a
+JS library (the JS dialect has only its whitelist, with `mutates(i)` in miniature as `ARG_WRITERS` in
+`src/readonly-exec/policy.ts`), the syntaxes sketched below, and workspace scope (parked). The
 examples below are sketches of a syntax to be argued with, not a design. Open questions are at the end.
 
 ## The idea

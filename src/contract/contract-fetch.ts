@@ -104,9 +104,10 @@ export interface TableLike {
      *  Worth surfacing: it is the discovered value, and a wrong guess is the failure a reader should be able
      *  to see rather than infer from mangled columns. */
     delimiter?: string;
-    /** `rows` was capped at 200,000 rows (`MAX_TABLE_ROWS`): the table is a prefix of the source, not the whole of it,
-     *  so a sum or count over `rows` or `col()` covers only that prefix. `shape[0]` is still the source's row count;
-     *  for the whole file, hand the URL to `python_exec`'s `tables`. */
+    /** `rows` holds fewer rows than the table has: `shape[0]` is the whole count and `rows` a prefix of it, so a sum or
+     *  count over `rows` covers only that prefix. A fetch keeps at most 200,000 rows (`MAX_TABLE_ROWS`); a stored
+     *  table, and its `select` or long `head`, keeps its preview. For every row of a stored table, `await t.records()`
+     *  or `await t.col(name)`; for the whole file in pandas, hand its source to `python_exec`'s `tables`. */
     truncated?: boolean;
     /** The source had NO header row, so `columns` are positional (`0`, `1`, `2`) — `read_csv(header=None)`.
      *  Recorded rather than left implicit: a reader who sees numeric column names should be able to tell that
@@ -130,25 +131,30 @@ export interface TableLike {
  *
  *  From `ml.fetch`, every method is synchronous and reads `rows`. One case returns promises: a STORED table, which
  *  is a pointer's table inside `exec` (`@tool:<id>.table`) where only a preview is in `rows` (`rows.length <
- *  shape[0]`) and the whole table sits in the run's value store. There, `col`, `select`, `records` and a `head`
- *  longer than `rows` read every row and return promises: `await t.col("revenue")`. The read-only dialect awaits
- *  them for you. */
+ *  shape[0]`) and the whole table sits in the run's value store. There, `col` and `records` read every row and
+ *  return promises: `await t.col("revenue")`. The read-only dialect awaits them for you. Its `select`, and a `head`
+ *  longer than `rows`, are synchronous VIEWS: their `rows` is the rows in hand (`truncated` set, `shape[0]` the
+ *  view's whole count), and their own `col`/`records` read every row of the view. */
 export interface Table extends TableLike {
     /** One column's values, by name. `t.col("revenue")` → `[9.99, 13.49, …]`. Throws on an unknown name. A promise
      *  only for a stored table inside `exec` (see above); from `ml.fetch` it is the array. */
     col(name: string): TableCell[];
-    /** A column SUBSET as a new table — `df[["a", "b"]]`. Keeps the source's row count and dtypes. */
+    /** A column SUBSET as a new table — `df[["a", "b"]]`. Keeps the source's row count and dtypes. Of a stored table,
+     *  a view: `rows` is the rows in hand, and `await v.records()` reads every row of those columns. */
     select(names: string[]): Table;
     /** Rows as objects keyed by column name — what most JavaScript actually wants. */
     records(): Record<string, TableCell>[];
-    /** The first `n` rows as a new table (default 5), like `df.head()`: its `shape` counts only those rows. */
+    /** The first `n` rows as a new table (default 5), like `df.head()`: its `shape` counts only those rows. Of a
+     *  stored table, past the rows in hand, a view: `rows` is the rows in hand, `shape[0]` is `n`, and
+     *  `await v.records()` reads all `n`. */
     head(n?: number): Table;
     /** An EDITABLE copy, like `df.copy()`. A fetched table (`ml.fetch`, or `ml.table` of a URL) and a pointer's are
      *  read-only at every level (`rows`, each row, `columns`, `shape`, `dtypes`), and so is every `select`/`head` of
      *  them; call `copy()` before you edit. A copy and
-     *  its own `select`/`head` results are yours to change. Of a stored table it copies only the rows in `rows`, never
-     *  the whole stored file, and its `col`/`select`/`records` still read every row. A write to a read-only table from
-     *  non-strict page code does nothing and throws nothing. */
+     *  its own `select`/`head` results are yours to change. Of a stored table (or a view of one) it copies only the
+     *  rows in `rows`, never the whole stored file, and it never reads: its `col`/`records` past those rows throw,
+     *  naming the source's `await t.records()`. A write to a read-only table from non-strict page code does nothing and
+     *  throws nothing. */
     copy(): Table;
 }
 

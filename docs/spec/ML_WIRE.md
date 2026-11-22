@@ -1,6 +1,6 @@
 # Spec (WIP): `ml` over the wire, the one protocol every executor speaks
 
-**Status: the server half is built (`ML_CALL`, `src/sw/sw-ml-wire.ts`; how it is bound: [`docs/dev/site-access.md`](../dev/site-access.md), "The `ml` wire"); no client consumes it yet.** Written on 2026-10-15. Four pieces of work
+**Status: the server half is built (`ML_CALL`, `src/sw/sw-ml-wire.ts`; how it is bound: [`docs/dev/site-access.md`](../dev/site-access.md), "The `ml` wire"); its client is a `python_exec` cell, whose `ML_CALL` the offscreen document relays (`src/offscreen.ts`; #757, b38b2574).** Written on 2026-10-15. Four pieces of work
 turned out to depend on the same missing thing: `ml` inside Pyodide, JS values reaching Python, Python running at the
 process host, and policies answering a call from inside a script. The missing thing is a definition of ONE `ml` call as a
 message, so that every place code runs is a client of the same server.

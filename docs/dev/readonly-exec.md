@@ -538,16 +538,19 @@ through every path, the pre-call size check with its timing, a failed survey lea
 ### A stored table: the same kind, reads that are requests
 
 A pointer's table whose whole value is in the value store (POINTER_VALUES slice 7) is the same `table` receiver
-with the same four methods, but `col`, `select`, `records` and a `head` past the preview read EVERY row through a
-reader bound to the run, and return promises. No construct was added, and the contract was re-checked for the new
-value:
+with the same four methods, but `col` and `records` read EVERY row through a reader bound to the run, and return
+promises. `select` and a `head` past the preview are views over the rows in hand that read nothing; their own `col`
+and `records` read the view's columns and rows (`docs/spec/ML_TABLE.md`, "Views of a stored table in JS"). No construct
+was added, and the contract was re-checked for the new value:
 
 - **Awaited like `ml` calls.** A call on a stored facade (`isStoredTable`, a second brand granted only by `asTable`)
   that returns a promise is yielded to the driver, so a survey writes `t.col("x").length` with no `await`. Inside
   a `.map` callback there is nowhere to await, so the read falls out of dialect rather than leaking a promise into
   the data.
-- **Sized by `shape`, before the request.** The preflight measures a stored table by `shape[0]`, not by the preview
-  in `rows`, so a column of a two-million-row table is refused (→ approval) without being fetched.
+- **Sized by `shape`, before the request.** The preflight measures a stored table's `col` and `records` by `shape[0]`,
+  not by the preview in `rows`, so a column of a two-million-row table is refused (→ approval) without being fetched.
+  A view's `shape` is its own (a head's `n`, a select's width), so its reads are charged for what they return; `select`
+  and `head` themselves build only the rows in hand and are charged for those.
 - **Bounded in total.** Each read is one host call doing work proportional to the table, which the step budget
   never sees, so reads across one script are capped at `MAX_STORED_CELLS` (5M). A loop of under-cap reads stops
   there.

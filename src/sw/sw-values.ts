@@ -7,7 +7,8 @@
 // sweep runs when the worker starts and on an alarm, because nothing else is awake to run it.
 
 import { ValueStore, ValueTooLarge, ValueMissing, type ValueFormat, type ValueRow } from "../pointers/value-store";
-import { storedColumns } from "../table/table-data";
+import type { StoredReadPlan } from "../table/table-plan";
+import { cachedStoredColumns } from "../table/table-decode-cache";
 import type { FetchedBody } from "./sw-fetch";
 import { recordHousekeeping } from "./sw-housekeeping";
 import { DEFAULT_CONFIG } from "../contract/contract-config";
@@ -165,13 +166,15 @@ export async function valueHolders(key: string): Promise<string[] | null> {
     return row ? row.sessions : null;
 }
 
-/** Named columns of a stored table, every row, decoded here from the bytes as stored. Throws the store's ValueMissing
- *  (with its reason) for a value that is gone, and the decoder's error for an unknown column or an oversized read. */
-export async function readStoredColumns(key: string, names: string[], opts: { delimiter?: string; headerless?: boolean }): Promise<{ rowCount: number; columns: Record<string, unknown[]> }> {
+/** Named columns of a stored table, every row up to the plan's limit, from the worker's decode of the bytes as stored
+ *  (decoded on the first read, `table-decode-cache.ts`). The store is asked first on every read, so a value that is gone
+ *  throws the store's ValueMissing (with its reason) even while its decode is cached; the decoder's error for an
+ *  unknown column or an oversized read. */
+export async function readStoredColumns(key: string, names: string[], opts: { delimiter?: string; headerless?: boolean }, plan: StoredReadPlan = {}): Promise<{ rowCount: number; columns: Record<string, unknown[]> }> {
     const s = values();
     if (!s) throw new Error("there is no value store in this context");
     const { row, blob } = await s.get(key);
-    return storedColumns(await blob.arrayBuffer(), row.format, names, opts);
+    return cachedStoredColumns(row.blob ?? row.key, () => blob.arrayBuffer(), row.format, names, opts, plan);
 }
 
 /** A session is gone: release what it held, except the rows named in `keep`. */

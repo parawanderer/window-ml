@@ -38,6 +38,7 @@ import { defineState, readState, readableMembers } from "../state-registry";
 import { pageHostedAnswer } from "./page-run-state";
 import { type ChannelMessage, onIsolated, toIsolated } from "../page-channel";
 import { surveyWhere } from "../tools/exec-trace";
+import type { StoredReadPlan } from "../table/table-plan";
 
 /** The delegated vision-sub-call tokens `fn` spent, as a DELTA around the page-side meter (bus.ts). The
  *  background loop can't read the page's accumulator, so each delegated tool call reports its own spend and
@@ -321,7 +322,7 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
             const read = await answer(ref, pipe);
             const key = read.meta?.table ? read.meta.value : undefined;
             const table = read.meta?.table;
-            return key && table ? { ...read, readColumns: (names: string[]) => columnsViaBackground(runId, key, names, { ...(table.delimiter ? { delimiter: table.delimiter } : {}), ...(table.headerless ? { headerless: true } : {}) }) } : read;
+            return key && table ? { ...read, readColumns: (names: string[], plan?: StoredReadPlan) => columnsViaBackground(runId, key, names, { ...(table.delimiter ? { delimiter: table.delimiter } : {}), ...(table.headerless ? { headerless: true } : {}) }, plan) } : read;
         };
         const log = opts.answerShape ? new AnswerLog(opts.answerShape) : undefined;
         if (log) ctx.answer = log;

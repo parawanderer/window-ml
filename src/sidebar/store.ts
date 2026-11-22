@@ -152,6 +152,8 @@ export interface Session {
     startAsk?: { ask: import("../contract/contract-agent").StartAsk; outcome?: "allowed" | "denied" | "expired"; ts: number; askOnly?: boolean };
     /** The site ended its turn waiting for the person (Q2b): its prompt, shown labelled over the reply box. */
     siteWait?: { prompt: string; site: string; ts: number };
+    /** The run's background tasks, as the worker last said (`agent-tasks`); absent when it has none. The card marks it. */
+    background?: import("../contract").TaskBackground;
     /** Quiet lines in the step list the worker wrote (Q17). */
     notes?: { text: string; ts: number; atStep: number }[];
     answers?: { text: string; ts: number; atStep: number; status: Status; hitCap?: boolean; cancelled?: boolean; error?: string }[];

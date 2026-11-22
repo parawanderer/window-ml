@@ -1,8 +1,10 @@
 # Spec: persistent runtime state — the agent as an interactive programmer, not a stateless RPC caller
 
 Status: JS half **shipped** (`ml.state` + `state` in `exec`, commit 4e0173d).
-Python half **designed here, not built**. Auto-approve of pure-compute writes is a
-later, separate chunk.
+Python half **built, to a later design than the one written here**: a worker-hosted
+run's cells share one namespace (root C, #757 b38b2574), kept across the run's turns
+(#1777 a079dfa6), with no `env` parameter and no `mode` ("Python design", below).
+Auto-approve of pure-compute writes is a later, separate chunk.
 
 ## The idea
 
@@ -36,7 +38,7 @@ on screen. A hidden heap is the opposite of that distribution. So the fluency be
 **conditional on visibility**: persistence *without* a manifest gives the token savings
 and forfeits the fluency.
 
-**Design:** after a `persist`-mode call, append a compact manifest of the run's namespace
+**Design:** after a call in a persistent namespace, append a compact manifest of the run's namespace
 — **names + types/shapes, never values** (values re-bloat the context you just saved):
 
 ```
@@ -83,33 +85,24 @@ two places by [`PYTHON_DIALECT.md`](PYTHON_DIALECT.md): there is no `env` parame
 persists per run, and a reset is TOLD to the run), and there is no `mode` (dialect membership decides, as for
 JS `exec`). The scope manifest and the sequencing stand.
 
-## Python design (`python_exec` gains `env`)
+## Python design: retired, and what was built instead
 
-```jsonc
-"env": { "type": "string", "enum": ["persist", "isolated"],
-         "description": "'persist' keeps variables/functions across this run's turns; 'isolated' runs in a clean scope (today's behavior)." }
-```
-
-Under the hood, in the worker (`python-worker.ts` / `python-runtime.ts`):
-
-- A `Map<runHash, PyProxy /* globals dict */>` at worker scope, page/worker-lifetime.
-- **`persist`**: run in `globals = namespaces.get(runHash) ??= freshNamespace()`. The
-  per-run prelude (img/df/tables preload) still applies, but user-defined names survive
-  between calls. Append the scope manifest to the result.
-- **`isolated`**: today's path — a throwaway namespace, destroyed after the call (the
-  current per-run reset). This stays the default for a one-off computation.
-- `runHash` must reach the worker: thread it through `PY_RUN` (offscreen relay →
-  worker), alongside the existing payload. The background agent already knows the runId.
-- **Never auto-clear** a persist namespace (resume revives it). Bound growth only if it
-  becomes a problem (LRU by run, evict the least-recently-used dict) — not v1.
-- Interaction with the RESET invariant: the current design wipes non-`_` globals each
-  call for isolation. `persist` mode **skips that wipe** for its run's namespace; the
-  `harden`/`unharden` (readonly network-nulling) still applies per call regardless.
+RETIRED: the `env: "persist" | "isolated"` parameter this section specified (never built;
+superseded 2026-10-15) and `python_exec`'s `mode` (removed 2026-10-19, #820 c715b9f1), both by
+[`PYTHON_DIALECT.md`](PYTHON_DIALECT.md), "Membership replaces `mode`" and "The namespace".
+As built, a worker-hosted run's cells always share one namespace, by run id; a page's
+`ml.pythonExec` and a page-hosted agent's `python_exec` stay stateless. A lost namespace
+is told (`namespace reset at <time>: <reason>`), and the names and types are kept as the
+scope manifest (`src/offscreen.ts`, state `python.run-namespace`). The tool's parameters on
+main are `code`, `image`, `cast`, `verify`, `margin`, `tables`, `tableRaw`, the output-cap
+and retry parameters, and in a worker-hosted run `keep` and `expect_ms`
+(`src/python/python-tool.ts`). How it works: [`docs/dev/python-sandbox.md`](../dev/python-sandbox.md),
+"A run's namespace (root C)".
 
 ## Sequencing
 
 1. **JS `state`** — shipped (4e0173d).
-2. **Python `env: persist|isolated`** — per-run namespace + the scope manifest. The manifest
+2. **Python per-run namespace** + the scope manifest, built without `env` (above). The manifest
    is not optional; it's what makes persist match the model's priors.
 3. **Auto-approve pure-`state`/compute mutations** — the friction unlock; extends
    `readonly-exec.ts`'s mediation. Separate, larger.
