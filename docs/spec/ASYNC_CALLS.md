@@ -472,6 +472,90 @@ would set it to a stand-in that prints the URL to stdout, where piece 1 picks it
 6. A page cannot cause a tail, read a snapshot, or make a call detach. None of `task`'s paths is in `HANDLE_MAP` or a
    page-started type.
 
+## A run whose tab closed: the release (proposed 2026-11-22; not built)
+
+**Status: proposal, the async lane's, for the coordinator to rule.** The release itself is decided in
+[`TABLESS_RUN.md`](TABLESS_RUN.md) ("It ships FIRST", Shane, 2026-11-14), and so is the boundary with the move-run lane
+("The overlap with the async lane's closed-tab release", the coordinator, 2026-11-17). This section is how it is built,
+read against main 69a73569. Anything not quoted from those two places is the lane's proposal.
+
+### What main has (read 2026-11-22)
+
+- `tabs.onRemoved` (`background.ts`) drops the tab's `activeRuns` entry and the page's own value session, never the
+  run's. A closed tab's run keeps its namespace, its `@tool:` values, its inbox, its replay ring and its tasks until
+  something else releases it.
+- `releaseSessionTokens(runId)` (`sw-runs.ts`) is already the whole release. It drops the run's pointers and values, and
+  its hooks call `deletePythonRun` (`PY_DELETE_RUN` to the offscreen document) and `endTasks`. No hook says WHY.
+- Every Python namespace drop happens in the offscreen document, and each one deletes `runNsVars` (the names
+  `ml.current.env` reads). The drops are: `killWorker` (reasons `timeout`, `start-timeout`, `stopped`,
+  `library-removed`, `kernel-death`, `crashed`), the idle reap (`idle`, `idle-between-turns`) and `PY_DELETE_RUN`.
+  The first two also set `nsLoss`, the in-memory note the run's next cell prints as `namespace reset at <time>:
+  <reason>`. `PY_DELETE_RUN` clears it.
+- `chrome.alarms` is in the manifest (the hub, the session snapshot and the value sweep use it).
+- [`TABLESS_RUN.md`](TABLESS_RUN.md) asks the async lane for "the run has no running task" as something the worker can
+  ask. #2082 adds `taskCounts(runId)` and `onTaskCounts`, which cover it once the table is hydrated.
+
+### The proposal
+
+1. **The trigger.** A tab closes. Each run the worker holds on it (`bgRuns` with that `tabId`) gets a release deadline
+   of now plus `closedRunGraceMin` (default 10, 0 releases at once). It is a DevTools setting, a guarded number, and
+   may be added to the popup but never only there. A run with a RUNNING task gets no deadline: `onTaskCounts` sets it
+   when the run's last running task ends while the run still has no tab. A task's result that waits (`waiting`) does
+   not hold the run (point 5).
+2. **A deadline that survives eviction.** The deadline is stored as `ml_release_due:<runId>` in
+   `chrome.storage.session` (`{ due, closedAt }`). One alarm, `ml-release`, is set to the earliest `due`. On the alarm,
+   and at worker start after `hydratePersistedRuns`, every due entry is released and the alarm is set again. The
+   browser closing ends both, as the task table already does. Declared with `defineState` beside the writer.
+3. **Reopening cancels it.** An adopt, a move (`MOVE_RUN.md`) or a resume that puts the run on a tab removes its
+   deadline. So does a person's message, which runs the turn on a tab or, after TABLESS_RUN, detached. The check is "the
+   run has a tab now", made with `chrome.tabs.get` at release time, so a missed cancel releases nothing alive. A run
+   with a turn running is never released; its deadline moves to the turn's end.
+4. **The release is `releaseSessionTokens(runId, reason)`**, the existing function with a reason added and passed to
+   its hooks, so `PY_DELETE_RUN` carries it (`tab-closed`, or `person` for the Stop button in point 7). The stored run
+   (`ml_bgrun`) and the transcript stay, so a later Continue rehydrates the run with a fresh namespace, as
+   TABLESS_RUN.md says. `forgetRun`, a failed start and the install purge pass no reason and write no record, since
+   none of them leaves a session to read it.
+5. **A waiting result is kept.** `endTasks` as it stands removes the whole table, including an ended row whose result no
+   turn has read: the result a person reopens the run for. The release keeps such rows and removes the rest (`endTasks`
+   gains `keepUndelivered`). Each row is small and the table is per run, and archive and delete still remove
+   everything. OPEN for the coordinator: keep them, or drop them with the namespace and record that they were dropped.
+6. **The one writer of the namespace-drop record** (TABLESS_RUN.md: time, reason, the names capped at 50, the total; on
+   the session, in the session store). It lives in the offscreen document because every drop does. `dropNamespace(run,
+   reason)` reads `runNsVars` first, deletes it, and posts a fresh `PY_NS_DROPPED { run, at, reason, names?, total? }`
+   to the service worker. `names` and `total` are absent when `runNsVars` held nothing for the run: an unknown list,
+   never an empty one. `killWorker`, the reap and `PY_DELETE_RUN` call it instead of deleting `runNsVars` themselves.
+   The service worker writes the record onto the session (`sw-sessions.ts`) and keeps only the last one, since the
+   divider describes one resume. `PY_NS_DROPPED` is extension-only, like `PY_RESULT`: in neither `HANDLE_MAP` nor
+   `PAGE_STARTED_TYPES`, and answered only for this extension's sender with no tab. The reasons are the kill and reap
+   reasons above plus `tab-closed` and `person`. Two paths cannot write: a browser restart, and the offscreen document
+   closing (`runNsVars` dies with it). Their sessions take the "what is known" form TABLESS_RUN.md describes. Archive
+   and delete write none.
+7. **The session list.** TABLESS_RUN.md's "alive marker" and "stop-the-kernel button" reuse #2082's row field instead of
+   a second one. `background` widens to `{ running, waiting, noTab?, releaseAt? }`, with `releaseAt` while a deadline
+   is set, and may then be present with both counts at 0 (the widening the move-run lane proposed on 2026-11-22 for a
+   run with no tab and no tasks; one change, agreed with that lane). The Stop button sends a new `ml-sessions` request,
+   `release { hash }`, from an extension page only. It releases at once with reason `person`, and is refused while a
+   turn runs. The chat-page lane draws the marker and the button.
+8. **The model.** The release adds no model line: the move-run lane's reader says "namespace reset at <time>:
+   <reason>" from the record, as ruled. Until that reader lands, the run's next cell prints the line that `nsLoss`
+   already prints for a reap, because `dropNamespace` sets `nsLoss` for every reason except archive and delete.
+
+### Open, for the coordinator
+
+- Point 5: keep a waiting result through the release, or drop it with a record.
+- The record's field name and shape in the session store, which the session-store lane owns. Proposed:
+  `nsDropped: { at, reason, names?, total? }` on the stored session's metadata.
+- Whether `kernel-death`'s record is written by `dropNamespace` in `killWorker` (proposed, since it is one more kill
+  reason), rather than by the packages lane's listener calling a writer of its own.
+
+### What a hostile page or program must not get (e3's rows, when built)
+
+1. A page cannot send `PY_NS_DROPPED` or `release`: both are refused from a content script or any sender with a tab.
+2. The record carries names only, never values or types' contents, at most 50, through the scrub.
+3. A page closing its own tab releases only the runs on that tab, never another session's.
+4. A forged or stale `ml_release_due` entry releases nothing that has a tab (the `chrome.tabs.get` check at release
+   time).
+
 ## Mode 2: the push subscription
 
 `subscribe({ on, times, ttl })` registers an observer and returns at once with an id. `on` is a predicate in the
