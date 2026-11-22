@@ -173,10 +173,12 @@ is not in those words is the lane's proposal.
 - **That control is not in the composer and not in a bubble.** Anything typed into the composer reads as a message
   to the model, and this is not one. Its surface is a page chip beside the composer ("page: none ▾", or the tab's
   title once attached) that opens the open-tabs picker (`useTargetPick`), always visible, so the person can see the
-  run has no page. There is no `/page` command (RULED, Shane through the coordinator, 2026-11-17).
+  run has no page. For now it is the chip alone, with no `/page` command in this build (RULED, Shane through the
+  coordinator, 2026-11-17).
 - **The contract.** `session.resume` names a TARGET today, a tab or a blank one. Resuming detached is a third target
-  (`{ kind: "detached" }`), additive, agreed with the hub session before it is built, as the first resume was; the
-  phone and other clients then resume the same way. The tab pick is `session.resume` with a tab target, as today.
+  (`{ kind: "detached" }`), additive. The coordinator reads the diff before it is built, and the Chat Page lane
+  draws its "No tab" and the chip; the hub relays the sealed command unread and has nothing to agree. The phone and
+  other clients then resume the same way. The tab pick is `session.resume` with a tab target, as today.
   The target lands first as a [`SESSION_CONTRACT.md`](SESSION_CONTRACT.md) diff, read before the build, and the
   build PR carries `@hub-compat`. That diff is SESSION_CONTRACT.md §Resuming, "Proposed: a detached target"
   (2026-11-22), which also adds `capabilities.detached`.

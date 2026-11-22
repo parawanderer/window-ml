@@ -327,7 +327,8 @@ command because `session.send` would reach a page that no longer holds the sessi
 
 #### Proposed: a detached target (TABLESS_RUN.md, not built)
 
-**Status: proposal (2026-11-22, the `[window-ml move-run]` lane), to be read with the hub session before the build.**
+**Status: proposal (2026-11-22, the `[window-ml move-run]` lane); the shape read and accepted by the coordinator on
+#2094, and the Chat Page lane draws the start form's "No tab" and the page chip.**
 A run can have NO page ([`TABLESS_RUN.md`](TABLESS_RUN.md)): started with none, or left with none when its tab closed.
 It reaches the contract as one additive member of an open enumeration, so nothing here breaks:
 
@@ -345,8 +346,9 @@ It reaches the contract as one additive member of an open enumeration, so nothin
 - **A tab later** is `session.resume` with a `tab` target on the same session, as today; the person picked the tab, so
   the runtime asks no approval for it. The model's own way to a page, `navigate`, is not a contract command.
 
-The hub carries `AgentTarget` as a string kind and carries the capability unread, so the hub needs no change to relay
-it; the build PR carries `@hub-compat` all the same, for the phone and any client that renders the start form.
+The hub needs no change: window-ml-hub names neither `AgentTarget`, `agent.start` nor `capabilities`, and relays the
+sealed command unread. The build PR carries `@hub-compat` all the same, for the phone and any client that renders the
+start form.
 
 ### Devices
 
