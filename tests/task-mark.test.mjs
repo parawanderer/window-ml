@@ -3,14 +3,48 @@
 // refused in event-admission.test.mjs.
 import test from "node:test";
 import assert from "node:assert/strict";
+import { backgroundOf } from "../src/contract/contract-debug.ts";
 import { taskMarkText } from "../src/sidebar/transcript/task-mark-text.ts";
 import { onDebug, forgetSessionReduced } from "../src/sidebar/debug-reducer.ts";
 import { sessionMap } from "../src/sidebar/store.ts";
+
+// --- backgroundOf: the one presence rule, enumerated ---
+
+test("backgroundOf over every combination: present exactly when something is true, carrying only the true fields", () => {
+    let n = 0;
+    for (const running of [0, 1]) for (const waiting of [0, 1]) for (const noTab of [undefined, true]) for (const releaseAt of [undefined, 1700000000000]) {
+        n++;
+        const got = backgroundOf({ running, waiting, ...(noTab ? { noTab } : {}), ...(releaseAt !== undefined ? { releaseAt } : {}) });
+        const something = running > 0 || waiting > 0 || noTab === true || releaseAt !== undefined;
+        const label = JSON.stringify({ running, waiting, noTab, releaseAt });
+        assert.equal(got !== undefined, something, label);
+        if (got) assert.deepEqual(got, { running, waiting, ...(noTab ? { noTab: true } : {}), ...(releaseAt !== undefined ? { releaseAt } : {}) }, label);
+    }
+    assert.equal(n, 16);
+});
+
+test("backgroundOf: null and undefined are none, a falsy noTab is dropped, a bad count is 0, and the input is copied", () => {
+    assert.equal(backgroundOf(null), undefined);
+    assert.equal(backgroundOf(undefined), undefined);
+    assert.equal(backgroundOf({ running: 0, waiting: 0, noTab: false }), undefined);
+    assert.equal(backgroundOf({ running: -2, waiting: NaN }), undefined);
+    assert.equal(backgroundOf({ running: 0, waiting: 0, releaseAt: NaN }), undefined);
+    const input = { running: 2, waiting: 0, noTab: true };
+    const out = backgroundOf(input);
+    assert.deepEqual(out, input);
+    assert.notEqual(out, input);
+});
 
 // --- the mark's wording ---
 
 test("no tasks, or both counts 0, is no mark", () => {
     for (const bg of [null, undefined, { running: 0, waiting: 0 }]) assert.equal(taskMarkText(bg), null);
+});
+
+test("0/0 with noTab or releaseAt is still no mark: the card shows counts only", () => {
+    assert.equal(taskMarkText({ running: 0, waiting: 0, noTab: true }), null);
+    assert.equal(taskMarkText({ running: 0, waiting: 0, releaseAt: 5000 }), null);
+    assert.equal(taskMarkText({ running: 0, waiting: 1, noTab: true, releaseAt: 5000 }), "1 result waiting");
 });
 
 test("running only, waiting only, and both, with their plurals", () => {

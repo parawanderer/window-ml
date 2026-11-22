@@ -15,7 +15,7 @@
 // the surfaces keep free of doubles, but off mode with `listPageSessions` wakes the page's bus while the background
 // also fans the run's start and result. So the index de-duplicates by meaning (a second start, a repeated result, a
 // repeated "seen", a chat turn's id), which holds whichever copy arrives first.
-import type { MlDebugEvent, TaskBackground } from "../contract/contract-debug";
+import { backgroundOf, type MlDebugEvent, type TaskBackground } from "../contract/contract-debug";
 import { HASH_RE, promptLine } from "../contract/contract-run";
 import { SESSION_CONTRACT_VERSION, type RuntimeId, type SessionId, type SessionKind, type SessionStatus, type SessionStreamMessage, type SessionSummary, type StreamPosition } from "./session-host";
 
@@ -596,13 +596,13 @@ export class SessionIndex {
     }
 
     /**
-     * Set a session's background-task marker (`SessionSummary.background`); `null`, or both counts 0, clears it. Returns the
+     * Set a session's background-task marker (`SessionSummary.background`); `null`, or a marker with nothing true (`backgroundOf`), clears it. Returns the
      * changed row, or null when the session is not held or nothing changed.
      */
     setBackground(hash: string, bg: TaskBackground | null): SessionSummary | null {
         const s = this.sessions.get(hash);
         if (!s) return null;
-        const next = bg && (bg.running > 0 || bg.waiting > 0) ? { running: bg.running, waiting: bg.waiting, ...(bg.noTab ? { noTab: true as const } : {}) } : null;
+        const next = backgroundOf(bg) ?? null;
         const cur = s.summary.background;
         if (JSON.stringify(cur ?? null) === JSON.stringify(next)) return null;
         if (next) s.summary.background = next;

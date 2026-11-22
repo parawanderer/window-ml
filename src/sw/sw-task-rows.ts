@@ -5,7 +5,7 @@ import { hydrateTasks, onTaskCounts, taskCounts } from "./sw-tasks";
 import { bgRuns, bufferReplay } from "./sw-runs";
 import { relayDebugEvent } from "./sw-debug";
 import { toPageUi } from "./sw-side-panel";
-import type { TaskBackground } from "../contract";
+import { backgroundOf, type TaskBackground } from "../contract/contract-debug";
 
 let server: SessionServer | undefined;   // state: plumbing — the session server rows are set on, bound once at worker start
 
@@ -33,20 +33,41 @@ function announceTasks(hash: string, bg: TaskBackground | null): void {
     if (run?.p.crossPage !== false) bufferReplay(tabId, event);
 }
 
+let noTabReader: ((hash: string) => Promise<boolean> | boolean) | null = null;   // state: plumbing — the move-run lane's answer for a run with no tasks, set once
+let releaseAtReader: ((hash: string) => Promise<number | undefined> | number | undefined) | null = null;   // state: plumbing — the release build's deadline for a run, set once
+
 /**
- * Put a run's task counts and tab state on its session row (`SessionSummary.background`), read from the task table now.
+ * Plug in who says a run with NO tasks has no tab (the move-run lane). Asked only for a run with both counts 0; a true answer
+ * puts `{ running: 0, waiting: 0, noTab: true }` on its row. None by default: such a run carries no field.
+ * @param f the reader, or null to unplug it
+ */
+export function setNoTabReader(f: ((hash: string) => Promise<boolean> | boolean) | null): void { noTabReader = f; }
+
+/**
+ * Plug in who says when a run's release deadline falls (the release build). Asked for every run; a number lands on the row
+ * as `releaseAt`. None by default.
+ * @param f the reader (epoch ms, or undefined for no deadline), or null to unplug it
+ */
+export function setReleaseAtReader(f: ((hash: string) => Promise<number | undefined> | number | undefined) | null): void { releaseAtReader = f; }
+
+/**
+ * Put a run's task counts, tab state and release deadline on its session row (`SessionSummary.background`), read from the
+ * task table now. `noTab` comes from the tab only when a count is above 0 (a finished run whose tab closed is not marked),
+ * or from `setNoTabReader` for a run with none.
  * @param hash the run's session hash
  */
 export async function refreshTaskRow(hash: string): Promise<void> {
     if (!server) return;
+    const has = (c: { running: number; waiting: number }) => c.running + c.waiting > 0;
     const early = taskCounts(hash);
-    if (early.running + early.waiting === 0) { server.background(hash, null); announceTasks(hash, null); return; }
-    const tab = await hasTab(hash);
+    let noTab = has(early) ? !(await hasTab(hash)) : !!(await noTabReader?.(hash));
+    const releaseAt = await releaseAtReader?.(hash);
     // The table may have moved on while the tab was asked: the row says what it holds now.
     const c = taskCounts(hash);
-    const next: TaskBackground | null = c.running + c.waiting === 0 ? null : { ...c, ...(tab ? {} : { noTab: true as const }) };
+    if (has(c) !== has(early)) noTab = has(c) ? !(await hasTab(hash)) : !!(await noTabReader?.(hash));
+    const next = backgroundOf({ ...c, ...(noTab ? { noTab: true as const } : {}), ...(typeof releaseAt === "number" ? { releaseAt } : {}) }) ?? null;
     server.background(hash, next);
-    announceTasks(hash, next);
+    announceTasks(hash, c.running + c.waiting === 0 ? null : next);
 }
 
 /**

@@ -584,9 +584,20 @@ test("setBackground changes the row once, returns null on the same value, and a 
     assert.equal(ix.setBackground("aaaa0021", { running: 1, waiting: 0 }), null, "the same value changed nothing");
     assert.deepEqual(ix.setBackground("aaaa0021", { running: 1, waiting: 2, noTab: true })?.background, { running: 1, waiting: 2, noTab: true });
     assert.ok(ix.setBackground("aaaa0021", { running: 0, waiting: 0 }), "{0,0} is a change from a marked row");
-    assert.equal("background" in ix.get("aaaa0021"), false, "never {0,0}: the field is absent");
+    assert.equal("background" in ix.get("aaaa0021"), false, "{0,0} with nothing else true: the field is absent");
     assert.equal(ix.setBackground("aaaa0021", null), null, "clearing a clear row changes nothing");
     assert.equal(ix.setBackground("zzzz0000", { running: 1, waiting: 0 }), null, "a session not held has no row");
+});
+
+test("a {0,0} marker is PRESENT when noTab or releaseAt is true, normalised, and clears when they go", () => {
+    const ix = index();
+    ix.ingest(start("aaaa0024"), bg());
+    assert.deepEqual(ix.setBackground("aaaa0024", { running: 0, waiting: 0, noTab: true })?.background, { running: 0, waiting: 0, noTab: true });
+    assert.equal(ix.setBackground("aaaa0024", { running: 0, waiting: 0, noTab: true }), null, "the same value changed nothing");
+    assert.deepEqual(ix.setBackground("aaaa0024", { running: 0, waiting: 0, releaseAt: 5000 })?.background, { running: 0, waiting: 0, releaseAt: 5000 });
+    assert.deepEqual(ix.setBackground("aaaa0024", { running: 1, waiting: 0, noTab: true, releaseAt: 7 })?.background, { running: 1, waiting: 0, noTab: true, releaseAt: 7 });
+    assert.ok(ix.setBackground("aaaa0024", { running: 0, waiting: 0 }), "nothing true clears");
+    assert.equal("background" in ix.get("aaaa0024"), false);
 });
 
 test("UPGRADE: a row saved by a worker with no `background` restores with none, and one saved WITH it restores without it", () => {

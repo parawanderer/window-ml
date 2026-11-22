@@ -198,12 +198,19 @@ follow); `senderOwnsRun` is the owner check `SET_APPROVAL` uses. The run host's 
 
 ## A session's row shows its tasks (rule 4b, slice E, the state half)
 
-`SessionSummary.background` (`{ running, waiting, noTab? }`, absent when both are 0) is how a session list marks a run with
-background tasks. `taskCounts(runId)` (`sw-tasks.ts`) counts the table: `running` rows, and ended rows with `delivered` false
+`SessionSummary.background` (`{ running, waiting, noTab?, releaseAt? }`) is how a session list marks a run with background
+tasks. It is present when SOMETHING is true, not only a count: both counts may be 0 with `noTab` (a run with no tasks and no
+tab to start a turn on) or `releaseAt` (epoch ms, set only while a release deadline is set). One predicate decides, `backgroundOf`
+(`contract-debug.ts`): undefined when both counts are 0 and neither field is set, else a normalised copy with only the true fields.
+`refreshTaskRow`, `SessionIndex.setBackground` and `taskMarkText` all call it, so no place tests `running + waiting === 0` itself. `taskCounts(runId)` (`sw-tasks.ts`) counts the table: `running` rows, and ended rows with `delivered` false
 (the result waits for a turn). `persist` and `endTasks` call `announceCounts`, which fires the `onTaskCounts` listeners; nothing
 stores the counts. `sw-task-rows.ts` (bound by `sw-sessions.ts` once the server exists) turns a change into
-`sessionServer.background(hash, ...)`, adding `noTab` when the run's tab (`bgRuns`, else the row's `page.tabId`) is not open
-(`chrome.tabs.get` rejects). It refreshes again on `tabs.onRemoved` and after an adopt or move. At worker start, after the
+`sessionServer.background(hash, ...)`, adding `noTab` when a count is above 0 and the run's tab (`bgRuns`, else the row's
+`page.tabId`) is not open (`chrome.tabs.get` rejects); a finished run whose tab closed is NOT marked. Two plug-in hooks cover
+what the table cannot: `setNoTabReader(f)` is asked for a run with both counts 0, and a true answer gives `{ 0, 0, noTab }`
+(the move-run lane sets it); `setReleaseAtReader(f)` is asked for every run and a number becomes `releaseAt` (the release
+build sets it). Both default to none, are `// state: plumbing`, and the table is re-read after they are awaited.
+The `agent-tasks` event still sends counts only, and null whenever both are 0. It refreshes again on `tabs.onRemoved` and after an adopt or move. At worker start, after the
 index is restored, `syncTaskRows` hydrates every `ml_tasks:*` key and sets each row, and clears a marker with no table behind it,
 so an evicted worker's rows are rebuilt from storage; `restore()` drops a saved `background`. The type is `TaskBackground`
 (`contract-debug.ts`), the one representation for the row, the setters and the HUD.

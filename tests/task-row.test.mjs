@@ -102,6 +102,45 @@ test("after an eviction the row is rebuilt from the stored table, whatever memor
     assert.ok(await until(() => r.bgOf()?.waiting === 1 && r.bgOf()?.running === 0), JSON.stringify(r.bgOf()));
 });
 
+// --- a run with no tasks: the readers the move-run lane and the release build will plug in ---
+
+test("with no reader set, a run that never had tasks and whose tab closed carries no field", T, async () => {
+    const r = await settled();
+    r.openTabs.length = 0;
+    r.bg.closeTab(7);
+    await r.bg.context.__mlTaskRowReadersForTest.refreshTaskRow(r.hash);
+    await tick();
+    assert.equal(r.row().background, undefined);
+});
+
+test("a noTab reader answering true gives {0,0,noTab}, none of it reaches the HUD, and unplugging clears it", T, async () => {
+    const r = await settled();
+    const k = r.bg.context.__mlTaskRowReadersForTest;
+    k.setNoTabReader(async (h) => h === r.hash);
+    await k.refreshTaskRow(r.hash);
+    assert.ok(await until(() => r.bgOf()), "the row was marked");
+    assert.deepEqual(r.bgOf(), { running: 0, waiting: 0, noTab: true });
+    assert.equal(r.bg.tabMessages.some(([, m]) => m?.event?.kind === "agent-tasks" && m.event.background), false, "the HUD shows counts only");
+    k.setNoTabReader(null);
+    await k.refreshTaskRow(r.hash);
+    assert.ok(await until(() => r.bgOf() === undefined));
+});
+
+test("a releaseAt reader puts the deadline on the row, with or without tasks", T, async () => {
+    const r = await settled();
+    const k = r.bg.context.__mlTaskRowReadersForTest;
+    k.setReleaseAtReader(() => 123456);
+    await k.refreshTaskRow(r.hash);
+    assert.ok(await until(() => r.bgOf()));
+    assert.deepEqual(r.bgOf(), { running: 0, waiting: 0, releaseAt: 123456 });
+    r.detach();
+    assert.ok(await until(() => r.bgOf()?.running === 1));
+    assert.deepEqual(r.bgOf(), { running: 1, waiting: 0, releaseAt: 123456 });
+    k.setReleaseAtReader(null);
+    await k.refreshTaskRow(r.hash);
+    assert.ok(await until(() => r.bgOf()?.releaseAt === undefined));
+});
+
 // --- the run's own tab is told (the HUD card's mark) ---
 
 test("the run's tab receives agent-tasks with running: 1 after a detach, and null once the result is read", T, async () => {

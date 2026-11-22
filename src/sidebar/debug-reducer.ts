@@ -5,7 +5,7 @@
 // summaries and the run-block segmentation (buildRunBlocks). Pure logic, no JSX — extracted from app.tsx.
 import { sessionMap, rev, config, sidebarOpen, backendError, unreachableIfNothingSaysOtherwise, noteAside } from "./store";
 import type { Session, Status, Turn, AgentStep } from "./store";
-import type { MlDebugEvent, SiteRunEvent } from "../contract/contract-debug";
+import { backgroundOf, type MlDebugEvent, type SiteRunEvent } from "../contract/contract-debug";
 import { WORKER_ONLY_KINDS } from "../event-admission";
 import { isBackendUnreachable } from "../contract/contract-server";
 import { services } from "./services";
@@ -177,7 +177,8 @@ function onSiteRunEvent(ev: SiteRunEvent, key: string, runtime?: string): void {
     } else if (ev.kind === "agent-tasks") {
         // A live notice of the run's task counts: replaces what was held, and null clears it. Not part of the history.
         const b = ev.background;
-        if (b && (b.running > 0 || b.waiting > 0)) s.background = { running: b.running, waiting: b.waiting }; else delete s.background;
+        const held = backgroundOf(b ? { running: b.running, waiting: b.waiting } : null);   // the card holds counts only
+        if (held) s.background = held; else delete s.background;
         rev.value++;
         return;
     } else if (ev.kind === "agent-wait") s.siteWait = { prompt: ev.prompt, site: ev.site, ts: ev.ts };
