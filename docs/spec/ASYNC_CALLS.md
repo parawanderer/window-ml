@@ -1,9 +1,15 @@
 # Async calls: the three ways a run stops waiting
 
-**Status: concept document, nothing of it built (2026-10-29, from Shane's 2026-09-18 framing in
+**Status: mode 1 built, modes 2 and 3 not (2026-10-29, from Shane's 2026-09-18 framing in
 `tmp/chats/gemini_async_discussion.md` and the memories that held it since; promoted to a spec on Shane's word
-2026-10-29; UNASSIGNED).** This is the one place the design lives. The memories, the open-topics map and the specs
-that touch a piece of it point here, and a build of any mode starts from this file.
+2026-10-29; built by the async lane).** Built: mode 1 on `ml.sh` (#1437, f49b935a) and on a worker-hosted run's
+`python_exec` cell (#1642, ffbaf0d8), with the `task` tool (`src/tools/task-tool.ts`) and `ml.current.tasks`; rule 4a,
+a page change (#1751, bf6c7f3e); rule 4b slices A to D: a task outlives its turn (#1810, 159fe160), a durable task
+table and the cap setting (#1854, 43f88825), a finished task starts a turn (#1929, a9bca8b2), the lifetimes in the
+prompt (#1942, 642b4691). How each works: [`docs/dev/async-calls.md`](../dev/async-calls.md). Not built: mode 1 on
+`exec`, modes 2 and 3, slice E (the HUD task mark), the no-tab state on the chat page, and the sign-in flow
+("A detached call that asks the person to sign in"). This is the one place the design lives. The memories, the
+open-topics map and the specs that touch a piece of it point here, and a build of any mode starts from this file.
 
 The problem is the one every agent harness has: a tool call blocks the loop until it returns, and when a call takes
 forty minutes nobody expected, the model sits for forty minutes uninformed. Shane hit it in Claude Code more than
@@ -34,8 +40,9 @@ only the overrun pays.
 
 ## What exists today, which each mode reuses
 
-Nothing of the three modes is built, but most of their machinery is, which is what makes them assembly rather than a
-subsystem. Do not build a second copy of any of these.
+When this was written (2026-10-29) nothing of the three modes was built, but most of their machinery was, which is what
+makes them assembly rather than a subsystem; what is built since is in the status line. Do not build a second copy of
+any of these.
 
 - **A tool call is one awaited round trip.** The loop (`agent-loop.ts`) calls the tool and waits; a DOM tool goes
   worker → tab through `delegateSend`, which already has a THIRD outcome beside answer and reject (a sleeping tab
