@@ -121,7 +121,7 @@ export const SETTING_CLASSES: Readonly<{ [K in keyof MlConfig]: SettingDecl }> =
     agentHudInDevtools: { class: "ordinary", domain: bool },
     pythonIdleMinutes: { class: "ordinary", domain: { kind: "number", min: 0, integer: true } },
     detachedTaskMaxMin: { class: "ordinary", domain: { kind: "number", min: 1, max: 60, integer: true } },
-    closedRunGraceMin: { class: "ordinary", domain: { kind: "number", min: 0, max: 1440, integer: true } },
+    closedRunGraceMin: { class: "ordinary", domain: { kind: "number", min: 0, integer: true } },
     agentStepMaxTokens: { class: "ordinary", domain: { kind: "number", min: 0, integer: true } },
     electricityPerKwh: { class: "ordinary", domain: { kind: "number", min: 0 } },
     electricityCurrency: { class: "ordinary", domain: { kind: "currency" } },

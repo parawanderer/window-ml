@@ -229,7 +229,7 @@ Tests: `tests/task-row.test.mjs`, `tests/session-index.test.mjs`, `tests/task-ma
 ## A run whose tab closed: the release (docs/spec/ASYNC_CALLS.md, points 1 to 5 and 7)
 
 `sw-release.ts` owns the deadline. `tabs.onRemoved` (`background.ts`) calls `onTabClosed`: each `bgRuns` run on that tab with no turn live gets
-`ml_release_due:<runId>` = `{ due, closedAt }` (`due` = now + `closedRunGraceMin` minutes, a DevTools setting, an ordinary one bounded 0 to 1440 so the model may change it, default 10, 0 releases at
+`ml_release_due:<runId>` = `{ due, closedAt }` (`due` = now + `closedRunGraceMin` minutes, a DevTools setting, an ordinary one (0 to 1440 minutes; a value past it reads as the default), default 10, 0 releases at
 once) and the one alarm `ml-release` is set to the earliest `due`. A run with a RUNNING task gets the entry with `due: null`: the tab's closing is
 remembered across an eviction, and the `onTaskCounts` listener sets `due` when the last running task ends and the run still has no tab. A waiting
 result does not hold the run. The alarm and worker start (after `hydrationDone`) call `releaseDue`: each due entry is dropped unless a turn is live, a

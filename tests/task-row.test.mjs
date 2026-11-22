@@ -104,13 +104,13 @@ test("after an eviction the row is rebuilt from the stored table, whatever memor
 
 // --- a run with no tasks: the readers the move-run lane and the release build will plug in ---
 
-test("with no reader set, a run that never had tasks and whose tab closed carries no field", T, async () => {
+test("a run that never had tasks and whose tab closed carries only the release deadline the closing set", T, async () => {
     const r = await settled();
     r.openTabs.length = 0;
     r.bg.closeTab(7);
     await r.bg.context.__mlTaskRowReadersForTest.refreshTaskRow(r.hash);
-    await tick();
-    assert.equal(r.row().background, undefined);
+    assert.ok(await until(() => r.row()?.background?.releaseAt));
+    assert.deepEqual(Object.keys(r.row().background).sort(), ["releaseAt", "running", "waiting"], "no noTab: that is the move-run lane's reader");
 });
 
 test("a noTab reader answering true gives {0,0,noTab}, none of it reaches the HUD, and unplugging clears it", T, async () => {
