@@ -163,3 +163,98 @@ test("uninstalling the anchored layer removes its window blur listener", () => {
         assert.deepEqual(removed, added, "the same function, so it is really gone");
     } finally { win.addEventListener = add; win.removeEventListener = rem; }
 });
+
+// --- the anchored layer's tip also shows on KEYBOARD focus ---
+
+const focusFixture = (visible = true) => {
+    doc.body.insertAdjacentHTML("beforeend", `<span class="tt" id="kb"><button id="kbb">?</button><button id="kbc">!</button><span class="tt-pop">prose</span></span><button id="elsewhere">o</button>`);
+    const t = doc.getElementById("kb"), b = doc.getElementById("kbb");
+    t.getBoundingClientRect = () => ({ left: 100, top: 200, width: 40, height: 16, right: 140, bottom: 216 });
+    // jsdom answers `:focus-visible` true for any focused element; a real mouse click answers false, so say which.
+    b.matches = (sel) => sel === ":focus-visible" ? visible : win.Element.prototype.matches.call(b, sel);
+    const stopLayer = layer.installTooltipLayer(doc, doc);
+    const tip = () => doc.querySelector(".tt-layer");
+    const fin = (el, rel = null) => el.dispatchEvent(new win.FocusEvent("focusin", { bubbles: true, relatedTarget: rel }));
+    const fout = (el, rel = null) => el.dispatchEvent(new win.FocusEvent("focusout", { bubbles: true, relatedTarget: rel }));
+    const done = () => { stopLayer(); t.remove(); doc.getElementById("elsewhere")?.remove(); };
+    return { t, b, tip, fin, fout, done };
+};
+
+test("keyboard focus on a trigger shows its tip, and focus leaving hides it", () => {
+    const f = focusFixture();
+    f.fin(f.b);
+    assert.equal(f.tip().hidden, false, "shown");
+    assert.equal(f.tip().textContent, "prose");
+    f.fout(f.b, doc.getElementById("elsewhere"));
+    assert.equal(f.tip().hidden, true, "hidden");
+    f.done();
+});
+
+test("focus moving to another element inside the same trigger keeps the tip", () => {
+    const f = focusFixture();
+    f.fin(f.b);
+    f.fout(f.b, doc.getElementById("kbc"));
+    assert.equal(f.tip().hidden, false, "still up");
+    f.done();
+});
+
+test("a focus that is not :focus-visible (a mouse click on a button) shows nothing", () => {
+    const f = focusFixture(false);
+    f.fin(f.b);
+    assert.equal(f.tip().hidden, true);
+    f.done();
+});
+
+test("a matches() that throws counts as not focus-visible", () => {
+    const f = focusFixture();
+    f.b.matches = () => { throw new Error("unsupported selector"); };
+    f.fin(f.b);
+    assert.equal(f.tip().hidden, true);
+    f.done();
+});
+
+test("Esc dismisses a tip raised by focus", () => {
+    const f = focusFixture();
+    f.fin(f.b);
+    assert.equal(f.tip().hidden, false);
+    f.b.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert.equal(f.tip().hidden, true);
+    f.done();
+});
+
+test("uninstalling the layer removes its focus listeners", () => {
+    const f = focusFixture();
+    f.done();
+    doc.body.insertAdjacentHTML("beforeend", `<span class="tt" id="kb2"><button id="kbb2">?</button><span class="tt-pop">p</span></span>`);
+    const b2 = doc.getElementById("kbb2");
+    b2.dispatchEvent(new win.FocusEvent("focusin", { bubbles: true }));
+    assert.equal(doc.querySelector(".tt-layer"), null, "no layer, nothing raised");
+    doc.getElementById("kb2").remove();
+});
+
+// --- no tooltip of its own: every tip is drawn by one of the shared surfaces ---
+
+test("a role=\"tooltip\" element in src is a shared surface's, never a bespoke absolutely-positioned span", async () => {
+    const { readdirSync, readFileSync, statSync } = await import("node:fs");
+    const { join, relative } = await import("node:path");
+    const root = new URL("../src", import.meta.url).pathname;
+    const files = [];
+    const walk = (d) => { for (const n of readdirSync(d)) { const p = join(d, n); if (statSync(p).isDirectory()) walk(p); else if (/\.(tsx|ts)$/.test(n) && !/\.gen\.ts$/.test(n)) files.push(p); } };
+    walk(root);
+    // The surfaces themselves: the anchored layer and the cursor layer, the shell chrome's own bubble (it lives
+    // outside the app's stylesheet) and the hover card (a card, not a tip).
+    const OWNERS = new Set(["sidebar/ui-kit.tsx", "sidebar/tooltip-layer.ts", "sidebar/shell.ts", "sidebar/hover-card.tsx"]);
+    const bad = [];
+    for (const f of files) {
+        const rel = relative(root, f);
+        if (OWNERS.has(rel)) continue;
+        const src = readFileSync(f, "utf8");
+        for (const m of src.matchAll(/<[a-z]+\b[^<>]*?role="tooltip"[^<>]*>/g)) {
+            // `.tt-pop` is the SOURCE the anchored layer copies from (never rendered itself); `.rc-tip` is the
+            // shared surface's class (sidebar.css), which the resource panel's own positioned layers wear.
+            if (/\b(?:tt-pop|rc-tip)\b/.test(m[0])) continue;
+            bad.push(`${rel}: ${m[0].slice(0, 90)}`);
+        }
+    }
+    assert.deepEqual(bad, [], "a tooltip is `cursorTipOn(...)` or a `.tt` trigger with a `.tt-pop` child; do not draw one by hand");
+});

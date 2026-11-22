@@ -98,8 +98,15 @@ the model hits a reserved surface.
 
 ## Security posture
 
-- Gated three ways: per-click approval (unforgeable, extension-origin surface) + runtime
-  `debugger` permission + off-by-default flag.
+- Gated by per-click approval (unforgeable, extension-origin surface) and by the sender: a
+  page's `CDP_CLICK` is refused unless it comes from an extension page or an origin the
+  person approved to self-gate (`senderTrust`, `src/sw/sw-consent.ts`). The `cdp` setting is
+  ON by default (`DEFAULT_CONFIG`, `src/contract/contract-config.ts`), so it is a switch the
+  person can turn off in Settings → Advanced, not a gate a run must pass first. The
+  `debugger` permission is held from install (above); `src/sw/sw-cdp.ts` checks it only to
+  fail with a clear error. (Until 2026-11-22 this line also listed a runtime `debugger`
+  permission, which Chrome does not allow, and an off-by-default flag, which has been on by
+  default since 2026-10-09.)
 - **No read** — click only; opaque/cross-origin *reading* stays unbuilt (SOP-bound).
 - Transparency — the banner is present while attached: the honest "input-level control"
   signal, which matches the elevated stakes of clicking into authenticated third-party frames.

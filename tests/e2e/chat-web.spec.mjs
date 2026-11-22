@@ -710,7 +710,8 @@ test("an answer that cites its own steps renders the tool's output, not a retypi
     await expect(answer.locator(".tok-block .r-df-table")).toBeVisible();
     await expect(answer.locator(".tok-block img")).toBeVisible();
     await expect(answer.locator(".tok-link")).toHaveText("the survey step");
-    await expect(answer.locator(".tok-anno").first()).toHaveText("Every fare, cheapest first");
+    // What a person reads on the caption: its tip (`.tt-pop`, drawn by the shared layer) is in the DOM but never shown here.
+    await expect(answer.locator(".tok-anno").first()).toHaveText("Every fare, cheapest first", { useInnerText: true });
     // The mark that says this came from a tool and not from the model is a COLOUR, and the inline form carries it
     // too — an inline `code` background over the tint is what made a citation read as something typed in backticks.
     const tint = await answer.locator(".tok-inline").evaluate((el) => getComputedStyle(el).backgroundColor);
