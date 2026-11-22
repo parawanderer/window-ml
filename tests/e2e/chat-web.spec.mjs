@@ -2259,13 +2259,52 @@ test("phone (touch): tapping a step's dot opens its tip, and the tap still opens
         await expect(step).toBeVisible();
         await expect(page.locator(".tt-layer")).toBeHidden();
 
+        // PROBE (flaky: the tip never opens). "The tap missed a row that had moved under it" and "the tip opened and
+        // something took it down" look identical a screenshot later, and the rule's last pointer (#2098) is one fact
+        // short in both: it says the rule saw a touch, not whether the finger was on the dot or the row had shifted,
+        // and nothing at all about a tip that came up and went. Recorded around the tap, dumped only when the
+        // assertion fails.
+        await page.evaluate(() => {
+            const out = [];
+            const at = () => {
+                const r = document.querySelector(".astep.tool .astep-head .dot")?.getBoundingClientRect();
+                return r ? [r.left, r.top, r.width, r.height].map(Math.round) : null;
+            };
+            const log = (ev, extra = {}) => out.push({ t: Math.round(performance.now()), ev, ...extra, box: at(), rows: document.querySelectorAll(".astep").length });
+            window.__ttProbe = out;
+            document.addEventListener("pointerdown", (e) => log("pointerdown", {
+                type: e.pointerType,
+                target: e.target?.getAttribute?.("class") ?? "",
+                inTip: !!e.target?.closest?.(".tt"),
+                xy: [Math.round(e.clientX), Math.round(e.clientY)],
+                hit: (() => { const h = document.elementFromPoint(e.clientX, e.clientY); return h ? `${h.tagName.toLowerCase()}.${h.getAttribute("class") ?? ""}` : null; })(),
+            }), true);
+            document.addEventListener("scroll", (e) => log("scroll", {
+                on: e.target === document ? "document" : (e.target.getAttribute?.("class") ?? e.target.nodeName),
+                top: Math.round(e.target.scrollTop ?? -1),
+            }), true);
+            window.addEventListener("blur", () => log("blur"));
+            new MutationObserver((ms) => {
+                for (const m of ms) if (m.target.classList?.contains("tt-layer")) log("layer", { hidden: m.target.hidden, text: (m.target.textContent ?? "").slice(0, 40) });
+            }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ["hidden"] });
+            log("install");
+            // The box every 50 ms, so a row that MOVES with no event to say so (a layout change, not a scroll) is in
+            // the timeline rather than inferred from a tap that landed somewhere else.
+            const tick = setInterval(() => log("box"), 50);
+            setTimeout(() => clearInterval(tick), 3000);
+        });
         await step.locator(".astep-head .dot").first().tap();
         const tip = page.locator(".tt-layer");
         // INSTRUMENT (flaky: the tip stays hidden): a failure carries the last pointer the tip rule saw.
         try {
             await expect(tip).toBeVisible();
         } catch (e) {
-            const seen = await page.evaluate(() => window.__ttLastPointer ?? "the rule never ran");
+            const seen = await page.evaluate(() => ({
+                last: window.__ttLastPointer ?? "the rule never ran",
+                probe: window.__ttProbe ?? [],
+                open: [...document.querySelectorAll(".astep.open")].map((s) => s.getAttribute("data-astep-seq")),
+                layer: (() => { const l = document.querySelector(".tt-layer"); return l ? { hidden: l.hidden, text: l.textContent } : "no layer"; })(),
+            }));
             throw new Error(`${e.message}\n the tip rule's last pointer: ${JSON.stringify(seen)}`);
         }
         await expect(tip).toContainText("Completed successfully");
