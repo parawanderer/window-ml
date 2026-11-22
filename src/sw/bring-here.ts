@@ -18,6 +18,9 @@ import { forRowText } from "./sw-scrub";
  */
 export function bringableSessions(tabId: number, tabUrl: string): BringableSession[] {
     const out: BringableSession[] = [];
+    // The row is scrubbed already; a held run's own page URL crosses the same scrub, running or settled.
+    const urlOf = (held: { p: { pageUrl?: string } } | undefined, s: { page?: { url?: string } }): string =>
+        (held?.p.pageUrl != null ? forRowText(held.p.pageUrl) : s.page?.url) ?? "";
     for (const s of sessionServer.shownList()) {
         if (s.kind !== "agent") continue;
         const hash = s.id.hash;
@@ -27,14 +30,12 @@ export function bringableSessions(tabId: number, tabUrl: string): BringableSessi
             if (!isWorkerRun(hash) || !runRebuilds.has(hash)) continue;
             const held = bgRuns.get(hash);
             if ((runInboxes.get(hash)?.tabId ?? held?.tabId) === tabId) continue;
-            out.push({ hash, title: s.title || s.task || hash, url: held?.p.pageUrl ?? s.page?.url ?? "", lastTs: s.lastTs, held: true, running: true });
+            out.push({ hash, title: s.title || s.task || hash, url: urlOf(held, s), lastTs: s.lastTs, held: true, running: true });
             continue;
         }
         const held = bgRuns.get(hash);
         if (held ? held.tabId === tabId : !s.saved) continue;
-        // The row is scrubbed already; a held run's own page URL crosses the same scrub.
-        const url = (held?.p.pageUrl != null ? forRowText(held.p.pageUrl) : s.page?.url) ?? "";
-        out.push({ hash, title: s.title || s.task || hash, url, lastTs: s.lastTs, held: !!held });
+        out.push({ hash, title: s.title || s.task || hash, url: urlOf(held, s), lastTs: s.lastTs, held: !!held });
     }
     return out.sort(BRING_HERE_ORDER(originOf(tabUrl)));
 }

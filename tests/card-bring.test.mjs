@@ -64,6 +64,34 @@ test("a queued answer shows the worker's sentence, no error, keeps the list open
     }
 });
 
+test("Back after a queued answer cancels the delayed close: the composer the person went back to stays open", async () => {
+    const SENTENCE = "The session is running: it moves to this tab when its current step ends.";
+    services.installServices({ ...ext, bringHere: async () => ({ ok: true, queued: SENTENCE }) });
+    let done = 0, back = 0;
+    const realSetTimeout = globalThis.setTimeout, realClearTimeout = globalThis.clearTimeout;
+    const held = new Map();
+    let next = 1000;
+    globalThis.setTimeout = (fn, ms, ...rest) => (ms >= 1000 ? (held.set(++next, fn), next) : realSetTimeout(fn, ms, ...rest));
+    globalThis.clearTimeout = (id) => { if (!held.delete(id)) realClearTimeout(id); };
+    try {
+        render(null, root());
+        // Back unmounts the list, as the composer does when the person returns to the task input.
+        render(h(M.BringHereList, { rows: ROWS, now: 5000, onBack() { back++; render(null, root()); }, onDone() { done++; } }), root());
+        await tick();
+        [...root().querySelectorAll(".card-bring-row")].find((b) => b.textContent.includes("Running one")).click();
+        await tick();
+        assert.equal(held.size, 1, "the delayed close is scheduled");
+        root().querySelector(".card-bring-back").click();
+        await tick();
+        assert.equal(back, 1);
+        assert.equal(held.size, 0, "and cleared by Back");
+        assert.equal(done, 0, "so it never closes the card");
+    } finally {
+        globalThis.setTimeout = realSetTimeout;
+        globalThis.clearTimeout = realClearTimeout;
+    }
+});
+
 test("an immediate move calls onDone at once; a refusal shows the error and not done", async () => {
     let l = await mountList({ ok: true });
     l.row("Settled one").click(); await tick();

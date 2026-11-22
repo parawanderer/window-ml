@@ -1,5 +1,5 @@
 // card-bring.tsx — the HUD composer's "bring a session here": this browser's settled sessions, and moving one to this tab.
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { services } from "../services";
 import { fmtAge } from "../timestamps";
 import { cursorTipOn } from "../ui-kit";
@@ -34,11 +34,16 @@ export function BringHereList({ onDone, onBack, rows: given, now: clock }: { onD
     const [busy, setBusy] = useState("");
     const [info, setInfo] = useState("");
     useEffect(() => { if (given) return; void (services().bringable?.() ?? Promise.resolve([])).then(setRows); }, []);
+    // A queued move's delayed close: cleared when the list goes (Back, or the card closing), so it never closes a composer
+    // the person has gone back to.
+    const doneTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const clearDone = (): void => { if (doneTimer.current != null) clearTimeout(doneTimer.current); doneTimer.current = null; };
+    useEffect(() => clearDone, []);
     const bring = async (hash: string) => {
         setBusy(hash); setErr(""); setInfo("");
         const r = await services().bringHere!(hash);
         if ("error" in r) { setBusy(""); setErr(r.error); }
-        else if (r.queued) { setInfo(r.queued); setTimeout(onDone, 2500); }   // the list stays up so the sentence can be read; busy stays so a second click cannot re-queue
+        else if (r.queued) { setInfo(r.queued); clearDone(); doneTimer.current = setTimeout(() => { doneTimer.current = null; onDone(); }, 2500); }   // the list stays up so the sentence can be read; busy stays so a second click cannot re-queue
         else { setBusy(""); onDone(); }
     };
     const now = clock ?? Date.now();
@@ -57,7 +62,7 @@ export function BringHereList({ onDone, onBack, rows: given, now: clock }: { onD
                     </div>}
             {err ? <div class="card-cmp-err">{err}</div> : null}
             {info ? <div class="card-bring-empty" role="status">{info}</div> : null}
-            <button type="button" class="card-bring-back" onClick={onBack}>Back to a new task</button>
+            <button type="button" class="card-bring-back" onClick={() => { clearDone(); onBack(); }}>Back to a new task</button>
         </div>
     );
 }
