@@ -49,7 +49,7 @@ test("the model may change a setting only with a row in DevTools Settings, and n
     const everywhere = Object.fromEntries(KEYS.map((k) => [k, { tab: "advanced" }]));
     for (const k of [...ofClass("secret"), ...ofClass("gate")]) assert.equal(modelWritable(k, everywhere), false, k);
     assert.equal(modelWritable("notASetting", { notASetting: { tab: "advanced" } }), false);
-    assert.equal(KEYS.filter((k) => modelWritable(k)).length, 51);
+    assert.equal(KEYS.filter((k) => modelWritable(k)).length, 52);
 });
 
 test("the secrets and the gate keys are exactly the ruled ones", async () => {
