@@ -26,6 +26,7 @@ import { endingSeen, isUnread } from "./read-marks";
 import { pinnedInOrder } from "./pin-order";
 import { useReorder } from "./pin-reorder";
 import { approvalsPending, STATUS_LABEL } from "./status-words";
+import { taskMarkText, TASK_MARK_TIP } from "../sidebar/transcript/task-mark-text";
 import { SessionHoverCard } from "./session-summary";
 
 /** The index's status as the panel's status dot draws it. A run stopped at its cap is `err` underneath (the reducer marks
@@ -73,6 +74,7 @@ function IndexRow({ store, s, rt, active, unread, read, showRuntime, showPin, re
     const key = `${s.id.runtime}:${s.id.hash}`;
     const title = s.title || s.task || "(untitled)";
     const offset = rt.clockOffsetMs ?? 0;
+    const taskMark = taskMarkText(s.background);
     // A bad ending already shown on this device keeps its words ("failed", "stopped at its step cap") and loses its
     // dot in calm view: the dot is for what you have not seen yet (`endingSeen`, read-marks.ts).
     return (
@@ -91,6 +93,7 @@ function IndexRow({ store, s, rt, active, unread, read, showRuntime, showPin, re
                             there is a count, the count IS the status and the word goes. */}
                         {s.pendingApprovals > 0 ? <span class="chat-appr-badge">{approvalsPending(s.pendingApprovals)}</span> : null}
                         {STATUS_LABEL[s.status] && !s.pendingApprovals ? <span class={`chat-status st-${s.status}`}>{STATUS_LABEL[s.status]}</span> : null}
+                        {taskMark ? <span class="chat-task-mark" {...cursorTipOn(TASK_MARK_TIP)}>{taskMark}</span> : null}
                         {/* A PIN TAKEN WHERE IT CANNOT MOVE THE ROW. Pinning from "Needs you" is real — it is stored,
                             and the row drops into Pinned once the gate is answered — but nothing moved at the time,
                             so the press read as a press that did nothing. */}

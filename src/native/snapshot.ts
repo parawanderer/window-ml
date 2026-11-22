@@ -5,6 +5,7 @@
 import type { AgentTarget, Principal, RuntimeInfo, SessionKey, SessionSummary, StorageReport } from "../session/session-host";
 import { formatBytes } from "../resource/resource-model";
 import { mayCommand, mayStart, resumableHere } from "../chat/grants";
+import { noTabText, mayBringHere } from "../chat/no-tab";
 import type { AttentionRow, RuntimeStorageView, SessionChrome } from "./bridge";
 import { attentionCount, attentionItems, certItems, revokerItems, type CertState, type RevokerState } from "../chat/attention";
 
@@ -18,6 +19,7 @@ export function sessionChrome(key: SessionKey, summary: SessionSummary | undefin
     const drive = !!rt && mayCommand(rt, "session.send", target, self);
     const online = !!rt?.online;
     const canSend = online && drive;
+    const resumable = resumableHere(rt, key, summary, self);
     const readOnly = canSend ? undefined
         : !rt ? "This session's runtime is not listed."
         : !online ? `${rt.name} is offline. You can read this session, and send to it once it is back.`
@@ -51,7 +53,9 @@ export function sessionChrome(key: SessionKey, summary: SessionSummary | undefin
         canDelete: online && mayCommand(rt, "session.delete", target, self),
         // The page's own peek rule (chat-app.tsx `usePeek`): a tab still open, a runtime that captures, the grant to ask.
         canPeek: online && summary.page?.tabId != null && !!rt?.capabilities.screenshots && mayCommand(rt, "tab.screenshot", target, self),
-        canResume: resumableHere(rt, key, summary, self),
+        canResume: resumable,
+        ...(noTabText(summary.background) ? { noTabText: noTabText(summary.background, { composer: canSend && !resumable })! } : {}),
+        canBringHere: mayBringHere(rt, key, summary, self),
     };
 }
 
