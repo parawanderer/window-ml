@@ -71,6 +71,7 @@ import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { drawStoredPages } from "./sw-attach";
 import { claimValue, runMayClaim, valueHolders, readStoredBytes, readStoredColumns, readStoredText, withHeldValuesOnly } from "./sw-values";
 import { isoServer, type IsoDeps } from "./iso-channel";
+import { fsCallFor } from "./sw-fs-call";
 import { shPut, shRead, shRun, takeShSpans } from "./sw-shell-call";
 import { focusLineFor } from "./sw-focus";
 import { delegateSend, CHANNEL_GONE } from "./delegate-send";
@@ -1332,15 +1333,18 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                 if (typeof w === "number") shWaited += w;
                                 return r;
                             } : undefined;
+                            // ml.fs, for a script that names it: reads of THIS run's session, on a channel of this exec's own
+                            // in the offscreen document (sw-fs-call.ts), closed when the exec ends.
+                            const fsCall = execNames(js).fs ? fsCallFor(runId) : undefined;
                             const out = await runIsolatedExec({
-                                tabId, runId, js, how: route.how, reason: route.reason, reads, onStream, documentId: execDoc, sh: !!sh,
-                                // What the world may ask for while it runs: re-pipes of what it was sent, those stored tables, and ml.sh.
-                                serve: isoServer(runId, reads, { deref: wholeDerefFor(runId), holders: valueHolders, columns: readStoredColumns, ...(sh ? { sh } : {}) }),
+                                tabId, runId, js, how: route.how, reason: route.reason, reads, onStream, documentId: execDoc, sh: !!sh, fs: !!fsCall,
+                                // What the world may ask for while it runs: re-pipes of what it was sent, those stored tables, ml.sh and ml.fs.
+                                serve: isoServer(runId, reads, { deref: wholeDerefFor(runId), holders: valueHolders, columns: readStoredColumns, ...(sh ? { sh } : {}), ...(fsCall ? { fs: fsCall.fs } : {}) }),
                                 // Made only for a script that names it, as a survey's is (tryReadonly below).
                                 // The person's settings, read now, for a script that names them in a run the worker built.
                                 ...(p.builtBy === "worker" && execNames(js).settings ? { settings: async () => settingEntries(await getConfig()) } : {}),
                                 ...(snap && execNames(js).current ? { current: async () => withTasks(withPolicies(withRuntime(await withEnv(await withUserWatches(snap({ model: modelNow(), log: eventsForRun(await runLog.all(), runId) })), tabId, !!p.autoApproveReadonly, !byWorker())), runId), runId) } : {}),
-                            });
+                            }).finally(() => fsCall?.end());
                             // A reading taken after a wait for the person is not simultaneous with one taken before: say so.
                             return shWaited >= 1000 ? { ...out, result: `${out.result}\n(ml.sh waited ${Math.round(shWaited / 1000)} s for the person to approve.)` } : out;
                         }
@@ -1520,7 +1524,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         // RESERVED-surface click: the page couldn't synth-click a cross-origin iframe / sealed
                         // shadow target and handed back a CDP-click coordinate. The click was ALREADY approved
                         // above, and the trusted background performs the CDP click (the page can't). Gated on
-                        // the off-by-default `cdpClick` flag (cdpClick() itself checks the debugger permission).
+                        // the `cdp` flag (on by default; cdpClick() itself checks the debugger permission).
                         // describeElement into a SEALED shadow root, for a run the worker drives: the worker resolves the MODEL's
                         // selector through the debugger and writes the result (tools.ts `sealedDescribe`), where the page used to
                         // send CDP_SHADOW_RESOLVE itself. A page-built run's page resolves its own (an approved site's).

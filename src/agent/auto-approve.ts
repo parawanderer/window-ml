@@ -1,5 +1,5 @@
 // The TRUSTED-WORLD auto-approve decision for a PRIVILEGED agent tool: may this call skip the human
-// gate? `python_exec` is the one privileged tool (full mode = CORS-bypass network via the offscreen
+// gate? `python_exec` is the one privileged tool (a cell outside the Python dialect = CORS-bypass network via the offscreen
 // doc; a sheet source = credentialed Google read), so in design A this decision MUST run where the
 // page can't forge it — the background — or a hostile page fakes "it's safe, skip the gate" and gets
 // network/credentialed access with no consent. It is deliberately PURE (mode + suspicious-char +

@@ -341,7 +341,7 @@ function pyCodeGranted(tabId: number | undefined, outside: boolean, code: string
 /**
  * A TURN of a worker-hosted run ended (the run lives on): tell the offscreen host (`PY_END_TURN`). The run's own
  * Python worker keeps its namespace for the next turn, idle-reaped after `pythonIdleMinutes`; the turn's keep ends;
- * the shared `full` worker's dict for the run is dropped (ROOT C: another full-mode run's cell could read it).
+ * the shared `full` worker's dict for the run is dropped (ROOT C: another run's cell could read it, were a cell ever routed there).
  * Fire-and-forget, like {@link deletePythonRun}.
  * @param runId the run whose turn ended
  */

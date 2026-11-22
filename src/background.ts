@@ -701,7 +701,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // CHOKE-POINT: this is privileged (attaches the debugger) so it must NOT be page-forgeable. An
         // UNTRUSTED page is refused; a `surface` (internal extension page — the approval UI) or a
         // `whitelisted` origin (the user trusts it to self-gate) may initiate it, and the per-click approval
-        // still governs upstream. Gated behind the off-by-default `cdpClick` flag. A page targets only its
+        // still governs upstream. Gated behind the `cdp` flag (on by default). A page targets only its
         // OWN tab (sender.tab.id); a surface passes the inspected tabId in the payload.
         (async () => {
             const cfg = await getConfig();
@@ -717,7 +717,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     if (message.type === "CDP_SHADOW_RESOLVE") {
         // READ-ONLY resolve of a `>>>` selector across sealed (closed/declarative) shadow roots via CDP — the
         // discovery half of the sealed-shadow reach (describeElement inside a host the JS path can't enter).
-        // Gated on the off-by-default `cdp` flag (the debugger banner is the visible signal); a page targets
+        // Gated on the `cdp` flag (on by default; the debugger banner is the visible signal); a page targets
         // only its OWN tab. NOT senderTrust-gated: it only READS same-document, same-origin content the page's
         // own server authored (no cross-origin gain; the shell's own closed roots are skipped, sw-cdp.ts), and
         // its output (describe lines + coordinates) is not actionable on its own — CDP_CLICK stays
@@ -1056,7 +1056,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // key, and the tool it runs is caller-chosen — a hostile page reaching this handler directly could
         // invoke any tool the user has configured, which is a different capability from spending tokens on
         // a chat call. So an untrusted page may only run a call it holds a per-call grant for, minted when
-        // its agent run APPROVED that exact call. Same shape as full-mode Python and FETCH_SHEET.
+        // its agent run APPROVED that exact call. Same shape as out-of-dialect Python and FETCH_SHEET.
         (async () => {
             const toolId = String(message.payload?.toolId ?? "");
             const name = String(message.payload?.name ?? "");

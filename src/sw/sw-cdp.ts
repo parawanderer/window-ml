@@ -2,7 +2,7 @@
 // structurally can't: strict-CSP/Trusted-Types exec, trusted (isTrusted) clicks/keystrokes into canvas /
 // cross-origin iframes / declarative-closed shadow roots, and a host-grant-free screenshot. Extracted from
 // background.ts verbatim; it owns its own attach lifecycle and shares no state with the rest of the worker.
-// Gated at the call sites behind the off-by-default `cdp` setting + the `debugger` permission (checked here).
+// Gated at the call sites behind the `cdp` setting (on by default) + the `debugger` permission (checked here).
 import { clipOut } from "../dom/dom";
 import { isOwnUiId } from "../ids";
 import { OUTPUT_CEILING, ceilingNote, pageWorldResult, CONSOLE_FORWARDS } from "../agent/output-clip";
@@ -13,7 +13,7 @@ import { cdpClickPlan, cdpTypePlan } from "../input-dispatch";
  *  Chrome forbids `debugger` as a runtime-optional grant (`permissions.request` rejects it: "Only permissions
  *  specified in the manifest may be requested"). So this always holds once the extension is loaded + its
  *  permissions accepted; the defensive check just degrades gracefully (actionable error) if it's somehow
- *  absent (e.g. an update pending re-approval). The `cdpClick` config flag is the actual on/off. */
+ *  absent (e.g. an update pending re-approval). The `cdp` config flag (on by default) is the actual on/off. */
 export async function hasDebuggerPermission(): Promise<boolean> {
     try { return await chrome.permissions.contains({ permissions: ["debugger"] }); } catch { return false; }
 }
