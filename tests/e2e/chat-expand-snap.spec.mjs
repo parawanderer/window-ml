@@ -88,8 +88,11 @@ function expectCleanOpen(frames, what) {
     const animated = frames.filter((f) => f.animating);
     expect(animated.length, `${what}: the body never animated\n${dump}`).toBeGreaterThan(3);
     for (let i = 1; i < frames.length; i++) expect(frames[i].h, `${what}: the height shrank ${frames[i - 1].h.toFixed(1)} → ${frames[i].h.toFixed(1)} at ${Math.round(frames[i].t)}ms\n${dump}`).toBeGreaterThanOrEqual(frames[i - 1].h - 1);
-    const settled = frames.at(-1).h, lastAnimated = animated.at(-1).h;
-    expect(Math.abs(lastAnimated - settled), `${what}: the last animated frame was ${lastAnimated.toFixed(1)}px and it settled at ${settled.toFixed(1)}px\n${dump}`).toBeLessThanOrEqual(1);
+    // No frame is taller than where it settles. Not "the last animated frame EQUALS the settled height": at a loaded
+    // runner's 30 frames a second the last sampled frame is still a few px short of the end (463.5 of 465.6), which is
+    // growth, not a snap. The snap this guards against was an OVERSHOOT (482.9, then 460.8 in one frame).
+    const settled = frames.at(-1).h;
+    for (const f of frames) expect(f.h, `${what}: ${f.h.toFixed(1)}px at ${Math.round(f.t)}ms is taller than the ${settled.toFixed(1)}px it settled at\n${dump}`).toBeLessThanOrEqual(settled + 1);
     const runs = runsOf(frames.map((f) => ({ t: f.t, v: f.h })), 1).filter((r) => r.total > 40);
     expect(runs.length, `${what}: the height never changed\n${dump}`).toBeGreaterThan(0);
     for (const r of runs) expect(r.maxStep, `${what}: one frame moved ${Math.round(r.maxStep)}px of a ${Math.round(r.total)}px change\n${dump}`).toBeLessThanOrEqual(r.total * 0.7);
