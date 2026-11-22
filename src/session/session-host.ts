@@ -817,6 +817,8 @@ export interface TabInfo {
     index?: number;
     /** the tab group it is in; absent when it is in none. Names and colours come in `tabs.list`'s `groups`. */
     groupId?: number;
+    /** when the person last had this tab in front, in ms since the epoch (Chrome's `lastAccessed`); absent when the runtime cannot say, never 0 */
+    lastAccessed?: number;
     /**
      * A small icon as a `data:image/…` URL the RUNTIME fetched, never the site's own icon URL: a client loading that
      * would tell each site, and the client's network, what the runtime has open. Absent when there is none.

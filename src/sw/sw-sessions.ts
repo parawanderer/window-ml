@@ -259,6 +259,8 @@ const tabInfo = (t: chrome.tabs.Tab): TabInfo | null =>
         ...(typeof t.index === "number" ? { index: t.index } : {}),
         // -1 is Chrome's "in no group".
         ...(typeof t.groupId === "number" && t.groupId >= 0 ? { groupId: t.groupId } : {}),
+        // Absent is unknown, never 0.
+        ...(typeof t.lastAccessed === "number" && t.lastAccessed > 0 ? { lastAccessed: t.lastAccessed } : {}),
     };
 
 /** The tab picker's icons, fetched here and handed over as data URLs (tab-favicons.ts). */

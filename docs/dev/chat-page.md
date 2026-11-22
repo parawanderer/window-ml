@@ -497,8 +497,9 @@ It is also asked when the page is shown again or its window takes focus back (`v
 tab means leaving this page, so coming back is when the list has to be current, with nothing opened.
 All of these are refreshes, keeping the old list on screen until the new one lands: tabs open and close while the page sits,
 and an icon still on its way the first time is there the second. A refresh never moves the choice. The FIRST list of a
-runtime offers the last tab picked on it from this device again (`view.target`, `lastTargets` in view-mode.tsx), or a
-new tab if that was the pick, while `rememberedTab` (new-session.tsx) still finds it: the same id on the same site, or a
+runtime offers whichever is MORE RECENT, the last tab picked on it from this device (`view.target`, `lastTargets` in
+view-mode.tsx, with `pickedAt`) or the tab last visited (the newest `TabInfo.lastAccessed`; `firstTab` in new-session.tsx;
+a pick stored without `pickedAt` is older than any visit), or a new tab if that was the newer pick, while `rememberedTab` (new-session.tsx) still finds the pick: the same id on the same site, or a
 tab at the exact address (a browser restart renumbers tabs, and an old id on another site is some other tab). Only a pick
 from the list is remembered, never the first guess, and only on the start page: a resume is a question about one run. Tab group names and colours need the optional `tabGroups` permission; where groups arrive unnamed,
 the list's foot offers "Show them" on this browser's own runtime (`ChatExtras.tabGroupsGrant`), which calls
