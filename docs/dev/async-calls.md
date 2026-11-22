@@ -226,6 +226,27 @@ The no-tab state on the chat page is not drawn yet: the chat-page lane's. No new
 Tests: `tests/task-row.test.mjs`, `tests/session-index.test.mjs`, `tests/task-mark.test.mjs`,
 `tests/event-admission.test.mjs`.
 
+## A run whose tab closed: the release (docs/spec/ASYNC_CALLS.md, points 1 to 5 and 7)
+
+`sw-release.ts` owns the deadline. `tabs.onRemoved` (`background.ts`) calls `onTabClosed`: each `bgRuns` run on that tab with no turn live gets
+`ml_release_due:<runId>` = `{ due, closedAt }` (`due` = now + `closedRunGraceMin` minutes, a guarded DevTools setting, default 10, 0 releases at
+once) and the one alarm `ml-release` is set to the earliest `due`. A run with a RUNNING task gets the entry with `due: null`: the tab's closing is
+remembered across an eviction, and the `onTaskCounts` listener sets `due` when the last running task ends and the run still has no tab. A waiting
+result does not hold the run. The alarm and worker start (after `hydrationDone`) call `releaseDue`: each due entry is dropped unless a turn is live, a
+task runs or `runLacksTab` (the `chrome.tabs.get` recheck) says the run has a tab; otherwise `releaseRun` calls `releaseSessionTokens(runId, "tab-closed")`.
+Cancelled by `cancelRelease` at a turn's start (`hostTurn`), by `moveRun` and by a resume that adopts the run on a tab (`sw-sessions.ts`). A turn's
+end (`settle`) calls `rearmAfterTurn`: a run still on no tab gets a fresh deadline. A forged or stale entry releases nothing that has a tab.
+
+The reason (`ReleaseReason`: `tab-closed`, `person`; none for `forgetRun`, a failed start and the install purge) goes to every `onSessionRelease` hook.
+`deletePythonRun` puts it in `PY_DELETE_RUN`; the offscreen handler accepts it and does not read it yet (point 6, the namespace-drop record, is a later
+change). `endTasks(runId, reason, { keepUndelivered })` is how the task hook reads it: with a reason the ended rows no turn has read stay in the
+table (persisted), their `result` pointer cleared and `releasedAt` stamped, and the inbox text (`[task <id> done after 3 s: <text>; its value was
+released at <ISO time>]`), an `await` and a `tail` of that row say so. Running tasks are cancelled; archive and delete keep nothing.
+
+The session row's `releaseAt` is `setReleaseAtReader(releaseAtOf)` (`background.ts`); `armRelease` and `cancelRelease` refresh the row. The Stop
+button's command is `session.release` (`session-commands.ts`): this browser's own pages only (`from.via`; a hub device is `forbidden`), `conflict`
+while a turn runs, reason `person`. Tests: `tests/release.test.mjs` (the bundle, with `loadBackground({ alarms: true })`), `tests/session-commands.test.mjs`.
+
 ## Traps
 
 - **A short `expectMs` shortens the lease.** The deadline is `expectMs ?? SH_LEASE_MS`, and models underestimate: on
