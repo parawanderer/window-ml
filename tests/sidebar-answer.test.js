@@ -783,6 +783,14 @@ test("answer render (sidebar): clicking an embed's BODY does not navigate to the
     assert.ok(step.classList.contains("astep-pulse"), "a click on the caption goes to the source step");
 });
 
+test("answer render (sidebar): a caption carries a decorative jump arrow, hidden from assistive tech", async () => {
+    const w = await loadSidebarWorld();
+    const { embed } = await jsonEmbedRun(w, "ejump");
+    const jump = embed.querySelector(".tok-anno > .tok-anno-jump");
+    assert.ok(jump?.querySelector("svg"), "the caption holds the arrow the stylesheet shows on hover and focus");
+    assert.equal(jump.getAttribute("aria-hidden"), "true", "it is decoration; the tooltip names the action");
+});
+
 test("answer render (sidebar): an embed with NO caption is captioned with its tool and step, and that caption navigates", async () => {
     const w = await loadSidebarWorld();
     w.window.HTMLElement.prototype.scrollIntoView = function () {};

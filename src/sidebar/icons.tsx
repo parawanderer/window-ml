@@ -269,6 +269,13 @@ export const IconFold = () => (
         <path d="M4 12h16M8.5 5 12 8.5 15.5 5M8.5 19 12 15.5 15.5 19" />
     </svg>
 );
+/** Corner arrow up and to the left — "goes to the step ABOVE": an embed's caption shows it on hover, since the source step precedes the answer. */
+export const IconJumpUp = () => (
+    <svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <polyline points="14 9 9 4 4 9" />
+        <path d="M20 20h-7a4 4 0 0 1-4-4V4" />
+    </svg>
+);
 /** Close. */
 export const IconClose = () => (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">

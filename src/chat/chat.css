@@ -907,7 +907,7 @@ html[data-calm]:not([data-theme="light"]), html[data-calm]:not([data-theme="ligh
 
 /* A CITATION'S TOOLTIP BELONGS TO ITS CAPTION (`tt` is on `.tok-anno`, not on the block: an embed is something you
    READ, and a tip that fires anywhere over a table explains the frame on top of its contents). */
-.chat.calm .tok-anno { cursor: help; }
+.chat.calm .tok-anno { cursor: pointer; }
 /* The wash over the whole embed goes with the tip, for the same reason: it fires while you are reading a table, and
    the rail already says where the transclusion starts and stops. It moves to the caption, which is the part that is
    now behaving like a control — and it is `--cite`, like every other mark on a citation. It was the last `--ok` in
