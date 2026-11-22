@@ -8,6 +8,7 @@ export default async ({ page, tile, shot }) => {
     await page.mouse.move(0, 0);
     await shot("rest");
     const plot = tile.locator(".sum-plot");
+    await plot.scrollIntoViewIfNeeded();   // the tile can sit below the fold of a page that lists several variants
     const box = await plot.boundingBox();
     if (!box) fail("no plot box");
     await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5);
