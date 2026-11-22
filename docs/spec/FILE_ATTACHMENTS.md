@@ -884,6 +884,10 @@ file a text read's length equals `stat`'s size, and the model is not told which 
 (#2058): a value in another encoding (UTF-16) or inside a compressed or encoded container (a deflated zip member, gzip)
 is not matched.
 
+RULED 2026-11-22 (Shane, ruling 101), not built: the `*` becomes a per-secret fake value of the same length, and a
+fake or a marker written back to the file that holds the value is restored from that file's own bytes (ruling 100).
+`SECRET_HANDLES.md`, "A redacted value written back to its own file is restored".
+
 SUPERSEDED 2026-11-20 to 22 (the coordinator, the same call): a text range scrubbed to `[REDACTED:<NAME>]` over a
 window widened by the longest form, with a 4,096-character ceiling and an 8 MiB whole-file fallback, and a binary
 range returned unscrubbed (the coordinator's ranged-scrub call under rulings 22 to 25). That window is built as
