@@ -143,3 +143,194 @@ test("a list row with the hover card in place still opens its session on click, 
     render(null, host);
     store.stop?.();
 });
+
+// --- the resources tab: usage totals, the chart's geometry, the scope override, and the tab drawn with and without a panel ---
+
+const use = (p, c, over = {}) => ({ promptTokens: p, completionTokens: c, totalTokens: p + c, ...over });
+
+test("usage totals: a field no call reported is null and draws no line, never a zero", async () => {
+    const { usageTotals, totalsLines } = await import("../src/chat/session-resources.tsx");
+    const t = usageTotals([use(100, 10), use(200, 20)], null, null);
+    assert.deepEqual([t.calls, t.prompt, t.completion, t.cached, t.reasoning, t.sub, t.cost], [2, 300, 30, null, null, null, null]);
+    assert.deepEqual(totalsLines(t).map((l) => l.key), ["calls", "prompt", "completion"]);
+    // A reported 0 is a measurement and draws; a field one call reported sums over the calls that did.
+    const u = usageTotals([use(100, 10, { cachedTokens: 0 }), use(200, 20, { cachedTokens: 50, reasoningTokens: 7 })], { tokens: 900, calls: 3 }, null);
+    assert.equal(u.cached, 50);
+    assert.equal(u.reasoning, 7);
+    assert.deepEqual(totalsLines(u).map((l) => l.key), ["calls", "prompt", "completion", "cached", "reasoning", "sub"]);
+    assert.match(totalsLines(u).find((l) => l.key === "sub").value, /^900 tokens in 3 calls$/);
+    assert.equal(usageTotals([use(1, 1, { cachedTokens: 0 })], null, null).cached, 0);
+    assert.ok(totalsLines(usageTotals([use(1, 1, { cachedTokens: 0 })], null, null)).some((l) => l.key === "cached"));
+});
+
+test("usage totals: an unpriced call is counted, not costed, and the line says how many; no pricing at all draws no cost", async () => {
+    const { usageTotals, totalsLines } = await import("../src/chat/session-resources.tsx");
+    const sp = (over) => ({ money: 0, reported: 0, computed: 0, local: 0, unpriced: 0, why: null, ...over });
+    const mixed = totalsLines(usageTotals([use(1, 1), use(1, 1), use(1, 1)], null, sp({ money: 0.5, computed: 2, unpriced: 1 })));
+    assert.match(mixed.find((l) => l.key === "cost").value, /\$0\.50 over 2 priced calls/);
+    assert.match(mixed.find((l) => l.key === "unpriced").value, /^1 call counted above, not costed/);
+    const none = totalsLines(usageTotals([use(1, 1)], null, sp({ unpriced: 1 })));
+    assert.ok(!none.some((l) => l.key === "cost"), "nothing priced: no cost line, and never $0");
+    assert.ok(none.some((l) => l.key === "unpriced"));
+    assert.ok(!totalsLines(usageTotals([use(1, 1)], null, sp({ local: 1 }))).some((l) => /cost|unpriced/.test(l.key)), "a local call is neither");
+    assert.ok(!totalsLines(usageTotals([use(1, 1)], null, null)).some((l) => l.key === "cost"), "host cannot price");
+});
+
+test("usage totals: no samples draw no lines", async () => {
+    const { usageTotals, totalsLines } = await import("../src/chat/session-resources.tsx");
+    assert.deepEqual(totalsLines(usageTotals([], null, null)), []);
+});
+
+test("the chart: one mark per call, time axis from the stamps, order axis when any stamp is missing, a lone call centred", async () => {
+    const { usageChart, niceMax } = await import("../src/chat/session-resources.tsx");
+    assert.deepEqual([0.2, 1, 3, 11, 120, 500, 5000].map(niceMax), [1, 1, 5, 20, 200, 500, 5000]);
+    const c = usageChart([{ ts: 1000, prompt: 100, completion: 10 }, { ts: 3000, prompt: 400, completion: 50 }, { ts: 2000, prompt: 200, completion: 0 }]);
+    assert.equal(c.axis, "time");
+    assert.equal(c.marks.length, 3);
+    assert.ok(c.marks[0].x < c.marks[2].x && c.marks[2].x < c.marks[1].x, "x follows the stamp");
+    assert.ok(c.marks[1].yPrompt < c.marks[0].yPrompt, "a bigger count is higher");
+    assert.equal(c.marks[2].yCompletion, c.plot.b, "zero sits on the baseline");
+    const order = usageChart([{ ts: 0, prompt: 1, completion: 1 }, { ts: 5, prompt: 2, completion: 1 }]);
+    assert.equal(order.axis, "order");
+    assert.deepEqual(order.xTicks, []);
+    const one = usageChart([{ ts: 5, prompt: 2, completion: 1 }]);
+    assert.equal(one.marks[0].x, (one.plot.l + one.plot.r) / 2);
+    assert.equal(usageChart([]).marks.length, 0);
+});
+
+test("scopedHash() answers the override first, and releasing it gives back the view's, nested holders included", async () => {
+    const { scopedHash, view, holdScope, scopeOverride } = await import("../src/sidebar/store.ts");
+    const was = view.value;
+    try {
+        view.value = { name: "detail", hash: "open1" };
+        assert.equal(scopedHash(), "open1");
+        const a = holdScope("sumA");
+        assert.equal(scopedHash(), "sumA");
+        const b = holdScope("sumB");
+        assert.equal(scopedHash(), "sumB");
+        a();   // a release out of order leaves the newer holder alone
+        assert.equal(scopedHash(), "sumB");
+        b();
+        assert.equal(scopedHash(), "open1", "a released holder never comes back");
+        b();   // a second release is a no-op
+        const c = holdScope("sumC"), d = holdScope("sumD");
+        d();
+        assert.equal(scopedHash(), "sumC", "releasing the newest gives back the one under it");
+        view.value = { name: "list" };
+        assert.equal(scopedHash(), "sumC", "the override holds over a list view");
+        c();
+        assert.equal(scopedHash(), null);
+    } finally { view.value = was; scopeOverride.value = null; }
+});
+
+test("the resources tab: with a panel it mounts it for this session key; without one it says why; usage draws from sessionMap or says to open the session", async () => {
+    const { JSDOM } = await import("jsdom");
+    const { createRequire } = await import("node:module");
+    const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", { pretendToBeVisual: true, url: "https://chat.test/" });
+    for (const k of ["localStorage", "window", "document", "Node", "FileReader", "Event", "HTMLElement"]) {
+        Object.defineProperty(globalThis, k, { value: dom.window[k], configurable: true, writable: true });
+    }
+    const { h, render } = createRequire(import.meta.url)("preact");
+    const { ResourcesTab } = await import("../src/chat/session-resources.tsx");
+    const { sessionMap, rev } = await import("../src/sidebar/store.ts");
+    const host = dom.window.document.getElementById("root");
+    const tick = () => new Promise((r) => setTimeout(r, 30));
+    const s = row();
+    const local = rt({ capabilities: { resourcePanel: true } });
+    const asked = [];
+    const extras = { resourcePanel: (runtime, hash) => { asked.push([runtime, hash]); return h("div", { class: "fake-panel" }, "panel"); } };
+
+    // Not opened: no samples in the map.
+    render(h(ResourcesTab, { s, rt: local, extras }), host);
+    await tick();
+    assert.ok(host.querySelector(".fake-panel"));
+    assert.deepEqual(asked[0], ["local", "local:a1b2c3d4"]);
+    assert.match(host.textContent, /usage shows once the session is opened/);
+
+    // Opened, no panel (web build): one line why, the usage still drawn, and no energy line.
+    sessionMap.set("local:a1b2c3d4", { hash: "local:a1b2c3d4", kind: "agent", model: "m", config: { model: "m" }, turns: [], steps: [
+        { step: 1, ts: 1000, usage: use(100, 10, { cachedTokens: 40 }) }, { step: 2, ts: 5000, usage: use(300, 30) }] });
+    rev.value++;
+    render(h(ResourcesTab, { s, rt: rt(), extras: undefined }), host);
+    await tick();
+    assert.equal(host.querySelector(".fake-panel"), null);
+    assert.match(host.textContent, /This runtime does not report its machine's memory and GPU\./);
+    assert.equal(host.querySelectorAll(".sum-chart circle").length, 2, "one prompt mark per call");
+    assert.equal(host.querySelectorAll(".sum-chart path.sum-m-completion").length, 2);
+    const fields = [...host.querySelectorAll(".sum-totals .sum-line")].map((e) => e.dataset.field);
+    assert.deepEqual(fields, ["calls", "prompt", "completion", "cached"], "no reasoning line, no cost line");
+    assert.doesNotMatch(host.textContent, /energy|kWh|watt/i);
+
+    // The sidebar's dialog: its own panel is not mounted twice, and its map is keyed by the bare hash.
+    sessionMap.set("a1b2c3d4", sessionMap.get("local:a1b2c3d4"));
+    render(h(ResourcesTab, { s, rt: local, extras, sidebar: true, bareKeys: true }), host);
+    await tick();
+    assert.equal(host.querySelector(".fake-panel"), null);
+    assert.match(host.textContent, /sidebar's own resource panel/);
+    assert.ok(host.querySelector(".sum-chart"));
+    render(null, host);
+    sessionMap.delete("local:a1b2c3d4"); sessionMap.delete("a1b2c3d4");
+});
+
+// --- the usage chart's reading: the shared time readout's snapping, keys, and clean-up ---
+
+test("the usage chart reads one call: the pointer snaps to the nearest, arrows step, Escape and unmount clear the tip", async () => {
+    const { JSDOM } = await import("jsdom");
+    const { createRequire } = await import("node:module");
+    const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", { pretendToBeVisual: true, url: "https://chat.test/" });
+    for (const k of ["localStorage", "window", "document", "Node", "FileReader", "Event", "HTMLElement"]) {
+        Object.defineProperty(globalThis, k, { value: dom.window[k], configurable: true, writable: true });
+    }
+    const { h, render } = createRequire(import.meta.url)("preact");
+    const { UsageChartView } = await import("../src/chat/session-resources.tsx");
+    const { cursorTip } = await import("../src/sidebar/ui-kit.tsx");
+    const host = dom.window.document.getElementById("root");
+    const tick = () => new Promise((r) => setTimeout(r, 20));
+    // Times 0, 100, 1000 apart: x fractions 0, .1, 1 across the plot.
+    const points = [{ ts: 1000, prompt: 100, completion: 10, cached: 5 }, { ts: 1100, prompt: 200, completion: 20 }, { ts: 2000, prompt: 400, completion: 40 }];
+    render(h(UsageChartView, { points }), host);
+    await tick();
+    const plot = host.querySelector(".sum-plot");
+    assert.ok(plot, "the reading box is drawn");
+    assert.equal(plot.getAttribute("tabindex"), "0");
+    assert.equal(plot.getAttribute("role"), "img");
+    assert.match(plot.getAttribute("aria-label"), /3 calls/);
+    plot.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 100, right: 200, bottom: 100, x: 0, y: 0 });
+    const move = (x) => plot.dispatchEvent(new dom.window.MouseEvent("pointermove", { bubbles: true, clientX: x, clientY: 50 }));
+    const key = (k) => plot.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+    const tipText = () => { const n = cursorTip.value?.node; if (!n) return null; const d = dom.window.document.createElement("div"); render(n, d); return d.textContent; };
+
+    assert.equal(host.querySelector(".rc-cross"), null, "nothing until pointed at");
+    move(190);   // fraction .95: the last call
+    await tick();
+    assert.match(tipText(), /Prompt400Completion40Total440/);
+    assert.ok(host.querySelector(".rc-cross.snapped"), "the rule is up");
+    move(30);    // fraction .15: nearer the second (.1) than the first (0)
+    await tick();
+    assert.match(tipText(), /Prompt200/);
+    move(0);
+    await tick();
+    assert.match(tipText(), /Cached5/, "the call that reported its cache hits lists them, and only that one");
+    move(190); await tick();
+    assert.doesNotMatch(tipText(), /Cached/);
+
+    // Keys: from nothing ArrowRight picks the first; Escape hides and clears the tip.
+    key("Escape"); await tick();
+    assert.equal(cursorTip.value, null);
+    key("ArrowRight"); await tick();
+    assert.match(tipText(), /Prompt100/);
+    key("ArrowRight"); await tick();
+    assert.match(tipText(), /Prompt200/);
+    key("ArrowLeft"); key("ArrowLeft"); key("ArrowLeft"); await tick();
+    assert.match(tipText(), /Prompt100/, "stops at the first");
+    key("Escape"); await tick();
+    assert.equal(cursorTip.value, null);
+    assert.equal(host.querySelector(".rc-cross"), null);
+
+    // Unmounting with a tip up takes it down.
+    move(100); await tick();
+    assert.ok(cursorTip.value);
+    render(null, host);
+    await tick();
+    assert.equal(cursorTip.value, null);
+});

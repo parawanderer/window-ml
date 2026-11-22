@@ -1,8 +1,10 @@
 # Spec (WIP): the session summary page
 
-**Status: specified, not built (2026-11-18).** Contents ruled by Shane (2026-11-18, ruling 50): the list below, open to
-additions and cuts as they come up. Owners and order ruled by the coordinator (2026-11-18, "Owners and order" below). The access
-tab's data is built on the worker side (`docs/spec/POLICIES.md`, "The effective view"); nothing else here is.
+**Status: specified (2026-11-18), partly built.** Contents ruled by Shane (2026-11-18, ruling 50): the list below, open to
+additions and cuts as they come up. Owners and order ruled by the coordinator (2026-11-18, "Owners and order" below). Built: the
+page's shell and its summary tab (#2002, 8d004724), a fork's parent and the current page (#2003, 2185077b), the resources
+tab (#2071, c7d02ab0), and the access tab's data on the worker side (`docs/spec/POLICIES.md`, "The effective view").
+The rest is not.
 
 ## What it is for
 
@@ -75,17 +77,31 @@ the shared `sessionMap` `Session` (`src/sidebar/store.ts`), and "local" the `DUM
 ### Resources tab
 
 The session's slice of the resource panel, by mounting the existing components (`VramPanel`, `BoxPanel`,
-`src/sidebar/resource/`), no new data. They scope to one session today only through the global `laneScoped` signal and
-`scopedHash()`, which reads the open detail view's hash, so they take no session prop: the tab either sets the view or
-the components gain a `hash` prop (a refactor in the resources PR, its call). On the chat page the panel exists only for
-a local runtime; elsewhere the tab says so in one line.
+`src/sidebar/resource/`), no new data. Built (`src/chat/session-resources.tsx`, `ResourcesTab`). The components take no
+session prop: they scope through `scopedHash()` (`store.ts`), which now answers `scopeOverride` FIRST and the open detail
+view's hash second. `ChatExtras.resourcePanel(runtime, hash?)` takes the session key; `BoxPanel` (`chat-ext.tsx`) holds the
+override with `holdScope(hash)` while it is mounted and releases it on unmount, which puts back the previous holder
+(nested holders, and a stale release, are safe). The global `laneScoped` toggle still decides whether the panel is scoped
+at all. While the tab is open the chat page's own resource pane, if open, is scoped to the same session too.
+
+What draws where:
+
+| Surface | Panel | Usage part |
+| --- | --- | --- |
+| Chat page, extension, local runtime | `BoxPanel`, scoped to the session | From `sessionMap`, keyed `runtime:hash`. |
+| Web build, hub runtime, extras absent | One line: "This runtime does not report its machine's memory and GPU." | As above. |
+| Sidebar's summary dialog | One line pointing at the sidebar's own panel (it is not mounted a second time) | From `sessionMap`, keyed by the bare hash. |
+
+The usage part reads `sessionMap`, which the page fills only for a session it has OPENED (the chat store subscribes on
+open). A session that is only in the list says "This session's usage shows once the session is opened." A session whose
+calls reported no usage says so; it does not draw an empty chart.
 
 Below the panel come the session's usage over time and its totals (ruled by Shane, 2026-11-19). The summary tab's "Tokens and
 cost so far" line is the short form of these totals.
 
 | Field | Status | Source today | Gap, and the lane that owns it |
 | --- | --- | --- | --- |
-| Tokens over time, and totals | have | `usageSamples` (`usage.tsx`, reducer): one `TokenUsage` per call, ordered by its step's or turn's `ts`; `promptTokens`, `completionTokens`, `cachedTokens`, `reasoningTokens` | — |
+| Tokens over time, and totals | built | `usageSamples`/`timedUsage` (`usage.tsx`, reducer): one `TokenUsage` per call, ordered by its step's or turn's `ts`; `promptTokens`, `completionTokens`, `cachedTokens`, `reasoningTokens` | — |
 | Cost over time, and total, for an external model | partial | `sessionCalls` priced through `services().priceCalls` against each call's own snapshot (`TokenUsage.prices`, `src/spend/price-book.ts`) | Extension pages only; no cost on the web or hub chat page (session-store). An unpriced call is counted, not costed. |
 | Energy for a local model, and its cost | partial | Measured on the box: the patched backend's `sample` frames carry GPU board watts and `compute.power_sources`, and the bench attributes them per session (`tests/e2e/bench/electricity.mjs`). Each call records the electricity price it ran under (`TokenUsage.electricity`) | The extension reads no power field yet. Owner: bench (ruling 53); the design is "Energy and its cost" below. A figure from a rated wattage draws nothing. |
 
@@ -162,8 +178,9 @@ Order of work, one PR each:
 
 ### Files tab
 
-Owned by files-host, after its scrub chain (#1948 and what it releases). On main, `/files/` is ruled, not built
-(`FILE_ATTACHMENTS.md`).
+Owned by files-host, after its scrub chain (#1948 and what it releases). On main, `/files/` is partly built: the
+ranged reader's read side and Python's mount (#2048, #2058, #2026); no write, no quota and no `ml.fs` yet
+(`FILE_ATTACHMENTS.md`, its status line).
 
 | Field | Status | Source today | Gap |
 | --- | --- | --- | --- |

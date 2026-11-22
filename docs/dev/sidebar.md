@@ -315,6 +315,9 @@ only after that; the worker refuses a widening removal without it. Nothing in th
 
 ## Traps
 
+- **`scopedHash()` is not only the open view.** It answers `scopeOverride` first (`holdScope(hash)` in `store.ts`), which a
+  mounted resource panel sets for a session that is not the view's (the summary page's resources tab, via `BoxPanel`).
+  Release it on unmount; code that wants "the open session" reads `view`, not `scopedHash()`.
 - **A web-accessible file has two URLs (`use_dynamic_url`).** `getURL("sidebar.html")` (or `mermaid.html`) names a
   per-session URL, which is the only one a web page may load it by; the document it loads still reports the
   extension's own id (`location`, `sender.url`, `getURL("")`). So a frame inside a page is LOADED by `getURL(file)`
@@ -409,6 +412,12 @@ never picks up the explanation of it.
   a trigger that is NOT itself a control. The split is the same one below: a control's tip is its NAME, which
   `aria-label` already carries, and raising a popup on every icon button a finger lands on turns ordinary use into
   a flicker. The tap is never stolen — whatever it was pressing still happens.
+
+  **A KEYBOARD CAN READ ONE TOO.** The layer also listens for `focusin`/`focusout`: a `.tt` trigger (or anything
+  inside it) that takes `:focus-visible` focus raises the same tip through the same `show`, and focus leaving it
+  takes it down unless focus only moved to another element inside the trigger. A click that focuses a button is
+  not `:focus-visible`, so it raises nothing a second way; an engine whose `matches(":focus-visible")` throws keeps
+  hover tips only. Esc dismisses it like a hovered one. A hover and a focus on different triggers: the last event wins.
 
   **The exception is an accessible NAME.** A `title` on an icon-only control is what a screen reader and a
   keyboard user get, and `cursorTip` is pointer-only — so those keep a name (prefer `aria-label`) and gain

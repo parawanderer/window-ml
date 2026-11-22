@@ -14,8 +14,9 @@ import type { RuntimeId } from "../session/session-host";
 
 /** The device's own views, if it has any. Every member is optional: absent means this place cannot draw it. */
 export interface ChatExtras {
-    /** The resource panel (capacity, the residents, the event lane) for one runtime's box. */
-    resourcePanel?(runtime: RuntimeId): ComponentChildren | null;
+    /** The resource panel (capacity, the residents, the event lane) for one runtime's box. With `hash` (a session key) the
+     *  panel is scoped to that session while it is mounted, whatever the page has open (the summary page's resources tab). */
+    resourcePanel?(runtime: RuntimeId, hash?: string): ComponentChildren | null;
     /** A Python bench running against one runtime's sandbox. */
     bench?(runtime: RuntimeId): ComponentChildren | null;
     /** The runtime's own settings, editable from here — offered where the runtime reports `localSettings`. */

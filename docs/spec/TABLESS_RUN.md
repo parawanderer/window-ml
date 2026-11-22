@@ -56,8 +56,8 @@ refused, a refused approval opens no tab, and a page cannot start it (no `HANDLE
 ## `ml.sh` with no page
 
 `ml.sh` is reached two ways today ([`docs/dev/shell.md`](../dev/shell.md)): from an `exec` in an isolated world on a
-tab (`exec-routing.ts`), and from a full-mode `python_exec` cell over the wire (`sw-ml-wire.ts`). The second needs no
-page, so a detached run has `ml.sh` already, through Python. Its cost is that full mode always asks.
+tab (`exec-routing.ts`), and from a `python_exec` cell outside the dialect over the wire (`sw-ml-wire.ts`). The second needs no
+page, so a detached run has `ml.sh` already, through Python. Its cost is that a cell outside the dialect always asks.
 
 Open: whether that is enough, or whether a detached run wants a worker-hosted `exec` world with `ml.sh` in it. A bench
 of disk tasks in a detached run, Python-only, answers it; nothing is built for it before that.

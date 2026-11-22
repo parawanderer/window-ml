@@ -1,6 +1,11 @@
 # Spec (WIP): library manifests for the read-only dialect
 
-**Status: work in progress, nothing built.** Written down on 2026-10-12 from a discussion, to come back to. The
+**Status: work in progress; built for Python only.** Written down on 2026-10-12 from a discussion, to come back to.
+Built: the four manifest files the Python dialect loads (`notebooks/python-dialect/data/manifest-*.json`, read by the
+CPython fork's `restricted.load_manifests`) and their schema ("The shipped files' JSON Schema"), and tier 3 libraries
+through `propose_manifest` with `library` (root K (c2), #1110 7891e866; "As built" below). Not built: a manifest for a
+JS library (the JS dialect has only its whitelist, with `mutates(i)` in miniature as `ARG_WRITERS` in
+`src/readonly-exec/policy.ts`), the syntaxes sketched below, and workspace scope (parked). The
 examples below are sketches of a syntax to be argued with, not a design. Open questions are at the end.
 
 ## The idea
@@ -199,10 +204,11 @@ export default {
 
 ## Examples: Python
 
-**A Python read-only dialect is decided and not yet built** ([`PYTHON_DIALECT.md`](PYTHON_DIALECT.md), 2026-10-15); until
-it exists everything built is JavaScript. (`python_exec`'s `mode: "readonly"` shares only the name: it cuts the
-sandbox's network and JS bridges ([`docs/dev/python-sandbox.md`](../dev/python-sandbox.md)), does not bound work, and
-tracks no ownership; the dialect replaces it.) **The Python dialect is this spec's main consumer**: in JS the dialect has
+**A Python read-only dialect is built** ([`PYTHON_DIALECT.md`](PYTHON_DIALECT.md), decided 2026-10-15): the restricted
+CPython fork's gate decides a cell's membership by running it ([`docs/dev/python-sandbox.md`](../dev/python-sandbox.md),
+"Membership is decided by RUNNING the cell"). (`python_exec`'s former `mode: "readonly"`, removed 2026-10-19, shared
+only the name: it cut the sandbox's network and JS bridges, did not bound work, and tracked no ownership; the dialect
+replaced it.) **The Python dialect is this spec's main consumer**: in JS the dialect has
 few native libraries to worry about, while in Python every useful cell is numpy or pandas, so these examples are the
 ones that matter first. The parser is `ast.parse`, the evaluator is CPython itself under a restricted mode the fork adds,
 and the native leaves are C extensions, as builtins are in JS. Tier 1 is the practical tier for them (no charge hook

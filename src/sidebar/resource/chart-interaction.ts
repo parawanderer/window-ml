@@ -12,13 +12,13 @@
 // (`snapUnder`, `cursorOn`), which live beside the signals they read so those files need not import each other.
 // Likewise the registry of which POOLS each surface drew (`notePools`), which the arrow keys step through.
 
-import { signal } from "@preact/signals";
+import { signal, type Signal } from "@preact/signals";
 import type { Band } from "../../resource/resource-bands";
 import type { ResourceSample } from "../../resource/resource-model";
 import type { EventPlacement, ResourceEvent } from "../../resource/resource-timeline";
 import { snapFraction, type Axis, type RunGap } from "../../resource/resource-axis";
 import { lineageOf } from "../../resource/resource-lane";
-import { zoomRange, resWindowS, laneScoped, scopedHash, crosshair, snapDot } from "../store";
+import { zoomRange, resWindowS, resWindowPref, brush, RESWIN_KEY, laneScoped, scopedHash, crosshair, snapDot } from "../store";
 import { releaseFocus, kbPool } from "./vram-focus";
 import { hiddenPools, sampleGraceMs } from "./panel-state";
 
@@ -141,17 +141,65 @@ export const live: { axis: Axis | null; runs: ResourceSample[][] | null } = { ax
  * the crosshair's sample walks away, a tooltip changes under a still cursor, a drag's anchored edge slides. So while
  * the pointer is over the plots or the lane, the axis it entered on is held, and the chart catches up to now when
  * the pointer leaves. Samples keep arriving meanwhile; they are drawn past the right edge until then.
+ *
+ * This is the PANEL's hold (`panelView.held`); another chart's lives on its own view.
  */
 export const chartHeld = signal<{ axis: Axis; key: string } | null>(null);
 
+/**
+ * THE STATE ONE CHART'S GESTURES READ AND WRITE: which stretch is selected, the drag in progress, how wide the
+ * rolling window is, and the axis the plots were last drawn on. The brush, the scrub strip, the window chip and the
+ * axis hold take one of these, so a second chart can zoom and select without moving the resource panel's.
+ *
+ * `panelView` bundles the panel's own globals (the same signal objects, no copies); `createChartView` makes a fresh,
+ * independent one. What stays shared on purpose: the snap-to-dot setting and the cursor (`snapDot`, `crosshair`),
+ * which are preferences of the reader, not of a chart; and `sampleGraceMs`, `lastPointerAt` and the strip's hover
+ * cursor, which are plumbing of the panel's polling and of the one pointer.
+ */
+export interface ChartView {
+    /** a drag-selected range, or null for the rolling window */
+    zoom: Signal<{ from: number; to: number } | null>;
+    /** the drag in progress, as fractions of the plot's width */
+    brush: Signal<{ from: number; to: number } | null>;
+    /** seconds of history the rolling window shows (0 = everything) */
+    windowS: Signal<number>;
+    /** the width the window chip's undo returns to */
+    windowDefault: Signal<number>;
+    /** keep a window width past this mount (the panel writes its storage key; a local view keeps nothing) */
+    remember: (secs: number) => void;
+    /** the axis and runs the plots were last drawn from, published during render (see {@link live}) */
+    live: { axis: Axis | null; runs: ResourceSample[][] | null };
+    /** the axis held under the pointer (see {@link chartHeld}) */
+    held: Signal<{ axis: Axis; key: string } | null>;
+}
+
+/** The resource panel's view: its own global signals, so every other reader of them is unaffected. */
+export const panelView: ChartView = {
+    zoom: zoomRange, brush, windowS: resWindowS, windowDefault: resWindowPref, live, held: chartHeld,
+    remember: (secs) => { try { chrome.storage.local.set({ [RESWIN_KEY]: secs }); } catch { /* opaque origin */ } },
+};
+
+/** A fresh, independent view for a second chart: nothing it does reaches the panel, and the panel's gestures do not reach it. */
+export function createChartView(opts: { windowS?: number; remember?: (secs: number) => void } = {}): ChartView {
+    // state: ui
+    return {
+        zoom: signal(null), brush: signal(null), windowS: signal(opts.windowS ?? 0), windowDefault: signal(opts.windowS ?? 0),
+        remember: opts.remember ?? (() => {}), live: { axis: null, runs: null }, held: signal(null),
+    };
+}
+
 /** WHAT the held axis was a view OF. Holding is for passive reading only: a zoom, a scrub, a new width or a change of
- *  scope is you navigating, and a hold taken before it would pin the chart to the stretch you just asked to leave. */
-export const holdKey = (): string =>
-    `${zoomRange.value?.from ?? ""}:${zoomRange.value?.to ?? ""}:${resWindowS.value}:${laneScoped.value}`
-    // The open session changes the window only when the chart is SCOPED to it. Keying it in regardless released the hold
-    // on the first click of a double-click (a click opens the step), so the chart jumped between the two clicks and the
-    // second one missed the bar it was meant for.
-    + (laneScoped.value ? `:${scopedHash() ?? ""}` : "");
+ *  scope is you navigating, and a hold taken before it would pin the chart to the stretch you just asked to leave.
+ *  `laneScoped` and the open session key only the panel's own view (a second chart is not scoped to a session). */
+export const holdKey = (view: ChartView = panelView): string =>
+    `${view.zoom.value?.from ?? ""}:${view.zoom.value?.to ?? ""}:${view.windowS.value}`
+    // Only the panel is scoped: another view's hold must not let go when the panel scopes or opens a session.
+    + (view === panelView ? panelScopeKey() : "");
+
+/** The panel's scope, as `holdKey` keys it. The open session changes the window only when the chart is SCOPED to it.
+ *  Keying it in regardless released the hold on the first click of a double-click (a click opens the step), so the
+ *  chart jumped between the two clicks and the second one missed the bar it was meant for. */
+const panelScopeKey = (): string => `:${laneScoped.value}` + (laneScoped.value ? `:${scopedHash() ?? ""}` : "");
 
 /** When the pointer last did anything over a chart surface. */
 export let lastPointerAt = 0;
@@ -160,17 +208,21 @@ export let lastPointerAt = 0;
  *  pointer has left: the DevTools panel, and any exit the browser does not report into the iframe. */
 export const HOLD_LAPSE_MS = 8000;
 
-/** Hold the axis as the pointer comes onto (or moves over) a chart surface. */
-export const holdAxis = () => {
+/** Hold the axis as the pointer comes onto (or moves over) a chart surface of `view`. */
+export const holdAxisOf = (view: ChartView) => () => {
     lastPointerAt = Date.now();
-    if (!chartHeld.value && live.axis) chartHeld.value = { axis: live.axis, key: holdKey() };
+    if (!view.held.value && view.live.axis) view.held.value = { axis: view.live.axis, key: holdKey(view) };
 };
+/** The panel's own. */
+export const holdAxis = holdAxisOf(panelView);
 
 /** Let it go when the pointer leaves for somewhere that is not another chart surface (plots → lane keeps it held). */
-export const releaseAxis = (e: PointerEvent) => {
+export const releaseAxisOf = (view: ChartView) => (e: PointerEvent) => {
     const to = e.relatedTarget as Element | null;
-    if (!to?.closest?.(".rc, .rc-lane")) chartHeld.value = null;
+    if (!to?.closest?.(".rc, .rc-lane")) view.held.value = null;
 };
+/** The panel's own. */
+export const releaseAxis = releaseAxisOf(panelView);
 
 /** Let go outright: the pointer is somewhere else entirely. Called when the overlay's shell reports the pointer on the
  *  PAGE, which the iframe is otherwise never told (see `relayPointerOut` in shell.ts). */
