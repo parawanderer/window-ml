@@ -116,7 +116,9 @@ grant on the client costs a greyed-out button or a `forbidden` result, never acc
 
 A `SessionSummary` is one row of a list: id, `kind` (`chat`, `agent`, `embed`), `status`, `title`, `task`, `model`,
 created and last timestamps, `pendingApprovals`, the `page` it started on, whether it is `saved`, `startedBy`,
-`lineage`, and two fields added 2026-11-19 for the Session summary page (SESSION_SUMMARY.md):
+`lineage`, `background` (a run's detached tasks still running or with a result no turn has read, and `noTab` when it has
+no open tab; absent when there are none, additive: an older client ignores it, and the hub never reads it, since the
+row rides in the sealed body), and two fields added 2026-11-19 for the Session summary page (SESSION_SUMMARY.md):
 
 - `currentPage` (`{ url }`): the page a worker-hosted run's tab moved to after it started, from the browser's own
   navigation report, never a page's claim; kept once the run ends, as the page it was last on.

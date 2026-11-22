@@ -15,7 +15,7 @@
 // the surfaces keep free of doubles, but off mode with `listPageSessions` wakes the page's bus while the background
 // also fans the run's start and result. So the index de-duplicates by meaning (a second start, a repeated result, a
 // repeated "seen", a chat turn's id), which holds whichever copy arrives first.
-import type { MlDebugEvent } from "../contract/contract-debug";
+import { backgroundOf, type MlDebugEvent, type TaskBackground } from "../contract/contract-debug";
 import { HASH_RE, promptLine } from "../contract/contract-run";
 import { SESSION_CONTRACT_VERSION, type RuntimeId, type SessionId, type SessionKind, type SessionStatus, type SessionStreamMessage, type SessionSummary, type StreamPosition } from "./session-host";
 
@@ -537,7 +537,9 @@ export class SessionIndex {
             // browser's life: the bar above the transcript stayed up through reloads and tab switches, "Review"
             // scrolled to no card, and answering some other gate could not clear it because it was never a gate.
             // A gate open when the worker died cannot be answered anyway — the loop that posted it is gone.
-            const restored: SessionSummary = { ...summary, id: { runtime: this.runtime, hash }, status, saved: true, pendingApprovals: 0 };
+            // `background` is dropped the same way: a saved summary is not the task table, which is read again at startup.
+            const { background: _bg, ...kept } = summary;
+            const restored: SessionSummary = { ...kept, id: { runtime: this.runtime, hash }, status, saved: true, pendingApprovals: 0 };
             const s: Indexed = {
                 id: restored.id, kind: restored.kind, gen: 0, ring: [], seen: count, bytes: 0,
                 lostThrough: count, lastCursor: count,
@@ -589,6 +591,22 @@ export class SessionIndex {
         if (!s || !!s.summary.pinned === pinned) return null;
         if (pinned) s.summary.pinned = true;
         else delete s.summary.pinned;
+        this.refreshSummary(s);
+        return s.summary;
+    }
+
+    /**
+     * Set a session's background-task marker (`SessionSummary.background`); `null`, or a marker with nothing true (`backgroundOf`), clears it. Returns the
+     * changed row, or null when the session is not held or nothing changed.
+     */
+    setBackground(hash: string, bg: TaskBackground | null): SessionSummary | null {
+        const s = this.sessions.get(hash);
+        if (!s) return null;
+        const next = backgroundOf(bg) ?? null;
+        const cur = s.summary.background;
+        if (JSON.stringify(cur ?? null) === JSON.stringify(next)) return null;
+        if (next) s.summary.background = next;
+        else delete s.summary.background;
         this.refreshSummary(s);
         return s.summary;
     }

@@ -91,6 +91,12 @@ const GENRES = {
         about: "backup and restore: the file format, the key inventory against the sources, settings preview and apply, the file, the keyring",
         files: ["backup-format.test.mjs", "backup-inventory.test.mjs", "backup-settings.test.mjs", "backup-file.test.mjs", "backup-keyring.test.mjs", "backup-run.test.mjs", "chat-record.test.mjs"],
     },
+    // Detached tasks (docs/spec/ASYNC_CALLS.md, docs/dev/async-calls.md): a detached call's result as the run reads and
+    // shows it, a finished task starting the run's next turn, and a session's task counts on its index row.
+    task: {
+        about: "detached tasks: the result the run reads, a finished task starting a turn, the counts on a session's row",
+        files: ["task-say.test.mjs", "task-turn.test.mjs", "task-starts-turn.test.mjs", "task-row.test.mjs"],
+    },
     // The read-only exec dialect: the parser and mediated evaluator, and each member a survey may call for free
     // (`ml.pipe`, `ml.jsonPath`, `ml.current`). Four files, so a change to the dialect has its own suite; its rule
     // (adversarial + halting + failure tests on every extension) is in AGENTS.md.

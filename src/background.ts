@@ -53,7 +53,8 @@ import { checkDraft } from "./sw/sw-manifest-proposal";
 
 import { bringableSessions, bringHere } from "./sw/bring-here";
 import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, contextByRun, turnByRun, workerRunsStarting, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, senderOwnsRun, reconcileTabPins, startingControllers, abortStart, startingOwnedBy } from "./sw/sw-runs";
-import { cancelPageTasks, detachTask, resetTaskChain, taskAction, type TaskOutcome } from "./sw/sw-tasks";
+import { cancelPageTasks, detachTask, dropAllTaskMemory, resetTaskChain, taskAction, type TaskOutcome } from "./sw/sw-tasks";
+import { refreshTaskRow, setNoTabReader, setReleaseAtReader, syncTaskRows } from "./sw/sw-task-rows";
 import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
 import { startBackgroundRun, delegateStreams, hostRun, WORKER_RUN_REFUSED } from "./sw/sw-run-host";
@@ -133,7 +134,9 @@ startValueSweeps(liveHeldSessions);   // its first pass releases held rows no se
     dropAllAnswerMemory();
     dropAllVisionMemory();
     dropHandedMemoryForTest();
+    dropAllTaskMemory();
     await hydratePersistedRuns();
+    await syncTaskRows();
 };
 // TEST-ONLY: seed a minimal resumable bgRun for a tab, so a unit test can exercise the "don't wipe a tab that
 // still has a recoverable run" guard (resetDebug / tabHasBgRun) without driving a whole run to completion.
@@ -173,8 +176,12 @@ startValueSweeps(liveHeldSessions);   // its first pass releases held rows no se
 // HUD do (`userRunAction`). The harness's conversations with a UI-started run (converse.mjs, SURFACE=…) go through it.
 (globalThis as unknown as { __mlUserRunActionForTest?: unknown }).__mlUserRunActionForTest = (hash: string, action: "send" | "continue", body: { text?: string; surface?: string }, origin?: import("./contract/contract-run").PromptOrigin) => userRunAction(hash, action, body, undefined, origin);
 
+// TEST-ONLY (SW realm only): plug a reader into the session row's `noTab` / `releaseAt` (sw-task-rows.ts) and refresh a row, as the
+// move-run lane and the release build will. A page cannot reach this.
+(globalThis as unknown as { __mlTaskRowReadersForTest?: unknown }).__mlTaskRowReadersForTest = { setNoTabReader, setReleaseAtReader, refreshTaskRow };
+
 // TEST-ONLY (SW realm only): detach a task of a run by hand, as an executor does, and get its id and a function that ends
-// it with an outcome. A test of what a FINISHED task does (starts a turn, parks) needs one without driving ml.sh or Python.
+// it with an outcome. A test of what a FINISHED task does (starts a turn, parks, shows on the session's row) needs one without driving ml.sh or Python.
 (globalThis as unknown as { __mlDetachTaskForTest?: unknown }).__mlDetachTaskForTest = (runId: string, tool = "ml.sh"): { id: string; finish: (o: Partial<TaskOutcome>) => void; read: () => Promise<unknown> } => {
     let end!: (o: TaskOutcome) => void;
     const settled = new Promise<TaskOutcome>((res) => { end = res; });

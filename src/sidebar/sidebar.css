@@ -4882,3 +4882,6 @@ pre.code.morphing:not(.numbered) > code, pre.code.morphing .lcode { visibility: 
 .sum-hc { white-space: normal; min-width: 180px; }
 /* `.sum-hc-title`: the session's title, as the heading of its hover card. */
 .sum-hc-title { font-weight: 600; margin-bottom: 4px; overflow-wrap: anywhere; }
+
+/* The HUD card's mark for a run with background tasks (card/task-mark.tsx). */
+.card-task-mark { margin: 0 0 6px; padding: 0 6px; width: fit-content; border-radius: 6px; font-size: .75em; border: 1px solid var(--border); color: var(--fg-dim); }
