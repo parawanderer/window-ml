@@ -1,6 +1,6 @@
 # Spec (WIP): policies, or "decide this without asking me"
 
-**Status: partly built** (2026-10-15, REPL lane 2): the evaluator, the store with global and run scopes, the `fetch` and `sh` consumers' judging, the policy page, and `propose_policy`; how, and what is not built, in [`docs/dev/policies.md`](../dev/policies.md). The general mechanism behind every "run this without asking" in the extension. Moved
+**Status: partly built** (2026-10-15, REPL lane 2): the evaluator, the store with global and run scopes, the `fetch` and `sh` consumers' judging, the policy page, and `propose_policy`; since then the `act` consumer (#1360), a navigate under an approved policy (#1358), several-rule proposals (#1423), the `setting` consumer and its proposals (#1952, #2001) and a session's effective policies as rows (#1975); how, and what is not built, in [`docs/dev/policies.md`](../dev/policies.md). The general mechanism behind every "run this without asking" in the extension. Moved
 out of [`SHELL.md`](SHELL.md) on 2026-10-15, where it was first written (2026-10-13) for `ml.sh`, its first consumer;
 `SHELL.md` keeps what a shell call gives a policy. The idea is older (2026-10-04): an agent that proposes its own
 permissions as a structure a person can read and approve, every grant listed and revocable.
@@ -394,7 +394,7 @@ calls it would and would not match. A refinement is the card's own "deny, with a
 propose again, so no new answer is added to the card ("Widening is a policy" above). That note is the gate's generic
 deny feedback (`agent-loop.ts`, "Denied by …: <note>"), sent by the split Deny on both the transcript's card and the
 HUD card.
-Not built as a loop: `propose_policy` (`fetch` only today) and its card exist. Open: whether a conversation that drafts
+Not built as a loop: `propose_policy` (consumers `fetch`, `act` and `setting`) and its card exist. Open: whether a conversation that drafts
 several policies needs more than one card at a time, and whether a proposed policy the person then edits in the policy
 editor becomes theirs (`editPolicy` keeps `origin: "proposed"` today).
 
@@ -831,8 +831,9 @@ the sandbox it started with. The host's protocol (window-ml-host, PROTOCOL.md) g
 built.
 
 **Every reader of a root is bound by it.** The list binds every way a file under a root is read, not only a `spawn`:
-`ml.fs` and its one ranged reader, an `@files` reference, the file browser's content view, and ruling 36's `/files`
-mounts once they exist. One list, every reader: a reader the host does not sandbox applies the worker's resolved list
+`ml.fs` and its one ranged reader, an `@files` reference, the file browser's content view, and Python's `/files`
+mount (built, #2026; the reader asks a hide rule at every open and read, and nothing sets one until this list is
+built). One list, every reader: a reader the host does not sandbox applies the worker's resolved list
 itself before it reads. A hidden file readable through `ml.fs` is the defect this rules out, and a row asserts it for
 each reader.
 

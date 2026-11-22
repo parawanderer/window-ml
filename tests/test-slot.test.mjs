@@ -15,7 +15,7 @@ const SLOT = path.join(ROOT, "scripts", "test-slot.mjs");
 // The bench's ledger, which a granted job joins: this file's own, set before the import reads it.
 process.env.BENCH_LEDGER_FILE = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "test-slot-ledger-")), "ledger.json");
 const { ledger, register, unregister } = await import("../tests/e2e/bench/memory-budget.mjs");
-const { jobsFor, capFor, skipReason, submit, finish, look, cancel, waitFor, acquire, waitingLine, jobEnv, procLive, startTime, priceFor, classOf, priceIn, priceAt, priceOfSizing, fitIn, shapeOf, SHAPE_MAX, BASE_DEFAULT, SLOPE_DEFAULT, SLOPE_MIN, SLOPE_MAX, grantLine, admit, minWorkersFor, maxWorkersFor, promisedBy, MAX_RUNS, BATCH_OVERRUN_MS, BATCH_MAX_WORKERS, batchRefusal, usualMsFor, timeCapFor, enforceCap, parseMaxTime, TIME_CAP_MIN_MS, TIME_CAP_FACTOR, KILL_GRACE_MS, MAX_TIME_MAX_MIN } = await import(SLOT);
+const { jobsFor, capFor, skipReason, submit, finish, look, cancel, waitFor, acquire, waitingLine, jobEnv, procLive, startTime, sameStart, priceFor, classOf, priceIn, priceAt, priceOfSizing, fitIn, shapeOf, SHAPE_MAX, BASE_DEFAULT, SLOPE_DEFAULT, SLOPE_MIN, SLOPE_MAX, grantLine, admit, minWorkersFor, maxWorkersFor, promisedBy, MAX_RUNS, BATCH_OVERRUN_MS, BATCH_MAX_WORKERS, batchRefusal, usualMsFor, timeCapFor, enforceCap, parseMaxTime, TIME_CAP_MIN_MS, TIME_CAP_FACTOR, KILL_GRACE_MS, MAX_TIME_MAX_MIN } = await import(SLOT);
 
 process.env.TEST_SLOT_POLL_MS = "50";
 process.env.TEST_SLOT_MAX_RUNS = "1";
@@ -881,6 +881,46 @@ test("a start time the machine cannot read is UNKNOWN, not dead: a queued ticket
     writeQueue(dir, [holder(process.pid, startTime(process.pid)), queued]);
     const q = look("me", { dir, deps: { memory, probe: { alive: () => true, startTime: () => null } } });
     assert.equal(q.job.state, "queued", "a live waiter whose runner's start time cannot be read still waits");
+    assert.equal(q.reaped.length, 0);
+});
+
+// THE FIELD ORDER OF `lstart` FOLLOWS THE SESSION'S LOCALE. macOS `ps` prints "Sun 22 Nov …" under an en_GB locale
+// and "Sun Nov 22 …" under C/en_US, and sessions on one machine carry both. On 2026-11-22 every session's reap read
+// the other sessions' tickets as a REUSED pid: queued tickets went `abandoned`, running jobs `lost`, and slots were
+// freed under live suites. One reading is pinned to one locale, and the comparison no longer depends on the order.
+test("startTime answers one form whatever the session's locale is", () => {
+    const before = { LANG: process.env.LANG, LC_ALL: process.env.LC_ALL, LC_TIME: process.env.LC_TIME };
+    try {
+        process.env.LANG = "en_GB.UTF-8"; delete process.env.LC_ALL; delete process.env.LC_TIME;
+        const gb = startTime(process.pid);
+        process.env.LANG = "en_US.UTF-8";
+        const us = startTime(process.pid);
+        assert.ok(gb && us, "both reads answer");
+        assert.equal(gb, us, `one process read under two locales: ${JSON.stringify([gb, us])}`);
+    } finally {
+        for (const [k, v] of Object.entries(before)) { if (v == null) delete process.env[k]; else process.env[k] = v; }
+    }
+});
+
+test("a start time in the other session's field order is the same instant", () => {
+    assert.equal(sameStart("Sun 22 Nov 13:45:20 2026", "Sun Nov 22 13:45:20 2026"), true);
+    assert.equal(sameStart("Sat  7 Nov 00:00:00 2026", "Sat Nov  7 00:00:00 2026"), true, "a one-digit day, padded either way");
+    assert.equal(sameStart("Sun 22 Nov 13:45:20 2026", "Sun 22 Nov 13:45:21 2026"), false, "a second later is another process");
+    assert.equal(sameStart("Sun 22 Nov 13:45:20 2026", "Sun 22 Dec 13:45:20 2026"), false, "another month is another process");
+    assert.equal(sameStart("garbage", "garbage"), true, "a shape it cannot parse is compared as it was");
+    assert.equal(sameStart("garbage", "Sun Nov 22 13:45:20 2026"), false);
+});
+
+test("a queued ticket recorded under another session's locale is not abandoned", () => {
+    const dir = tmpDir();
+    const said = startTime(process.pid);
+    const [dow, a, b, ...rest] = said.split(/\s+/);
+    const other = [dow, b, a, ...rest].join(" ");   // the same instant in the other field order
+    assert.notEqual(other, said, "the two orders are tellable apart before the fix");
+    const queued = { ticket: "me", mode: "attached", kind: "unit", cmd: ["x"], cwd: "/", key: "k1", clone: "/c", by: { pid: process.pid, started: other }, state: "queued", jobs: 2 };
+    writeQueue(dir, [holder(process.pid, said), queued]);
+    const q = look("me", { dir, deps: { memory, probe: { alive: () => true, startTime: () => said } } });
+    assert.equal(q.job.state, "queued", "the same instant in the other field order is the same process");
     assert.equal(q.reaped.length, 0);
 });
 

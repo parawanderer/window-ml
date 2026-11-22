@@ -43,6 +43,7 @@ import { pageContext } from "../util";
 import { assembleRun, firstUserTurn, withoutCurrentClause, startPayload, type AssemblyMl } from "../agent/run-assembly";
 import { validateArgs } from "../tools/validate";
 import { surveyWhere } from "../tools/exec-trace";
+import type { StoredReadPlan } from "../table/table-plan";
 
 /**
  * Run a full agent loop over a tool registry: the model calls tools, we
@@ -413,7 +414,7 @@ export const agent = async function(this: MlApi, task: string, { host = null, to
         const key = read.meta?.table ? read.meta.value : undefined;
         const table = read.meta?.table;
         if (!key || !table) return read;
-        return { ...read, readColumns: (names: string[]) => columnsViaBackground(runHash, key, names, { ...(table.delimiter ? { delimiter: table.delimiter } : {}), ...(table.headerless ? { headerless: true } : {}) }) };
+        return { ...read, readColumns: (names: string[], plan?: StoredReadPlan) => columnsViaBackground(runHash, key, names, { ...(table.delimiter ? { delimiter: table.delimiter } : {}), ...(table.headerless ? { headerless: true } : {}) }, plan) };
     };
     // The run's curated answer set (created per run on the ToolContext). The `answer` tool mutates it
     // directly — no per-call accumulation here — and the loop reads it at assembly.

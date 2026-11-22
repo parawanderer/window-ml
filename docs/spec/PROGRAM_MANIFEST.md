@@ -1,6 +1,13 @@
 # Spec (WIP): program manifests, what a shell call is described by
 
-**Status: draft, nothing built.** Split out of [`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md) on
+**Status: built for `ml.sh`; the follow-ups under "Known limits" are not.** On main: the format, its validator and
+`flavourOf` (`src/shell/program-manifest.ts`), the shipped manifests (`src/shell/manifests/`, with `gh`'s credentialed
+profile, #1538 0a640bcd; `cp`, #1873 1b973c5d; flavours, #1963 0ff1b911; `sed` and `awk`, #1989 f304734d), the
+version probe, script manifests pinned by `entrypoint`, the person's store and its Settings page
+(`src/sw/sw-manifests.ts`, root K slices b and d, a35d7363), `propose_manifest` with its evidence run
+(`src/sw/sw-manifest-proposal.ts`) and the generated JSON Schema; how they work, in
+[`docs/dev/shell.md`](../dev/shell.md). Not built: a stored manifest's version from its pin, gawk and mawk flavours,
+and a fingerprint list for revealing programs ("Known limits"). Split out of [`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md) on
 2026-10-15, because the shell's free tier ([`SHELL.md`](SHELL.md)) needs a much smaller thing than the library manifest
 and should not wait on its cost model. A program manifest describes a PROGRAM the way a library manifest describes a
 function; it never decides anything ([`POLICIES.md`](POLICIES.md) decides).

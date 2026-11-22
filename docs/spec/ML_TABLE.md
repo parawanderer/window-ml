@@ -1,6 +1,7 @@
 # Spec: `ml.table`, a cell reads its own tables
 
-**Status: specified, not built (2026-11-19).** The design note, with every measurement behind these rules, is
+**Status: specified (2026-11-19); the JS member is built (#2043, "Built as of 2026-11-20" below); the Python member,
+the `/files` writers and the lazy table are not.** The design note, with every measurement behind these rules, is
 [`docs/plan/repl/ML_TABLE.md`](../plan/repl/ML_TABLE.md). This file holds the rules; where another spec owns a line, it
 is pointed at, not restated. Shane's rulings: 55, 56, 57, 68 to 72, 75 to 87 (2026-11-19, in the coordinator's
 session, recorded in [`docs/plan/repl/README.md`](../plan/repl/README.md)).
@@ -190,12 +191,9 @@ slice 1): `filesQuotaMB`, commit on close, and the place-by-place errors. This s
 where.
 
 - **The model's writable folder is `/files/agent/`** (ruling 86: "every model has `/files/`, it's like the home
-  directory").
-  - The model may make subfolders there.
-  - Write, overwrite, `rm` and `mv` are free there, inside the dialect too.
-  - Everything else under `/files/` is the person's, and read-only to the model.
-  - A relative path resolves against `/files/agent/`.
-  - `ml.fs.cp`'s destination must be under `/files/agent/`.
+  directory"). Write, overwrite, `rm` and a rename are free there, inside the dialect too. The rest of the layout
+  (subfolders, the read-only rest of `/files/`, relative paths, `ml.fs.cp`'s destination) has one home:
+  [`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md), "The layout".
 - **The members that write, inside the dialect,** are each a manifest leaf `writes(path arg)`, with the path checker:
   - pandas: `DataFrame.to_csv`, `to_parquet`, `to_json`, `to_feather`, `to_pickle`, `to_html` and
     `to_string(buf=…)`, and `Series.to_csv`.
@@ -215,7 +213,7 @@ where.
   - It is a lifted `allow_call` entry check. It reads the path by keyword, by position, through `*` and `**`, and
     from a bound method held in a name.
   - It normalises the path lexically, with `/` as the session root and `..` stopping there.
-  - It admits a write, `rm` or `mv` only when every target is under `/files/agent/`. It refuses anything else under
+  - It admits a write, `rm` or a rename only when every target is under `/files/agent/`. It refuses anything else under
     `/files/`, and asks for a hidden-list name (ruling 34).
   - A path it cannot normalise asks.
   - A C method with a path argument is not listed.
@@ -294,9 +292,11 @@ Today a stored table's `col`, `select`, `records` and a long `head` each re-pars
 - **Bounds.**
   - The source: at most `FETCH_TABLE_MAX` (64 MB) of bytes, inside `valueStoreBudgetMB` on disk.
   - The decode cache: at most 256 MiB of Arrow buffers (`TABLE_DECODE_CACHE_BYTES`), least recently read first out. A
-    decode larger than the cache serves its one read and is not kept. **Provisional:** chosen, not measured. Slice A's
-    PR measures the decode of the 64 MB CSV in the worker (Arrow buffer bytes and peak heap), commits the figure, and
-    sets the constant from it.
+    decode larger than the cache serves its one read and is not kept. **Measured** in slice A
+    ([`decode-cache.ipynb`](../../notebooks/tables/decode-cache.ipynb), in Node's V8, not the service worker): a 64 MB
+    CSV decodes to 58 to 90 MB, so the cache holds two to four of the largest. The parse peaks at least 0.6 to 1.2 GB
+    over the RSS before it, a lower bound because that RSS (285 to 903 MB) holds the generator's garbage; every stored
+    read paid it before slice A. The peak in the real service worker is a separate measurement, not slice A's.
   - `table-data.ts`'s `MAX_TABLE_ROWS` (200,000) caps the preview a fetch keeps, not the stored table, which has no
     row cap of its own. `dom.ts` has its own `MAX_TABLE_ROWS` (5,000), for a page table, which is never stored.
   - A view's rows in hand are never more than its source's rows in hand. A whole read (`col`, `records`) answers at
@@ -451,7 +451,7 @@ What a hostile page must not get through `ml.table`:
 For files, e3 attacks:
 - `..` past the root;
 - `attached/` by every spelling;
-- a write, `rm` or `mv` outside `/files/agent/`, including an `mv` out of it;
+- a write, `rm` or rename outside `/files/agent/`, including a rename out of it;
 - a hidden name;
 - another session's path;
 - a link;

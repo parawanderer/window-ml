@@ -259,13 +259,27 @@ the read, bound to the runId (`VALUE_COLUMNS`, answered for a worker-hosted run 
 call; in a survey the worker reads the value store itself), and `DerefText` hands it to `asTable`, which makes a STORED facade
 (`brandStored`):
 
-- `col`, `select`, `records`, and a `head` longer than the preview, read every row and return promises. `rows` stays
-  the preview. A missed `await` throws a message saying to await, where it would otherwise read `undefined`.
+- `col` and `records` read every row and return promises. `rows` stays the preview. A missed `await` throws a message
+  saying to await, where it would otherwise read `undefined`.
+- `select`, and a `head` longer than the preview, are VIEWS (`docs/spec/ML_TABLE.md`, "Views of a stored table in JS"):
+  synchronous stored facades over the rows in hand, `truncated`, with the view's whole count in `shape[0]`. Their own
+  `col`/`records` go through the same reader, narrowed to their columns and, for a head, limited to its `n`
+  (`limitedTo`). The plan crosses as flat fields of the read (`names`, `limit`), and every reader of a page's message
+  refuses a field outside the closed shape (`checkReadPlan`, `table-plan.ts`): the content script, `VALUE_COLUMNS` and
+  the isolated channel.
+- `copy()` of a stored table, or of a view, keeps no reader: it copies the rows in hand, keeps `shape` and `truncated`,
+  and its `col`/`records` past those rows throw, naming the source's `await t.records()` (a CUT copy, `brandCut`).
+  #2043's copy kept the reader, so after an edit a whole read answered the source's unedited cell.
 - The read goes through the relay (`PAGE_VALUE_COLUMNS` → content → `VALUE_COLUMNS`). The worker answers only for a run
   it hosts (`derefByRun`), active on the SENDER's tab, that holds the value.
-- The worker decodes the stored bytes (`storedColumns`, table-data.ts) with the preview's own parsers, uncapped: a
-  delimited body with the preview's delimiter and header decision, Parquet with hyparquet, Arrow with apache-arrow.
-  One read returns at most `MAX_STORED_READ_CELLS` (5M); past that it names `python_exec`.
+- The worker decodes the stored bytes ONCE per blob and options (`cachedStoredColumns`, `table-decode-cache.ts`) with
+  the preview's own parsers, uncapped (`decodeStored`, table-data.ts): a delimited body with the preview's delimiter and
+  header decision, Parquet with hyparquet, Arrow with apache-arrow. The decode is kept as Arrow columns built with
+  `makeData` (apache-arrow's builders compile with `new Function`, which the worker's CSP refuses), least recently read
+  first out past `TABLE_DECODE_CACHE_BYTES` (256 MiB; `notebooks/tables/decode-cache.ipynb`), and dies with the worker.
+  The store is asked on every read, so a value that is gone answers its `ValueMissing` even while its decode is kept.
+  One read returns at most `MAX_STORED_READ_CELLS` (5M); past that it names `python_exec`. An extension page reads the
+  same store with `storedColumns`, which decodes per read.
 - In the read-only dialect the reads are awaited like `ml` calls, sized by `shape` before the request, and bounded
   in total per script (`MAX_STORED_CELLS`); see `docs/dev/readonly-exec.md`.
 - In an ISOLATED exec (an approved exec of a worker-built run that names a pointer, `exec-routing.ts`) the value is the

@@ -172,17 +172,22 @@ is not in those words is the lane's proposal.
      only: while a turn runs the control says it waits for the turn to end, until MOVE_RUN slice 2 moves a running
      turn.
 - **That control is not in the composer and not in a bubble.** Anything typed into the composer reads as a message
-  to the model, and this is not one. Its surface is OPEN, for Shane:
-  - a page chip beside the composer ("page: none ▾", or the tab's title once attached) that opens the open-tabs
-    picker (`useTargetPick`), always visible, so the person can see the run has no page;
-  - a `/`-command (`/page`) that opens the same picker, Shane's own tentative suggestion. It is typed in the
-    composer, where a message goes, and nobody finds it until told;
-  - both, the chip as the surface and the command as its shortcut (the lane's recommendation).
+  to the model, and this is not one. Its surface is a page chip beside the composer ("page: none ▾", or the tab's
+  title once attached) that opens the open-tabs picker (`useTargetPick`), always visible, so the person can see the
+  run has no page. For now it is the chip alone, with no `/page` command in this build (RULED, Shane through the
+  coordinator, 2026-11-17).
 - **The contract.** `session.resume` names a TARGET today, a tab or a blank one. Resuming detached is a third target
-  (`{ detached: true }`), additive, agreed with the hub session before it is built, as the first resume was; the
-  phone and other clients then resume the same way. The tab pick is `session.resume` with a tab target, as today.
+  (`{ kind: "detached" }`), additive. The coordinator reads the diff before it is built, and the Chat Page lane
+  draws its "No tab" and the chip; the hub relays the sealed command unread and has nothing to agree. The phone and
+  other clients then resume the same way. The tab pick is `session.resume` with a tab target, as today.
   The target lands first as a [`SESSION_CONTRACT.md`](SESSION_CONTRACT.md) diff, read before the build, and the
-  build PR carries `@hub-compat`.
+  build PR carries `@hub-compat`. That diff is SESSION_CONTRACT.md §Resuming, "Proposed: a detached target"
+  (2026-11-22), which also adds `capabilities.detached`.
+- **"Still held with no tab" in the session list is async's `background.noTab`** (`TaskBackground`, #2082), not a
+  field of this spec's own. The two lanes agreed one shape on 2026-11-22: `{ running, waiting, noTab?, releaseAt? }`,
+  present when any of it is true (`backgroundOf`); `refreshTaskRow` is its one writer, and this build supplies the
+  no-tab input through its `noTabReader` hook, true only for a run still held with no tab, never for a finished
+  session whose tab closed.
 
 ### The overlap with the async lane's closed-tab release
 
@@ -244,7 +249,6 @@ lane's), and everything in §Resuming with no page after a worker eviction.
 
 ## Open
 
-- The surface of the person's tab pick: a chip beside the composer, a `/`-command, or both (§Resuming with no page).
 - Whether the person can detach a run whose tab is still open (a closed tab detaches it; above).
 - How this relates to headless runs ([`HEADLESS_AGENTS.md`](HEADLESS_AGENTS.md)): a detached run has no page at all; a
   headless one has a page no one sees.

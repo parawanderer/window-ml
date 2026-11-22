@@ -95,6 +95,24 @@ export function rememberedTab(r: RememberedTarget | undefined, tabs: readonly Ta
     return tabs.find((t) => t.url === r.url)?.tabId ?? null;
 }
 
+/**
+ * The tab the start page offers first: the last pick made here or the last tab the person was on, whichever is MORE
+ * RECENT. The visit is the newest `lastAccessed` among the listed tabs (the runtime lists no page of ours). A pick with no
+ * `pickedAt` (stored before it was kept) is older than any visit. With no `lastAccessed` anywhere the remembered pick
+ * stands, as before. The pick still has to hold (`rememberedTab`).
+ * @param r the pick remembered for this runtime, if any
+ * @param tabs the runtime's open tabs, as `tabs.list` just answered
+ * @returns the tab to choose, `"blank"` for a new tab, or null to make the usual first guess
+ */
+export function firstTab(r: RememberedTarget | undefined, tabs: readonly TabInfo[]): number | "blank" | null {
+    const back = rememberedTab(r, tabs);
+    let visit: TabInfo | undefined;
+    for (const t of tabs) if (typeof t.lastAccessed === "number" && t.lastAccessed > (visit?.lastAccessed ?? 0)) visit = t;
+    if (!visit) return back;
+    if (back !== null && r?.pickedAt !== undefined && r.pickedAt >= visit.lastAccessed!) return back;
+    return visit.tabId;
+}
+
 /** `remember`: offer the last tab picked on this runtime again (`lastTargets`) and remember each new pick. The start
  *  page's; a resume is a question about one run, which the last start page's answer says nothing about. */
 export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, enabled: boolean, extras?: ChatExtras, remember = false): TargetPick {
@@ -120,10 +138,10 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
             setGroups(r.ok ? r.data.groups ?? [] : []);
             setWithheld(r.ok ? r.data.withheld ?? 0 : 0);
             setTabs(list);
-            // The first list picks the last tab picked here if it is still open, else the tab showing in the first
-            // window. A refresh NEVER moves a choice: a chosen tab that has closed stays chosen and says so (`closed`),
+            // The first list picks whichever is more recent: the last tab picked here (if still open) or the last tab
+            // visited (`firstTab`), else the tab showing in the first window. A refresh NEVER moves a choice: a chosen tab that has closed stays chosen and says so (`closed`),
             // because silently switching to whichever tab is in front would start an agent on a page nobody picked.
-            const back = fresh && remember ? rememberedTab(lastTargets.peek()[rt.id], list) : null;
+            const back = fresh && remember ? firstTab(lastTargets.peek()[rt.id], list) : null;
             setTabId((id) => (typeof back === "number" ? back
                 : id != null && (!fresh || list.some((t) => t.tabId === id)) ? id : list.find((t) => t.active)?.tabId ?? list[0]?.tabId ?? null));
             if (fresh && (back === "blank" || !list.length)) setWhere("blank");

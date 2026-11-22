@@ -721,8 +721,14 @@ test("view prefs: the last target picked is kept per runtime and written back", 
     const prefs = fakePrefs({ [TARGET_KEY]: { desk: { tabId: 4, url: "https://a.example/" } } });
     installViewPrefs(prefs);
     assert.deepEqual(lastTargets.value, { desk: { tabId: 4, url: "https://a.example/" } });
+    const before = Date.now();
     rememberTarget("box", { blank: true });
-    assert.deepEqual(prefs.all.get(TARGET_KEY), { desk: { tabId: 4, url: "https://a.example/" }, box: { blank: true } });
+    // A new pick is stamped with when it was made (the start page weighs it against the last tab visited); the stored one,
+    // written before picks carried a time, is kept as it was.
+    const { box, ...rest } = prefs.all.get(TARGET_KEY);
+    assert.deepEqual(rest, { desk: { tabId: 4, url: "https://a.example/" } });
+    assert.equal(box.blank, true);
+    assert.ok(box.pickedAt >= before && box.pickedAt <= Date.now(), `pickedAt ${box.pickedAt}`);
     installViewPrefs(fakePrefs());
     assert.deepEqual(lastTargets.value, {}, "a device with nothing stored remembers nothing");
 });

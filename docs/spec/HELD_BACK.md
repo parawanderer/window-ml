@@ -53,5 +53,5 @@ commit. A row leaves this list when its fix merges.
 | 14 | Chat images (`sw-chat.ts:33,172`) | Images past 8 in a turn | Nothing, to the model or the person | None |
 | 15 | Delegated page answers (`page-answer-caps.ts:145-172`; `worker-media.ts:56`) | Columns past 2000, cells past 100k chars, media past 4 MB | Only text and image drops get a note | None |
 
-PDF attachments are not wired yet. When they are, a page sent as text without its image says what the measurements
-saw (a figure, drawn paths, broken glyphs) and how to look at the page: `FILE_ATTACHMENTS.md`.
+PDF attachments are built (#1328 9f6f8c3c, #1413 54cd61ad). The rule for them: a page sent as text without its image
+says what the measurements saw (a figure, drawn paths, broken glyphs) and how to look at the page: `FILE_ATTACHMENTS.md`.

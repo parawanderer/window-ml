@@ -491,6 +491,26 @@ test("python_exec tells a worker-hosted run its names persist, and a page-hosted
     assert.doesNotMatch(worker + page, / {2}/, "no padding in model-facing text");
 });
 
+test("python_exec tells a worker-hosted run its attached files are under /files/attached/ and read-only, and a page-hosted one it has no filesystem", T, async () => {
+    const { buildPythonTool } = await import("../src/python/python-tool.ts");
+    const { defineTool } = await import("../src/ml/ml-tool-factories.ts");
+    const failed = { ok: false, error: "FileNotFoundError: [Errno 44] No such file or directory: 'data.csv'", inputTables: [{ name: "df" }] };
+    const build = (ml) => buildPythonTool({ defineTool, _queryAll: () => [], pythonExec: async () => failed, ...ml });
+    const worker = build({ _mintToken: async () => "@pt:abcdef12" });
+    const page = build({});
+    assert.match(worker.description, /Files the person attached to this session are under \/files\/attached\/ \(list it with os\.listdir\); \/files is read-only\./);
+    assert.doesNotMatch(worker.description, /filesystem/, "the worker's sandbox has a filesystem");
+    assert.doesNotMatch(worker.description, /writ/i, "no write is promised: the reader answers EROFS to each");
+    assert.match(page.description, /No network or filesystem here/, "a page-hosted run's worker mounts no /files");
+    assert.doesNotMatch(page.description, /\/files/);
+    const said = async (tool) => { const r = await tool.run({ code: "open('data.csv')", tables: "table" }); return typeof r === "string" ? r : JSON.stringify(r); };
+    const wHint = await said(worker), pHint = await said(page);
+    assert.match(wHint, /your inputs are not files, and the sandbox has no network/);
+    assert.doesNotMatch(wHint, /no filesystem/);
+    assert.match(pHint, /the sandbox has no filesystem or network/);
+    assert.doesNotMatch(worker.description + page.description + wHint + pHint, / {2}/, "no padding in model-facing text");
+});
+
 test("python_exec offers keep only where names persist, and passes it on", T, async () => {
     const { buildPythonTool } = await import("../src/python/python-tool.ts");
     const { defineTool } = await import("../src/ml/ml-tool-factories.ts");

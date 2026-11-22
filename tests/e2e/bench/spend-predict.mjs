@@ -16,7 +16,7 @@
 import { existsSync } from "node:fs";
 import { priceBook, callCost, PRICE_CURRENCY } from "../../../src/spend/price-book.ts";
 import { readCalls } from "./spend.mjs";
-import { rateAt } from "./electricity.mjs";
+import { rateAt } from "../../../src/spend/energy.ts";
 
 /** How many of a model's most recent past runs of an item an estimate averages: recent, because prompts shrink. */
 export const RECENT = 20;

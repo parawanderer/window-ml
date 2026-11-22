@@ -14,7 +14,8 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { priceCalls, spendByModel } from "./cost.mjs";
-import { runEnergy, energyByModel, BASIS_WORDS } from "./electricity.mjs";
+import { runEnergy, energyByModel } from "./electricity.mjs";
+import { BASIS_WORDS } from "../../../src/spend/energy.ts";
 import { PRICE_CURRENCY } from "../../../src/spend/price-book.ts";
 
 export const SPEND_SCHEMA = `

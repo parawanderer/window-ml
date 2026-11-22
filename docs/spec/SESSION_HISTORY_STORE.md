@@ -1,9 +1,10 @@
 # Spec: a session's history is stored whole and read by range
 
-**Status: spec, measured; nothing below is built.** Written 2026-11-17 by the session-store lane, at the REPL
-coordinator's brief. Measured against main d3394f0d. The figures marked "measured" were run in this lane against the
-real `SessionStore` (scripts below); the code paths are cited by file and line. Compaction POLICY is out of scope: what
-the model is sent, and when that changes, is Shane's to decide through the coordinator.
+**Status: spec, measured; slice 1 is done (the notebook, #1938) and slice 2 is built (#1995, "BUILT" under it in the slices list), the rest is not; §6a's
+`/files/` recommendation is built in FILE_ATTACHMENTS.md's terms (#2026, #2048, #2058).** Written 2026-11-17 by the
+session-store lane, at the REPL coordinator's brief. Measured against main d3394f0d. The figures marked "measured" were
+run in this lane against the real `SessionStore` (scripts below); the code paths are cited by file and line. Compaction
+POLICY is out of scope: what the model is sent, and when that changes, is Shane's to decide through the coordinator.
 
 ## Why
 
@@ -252,27 +253,17 @@ Each of these keeps a bound per step: one batch of events, a few MiB at most, ne
 `/files/` never holds all files in memory and that it gets `ml.fs` (Node's `fs/promises`) for JS. The text below is
 the recommendation that led there; the spec there is what holds.
 
-**Measured in that spec, not built** (`FILE_ATTACHMENTS.md:552-555`). The ruled mount is EAGER: at interpreter start
-every file's whole bytes are posted to the worker and held as ArrayBuffers, "one times the directory's size" (`:601`).
-A cell then reads into the wasm heap, which grows and never shrinks; the measured worst case is three times a file's
-size (a 50 MB file: 154 MB of buffers, wasm memory at 75 MB, `:637-638`). The worker dies at a 2.6 GB JS heap
-(`:638`; `docs/dev/python-sandbox.md:291`). The quota is still an open question (`:1442-1444`), and it applies only to
-files a run made, not to the person's attachments (`:661-663`). So today's text bounds a session's `/files/` at about
-800 MB of directory before a cell that reads it all kills the worker, and nothing enforces even that.
+**What it recommended, and what became of it.** The mount then ruled was EAGER (every file's bytes posted to the worker
+at interpreter start, up to three times a file's size once cells read it, against a worker that dies at a 2.6 GB JS
+heap), and the spec had set a lazy mount aside for want of a synchronous channel and for fear that `Atomics.wait`
+would block Stop. Route A's measurement answered both. The recommendation: build `/files/` on route A's file system
+type, served by the offscreen document, reading the shelf by range (`Blob.slice(a, b).arrayBuffer()` over the value
+store's blobs), with no `python_install` candidate worker ever getting the mount.
 
-**What a lazy, ranged mount takes.** The spec rejected one in two lines (`:603-613`): a lazy mount needs a synchronous
-channel, and "`Atomics.wait` would block the interrupt buffer so Stop would fall through to the kill". The async lane's
-own measurement two sections later answers that objection for host mounts (`:776-806`, Route A, 2026-11-13): a sliced
-wait over a SharedArrayBuffer stops 300 times out of 300, also under `lockdownReadonly`, costs 0.26 ms per request
-end to end, and reads 103 MB/s in 512 KiB chunks, with a chunked read working to 4 GiB.
-
-**Recommendation: build `/files/` on Route A's file system type, with the offscreen document as its server, reading
-the shelf by range** (`Blob.slice(a, b).arrayBuffer()` over the value store's blobs, `src/pointers/value-store.ts:236-242`,
-reads a range without loading the blob). Nothing is held until a file is read, and a read holds its range. Keep the
-eager MEMFS only below a small directory size, to be measured, where it is simpler and as cheap. Writes stay as ruled
-(MEMFS nodes, posted on close). A `python_install` candidate worker never gets the `/files/` mount (the packages
-lane's constraint): the worker that tries an install sees no session's files. This is the files-host lane's ground: the recommendation goes to it through the
-coordinator, and this spec builds nothing there.
+- BUILT that way: the ranged reader (#2048), its wiring and scrub (#2058), and Python's mount in a worker-hosted run
+  (#2026). FILE_ATTACHMENTS.md, "`/files/` read by range, and `ml.fs`", is the home of the design.
+- Not taken: an eager MEMFS below a small directory size (the coordinator, 2026-11-19: lazy at every size), and writes
+  as MEMFS nodes posted on close (ruling 75: a file commits on close through the reader's write verbs, not built yet).
 
 ### b. Archived history through that file system?
 
@@ -289,10 +280,11 @@ places:
    built per chunk and cached under the secrets' fingerprint, with a chunk index of scrubbed lengths. When the
    secrets change, the cache is rebuilt by a streaming pass, and a read of a stale chunk waits for it. Scrubbing
    happens on the server side of the channel, so unscrubbed text never enters the wasm heap.
-3. **The shared `full` worker.** `/files/` is one directory per session inside a worker that can host several runs
-   (`FILE_ATTACHMENTS.md:621-624`). A mount of another session's history must exist only in a run-principal realm
-   (`run:<id>`, `docs/dev/python-sandbox.md:190-192`), never in `full`, the bench or a page's realm, or one run reads
-   what another was consented.
+3. **One run's worker only.** A mount of another session's history must exist only in a run-principal realm
+   (`run:<id>`), never in the bench's or a page's realm, or one run reads what another was consented. `/files/` is
+   built that way: only a `run:` worker gets a channel, its session fixed to the run's (`src/python/files-host.ts`,
+   #2026). AMENDED 2026-11-19 (the coordinator, "the reader's premise"): this item described one directory per
+   session inside a shared worker hosting several runs, which no longer exists.
 4. **Images.** Events carry screenshots as data URLs. In a file view they are separate files
    (`/history/<session>/images/<sha>.webp`), referenced from the JSONL, never base64 inline.
 5. **The shell.** A `/history/` the host could see would need the host to serve a mount backed by the extension. That
@@ -383,7 +375,8 @@ In order. Each is one PR, with what it must not break.
    archive folder's month files (byte-compatible) and its sync's merge.
 7. **Streaming export** (§5). Medium. Must not break: `export.schema.json` and the `run.json` diff rule
    (`docs/dev/export.md`).
-8. **`/history/`** (§6b), after `/files/` exists.
+8. **`/history/`** (§6b), a second volume of the ranged reader `/files/` is built on (#2048: `VolumeName` names
+   `files` only today).
 
 ## Resume before compaction (ruled 2026-11-17)
 

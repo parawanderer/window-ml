@@ -1,10 +1,12 @@
 # Spec (WIP): a read-only dialect of Python, and the namespace it runs in
 
-**Status: decided, nothing built.** Decided by Shane on 2026-10-15, after a discussion that first proposed treating
-Python as a sandbox and was corrected. This spec holds that decision, the reasons, the design, and the answers to the
-open questions on persistent Python state in [`STATE_INSPECTOR.md`](STATE_INSPECTOR.md) ("Python state persists per
-run") and [`PERSISTENT_RUNTIME_SPEC.md`](PERSISTENT_RUNTIME_SPEC.md). It is the second implementation of the concept the
-JS dialect implements ([`docs/dev/readonly-exec.md`](../dev/readonly-exec.md)), and the main consumer of
+**Status: decided and built.** Every `python_exec` cell runs hardened, and one inside the dialect runs with no card
+([`docs/dev/python-sandbox.md`](../dev/python-sandbox.md)); what each part was built in is noted where it is described.
+Decided by Shane on 2026-10-15, after a discussion that first proposed treating Python as a sandbox and was corrected.
+This spec holds that decision, the reasons, the design, and the answers to the open questions on persistent Python state
+in [`STATE_INSPECTOR.md`](STATE_INSPECTOR.md) ("Python state persists per run") and
+[`PERSISTENT_RUNTIME_SPEC.md`](PERSISTENT_RUNTIME_SPEC.md). It is the second implementation of the concept the JS
+dialect implements ([`docs/dev/readonly-exec.md`](../dev/readonly-exec.md)), and the main consumer of
 [`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md).
 
 ## Why a dialect, when Pyodide is already a sandbox
@@ -423,9 +425,10 @@ running a Python script via `ml.sh.run(["python3", "script.py", ...])` do not sh
   replaced by ML_TABLE.md's served `read_csv`. A paged document (a PDF) is injected as its pages:
   each page's `text`, `kind` and `measure`, and `png(scale)`, a bounded on-demand render through the offscreen
   document, beside the bytes (`FILE_ATTACHMENTS.md`, "Python"). REOPENED 2026-11-12 (Shane, in the coordinator's
-  session) for approved and `full` cells, which get a mounted `/files/` with a read-only `/files/attached/`
-  (`FILE_ATTACHMENTS.md`, "A session's files as a directory"); this dialect writes only under `/files/agent/`, through
-  the manifest's listed writers, and reads through `ml.table` and the served `read_csv` ([`ML_TABLE.md`](ML_TABLE.md),
+  session) for cells outside this dialect, which get a mounted `/files/` with a read-only `/files/attached/`
+  (`FILE_ATTACHMENTS.md`, "A session's files as a directory"; BUILT for a worker-hosted run's own worker, #2026, with
+  every write answering EROFS until the reader's write side lands); this dialect writes only under `/files/agent/`,
+  through the manifest's listed writers, and reads through `ml.table` and the served `read_csv` ([`ML_TABLE.md`](ML_TABLE.md),
   rulings 69 and 86).
 - **Subprocess CLI (`ml.sh.run(["python3", ...])`):** Spawns a fresh OS process with `CO_RESTRICTED` off, because a CLI
   script legitimately uses `sys.argv`, `argparse`, `pathlib` and `open()`. While an agent is actively writing and editing

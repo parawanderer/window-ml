@@ -10,9 +10,9 @@ import { usePickerPop } from "./pop-picker";
  *  point: two rows of prose differing in one word are told apart by reading, and a robot beside a speech bubble is
  *  told apart at a glance. The same two marks are drawn wherever the kinds appear (the wide segmented control, the
  *  phone app's tabs), so the pair means one thing across the product. */
-const KINDS: Record<StartKind, { label: string; detail: string; icon: () => preact.JSX.Element }> = {
-    agent: { label: "Agent", detail: "Works on a page: reads it, clicks, fetches, runs code.", icon: IconAgent },
-    chat: { label: "Chat", detail: "Just the conversation, with no page and no tools.", icon: IconChat },
+const KINDS: Record<StartKind, { label: string; icon: () => preact.JSX.Element }> = {
+    agent: { label: "Agent", icon: IconAgent },
+    chat: { label: "Chat", icon: IconChat },
 };
 
 /** The pill and its list. */
@@ -31,7 +31,7 @@ export function KindPicker({ kinds, value, onChange }: { kinds: readonly StartKi
                         {kinds.map((k) => (
                             <button key={k} type="button" role="option" aria-selected={value === k} {...p.row(k, " tp-kind")}>
                                 <span class="tp-kind-icon" aria-hidden="true">{KINDS[k].icon()}</span>
-                                <span class="tp-kind-text"><span class="tp-title">{KINDS[k].label}</span><span class="tp-kind-detail">{KINDS[k].detail}</span></span>
+                                <span class="tp-kind-text"><span class="tp-title">{KINDS[k].label}</span></span>
                                 {value === k ? <span class="tp-check" aria-hidden="true"><IconCheck /></span> : null}
                             </button>
                         ))}

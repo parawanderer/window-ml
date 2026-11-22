@@ -1,8 +1,10 @@
 # Spec (WIP): the session summary page
 
-**Status: specified, not built (2026-11-18).** Contents ruled by Shane (2026-11-18, ruling 50): the list below, open to
-additions and cuts as they come up. Owners and order ruled by the coordinator (2026-11-18, "Owners and order" below). The access
-tab's data is built on the worker side (`docs/spec/POLICIES.md`, "The effective view"); nothing else here is.
+**Status: specified (2026-11-18), partly built.** Contents ruled by Shane (2026-11-18, ruling 50): the list below, open to
+additions and cuts as they come up. Owners and order ruled by the coordinator (2026-11-18, "Owners and order" below). Built: the
+page's shell and its summary tab (#2002, 8d004724), a fork's parent and the current page (#2003, 2185077b), the resources
+tab (#2071, c7d02ab0), and the access tab's data on the worker side (`docs/spec/POLICIES.md`, "The effective view").
+The rest is not.
 
 ## What it is for
 
@@ -101,15 +103,16 @@ cost so far" line is the short form of these totals.
 | --- | --- | --- | --- |
 | Tokens over time, and totals | built | `usageSamples`/`timedUsage` (`usage.tsx`, reducer): one `TokenUsage` per call, ordered by its step's or turn's `ts`; `promptTokens`, `completionTokens`, `cachedTokens`, `reasoningTokens` | — |
 | Cost over time, and total, for an external model | partial | `sessionCalls` priced through `services().priceCalls` against each call's own snapshot (`TokenUsage.prices`, `src/spend/price-book.ts`) | Extension pages only; no cost on the web or hub chat page (session-store). An unpriced call is counted, not costed. |
-| Energy for a local model, and its cost | partial | Measured on the box: the patched backend's `sample` frames carry GPU board watts and `compute.power_sources`, and the bench attributes them per session (`tests/e2e/bench/electricity.mjs`). Each call records the electricity price it ran under (`TokenUsage.electricity`) | The extension reads no power field yet. Owner: bench (ruling 53); the design is "Energy and its cost" below. A figure from a rated wattage draws nothing. |
+| Energy for a local model, and its cost | partial | Measured on the box: the patched backend's `sample` frames carry GPU board watts and `compute.power_sources`, and the bench attributes them per session (`src/spend/energy.ts`, fed from the box log by `tests/e2e/bench/electricity.mjs`). Each call records the electricity price it ran under (`TokenUsage.electricity`) | The extension reads no power field yet. Owner: bench (ruling 53); the design is "Energy and its cost" below. A figure from a rated wattage draws nothing. |
 
 #### Energy and its cost
 
 Ruled by Shane (2026-11-19): the resources tab shows what a local model drew for the session, and its cost. Owner:
-bench. The attribution is `tests/e2e/bench/electricity.mjs` today (readings integrated per interval, each interval's
-energy split among the generations running in it, per GPU by residency, priced at each moment's rate). It becomes ONE
-module under `src/spend/`, beside `price-book.ts`, that the bench and the page both import (moved with `move-symbols`),
-never a second copy; only `runEnergy`, which reads the bench's SQLite box log, stays in the bench.
+bench. The attribution is `src/spend/energy.ts` (readings integrated per interval, each interval's energy split among
+the generations running in it, per GPU by residency, priced at each moment's rate): ONE module beside `price-book.ts`,
+moved there from the bench with `move-symbols`, that the bench and the page both import, never a second copy. Only
+`runEnergy`, which reads the bench's SQLite box log, and the bench's sums per model and per sweep stay in
+`tests/e2e/bench/electricity.mjs`.
 
 Where the readings come from. Live, from frames the extension already receives: the patched Ollama's `sample` frames
 carry `info.compute.supported_gpus[].power` and `info.compute.power_sources`. In this clone's box log (2026-10-15 to
@@ -176,8 +179,9 @@ Order of work, one PR each:
 
 ### Files tab
 
-Owned by files-host, after its scrub chain (#1948 and what it releases). On main, `/files/` is ruled, not built
-(`FILE_ATTACHMENTS.md`).
+Owned by files-host, after its scrub chain (#1948 and what it releases). On main, `/files/` is partly built: the
+ranged reader's read side and Python's mount (#2048, #2058, #2026); no write, no quota and no `ml.fs` yet
+(`FILE_ATTACHMENTS.md`, its status line).
 
 | Field | Status | Source today | Gap |
 | --- | --- | --- | --- |
