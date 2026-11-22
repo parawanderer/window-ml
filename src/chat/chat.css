@@ -2245,6 +2245,10 @@ html[data-calm] .tt-layer { --notice: var(--accent); --notice-fg: var(--accent-f
 /* …and the rail stops at the last row, not at the end of that padding: the room under a group is the gap to the next row, not more
    group. The padding stays (it animates with the body, from 0, where a margin on `.astreak` would snap when the body unmounts). */
 .chat.calm .astreak-body > .fold-rail { bottom: 17px; }
+/* …except while the rows REFOLD into a group: that body mounts holding the rows where they stood and only ever closes, so its first frame must
+   be the lone row's layout, 26px of margin under the last row and no padding, or what follows the group steps by the difference. */
+.chat.calm .astreak.refolding > .astreak-body { padding-bottom: 0; }
+.chat.calm .astreak.refolding > .astreak-body > .aturn:last-child { margin-bottom: 26px; }
 .astreak-body.closing { animation: chat-step-close .4s cubic-bezier(.4, 0, .2, 1) forwards; }
 @media (prefers-reduced-motion: reduce) {
     .astreak, .chat.calm .astreak.refolding { --astep-close-ms: 0; }
