@@ -905,17 +905,9 @@ html[data-calm]:not([data-theme="light"]), html[data-calm]:not([data-theme="ligh
     @media (prefers-reduced-motion: reduce) { .chat.calm .r-df > .r-df-bar { transition: none; } }
 }
 
-/* A CITATION'S TOOLTIP BELONGS TO ITS CAPTION. An embed is something you READ — a table, a plot — and a tip that
-   fires anywhere over it is an explanation of the frame appearing on top of the contents. The caption is the
-   frame's own text, so that is what carries the explanation; the block itself stays clickable. */
-.chat.calm .tok-block:hover > .tok-tip { opacity: 0; }
+/* A CITATION'S TOOLTIP BELONGS TO ITS CAPTION (`tt` is on `.tok-anno`, not on the block: an embed is something you
+   READ, and a tip that fires anywhere over a table explains the frame on top of its contents). */
 .chat.calm .tok-anno { cursor: help; }
-.chat.calm .tok-anno:hover ~ .tok-tip, .chat.calm .tok-anno:focus-visible ~ .tok-tip { opacity: 1; }
-/* …and it appears AT the caption, not at the top of the embed. The tip is anchored rather than cursor-following
-   (the shared component draws it, and the panel's own tests pin that), so the least confusing thing it can do is
-   sit against the one element that raises it — a tip that opens half a screen from the pointer reads as belonging
-   to something else. */
-.chat.calm .tok-block > .tok-tip { bottom: auto; top: calc(100% + 4px); left: 8px; }
 /* The wash over the whole embed goes with the tip, for the same reason: it fires while you are reading a table, and
    the rail already says where the transclusion starts and stops. It moves to the caption, which is the part that is
    now behaving like a control — and it is `--cite`, like every other mark on a citation. It was the last `--ok` in

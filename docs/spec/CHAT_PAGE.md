@@ -1,6 +1,8 @@
 # Spec: the chat page, a full-tab view over the same sessions
 
-**Status: agreed direction, in progress** (2026-09-15; architecture added 2026-09-17; slice 1 built 2026-09-17). Decisions below are Shane's unless marked as a proposal.
+**Status: agreed direction, in progress** (2026-09-15; architecture added 2026-09-17; slice 1 built 2026-09-17). Slices 1 to 6 are built since (saved sessions
+and resume: `docs/dev/chat-page.md`; the phone app: [`NATIVE_SHELL.md`](NATIVE_SHELL.md)), and pairing a device and the
+devices list (slice 7) are in `src/pairing/`; slice 8, remote control, is not built. Decisions below are Shane's unless marked as a proposal.
 
 ## What it is
 
@@ -355,7 +357,8 @@ coordinates, and offers live viewing only when the runtime has the capability.
 
 ## The state inspector: current state beside the linear transcript (proposal)
 
-**Status: agreed direction, unbuilt** (Shane, 2026-09-18). This page is where it goes, because it is the only surface
+**Status: agreed direction** (Shane, 2026-09-18); items 1 to 3 of STATE_INSPECTOR.md's Order are built as the Run
+state panel. This page is where it goes, because it is the only surface
 with the room. **Superseded in detail by [`STATE_INSPECTOR.md`](STATE_INSPECTOR.md)** (2026-10-08): what the pane holds,
 the audience of each member, watches, Python state and where it is offered. This section keeps the reasoning for the
 pane and the `session.context` call.

@@ -1,6 +1,6 @@
 # Spec: the component gallery
 
-**Status: agreed direction, being built** (Shane, 2026-10-12). Branch `feat/component-gallery`. Its first custom entry
+**Status: built** (agreed by Shane 2026-10-12; merged in #591, fe0c6c64; `scripts/gallery.mjs`, the `gallery` skill). Its first custom entry
 is the gradient canvas ([`GRADIENT_FILLS.md`](GRADIENT_FILLS.md)).
 
 ## What it is
