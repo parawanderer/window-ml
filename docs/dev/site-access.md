@@ -785,9 +785,10 @@ which has no `chrome` in it so its rules are tested without a worker.
 and gets a handle, `mlw-<uuid>`. The handle is bound to the sender kind that will carry the calls: `offscreen`
 (`sender.tab == null` and `sender.url` is the offscreen document's URL), the only kind so far. An isolated world keeps
 its own channel (`iso-channel.ts`); when it becomes a wire client, every fact (tab, frame 0, document, world) is
-REQUIRED, since a client opened without one would match any document on the tab. It is bound to the run the cell is for, and to a realm (`WireRealm`: `readonly` for a cell that ran
-inside the dialect, `full` for an approved one outside it), taken from whether the cell ran `inside`. The handle and
-the run ride `PY_RUN` as `wire: { client, run }`, and the client is closed when the cell
+REQUIRED, since a client opened without one would match any document on the tab. It is bound to the run the cell is
+for, and to a realm (`WireRealm`): `full` when the cell's code is outside the dialect (`outside`, `sw-python.ts`),
+`readonly` otherwise. The handle and the run ride `PY_RUN` as `wire: { client, run }`, and the client is closed when
+the cell
 ends, so a call on the handle after that is refused. A completion runs no code and gets no client.
 
 **A call is answered only when the handle AND the sender match.** `senderIs` compares what the browser set on the
