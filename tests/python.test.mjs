@@ -282,14 +282,21 @@ test("unharden restores the bridge — a later FULL run can import js again", { 
 test("readonly: urllib.request.urlopen raises the clean extension error, not a raw socket traceback", { skip }, async () => {
     const r = await pyRun("import urllib.request\nurllib.request.urlopen('http://example.com/data.csv')", { hardened: true });
     assert.equal(r.ok, false);
-    assert.match(r.error, /network is disabled in readonly python_exec/);
+    assert.match(r.error, /network is disabled in python_exec/);
     assert.doesNotMatch(r.error, /create_connection|Host is unreachable/, "no 40-line socket traceback");
+});
+
+test("the blocked-network message points at fetch_url and names no removed mode", { skip }, async () => {
+    const r = await pyRun("import urllib.request\nurllib.request.urlopen('http://example.com/data.csv')", { hardened: true });
+    assert.equal(r.ok, false);
+    assert.match(r.error, /fetch_url/);
+    assert.doesNotMatch(r.error, /mode:|readonly python_exec|full/, "python_exec has no mode since #820");
 });
 
 test("readonly: pandas read_csv(url) hits the SAME clean error (the funnel is OpenerDirector.open)", { skip }, async () => {
     const r = await pyRun("import pandas as pd\nreturn pd.read_csv('http://example.com/data.csv')", { hardened: true });
     assert.equal(r.ok, false);
-    assert.match(r.error, /network is disabled in readonly python_exec/, "the patch catches pandas' urlopen regardless of how it imported it");
+    assert.match(r.error, /network is disabled in python_exec/, "the patch catches pandas' urlopen regardless of how it imported it");
 });
 
 test("full mode installs the working fetch (NOT the readonly block) — no leak between modes", { skip }, async () => {
