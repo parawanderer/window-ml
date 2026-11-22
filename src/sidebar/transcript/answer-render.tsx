@@ -14,7 +14,7 @@ import { focusMode } from "../store";
 import { pretty, markdown, inlineMarkdown } from "../format";
 import { linkTipFor, onAddressClick } from "../links";
 import { reveal } from "./transcript-window";
-import { IconChevron, IconEye, IconCheck } from "../icons";
+import { IconChevron, IconEye, IconCheck, IconJumpUp } from "../icons";
 import { ClickableImg, SheetChip, cursorTipOn } from "../ui-kit";
 import { RenderPanel, PyDfTable, CodeRender, ValueOut, LinkedLine } from "./render-panel";
 import type { CodeCtx } from "./render-panel";
@@ -262,6 +262,7 @@ function TokBlock({ node, label, tip, name, onJump }: { node: ComponentChildren;
         <div class="tok-anno tt" role="button" tabIndex={0} onClick={onJump} onKeyDown={(e) => { if (e.key === "Enter") onJump(); }}>
             <span class="tt-pop wrap" role="tooltip">{tip}</span>
             {label ? <span dangerouslySetInnerHTML={{ __html: inlineMarkdown(label) }} /> : name}
+            <span class="tok-anno-jump" aria-hidden="true"><IconJumpUp /></span>
         </div>
     </span>;
 }

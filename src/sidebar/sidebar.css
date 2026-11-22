@@ -3369,6 +3369,17 @@ html[data-focus] .action-verb { font-weight: 500; }
 .answer-rendered .tok-block > .tok-anno { cursor: pointer; }
 .answer-rendered .tok-block > .tok-anno:hover { background: color-mix(in srgb, var(--cite) 12%, transparent); border-radius: 3px; }
 .answer-rendered .tok-anno:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The caption GOES somewhere, and the source step is always ABOVE the answer: on hover or keyboard focus a corner arrow
+   (up and left) appears at its right end. Absolute, with the room reserved as padding, so the text never moves when it
+   shows. A touch screen has no hover to reveal it, so it draws nothing new there. The tooltip already names the action. */
+.answer-rendered .tok-block > .tok-anno { position: relative; padding-right: 1.6em; }
+.answer-rendered .tok-anno-jump { display: none; }
+@media (hover: hover) and (pointer: fine) {
+    .answer-rendered .tok-block > .tok-anno > .tok-anno-jump { display: block; position: absolute; right: 0.3em; top: 50%; margin-top: -0.45em; width: 0.9em; height: 0.9em; line-height: 0; color: var(--fg-faint); opacity: 0; transition: opacity 0.12s ease, color 0.12s ease; pointer-events: none; }
+    .answer-rendered .tok-block > .tok-anno > .tok-anno-jump svg { width: 100%; height: 100%; display: block; }
+    .answer-rendered .tok-block > .tok-anno:hover > .tok-anno-jump, .answer-rendered .tok-block > .tok-anno:focus-visible > .tok-anno-jump { opacity: 1; color: inherit; }
+}
+@media (prefers-reduced-motion: reduce) { .answer-rendered .tok-block > .tok-anno > .tok-anno-jump { transition: none; } }
 /* LINK-form citation `[label](@tool:…)` — a clickable jump to the output's source step (vs the `![…]` embed which
    expands in place). Styled like an in-text link; the click scrolls to + pulses the step. */
 /* TWO KINDS OF LINK, told apart by the underline and never by a colour change in the words: both read as prose, in the
