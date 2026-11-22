@@ -380,3 +380,322 @@ test("a turn cannot be moved onto a page we own: MOVE_RUN from a surface in the 
     assert.equal((await within(r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudOn), 8000))?.data, true, "the same surface on an ordinary page could not move the run");
     assert.equal(r.toolsOn(OUR), 0, "a page of ours was sent a turn");
 });
+
+// --- G. a LIVE run's move (shape (b), slice 2): what a page must not get from a move made mid-turn ---
+//
+// A turn that runs: `moveRun` queues the person's move (`move-queued`) and `applyLiveMove` takes it at the turn's next
+// step boundary. The tab the run LEFT keeps its document, its registered toolset and the run's id (its own debug events
+// named it), so the questions are whether that page can still answer for, steer, mark or read back the run, whether a
+// page can make the move happen at all, and whether a page-built or no-rebuild run can be made to look movable.
+//
+// MEASURED AT 16d9b626, one mutation per row, `node build.mjs` after each (loadBackground boots the BUILT dist/, so a
+// src mutation is invisible until it is rebuilt) and the sources restored from git before the next; the command is
+// `node scripts/test.mjs --files tests/redteam-move-run.test.mjs`:
+//   the MOVE_RUN branch's `!isExtensionSender(sender) ||` removed (background.ts:510) → 3 red: "every type a page can
+//   start…", "the move type refuses a tab sender…", and "a page's MOVE_RUN on a RUNNING run…" (the page's move queues);
+//   `rekeyRunInbox`'s `inbox.tabId = to` removed (sw-runs.ts:709) → 6 red: the replaced-tab row, "a page's MOVE_RUN on a
+//   RUNNING run…", "only the sender's OWN tab…", "after a live move the old tab's page…", "a live move takes the run's
+//   replay ring…", "the move's note names both tabs…";
+//   `applyLiveMove`'s `moveReplay(runId, from, to)` result replaced with `[]` (move-run.ts:205) → "a live move takes the
+//   run's replay ring…" red, and only it: the destination's fresh document was replayed the two post-move step events
+//   and none of the run's pre-move history. Its OLD-tab half is the delivery gate (a tab with no run left is not answered
+//   at all), so the pre-move assertion is what pins the transfer — and it is asked mid-turn, while the turn waits at its
+//   gate, since a settled turn prunes a tab with no run whether or not the move carried anything;
+//   the running row's `urlOf(held, s)` back to `held?.p.pageUrl` (bring-here.ts) → the registered-secret row red (and it
+//   is the row that failed at 23bde4f7, before the builder made the running row take the same scrub as the settled row).
+
+const OTHER_URL = "https://other.example/doc";
+const hudFrame = (tabId, url = SITE_URL) => ({ tab: { id: tabId, url }, url: "chrome-extension://test/sidebar.html", frameId: 1 });
+const pageFrame = (tabId, url = SITE_URL) => ({ tab: { id: tabId, url }, url, origin: "https://site.example", frameId: 0 });
+const FINDBY = { name: "findByText", args: { text: "x" } };
+const EXEC = { name: "exec", args: { js: "document.body.remove()" } };
+
+/**
+ * A worker-built run on HOME whose first turn ends at once, then a second turn whose first page call (`findByText`,
+ * ungated) is held open by `release()` and whose next (`exec`) is a gate. Every gate is recorded with the tab it was
+ * drawn on and nothing is answered for the row: a row watches what an answer from a given tab does.
+ * @param opts `steps` (the held turn's model calls), `pageUrl`/`title` (HOME's page, which a run's row names), `onAdopt`
+ * @returns the worker, the run id, `startTurn()`, `settled()`, `release`, `gates`, `pageCalls`, `moves`, `lastBody`
+ */
+async function live({ steps = [FINDBY, EXEC], pageUrl = SITE_URL, title = "Site", onAdopt } = {}) {
+    const script = [];
+    let releaseHold;
+    const hold = new Promise((res) => { releaseHold = res; });
+    let held = false;
+    const gates = [];
+    let bg;
+    bg = loadBackground({
+        config: { chatUrl: "http://host/api/chat/completions", apiKey: "k", model: "m", apiFormat: "openai", debugMode: "off" },
+        // Both pages may use window.ml, so an approved `exec` runs in each page's own world (an unapproved page would
+        // take the isolated-world route instead, where a step is delivered by another message and host).
+        local: { ml_site_always: ["https://site.example", "https://other.example"] },
+        openTabs: [{ id: HOME, windowId: 3, active: true, url: pageUrl, title }, { id: ELSEWHERE, windowId: 3, active: false, url: OTHER_URL, title: "Other" },
+            { id: OUR, windowId: 3, active: false, url: "chrome://newtab/", title: "New Tab" }],
+        onFetch: async (call) => {
+            if (call.url.endsWith("/api/models")) return jsonResponse({ data: [{ id: "m" }] });
+            if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            // A sub-call with no tools (a title, a summary) is not one of the model's turns.
+            if (!(Array.isArray(call.body?.tools) && call.body.tools.length)) return jsonResponse({ choices: [{ message: { content: "ok" } }] });
+            const step = script.shift();
+            if (!step) return jsonResponse({ choices: [{ message: { content: "done" } }] });
+            return jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: `c${Math.random()}`, type: "function", function: { name: step.name, arguments: JSON.stringify(step.args) } }] } }] });
+        },
+        onTabMessage: async (t, msg) => {
+            if (msg.type === "ADOPT_RUN_NOW") return onAdopt ? onAdopt(t) : { pageInfo: "" };
+            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) gates.push({ tab: t, event: msg.event });
+            if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
+            if (msg.payload.finish || msg.payload.renderOnly || msg.payload.precheck || msg.payload.readonlyTry) return {};
+            if (!held && msg.payload.name === "findByText") { held = true; await hold; return { result: `found on ${t}` }; }
+            return { result: `ran on ${t}` };
+        },
+    });
+    bg.commit?.(HOME, { documentId: "doc-7", url: pageUrl });
+    bg.commit?.(ELSEWHERE, { documentId: "doc-8", url: OTHER_URL });
+    const { hash } = await bg.context.__mlStartUserRunForTest(HOME, { task: "probe", surface: "hud", maxSteps: 30 });
+    const state = () => bg.context.__mlRunStateForTest();
+    const ended = () => bg.tabMessages.some(([, m]) => m?.type === "ML_DEBUG_TO_PAGE" && m.event?.kind === "agent-result" && m.event.id === hash);
+    assert.ok(await until(() => ended() && !state().controllers.includes(hash)), "the run's first turn settles");
+    /** Start the held turn: its model calls come from `steps`, its first page call is held open until `release()`. The
+     *  action's own promise resolves when the run took the prompt (`userRunAction`), NOT when the turn ends, so a row
+     *  that needs the turn's end waits for {@link settled} instead. */
+    const startTurn = async () => {
+        script.push(...steps);
+        bg.context.__mlUserRunActionForTest(hash, "send", { text: "go on", surface: "hud" });
+        assert.ok(await until(() => held), "the turn's first page call is out on the run's tab");
+    };
+    /** The held turn's end: a second `agent-result` for the run, and no controller left. */
+    const settled = async () => {
+        const results = () => bg.tabMessages.filter(([, m]) => m?.type === "ML_DEBUG_TO_PAGE" && m.event?.kind === "agent-result" && m.event.id === hash).length;
+        assert.ok(await until(() => results() >= 2 && !state().controllers.includes(hash) && !state().starting.includes(hash)), "the held turn ends");
+    };
+    /** The page messages a tab was sent, the step's own probe (precheck/readonlyTry) excluded. */
+    const pageCalls = (tab, name) => bg.tabMessages.filter(([t, m]) => t === tab && m?.type === "RUN_TOOL_IN_PAGE" && (!name || m.payload?.name === name) && !m.payload?.finish && !m.payload?.renderOnly && !m.payload?.precheck && !m.payload?.readonlyTry).length;
+    const moves = async () => (await bg.context.__mlRunLog.all()).filter((e) => e.run === hash && e.subsystem === "tab");
+    const lastBody = () => bg.calls.filter((c) => c.url.includes("/chat/completions")).at(-1)?.body;
+    return { bg, hash, startTurn, settled, release: () => releaseHold(), gates, pageCalls, moves, lastBody };
+}
+
+/** The person's answer at the first gate drawn on `tab`, sent from that tab's content script (the shell's shape). */
+function answerGate(r, tab) {
+    const g = r.gates.find((x) => x.tab === tab);
+    assert.ok(g, `no gate was drawn on tab ${tab}: gates on ${JSON.stringify(r.gates.map((x) => x.tab))}`);
+    void r.bg.send({ type: "SET_APPROVAL", payload: { runId: r.hash, seq: g.event.seq, decision: true } }, pageFrame(tab));
+    return g;
+}
+
+test("a page's MOVE_RUN on a RUNNING run moves and queues nothing, and the HUD's own on the same run does", LIVE, async () => {
+    const r = await live();
+    await r.startTurn();
+    const payload = { runId: r.hash, toTabId: ELSEWHERE, tabId: ELSEWHERE, target: { kind: "tab", tabId: ELSEWHERE } };
+    // From the page the run is on, and from the page it would be moved to: both are pages.
+    for (const tab of [HOME, ELSEWHERE]) {
+        const ans = await within(r.bg.send({ type: "MOVE_RUN", payload }, pageFrame(tab, tab === HOME ? SITE_URL : OTHER_URL)));
+        assert.notEqual(ans?.data, true, `a page on tab ${tab} moved a running run: ${JSON.stringify(ans)}`);
+        assert.match(String(ans?.error ?? ""), /refus/i, `a page's MOVE_RUN was not refused: ${JSON.stringify(ans)}`);
+        const list = await within(r.bg.send({ type: "LIST_BRINGABLE" }, pageFrame(tab, tab === HOME ? SITE_URL : OTHER_URL)));
+        assert.equal(list?.data, undefined, `a page listed this browser's sessions: ${JSON.stringify(list)}`);
+    }
+    assert.deepEqual((await r.moves()).filter((e) => e.kind === "move-queued"), [], "a page's message queued a move");
+    assert.equal(r.pageCalls(ELSEWHERE), 0, "a page's message put a step on the destination tab");
+    // Control, the same run and the same moment: the person's own surface does queue it, and the turn takes it.
+    const q = await within(r.bg.send({ type: "MOVE_RUN", payload }, hudFrame(ELSEWHERE)));
+    assert.match(String(q?.data?.queued ?? ""), /current step ends/, `the HUD's move was not queued: ${JSON.stringify(q)}`);
+    assert.deepEqual((await r.moves()).filter((e) => e.kind === "move-queued").map((e) => e.detail), [{ to: ELSEWHERE }]);
+    r.release();
+    assert.ok(await until(() => r.gates.some((g) => g.tab === ELSEWHERE)), "the step after the held one is drawn on the tab the HUD sat in");
+    answerGate(r, ELSEWHERE);
+    await r.settled();
+    assert.ok(r.pageCalls(ELSEWHERE) > 0 && r.pageCalls(HOME, "exec") === 0, "the turn's later calls did not follow the person's move");
+});
+
+test("only the sender's OWN tab is a destination: a HUD in a browser page is refused, and one naming another tab moves the run to the tab it sits in", LIVE, async () => {
+    const r = await live();
+    await r.startTurn();
+    const named = { runId: r.hash, toTabId: OUR, tabId: OUR, target: { kind: "tab", tabId: OUR } };
+    const ours = await within(r.bg.send({ type: "MOVE_RUN", payload: named }, hudFrame(OUR, "chrome://newtab/")));
+    assert.match(String(ours?.error ?? ""), /ordinary web page/, `a HUD in a browser page moved the run: ${JSON.stringify(ours)}`);
+    assert.deepEqual((await r.moves()).filter((e) => e.kind === "move-queued"), [], "the refused move was queued");
+    // The same message from a HUD on an ordinary page: the destination is THAT tab, never the one the payload names.
+    const q = await within(r.bg.send({ type: "MOVE_RUN", payload: named }, hudFrame(ELSEWHERE)));
+    assert.match(String(q?.data?.queued ?? ""), /current step ends/, JSON.stringify(q));
+    r.release();
+    assert.ok(await until(() => r.gates.some((g) => g.tab === ELSEWHERE)), "the step after the move is not on the tab the HUD sat in");
+    answerGate(r, ELSEWHERE);
+    await r.settled();
+    assert.equal(r.pageCalls(OUR), 0, "a step went to the tab the message named");
+    assert.ok(r.pageCalls(ELSEWHERE) > 0, "positive control: the step went to the tab the HUD sat in");
+});
+
+test("after a live move the old tab's page can no longer answer at the gate, steer the turn, or mark the run", LIVE, async () => {
+    const r = await live();
+    // One panel on each tab: a page's event is fed to the panel watching ITS tab, so the row needs both to tell "the
+    // claim refused it" from "no panel was listening there".
+    const panel = r.bg.connect("ml-devtools");
+    panel.send({ type: "ml-devtools-init", tabId: ELSEWHERE });
+    const panelHome = r.bg.connect("ml-devtools");
+    panelHome.send({ type: "ml-devtools-init", tabId: HOME });
+    await r.startTurn();
+    await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudFrame(ELSEWHERE));
+    r.release();
+    assert.ok(await until(() => r.gates.some((g) => g.tab === ELSEWHERE)), "the gate after the move is drawn on the new tab");
+    const g = r.gates.find((x) => x.tab === ELSEWHERE);
+    // (b) The steer, while the turn waits at the gate: the extension frame on the tab the run left is not its owner
+    // any more; the new tab's is.
+    const steer = (tab, text) => within(r.bg.send({ type: "INJECT_MESSAGE", payload: { runId: r.hash, text, sayId: `s-${tab}` } }, hudFrame(tab)));
+    assert.equal((await steer(HOME, "do it from the old page"))?.data, false, "the old tab steered the moved run");
+    assert.equal((await steer(ELSEWHERE, "do it from here"))?.data, true, "positive control: the new tab could not steer its own run");
+    // (c) The mark, at the same moment: a page's event for the run reaches neither the panel nor its row, whatever kind
+    // it claims.
+    const MARK = "PAGE-MARK-7f3a";
+    for (const kind of ["agent", "agent-step", "spoken", "agent-note"]) {
+        await r.bg.send({ type: "ML_DEBUG_EVENT", event: { kind, id: r.hash, session: { hash: r.hash, turn: 0 }, text: MARK, save: false, ts: 1 } }, pageFrame(HOME));
+    }
+    await silence(300);
+    const feeds = () => JSON.stringify([panel.messages.map((m) => m.__mlDebug), panelHome.messages.map((m) => m.__mlDebug)]);
+    assert.ok(!feeds().includes(MARK), "a page wrote into the moved run's DevTools feed");
+    // Positive control: the same channel admits a page's event for a session no worker run claims, so the emptiness
+    // above is the claim check, not a dead port.
+    await r.bg.send({ type: "ML_DEBUG_EVENT", event: { kind: "spoken", id: "deadbeef", session: { hash: "deadbeef", turn: 0 }, text: MARK, save: false, ts: 1 } }, pageFrame(HOME));
+    assert.ok(await until(() => feeds().includes(MARK)), "the panels heard no page event at all, so the row is vacuous");
+    // (a) The answer: the old tab's does nothing, the new tab's releases the step. SET_APPROVAL is fire-and-forget, so
+    // this is measured by what it CAUSES: the exec the gate admits.
+    void r.bg.send({ type: "SET_APPROVAL", payload: { runId: r.hash, seq: g.event.seq, decision: true } }, pageFrame(HOME));
+    await silence();
+    assert.equal(r.pageCalls(ELSEWHERE, "exec"), 0, "the old tab's answer released the gate the run was moved away from");
+    answerGate(r, ELSEWHERE);
+    assert.ok(await until(() => r.pageCalls(ELSEWHERE, "exec") > 0), "the tab the run moved to could not answer its own gate");
+    await r.settled();
+});
+
+test("a live move takes the run's replay ring from the old tab to the new one: a fresh document on the old tab gets nothing of it, the new tab's gets its pre-move history", LIVE, async () => {
+    const r = await live();
+    await r.startTurn();
+    await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudFrame(ELSEWHERE));
+    r.release();
+    assert.ok(await until(() => r.gates.some((x) => x.tab === ELSEWHERE)), "the move landed at the step boundary");
+    // A fresh document on each tab asks for its tab's replay, as a shell that mounts late does: the same question the
+    // page itself can ask, while the turn the move made WAITS at its gate. Asked now, mid-turn, because a settled turn
+    // prunes a tab with no run left, which would empty the old ring whether or not the move moved anything.
+    const since = r.bg.tabMessages.length;
+    void r.bg.send({ type: "SHELL_LISTENING" }, { tab: { id: HOME, url: SITE_URL }, url: SITE_URL, frameId: 0, documentId: "doc-7b" });
+    void r.bg.send({ type: "SHELL_LISTENING" }, { tab: { id: ELSEWHERE, url: OTHER_URL }, url: OTHER_URL, frameId: 0, documentId: "doc-8b" });
+    await silence(300);
+    const replayed = (tab) => r.bg.tabMessages.slice(since).filter(([t, m]) => t === tab && m?.type === "ML_DEBUG_TO_PAGE" && (m.event?.id === r.hash || m.event?.session?.hash === r.hash));
+    assert.deepEqual(replayed(HOME), [], "the tab the run left replayed its events to a fresh document");
+    // The destination's replay must carry the history the run made BEFORE the move: the first turn's result was in the
+    // old tab's ring and nothing else can put it in the new one. (Its post-move events alone would satisfy a mere
+    // non-emptiness check, whether or not the move carried anything.)
+    const replayedElsewhere = replayed(ELSEWHERE).map(([, m]) => m.event);
+    assert.ok(
+        replayedElsewhere.some((e) => e?.kind === "agent-result" && e?.session?.turn === 0),
+        `the destination's fresh document was replayed ${replayedElsewhere.length} event(s) and none of the run's pre-move history: ${JSON.stringify(replayedElsewhere.map((e) => [e?.kind, e?.session?.turn]))}`,
+    );
+    answerGate(r, ELSEWHERE);
+    await r.settled();
+});
+
+test("the move's note names both tabs to the MODEL only: no tab is sent it, and the old tab's notice names no site", LIVE, async () => {
+    const r = await live();
+    await r.startTurn();
+    await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudFrame(ELSEWHERE));
+    r.release();
+    assert.ok(await until(() => r.gates.some((x) => x.tab === ELSEWHERE)), "the move landed at the step boundary");
+    answerGate(r, ELSEWHERE);
+    await r.settled();
+    await silence(100);
+    const notes = (r.lastBody()?.messages ?? []).filter((m) => m.role === "system" && /moved this run from tab/.test(String(m.content)));
+    assert.equal(notes.length, 1, `positive control: the model was told the move ${notes.length} times`);
+    assert.match(String(notes[0].content), /Site/, "the note does not name the tab the run left");
+    assert.ok(!JSON.stringify(r.bg.tabMessages.map(([, m]) => m)).includes("moved this run from tab"), "a tab was sent the model's note");
+    const away = r.bg.tabMessages.filter(([t, m]) => t === HOME && m?.type === "ML_DEBUG_TO_PAGE" && m.event?.kind === "agent-note").map(([, m]) => m.event);
+    assert.equal(away.length, 1, `the old tab was told it moved ${away.length} times`);
+    assert.match(String(away[0].text), /^This session was moved to another tab/);
+    assert.ok(!/https?:\/\/|site\.example/.test(String(away[0].text)), `the old tab's notice names a site: ${away[0].text}`);
+});
+
+test("a run a page built, or one with nothing to rebuild, is never moved mid-turn by any route, nor resumed into a move", LIVE, async () => {
+    // Two page-built runs, one carrying a rebuild (so its BUILDER is the only reason it is not movable) and one without:
+    // the person's MOVE_RUN is refused for both while their turns run, and `session.resume` is a conflict, never a move.
+    const script = [];
+    let out = 0, release;
+    const hold = new Promise((r) => { release = r; });
+    let bg;
+    const tools = (name) => [{ name, description: "find", parameters: { type: "object", properties: { text: { type: "string" } } }, requiresApproval: false, capabilities: [] }];
+    const rebuild = (name) => ({ toolNames: [name], model: "m", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: false });
+    bg = loadBackground({
+        config: { chatUrl: "http://host/api/chat/completions", apiKey: "k", model: "m", apiFormat: "openai", debugMode: "off" },
+        openTabs: [{ id: HOME, windowId: 3, active: true, url: SITE_URL, title: "Site" }, { id: ELSEWHERE, windowId: 3, active: false, url: OTHER_URL, title: "Other" }],
+        onFetch: async (call) => {
+            if (call.url.endsWith("/api/models")) return jsonResponse({ data: [{ id: "m" }] });
+            if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            if (!(Array.isArray(call.body?.tools) && call.body.tools.length)) return jsonResponse({ choices: [{ message: { content: "ok" } }] });
+            const step = script.shift();
+            if (!step) return jsonResponse({ choices: [{ message: { content: "done" } }] });
+            return jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: `c${Math.random()}`, type: "function", function: { name: step.name, arguments: JSON.stringify(step.args) } }] } }] });
+        },
+        onTabMessage: async (t, msg) => {
+            if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
+            if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
+            if (msg.payload.finish || msg.payload.renderOnly || msg.payload.precheck || msg.payload.readonlyTry) return {};
+            out++;
+            await hold;
+            return { result: "ran" };
+        },
+    });
+    bg.commit?.(HOME, { documentId: "doc-7", url: SITE_URL });
+    bg.commit?.(ELSEWHERE, { documentId: "doc-8", url: OTHER_URL });
+    const started = [];
+    for (const [runId, name, extra] of [["pagerun1", "pageToolA", { rebuild: rebuild("pageToolA") }], ["pagerun2", "pageToolB", {}]]) {
+        script.push({ name, args: { text: "x" } });
+        void bg.send({ type: "START_RUN", payload: { runId, task: "x", systemPrompt: "S", tools: tools(name), model: "m", think: null, maxSteps: 3, surface: "off", autoApproveReadonly: false, ...extra } }, pageFrame(HOME));
+        started.push(runId);
+        assert.ok(await until(() => out === started.length), `${runId}'s call is out`);
+    }
+    const state = bg.context.__mlRunStateForTest();
+    assert.ok(started.every((id) => state.controllers.includes(id)), "positive control: both page runs are running");
+    assert.ok(state.rebuilds.includes("pagerun1") && !state.rebuilds.includes("pagerun2"), "positive control: one has a rebuild, the other none");
+    const adopts = () => bg.tabMessages.filter(([t, m]) => t === ELSEWHERE && m?.type === "ADOPT_RUN_NOW").length;
+    for (const runId of started) {
+        const moved = await within(bg.send({ type: "MOVE_RUN", payload: { runId } }, hudFrame(ELSEWHERE)));
+        assert.notEqual(moved?.data, true, `${runId} was moved mid-turn: ${JSON.stringify(moved)}`);
+        // Both are refused. A page-built run's FIRST turn has no `bgRuns` entry yet, so `bringHere` does not reach
+        // `moveRun` at all: it tries a resume, and the session layer answers the conflict ("still going"). Neither
+        // sentence is the live move's own; the row pins the refusal, and the differing sentence is reported to the lane.
+        assert.match(String(moved?.error ?? ""), /between its turns|stay on its page|still going; it does not need resuming/i, `${runId} was not refused: ${JSON.stringify(moved)}`);
+    }
+    const port = bg.connect("ml-sessions", { url: "chrome-extension://test/chat.html" });
+    // The port answers only a NUMERIC id (`session-server.ts`: a string id is dropped unanswered).
+    for (const [n, runId] of started.entries()) {
+        const cmd = { type: "session.resume", session: { runtime: "local", hash: runId }, target: { kind: "tab", tabId: ELSEWHERE } };
+        port.send({ type: "cmd", id: 100 + n, command: cmd });
+        assert.ok(await until(() => port.messages.some((m) => m.type === "result" && m.id === 100 + n), 4000), "the command is answered");
+        const res = port.messages.find((m) => m.type === "result" && m.id === 100 + n);
+        assert.notEqual(res?.result?.ok, true, `${runId} was resumed into a move mid-turn: ${JSON.stringify(res)}`);
+        assert.equal(res?.result?.error?.code, "conflict", `${runId}'s resume was not the conflict: ${JSON.stringify(res)}`);
+    }
+    assert.equal(adopts(), 0, "a page-built run's tools were adopted on the destination");
+    assert.deepEqual(bg.tabMessages.filter(([t, m]) => t === ELSEWHERE && m?.type === "RUN_TOOL_IN_PAGE"), [], "a page-built run's call went to the destination");
+    release();
+    assert.ok(await until(() => bg.context.__mlRunStateForTest().controllers.length === 0), "both page runs end");
+});
+
+test("a registered secret in a RUNNING run's page URL does not reach the HUD's row, as the settled row's scrub holds", LIVE, async () => {
+    const SECRET = "SECRET-9f3a-token";
+    const r = await live({ pageUrl: `https://site.example/page?token=${SECRET}`, title: "Site" });
+    await r.startTurn();
+    const row = async () => (await r.bg.send({ type: "LIST_BRINGABLE" }, hudFrame(ELSEWHERE))).data.find((s) => s.hash === r.hash);
+    const before = await row();
+    assert.equal(before?.running, true, "positive control: the running run is offered to the HUD");
+    assert.ok(String(before?.url ?? "").includes(SECRET), `positive control: the row is the run's own page URL: ${before?.url}`);
+    const add = await r.bg.send({ type: "SECRET_REGISTRY", payload: { op: "add", name: "PW", value: SECRET } }, { url: "chrome-extension://test/sidebar.html" });
+    assert.ok(!add?.error, `the secret was not registered: ${JSON.stringify(add)}`);
+    const after = await row();
+    assert.equal(after?.running, true, "the row is still the running one");
+    assert.ok(!String(after?.url ?? "").includes(SECRET), `the running row carried a registered secret: ${after?.url}`);
+    assert.match(String(after?.url ?? ""), /site\.example/, "the row lost the page it names rather than scrubbing the value");
+    r.release();
+    assert.ok(await until(() => r.gates.some((g) => g.tab === HOME)), "the step after the held one is drawn on the run's tab");
+    answerGate(r, HOME);
+    await r.settled();
+    assert.ok(!String((await row())?.url ?? "").includes(SECRET), "the settled row carried it too");
+});
