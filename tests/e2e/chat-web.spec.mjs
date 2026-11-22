@@ -2260,7 +2260,13 @@ test("phone (touch): tapping a step's dot opens its tip, and the tap still opens
 
         await step.locator(".astep-head .dot").first().tap();
         const tip = page.locator(".tt-layer");
-        await expect(tip).toBeVisible();
+        // INSTRUMENT (flaky: the tip stays hidden): a failure carries the last pointer the tip rule saw.
+        try {
+            await expect(tip).toBeVisible();
+        } catch (e) {
+            const seen = await page.evaluate(() => window.__ttLastPointer ?? "the rule never ran");
+            throw new Error(`${e.message}\n the tip rule's last pointer: ${JSON.stringify(seen)}`);
+        }
         await expect(tip).toContainText("Completed successfully");
         // AND IT IS STILL THERE A MOMENT LATER. This assertion is the whole reason the test is not a lie: the tap
         // that opens a tip is very often the same tap that SCROLLS — it opens the step, the transcript grows, its

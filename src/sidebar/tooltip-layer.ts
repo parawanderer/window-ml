@@ -167,6 +167,8 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
      */
     const down = (e: Event): void => {
         const pe = e as PointerEvent;
+        // INSTRUMENT for the phone-tap e2e flake: the last pointer this rule saw. Only our own pages mount the layer.
+        Object.assign(doc.defaultView ?? {}, { __ttLastPointer: { type: pe.pointerType, target: (e.target as Element | null)?.getAttribute?.("class") ?? "" } });
         const el = pe.pointerType === "touch" ? (e.target as Element | null)?.closest?.(".tt") : null;
         if (el && !el.matches("button, a, summary, [role=button], [role=tab], [role=menuitem]")) {
             held = true;
