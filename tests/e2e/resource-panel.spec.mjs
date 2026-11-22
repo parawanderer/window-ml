@@ -2607,13 +2607,40 @@ test("resource panel: the pool tooltip puts the ceiling on its own dimmer line",
         // A window SHORTER than the history this test waits for: the axis is linear in time, so a longer window would
         // leave the stretch it hovers empty (the history fills from the left). See `chartWindow`.
         await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_window: 3 }));
-        const { page, frame } = await openPanel(fake, ext);
-        await expect.poll(() => frame.locator(".rc-plot").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        const { frame } = await openPanel(fake, ext);
+        // THE SEEDED LAYOUT, not merely "a plot exists": until the stored layout arrives the panel draws the
+        // DEFAULT Overview, one track whose tip is `.rc-tip-pools` — so a hover that lands before the restore
+        // reads the wrong surface and `.rc-tip-pool` can never appear. The names are the same wait the first
+        // test in this file makes for the same reason.
+        await expect.poll(() => frame.locator(".rc-name").allTextContents(), { timeout: 25000 })
+            .toEqual(["CUDA0", "CUDA1", "System RAM"]);
         await sleep(4000);
 
-        const plot = await frame.locator(".rc-plot").first().boundingBox();
-        await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.5);
-        await expect.poll(() => frame.locator(".rc-tip-pool").count(), { timeout: 8000 }).toBe(1);
+        const plot = frame.locator(".rc-plot").first();
+        await plot.hover();
+        try {
+            await expect.poll(() => frame.locator(".rc-tip-pool").count(), { timeout: 8000 }).toBe(1);
+        } catch (e) {
+            // A hover that fails names WHY, once: the tracks that are drawn, every plot's box, the tips that ARE
+            // up, and the element at the first plot's centre. `getAttribute("class")` because an SVG node on an
+            // elementFromPoint hit serialises `className` as an object.
+            const at = await frame.evaluate(() => {
+                const plots = [...document.querySelectorAll(".rc-plot")];
+                const p = plots[0];
+                const box = (el) => { const r = el.getBoundingClientRect(); return [r.left, r.top, r.width, r.height].map(Math.round); };
+                const r = p ? p.getBoundingClientRect() : null;
+                const el = r ? document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null;
+                return {
+                    tracks: [...document.querySelectorAll(".rc-track")].map((t) => t.querySelector(".rc-name")?.textContent ?? "?"),
+                    plots: plots.map(box),
+                    tips: [...document.querySelectorAll('[role="tooltip"]')].filter((t) => t.getClientRects().length)
+                        .map((t) => t.getAttribute("class")),
+                    centre: el ? `${el.tagName.toLowerCase()}.${el.getAttribute("class") ?? ""}` : null,
+                    crosshair: document.querySelectorAll(".rc-cross").length,
+                };
+            });
+            throw new Error(`${e.message}\n the chart at the hover: ${JSON.stringify(at)}`);
+        }
 
         const first = await frame.locator(".rc-tip-pool .rc-tip-size").first().textContent();
         expect(first, "the reading leads, with its share").toMatch(/in use \(\d+%\)/);

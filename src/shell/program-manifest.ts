@@ -342,9 +342,21 @@ function flavoured(cmd: CommandSpec, m: ProgramManifest, f: Flavour | undefined)
 
 const unresolved = (p: { arg: number | "cwd" | "repo"; given: string }): Resource => ({ kind: "fs", path: p.given });
 
-/** Describes one argv by its program's manifest. `argv[0]` is the program as the caller wrote it; its basename must
- *  name the manifest's program. */
-export function describeCall(argv: readonly string[], m: ProgramManifest, opts: DescribeOptions = {}): CallDescription {
+/** One effect term of a call before its paths are resolved: the term, and each path it falls on as the argument the host
+ *  is asked about (`arg`: an argv index, `"cwd"` or `"repo"`) with the text as given (a flag's attached value already
+ *  split off). The order is the order `resolve` is called in. */
+export type PreTerm = { term: ProgramEffect; targets: { arg: number | "cwd" | "repo"; given: string }[] };
+
+/**
+ * Describes one argv by its program's manifest, BEFORE any path is resolved: the description and the effect terms with
+ * their targets. `resolvePre` is the other half; `describeCall` is the two together.
+ * @param argv the call; `argv[0]` is the program as the caller wrote it, and its basename must name the manifest's program
+ * @param m the program's manifest
+ * @param opts version, env and flavour as for `describeCall`; `resolve` is not read here
+ * @returns `description`, whose `effects` is `"unknown"` when not described and `[]` otherwise (resolution fills it),
+ *   and `terms`, empty when the call is not described
+ */
+export function describePre(argv: readonly string[], m: ProgramManifest, opts: DescribeOptions = {}): { description: CallDescription; terms: PreTerm[] } {
     const d: CallDescription = {
         described: true, why: [], program: m.program, subcommand: [], effects: [], pathArgs: [], actsOnDir: false,
         dirArg: null, recursive: false, harden: [], operandStart: null, terminator: null, runner: false, echoes: !!m.echoes, okCodes: [...(m.okCodes ?? [0])],
@@ -393,28 +405,37 @@ export function describeCall(argv: readonly string[], m: ProgramManifest, opts: 
     if (cmd.okCodes) d.okCodes = [...new Set([...cmd.okCodes, ...d.okCodes.filter((c) => c !== 0)])];
     if (cmd.echoes) d.echoes = true;
 
-    if (!d.described) { d.effects = "unknown"; return d; }
-    const resolve = opts.resolve ?? unresolved;
+    if (!d.described) { d.effects = "unknown"; return { description: d, terms: [] }; }
     const repoWide = cmd.repoWide === true;
-    const dirRes = (): Resource => d.dirArg !== null ? resolve({ arg: d.dirArg, given: argv[d.dirArg] }) : resolve({ arg: "cwd", given: "." });
-    const around: Resource[] = [
+    type Target = PreTerm["targets"][number];
+    const dirRes = (): Target => d.dirArg !== null ? { arg: d.dirArg, given: argv[d.dirArg] } : { arg: "cwd", given: "." };
+    const around: Target[] = [
         ...(d.actsOnDir ? [dirRes()] : []),
-        ...(repoWide ? [dirRes(), resolve({ arg: "repo", given: "." })] : []),
+        ...(repoWide ? [dirRes(), { arg: "repo" as const, given: "." }] : []),
     ];
-    const operandRes = (keep: (i: number) => boolean) => operandPaths.filter(keep).map((i) => resolve({ arg: i, given: argv[i] }));
-    const commandTargets: Resource[] = [...operandRes(() => true), ...around];
+    const operandRes = (keep: (i: number) => boolean): Target[] => operandPaths.filter(keep).map((i) => ({ arg: i, given: argv[i] }));
+    const commandTargets: Target[] = [...operandRes(() => true), ...around];
     // With `writtenOperands: "last"` a write falls on the destination and a read on the sources; any other term on all.
-    const targetsOf = (term: ProgramEffect): Resource[] => !lastOnly ? commandTargets
+    const targetsOf = (term: ProgramEffect): Target[] => !lastOnly ? commandTargets
         : WRITE_TERMS.has(term) ? [...operandRes((i) => i === dest), ...around]
         : term === "read" ? [...operandRes((i) => i !== dest), ...around] : commandTargets;
-    const sets: EffectsData[] = [];
-    for (const t of terms) {
-        const targets = t.targets === "command" ? targetsOf(t.term) : t.targets.map((r) => r.kind === "fs" && r.path.startsWith("\0arg:")
-            ? resolveArg(r.path, argv, resolve) : r);
-        sets.push(fromProgramEffect(t.term, { paths: targets }));
-    }
-    d.effects = union(...sets);
-    return d;
+    const pre: PreTerm[] = terms.map((t) => ({ term: t.term, targets: t.targets === "command" ? targetsOf(t.term) : t.targets.map((r) => r.kind === "fs" && r.path.startsWith("\0arg:")
+        ? argGiven(r.path, argv) : (() => { throw new Error("a term target that is not an argument placeholder"); })()) }));
+    d.effects = [];
+    return { description: d, terms: pre };
+}
+
+/** Resolves a call's pre-resolution terms: each target through `resolve`, each term to its effects, the union of them. */
+export function resolvePre(terms: readonly PreTerm[], resolve: NonNullable<DescribeOptions["resolve"]>): EffectsData {
+    return union(...terms.map((t) => fromProgramEffect(t.term, { paths: t.targets.map((p) => resolve(p)) })));
+}
+
+/** Describes one argv by its program's manifest. `argv[0]` is the program as the caller wrote it; its basename must
+ *  name the manifest's program. */
+export function describeCall(argv: readonly string[], m: ProgramManifest, opts: DescribeOptions = {}): CallDescription {
+    const { description, terms } = describePre(argv, m, opts);
+    if (description.described) description.effects = resolvePre(terms, opts.resolve ?? unresolved);
+    return description;
 }
 
 /** A placeholder resource for argv index `i` (optionally after a separator), resolved once parsing is done. */
@@ -422,11 +443,12 @@ function argRes(i: number, split?: string): Resource {
     return { kind: "fs", path: `\0arg:${i}:${split ?? ""}` };
 }
 
-function resolveArg(ph: string, argv: readonly string[], resolve: NonNullable<DescribeOptions["resolve"]>): Resource {
+/** The target an `argRes` placeholder names: the argv index and the text given, after the separator when it has one. */
+function argGiven(ph: string, argv: readonly string[]): PreTerm["targets"][number] {
     const [, n, split] = ph.split(":");
     const i = Number(n);
     const given = split ? argv[i].slice(argv[i].indexOf(split) + split.length) : argv[i];
-    return resolve({ arg: i, given });
+    return { arg: i, given };
 }
 
 /** The argv with the manifest's hardening arguments inserted (`git --no-pager diff --no-ext-diff --no-textconv …`),
