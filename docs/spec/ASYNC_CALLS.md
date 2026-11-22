@@ -379,9 +379,9 @@ field; the detach answer is a sentence plus the tail (`pyDetachedText`, `sw-pyth
   is no line-range verb, `head -n B | tail -n K` is the form `cutNote` teaches). Checked: the pipe composes this way
   today. Guessed: whether the embed syntax itself takes a pipe; the spec does not rely on it.
 - **Lifetime: the session's, until a worker eviction** (`docs/dev/state.md`, "Lost on a worker eviction"). The pointer
-  is in `tokensByRun` (`src/sw/sw-runs.ts:592`, declared `run.pointers` with `lostOn: ["worker-eviction"]`, about
-  `:595`), capped per session (`TokenStore.CAP`, 200; `MAX_TOKEN_SESSIONS` 24, `:597`) and dropped at session release
-  (`releaseSessionTokens`, `:659`). Checked: for an `ml.sh` call the open native port keeps the worker alive while the
+  is in `tokensByRun` (`src/sw/sw-runs.ts:592`, declared `run.pointers` with `lostOn: ["worker-eviction"]`, at
+  `:598`), capped per session (`TokenStore.CAP`, 200; `MAX_TOKEN_SESSIONS` 24, `:596`) and dropped at session release
+  (`releaseSessionTokens`, `:670`). Checked: for an `ml.sh` call the open native port keeps the worker alive while the
   call runs (rule 4b, "Durable"). A detached cell does not, so between turns the worker can be evicted (about 30 s idle)
   and the model's pointer then dangles, as every pointer does. The flow needs the pointer only within the turn that
   embeds it. The answer's expansion is captured at the step (`tokenRenders.push`, `agent-loop.ts:1280`, into the

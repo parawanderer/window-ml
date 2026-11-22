@@ -13,11 +13,12 @@ const T = { timeout: 30000 };
 const tick = () => new Promise((r) => setTimeout(r, 0));
 async function until(done, cap = 4000) { for (let i = 0; i < cap && !(await done()); i++) await tick(); return done(); }
 
-/** A worker-built run on tab 7 whose first turn has ended, and a subscriber to the session index. */
-async function settled() {
+/** A worker-built run on tab 7 whose first turn has ended, and a subscriber to the session index. `config` is laid over the
+ *  stored config (`taskNotifyOnly: true` parks a finished task instead of starting a turn). */
+async function settled(config = {}) {
     const openTabs = [{ id: 7, windowId: 3, active: true, url: SITE_URL, title: "Site" }];
     const bg = loadBackground({
-        config: { chatUrl: "http://host/api/chat/completions", apiKey: "k", model: "m", apiFormat: "openai", debugMode: "off" },
+        config: { chatUrl: "http://host/api/chat/completions", apiKey: "k", model: "m", apiFormat: "openai", debugMode: "off", ...config },
         openTabs,
         onFetch: async (call) => {
             if (call.url.endsWith("/api/models")) return jsonResponse({ data: [{ id: "m" }] });
@@ -60,8 +61,8 @@ test("a detached task puts running: 1 on the run's row; it carries no field befo
     assert.deepEqual(r.bgOf(), { running: 1, waiting: 0 });
 });
 
-test("a task that ends between turns is waiting: 1, and the next turn reading it clears the field", T, async () => {
-    const r = await settled();
+test("a task that ends between turns under notify-only is waiting: 1, and the person's next turn reading it clears the field", T, async () => {
+    const r = await settled({ taskNotifyOnly: true });
     const t = r.detach();
     assert.ok(await until(() => r.bgOf()?.running === 1));
     t.finish({ text: "built" });
@@ -69,6 +70,15 @@ test("a task that ends between turns is waiting: 1, and the next turn reading it
     assert.deepEqual(r.bgOf(), { running: 0, waiting: 1 });
     await r.bg.context.__mlUserRunActionForTest(r.hash, "send", { text: "go on", surface: "hud" });
     assert.ok(await until(r.idle(2)), "the person's next turn ran");
+    assert.ok(await until(() => r.bgOf() === undefined), `the read result cleared the field: ${JSON.stringify(r.bgOf())}`);
+});
+
+test("by default a task that ends between turns starts a turn, and that turn reading it clears the field", T, async () => {
+    const r = await settled();
+    const t = r.detach();
+    assert.ok(await until(() => r.bgOf()?.running === 1));
+    t.finish({ text: "built" });
+    assert.ok(await until(r.idle(2)), "the task's turn ran");
     assert.ok(await until(() => r.bgOf() === undefined), `the read result cleared the field: ${JSON.stringify(r.bgOf())}`);
 });
 
