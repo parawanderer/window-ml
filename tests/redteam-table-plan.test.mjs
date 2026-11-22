@@ -15,7 +15,7 @@ const csv = (s) => enc.encode(s).buffer;
 // --- the plan is closed: one field outside the shape is refused, at every reader ---
 
 test("RED TEAM (plan): any field outside the closed shape is refused, and a valid plan passes", () => {
-    // The content script (src/content.ts:320), the worker's router (src/background.ts:981) and the isolated
+    // The content script (src/content.ts:320), the worker's router (src/background.ts:993) and the isolated
     // channel (src/sw/iso-channel.ts:95) all call this one function; the channel is exercised end to end below.
     const base = { type: "PAGE_VALUE_COLUMNS", id: "i1", runId: "run-1", op: "cols", key: "k1", names: ["a"] };
     assert.deepEqual(checkReadPlan(base), {});
