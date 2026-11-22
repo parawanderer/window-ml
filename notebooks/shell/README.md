@@ -13,4 +13,8 @@ Each notebook has a generator beside it (`make-<name>.py`, the file to edit) and
   `docs/plan/repl/ONE_DESCRIBER_WASM_SPIKE.md`. window-ml-host's Rust describer compiled to wasm, run beside the TS
   `describeCall`: every shared vector row, a differential fuzz of 340,000 calls, size, compile and per-call time in Node,
   and the count of what the second port caught in both repos' review history. Generator: `make-one-describer.py`;
-  harness and the wrapper crate's source: `one-describer/` (`build.sh` takes `WML_HOST`).
+  harness and the wrapper crate's source: `one-describer/` (`build.sh` takes `WML_HOST`). Section 7 is the differential
+  run WITH path resolution (`docs/plan/repl/ONE_DESCRIBER_BUILD.md`, section 5), run against the host's shipped wasm: build
+  it in a `window-ml-host` checkout with `tools/build-describer.sh <out-dir>` (not the spike's `build.sh` and `wrapper/`,
+  which stay as history), then from `one-describer/`: `node --import tsx fuzz-resolved.mjs <out-dir>/describe.wasm <host
+  checkout> 2000 1,2,3,7`. The mutation generator both fuzzers use is `makeFuzzer` in `one-describer/lib.mjs`.

@@ -5,7 +5,8 @@
 
 The cells are written here; edit this file, not the notebook. Their numbers come from data/one-describer/, pinned from
 the harness's raw output in one-describer/out/ (gitignored). To measure again: `WML_HOST=<window-ml-host checkout> sh
-notebooks/shell/one-describer/build.sh`, then the scripts named in the first cell, then NB_REFRESH=1.
+notebooks/shell/one-describer/build.sh`, then the scripts named in the first cell, then NB_REFRESH=1. Section 7 (the run
+with resolution) is built from the host's own `tools/build-describer.sh` and `one-describer/fuzz-resolved.mjs`.
 """
 
 from pathlib import Path
@@ -284,6 +285,118 @@ heap = cold.groupby("variant")[["heapUsed", "embedderHeapUsed", "wasmMemoryBytes
 heap["heap added, kB"] = ((heap.heapUsed - heap.loc["control", "heapUsed"]) / 1e3).round(0)
 heap["embedder heap added, kB"] = ((heap.embedderHeapUsed - heap.loc["control", "embedderHeapUsed"]) / 1e3).round(0)
 heap.round(0)
+""")
+
+md("""
+## 7. The differential run with resolution
+
+`docs/plan/repl/ONE_DESCRIBER_BUILD.md`, section 5, last paragraph: before `describeCall` is deleted, the fuzz runs once
+more, with path resolution, against the describer the host now ships. The host returns the description BEFORE
+resolution (`pre`); the extension resolves it with `resolvePre`. So the two sides are:
+
+- **TS**: `describeCall(argv, manifest, {version, flavour, envSet, resolve})`, the resolved effects.
+- **wasm**: the host's `describe.wasm` (built by the host's `tools/build-describer.sh`, which first replays every shared
+  vector through it) gives `pre`; `resolvePre(pre, resolve)` gives the resolved effects.
+
+The bar is 0 disagreements on the resolved effects and on `described`. `why` and `pre` are compared too, reported apart.
+`one-describer/fuzz-resolved.mjs` runs every vector row unmutated, then, per seed, 2,000 mutations per program from the
+same generator and seeds as section 2 (`makeFuzzer` in `lib.mjs`, which `fuzz.mjs` now draws from too: its output is
+unchanged by the move). A call with a lone surrogate in argv, `envSet` or the flavour is not described on the worker side
+(plan section 4: the call asks), so it is counted as an ask and is neither an agreement nor a disagreement.
+
+**The fake resolver** is one function both sides call, deterministic per argv index `i` (the placeholder's `arg`):
+
+| placeholder | resolves to |
+| --- | --- |
+| `cwd`, `repo` | `/w`, the workspace root: in root, `isRoot` |
+| `i mod 7` is 0 or 1 | the rule of `scripts/gen-resolved-calls.mjs` on the argument as given: normalised against `/w`, in root iff under it, secret iff the basename starts `.env` or `id_`, not existing iff it starts `new` |
+| 2 | outside the roots: `/o/<i>/<basename>` |
+| 3 | a secret: `/w/.env`, `secret: true` |
+| 4 or 5 | the same path, `/w/shared`: two indices on one path |
+| 6 | does not exist: `/w/new<i>`, `exists: false` |
+
+The columns below say how often each case was actually reached by a described call, so a clean result cannot be a
+resolver that never fired.
+""")
+
+code("""
+def read_resolved():
+    rows = [{"kind": "meta", **json.loads((OUT / "fuzz-resolved-meta.json").read_text())},
+            {"kind": "control", **json.loads((OUT / "fuzz-resolved-control.json").read_text())},
+            {"kind": "vectors", **json.loads((OUT / "fuzz-resolved-vectors.json").read_text())}]
+    for p in sorted(OUT.glob("fuzz-resolved-[0-9]*.json")):
+        rows.append({"kind": "seed", **json.loads(p.read_text())})
+    for r in rows:
+        for g in r.get("groups", []): g["examples"] = g["examples"][:3]
+    return rows
+
+rr = wmlnb.extract(DATA / "resolved.json", read_resolved, source={"harness": "notebooks/shell/one-describer/fuzz-resolved.mjs", "out": "notebooks/shell/one-describer/out/fuzz-resolved-*.json"})
+rmeta = next(r for r in rr if r["kind"] == "meta")
+runs7 = [r for r in rr if r["kind"] in ("vectors", "seed")]
+sides = {"window-ml (TS, HEAD before the notebook's commit)": rmeta["windowMlCommit"], "window-ml-host (the wasm's source)": rmeta["hostCommit"],
+         "describe.json commit": rmeta["describeJson"]["commit"], "vectorPin": rmeta["describeJson"]["vectorPin"][:16],
+         "describe.wasm sha256": rmeta["wasmSha256"], "describe.wasm bytes": rmeta["wasmBytes"], "rustc": rmeta["rustc"], "node": rmeta["node"],
+         "per program / seeds": f"{rmeta['perProgram']} / {rmeta['seeds']}"}
+assert rmeta["hostCommit"] == rmeta["describeJson"]["commit"], "the wasm was built from another commit than the checkout the harness read"
+pd.Series(sides, name="the two sides").to_frame()
+""")
+
+code("""
+cols = ["label", "calls", "asks", "compared", "described", "notDescribed", "withTargets", "twoArgsOnePath", "callsOutsideRoots", "callsWithSecret", "disagreements", "barDisagreements", "seconds"]
+t7 = pd.DataFrame([{k: r[k] for k in cols} for r in runs7]).set_index("label")
+t7.columns = ["calls", "asks, lone surrogate", "compared", "described", "not described", "described with a path", "two args on one path", "a path outside the roots", "a secret", "disagreements (all fields)", "disagreements on described or effects", "seconds"]
+tot = t7.sum(numeric_only=True); tot["seconds"] = round(tot["seconds"], 1)
+display(pd.concat([t7, tot.rename("total").to_frame().T]).round(1))
+print(f"wall time of the whole run (build excluded): {rmeta['totalSeconds']:.1f} s")
+print("resolver cases reached by described calls (resource count), all runs:", {k: sum(r["resolverUse"].get(k, 0) for r in runs7) for k in ("cwd", "repo", "rule", "outside", "secret", "shared", "missing")})
+""")
+
+code("""
+# Every disagreement, by field and by cause. `described` and `effects` (and an error or trap on either side) are the bar;
+# `why` and `pre` are reported apart.
+BAR7 = {"described", "effects", "WASM-ERROR", "WASM-TRAP", "TS-THROW", "RESOLVE-THROW"}
+causes7 = pd.DataFrame([{"run": r["label"], "cause": g["cause"], "in the bar": g["bar"], "count": g["count"]} for r in runs7 for g in r["groups"]])
+by_field = pd.DataFrame([{"run": r["label"], **r["byField"]} for r in runs7]).set_index("run").fillna(0).astype(int)
+display(by_field if len(by_field.columns) else pd.DataFrame({"disagreements": [0] * len(runs7)}, index=[r["label"] for r in runs7]))
+display(causes7.pivot_table(index=["in the bar", "cause"], columns="run", values="count", fill_value=0, aggfunc="sum") if len(causes7) else "no disagreements of any field")
+bar_total = sum(r["barDisagreements"] for r in runs7)
+why_on_described = sum(r["whyOnDescribedCalls"] for r in runs7)
+pre_total = sum(r["byField"].get("pre", 0) for r in runs7)
+print(f"verdict: {bar_total} disagreements on described or effects over {sum(r['compared'] for r in runs7):,} compared calls "
+      f"({sum(r['described'] for r in runs7):,} described); `pre` differs on {pre_total}; `why` differs on {sum(r['byField'].get('why', 0) for r in runs7)}, "
+      f"of which on a described call: {why_on_described}")
+assert bar_total == 0, "a disagreement on described or effects: the plan stops describeCall's deletion until it is understood"
+""")
+
+md("""
+The `why` differences are section 2's text causes again, on calls both sides refuse to describe: TS splits an astral
+character when it quotes one letter of a flag cluster (the wasm quotes the whole character), and Rust's `{:?}` writes
+`\\\\u{301}` and `\\\\0` where JSON writes the mark and `\\\\u0000`. One example each (seed 1), `why` as each side wrote it.
+""")
+
+code("""
+s1 = next(r for r in runs7 if r["label"] == "seed 1")
+pd.DataFrame([{"cause": g["cause"], "program": g["examples"][0]["program"], "argv": shown(g["examples"][0]["argv"]),
+               "ts why": shown(g["examples"][0]["repro"]["ts"]["why"]), "wasm why": shown(g["examples"][0]["repro"]["wasm"]["why"])}
+              for g in s1["groups"] if g["examples"]])
+""")
+
+md("""
+**Can this harness see a difference at all?** A control: the same run with the wasm side's resolver changed to report
+every resource as in root and not secret (`CONTROL=1`). It has to disagree on effects, and it does; it is not the result.
+""")
+
+code("""
+ctl = next(r for r in rr if r["kind"] == "control")
+display(pd.DataFrame([{"run": k, **{c: ctl[k][c] for c in ("calls", "described", "disagreements", "barDisagreements")}, "effects": ctl[k]["byField"].get("effects", 0)} for k in ("vectors", "seed1")]).set_index("run"))
+assert ctl["seed1"]["byField"].get("effects", 0) > 0
+""")
+
+md("""
+To measure again: in a `window-ml-host` checkout at the commit under test, `tools/build-describer.sh <out-dir>` (the host's
+own script, replaying the vectors first; this section's run uses it, not the spike's `build.sh` and `wrapper/`), then from
+`notebooks/shell/one-describer/` `node --import tsx fuzz-resolved.mjs <out-dir>/describe.wasm <host checkout> 2000 1,2,3,7`,
+then `NB_REFRESH=1 node scripts/nb.mjs run notebooks/shell/one-describer.ipynb`.
 """)
 
 nb = nbf.v4.new_notebook()

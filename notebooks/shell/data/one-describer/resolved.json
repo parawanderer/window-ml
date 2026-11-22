@@ -1,0 +1,1401 @@
+{
+  "commit": "e6f4c5fbc7caa46f9d41006e224129a413d160e5",
+  "extracted_at": "2026-11-22T19:05:21+00:00",
+  "rows": [
+    {
+      "describeJson": {
+        "commit": "7708d8d1767511c0a944d5f911447d17e591d22b",
+        "sha256": "b6a60bf20d120161144f33ee2c889469b998bb1361dd92cd6e9cb2bf7193ec6e",
+        "vectorPin": "638c08748c5299f8b4a5b47bed8dd1d81a06826232a203fd4e7d47a7c90e712b"
+      },
+      "hostCommit": "7708d8d1767511c0a944d5f911447d17e591d22b",
+      "kind": "meta",
+      "node": "v26.12.1",
+      "perProgram": 2000,
+      "resolver": {
+        "classes": [
+          "rule",
+          "rule",
+          "outside",
+          "secret",
+          "shared",
+          "shared",
+          "missing"
+        ],
+        "cwdRepo": "/w",
+        "root": "/w"
+      },
+      "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+      "seeds": [
+        1,
+        2,
+        3,
+        7
+      ],
+      "totalSeconds": 10.425,
+      "wasmBytes": 231127,
+      "wasmSha256": "b6a60bf20d120161144f33ee2c889469b998bb1361dd92cd6e9cb2bf7193ec6e",
+      "windowMlCommit": "e6f4c5fbc7caa46f9d41006e224129a413d160e5"
+    },
+    {
+      "kind": "control",
+      "note": "CONTROL=1: the wasm side's resolver reports every resource in-root and not secret; a run that must disagree",
+      "seed1": {
+        "barDisagreements": 7833,
+        "byField": {
+          "effects": 7833,
+          "why": 155
+        },
+        "calls": 34000,
+        "described": 12274,
+        "disagreements": 7988
+      },
+      "vectors": {
+        "barDisagreements": 167,
+        "byField": {
+          "effects": 167
+        },
+        "calls": 532,
+        "described": 335,
+        "disagreements": 167
+      }
+    },
+    {
+      "asks": 0,
+      "barDisagreements": 0,
+      "byField": {},
+      "calls": 532,
+      "callsOutsideRoots": 99,
+      "callsWithSecret": 98,
+      "compared": 532,
+      "described": 335,
+      "disagreements": 0,
+      "groups": [],
+      "kind": "vectors",
+      "label": "vectors",
+      "notDescribed": 197,
+      "resolverUse": {
+        "cwd": 242,
+        "missing": 1,
+        "outside": 103,
+        "outsideRoots": 105,
+        "repo": 29,
+        "rule": 54,
+        "secret": 118,
+        "secretResources": 118,
+        "shared": 67
+      },
+      "seconds": 0.143,
+      "twoArgsOnePath": 32,
+      "whyOnDescribedCalls": 0,
+      "withTargets": 319
+    },
+    {
+      "asks": 4,
+      "barDisagreements": 0,
+      "byField": {
+        "why": 155
+      },
+      "calls": 34000,
+      "callsOutsideRoots": 6003,
+      "callsWithSecret": 4812,
+      "compared": 33996,
+      "described": 12274,
+      "disagreements": 155,
+      "groups": [
+        {
+          "bar": false,
+          "byProgram": {
+            "cat": 6,
+            "cp": 10,
+            "gh": 2,
+            "git": 2,
+            "head": 2,
+            "jq": 5,
+            "ls": 15,
+            "mv": 3,
+            "rg": 3,
+            "rm": 12,
+            "rmdir": 6,
+            "sed": 4,
+            "tail": 4,
+            "unlink": 1,
+            "wc": 5
+          },
+          "cause": "why / astral",
+          "count": 80,
+          "examples": [
+            {
+              "argv": [
+                "cat",
+                "-vet\ud83d\ude42"
+              ],
+              "envSet": [],
+              "program": "cat",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "flag -\ud83d (in -vet\ud83d\ude42) is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "flag -\ud83d\ude42 (in -vet\ud83d\ude42) is not in the manifest"
+                  ]
+                }
+              }
+            },
+            {
+              "argv": [
+                "cat",
+                "-n\ud83d\ude42"
+              ],
+              "envSet": [],
+              "program": "cat",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "flag -\ud83d (in -n\ud83d\ude42) is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "flag -\ud83d\ude42 (in -n\ud83d\ude42) is not in the manifest"
+                  ]
+                }
+              }
+            },
+            {
+              "argv": [
+                "cat",
+                "-\ud83d\ude42"
+              ],
+              "envSet": [],
+              "program": "cat",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "flag -\ud83d (in -\ud83d\ude42) is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "flag -\ud83d\ude42 is not in the manifest"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "bar": false,
+          "byProgram": {
+            "find": 20,
+            "gh": 29,
+            "git": 19,
+            "sed": 1
+          },
+          "cause": "why / non-ascii",
+          "count": 69,
+          "examples": [
+            {
+              "argv": [
+                "find",
+                "-printf\u0301"
+              ],
+              "envSet": [],
+              "program": "find",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"-printf\u0301\" is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"-printf\\u{301}\" is not in the manifest"
+                  ]
+                }
+              }
+            },
+            {
+              "argv": [
+                "find",
+                "-not\u0301"
+              ],
+              "envSet": [],
+              "program": "find",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"-not\u0301\" is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"-not\\u{301}\" is not in the manifest"
+                  ]
+                }
+              }
+            },
+            {
+              "argv": [
+                "find",
+                "-H\u0301"
+              ],
+              "envSet": [],
+              "program": "find",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"-H\u0301\" is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"-H\\u{301}\" is not in the manifest"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "bar": false,
+          "byProgram": {
+            "gh": 4,
+            "git": 2
+          },
+          "cause": "why / control-char",
+          "count": 6,
+          "examples": [
+            {
+              "argv": [
+                "gh",
+                "\u0000"
+              ],
+              "envSet": [],
+              "program": "gh",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "the program's version was not reported",
+                    "gh has no subcommand \"\\u0000\" in its manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "the program's version was not reported",
+                    "gh has no subcommand \"\\0\" in its manifest"
+                  ]
+                }
+              }
+            },
+            {
+              "argv": [
+                "git",
+                "\u0000"
+              ],
+              "envSet": [],
+              "program": "git",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "the program's version was not reported",
+                    "git has no subcommand \"\\u0000\" in its manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "the program's version was not reported",
+                    "git has no subcommand \"\\0\" in its manifest"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "kind": "seed",
+      "label": "seed 1",
+      "notDescribed": 21722,
+      "resolverUse": {
+        "cwd": 1308,
+        "missing": 240,
+        "outside": 6186,
+        "outsideRoots": 6380,
+        "repo": 124,
+        "rule": 4148,
+        "secret": 5257,
+        "secretResources": 5257,
+        "shared": 3776
+      },
+      "seconds": 2.72,
+      "seed": 1,
+      "twoArgsOnePath": 1789,
+      "whyOnDescribedCalls": 0,
+      "withTargets": 10893
+    },
+    {
+      "asks": 7,
+      "barDisagreements": 0,
+      "byField": {
+        "why": 141
+      },
+      "calls": 34000,
+      "callsOutsideRoots": 5830,
+      "callsWithSecret": 4868,
+      "compared": 33993,
+      "described": 12231,
+      "disagreements": 141,
+      "groups": [
+        {
+          "bar": false,
+          "byProgram": {
+            "awk": 1,
+            "cat": 4,
+            "cp": 4,
+            "find": 1,
+            "gh": 3,
+            "git": 4,
+            "jq": 4,
+            "ls": 3,
+            "mv": 3,
+            "rg": 6,
+            "rm": 8,
+            "rmdir": 3,
+            "sed": 5,
+            "tail": 5,
+            "unlink": 2,
+            "wc": 12
+          },
+          "cause": "why / astral",
+          "count": 68,
+          "examples": [
+            {
+              "argv": [
+                "awk",
+                "-\ud83d\ude42"
+              ],
+              "envSet": [],
+              "program": "awk",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "flag -\ud83d (in -\ud83d\ude42) is not in the manifest",
+                    "awk was given no program"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "flag -\ud83d\ude42 is not in the manifest",
+                    "awk was given no program"
+                  ]
+                }
+              }
+            },
+            {
+              "argv": [
+                "cat",
+                "-bs\ud83d\ude42"
+              ],
+              "envSet": [],
+              "program": "cat",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "flag -\ud83d (in -bs\ud83d\ude42) is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "flag -\ud83d\ude42 (in -bs\ud83d\ude42) is not in the manifest"
+                  ]
+                }
+              }
+            },
+            {
+              "argv": [
+                "cat",
+                "-\ud83d\ude42"
+              ],
+              "envSet": [],
+              "program": "cat",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "flag -\ud83d (in -\ud83d\ude42) is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "flag -\ud83d\ude42 is not in the manifest"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "bar": false,
+          "byProgram": {
+            "find": 22,
+            "gh": 26,
+            "git": 15
+          },
+          "cause": "why / non-ascii",
+          "count": 63,
+          "examples": [
+            {
+              "argv": [
+                "find",
+                "-\u0301"
+              ],
+              "envSet": [],
+              "program": "find",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"-\u0301\" is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"-\\u{301}\" is not in the manifest"
+                  ]
+                }
+              }
+            },
+            {
+              "argv": [
+                "find",
+                "-name\u0301"
+              ],
+              "envSet": [],
+              "program": "find",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"-name\u0301\" is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"-name\\u{301}\" is not in the manifest"
+                  ]
+                }
+              }
+            },
+            {
+              "argv": [
+                "find",
+                "-ls",
+                "\u0301"
+              ],
+              "envSet": [],
+              "program": "find",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"\u0301\" is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"\\u{301}\" is not in the manifest"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "bar": false,
+          "byProgram": {
+            "find": 1,
+            "gh": 5,
+            "git": 4
+          },
+          "cause": "why / control-char",
+          "count": 10,
+          "examples": [
+            {
+              "argv": [
+                "find",
+                "-mtime",
+                "-",
+                "-size",
+                "+",
+                "\u0000"
+              ],
+              "envSet": [],
+              "program": "find",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"\\u0000\" is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"\\0\" is not in the manifest"
+                  ]
+                }
+              }
+            },
+            {
+              "argv": [
+                "gh",
+                "\u0000"
+              ],
+              "envSet": [],
+              "program": "gh",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "the program's version was not reported",
+                    "gh has no subcommand \"\\u0000\" in its manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "the program's version was not reported",
+                    "gh has no subcommand \"\\0\" in its manifest"
+                  ]
+                }
+              }
+            },
+            {
+              "argv": [
+                "git",
+                "\u0000"
+              ],
+              "envSet": [],
+              "program": "git",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "the program's version was not reported",
+                    "git has no subcommand \"\\u0000\" in its manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "the program's version was not reported",
+                    "git has no subcommand \"\\0\" in its manifest"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "kind": "seed",
+      "label": "seed 2",
+      "notDescribed": 21762,
+      "resolverUse": {
+        "cwd": 1310,
+        "missing": 264,
+        "outside": 6003,
+        "outsideRoots": 6150,
+        "repo": 109,
+        "rule": 4079,
+        "secret": 5326,
+        "secretResources": 5326,
+        "shared": 3823
+      },
+      "seconds": 2.466,
+      "seed": 2,
+      "twoArgsOnePath": 1816,
+      "whyOnDescribedCalls": 0,
+      "withTargets": 10808
+    },
+    {
+      "asks": 7,
+      "barDisagreements": 0,
+      "byField": {
+        "why": 145
+      },
+      "calls": 34000,
+      "callsOutsideRoots": 5900,
+      "callsWithSecret": 4880,
+      "compared": 33993,
+      "described": 12344,
+      "disagreements": 145,
+      "groups": [
+        {
+          "bar": false,
+          "byProgram": {
+            "cat": 6,
+            "cp": 9,
+            "gh": 1,
+            "head": 2,
+            "jq": 8,
+            "ls": 9,
+            "mv": 9,
+            "rg": 2,
+            "rm": 13,
+            "rmdir": 2,
+            "sed": 1,
+            "tail": 4,
+            "unlink": 2,
+            "wc": 6
+          },
+          "cause": "why / astral",
+          "count": 74,
+          "examples": [
+            {
+              "argv": [
+                "cat",
+                "-\ud83d\ude42"
+              ],
+              "envSet": [],
+              "program": "cat",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "flag -\ud83d (in -\ud83d\ude42) is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "flag -\ud83d\ude42 is not in the manifest"
+                  ]
+                }
+              }
+            },
+            {
+              "argv": [
+                "cat",
+                "-n\ud83d\ude42"
+              ],
+              "envSet": [],
+              "program": "cat",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "flag -\ud83d (in -n\ud83d\ude42) is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "flag -\ud83d\ude42 (in -n\ud83d\ude42) is not in the manifest"
+                  ]
+                }
+              }
+            },
+            {
+              "argv": [
+                "cat",
+                "-vet\ud83d\ude42"
+              ],
+              "envSet": [],
+              "program": "cat",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "flag -\ud83d (in -vet\ud83d\ude42) is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "flag -\ud83d\ude42 (in -vet\ud83d\ude42) is not in the manifest"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "bar": false,
+          "byProgram": {
+            "find": 12,
+            "gh": 26,
+            "git": 23
+          },
+          "cause": "why / non-ascii",
+          "count": 61,
+          "examples": [
+            {
+              "argv": [
+                "find",
+                "-fprint\u0301"
+              ],
+              "envSet": [],
+              "program": "find",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"-fprint\u0301\" is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"-fprint\\u{301}\" is not in the manifest"
+                  ]
+                }
+              }
+            },
+            {
+              "argv": [
+                "find",
+                "-samefile",
+                "r",
+                "\u0301"
+              ],
+              "envSet": [],
+              "program": "find",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"\u0301\" is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"\\u{301}\" is not in the manifest"
+                  ]
+                }
+              }
+            },
+            {
+              "argv": [
+                "find",
+                "-type\u0301"
+              ],
+              "envSet": [],
+              "program": "find",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"-type\u0301\" is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"-type\\u{301}\" is not in the manifest"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "bar": false,
+          "byProgram": {
+            "find": 3,
+            "gh": 2,
+            "git": 5
+          },
+          "cause": "why / control-char",
+          "count": 10,
+          "examples": [
+            {
+              "argv": [
+                "find",
+                "-path",
+                ".",
+                "\u0000"
+              ],
+              "envSet": [],
+              "program": "find",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"\\u0000\" is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"\\0\" is not in the manifest"
+                  ]
+                }
+              }
+            },
+            {
+              "argv": [
+                "find",
+                "-name",
+                "*",
+                "\u0000"
+              ],
+              "envSet": [],
+              "program": "find",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"\\u0000\" is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"\\0\" is not in the manifest"
+                  ]
+                }
+              }
+            },
+            {
+              "argv": [
+                "find",
+                "-name",
+                "b",
+                "\u0000"
+              ],
+              "envSet": [],
+              "program": "find",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"\\u0000\" is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"\\0\" is not in the manifest"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "kind": "seed",
+      "label": "seed 3",
+      "notDescribed": 21649,
+      "resolverUse": {
+        "cwd": 1407,
+        "missing": 237,
+        "outside": 6058,
+        "outsideRoots": 6194,
+        "repo": 137,
+        "rule": 4054,
+        "secret": 5284,
+        "secretResources": 5284,
+        "shared": 3982
+      },
+      "seconds": 2.524,
+      "seed": 3,
+      "twoArgsOnePath": 1782,
+      "whyOnDescribedCalls": 0,
+      "withTargets": 10966
+    },
+    {
+      "asks": 7,
+      "barDisagreements": 0,
+      "byField": {
+        "why": 146
+      },
+      "calls": 34000,
+      "callsOutsideRoots": 5922,
+      "callsWithSecret": 4782,
+      "compared": 33993,
+      "described": 12126,
+      "disagreements": 146,
+      "groups": [
+        {
+          "bar": false,
+          "byProgram": {
+            "cat": 6,
+            "cp": 3,
+            "gh": 5,
+            "git": 2,
+            "head": 1,
+            "jq": 4,
+            "ls": 13,
+            "mv": 3,
+            "rg": 8,
+            "rm": 16,
+            "rmdir": 5,
+            "sed": 1,
+            "tail": 5,
+            "unlink": 2,
+            "wc": 5
+          },
+          "cause": "why / astral",
+          "count": 79,
+          "examples": [
+            {
+              "argv": [
+                "cat",
+                "-n\ud83d\ude42"
+              ],
+              "envSet": [],
+              "program": "cat",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "flag -\ud83d (in -n\ud83d\ude42) is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "flag -\ud83d\ude42 (in -n\ud83d\ude42) is not in the manifest"
+                  ]
+                }
+              }
+            },
+            {
+              "argv": [
+                "cat",
+                "-vet\ud83d\ude42"
+              ],
+              "envSet": [],
+              "program": "cat",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "flag -\ud83d (in -vet\ud83d\ude42) is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "flag -\ud83d\ude42 (in -vet\ud83d\ude42) is not in the manifest"
+                  ]
+                }
+              }
+            },
+            {
+              "argv": [
+                "cat",
+                "-bs\ud83d\ude42"
+              ],
+              "envSet": [],
+              "program": "cat",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "flag -\ud83d (in -bs\ud83d\ude42) is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "flag -\ud83d\ude42 (in -bs\ud83d\ude42) is not in the manifest"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "bar": false,
+          "byProgram": {
+            "find": 22,
+            "gh": 21,
+            "git": 12,
+            "sed": 2
+          },
+          "cause": "why / non-ascii",
+          "count": 57,
+          "examples": [
+            {
+              "argv": [
+                "find",
+                "-type\u0301"
+              ],
+              "envSet": [],
+              "program": "find",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"-type\u0301\" is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"-type\\u{301}\" is not in the manifest"
+                  ]
+                }
+              }
+            },
+            {
+              "argv": [
+                "find",
+                "-name\u0301"
+              ],
+              "envSet": [],
+              "program": "find",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"-name\u0301\" is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"-name\\u{301}\" is not in the manifest"
+                  ]
+                }
+              }
+            },
+            {
+              "argv": [
+                "find",
+                "-fprint\u0301"
+              ],
+              "envSet": [],
+              "program": "find",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"-fprint\u0301\" is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"-fprint\\u{301}\" is not in the manifest"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "bar": false,
+          "byProgram": {
+            "find": 3,
+            "gh": 3,
+            "git": 4
+          },
+          "cause": "why / control-char",
+          "count": 10,
+          "examples": [
+            {
+              "argv": [
+                "find",
+                "-path",
+                ".",
+                "\u0000"
+              ],
+              "envSet": [],
+              "program": "find",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"\\u0000\" is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"\\0\" is not in the manifest"
+                  ]
+                }
+              }
+            },
+            {
+              "argv": [
+                "find",
+                "-newer",
+                "r",
+                "\u0000"
+              ],
+              "envSet": [],
+              "program": "find",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"\\u0000\" is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"\\0\" is not in the manifest"
+                  ]
+                }
+              }
+            },
+            {
+              "argv": [
+                "find",
+                "-exec",
+                ";",
+                "\u0000"
+              ],
+              "envSet": [],
+              "program": "find",
+              "repro": {
+                "fields": [
+                  "why"
+                ],
+                "ts": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"\\u0000\" is not in the manifest"
+                  ]
+                },
+                "wasm": {
+                  "described": false,
+                  "effects": "unknown",
+                  "why": [
+                    "find expression \"\\0\" is not in the manifest"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "kind": "seed",
+      "label": "seed 7",
+      "notDescribed": 21867,
+      "resolverUse": {
+        "cwd": 1288,
+        "missing": 244,
+        "outside": 6100,
+        "outsideRoots": 6266,
+        "repo": 118,
+        "rule": 4043,
+        "secret": 5219,
+        "secretResources": 5219,
+        "shared": 3775
+      },
+      "seconds": 2.298,
+      "seed": 7,
+      "twoArgsOnePath": 1817,
+      "whyOnDescribedCalls": 0,
+      "withTargets": 10786
+    }
+  ],
+  "source": {
+    "harness": "notebooks/shell/one-describer/fuzz-resolved.mjs",
+    "out": "notebooks/shell/one-describer/out/fuzz-resolved-*.json"
+  }
+}
