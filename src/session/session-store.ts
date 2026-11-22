@@ -52,7 +52,28 @@ export type SessionHistory =
      * reconstructed from the transcript. `sub` is the session's cumulative sub-call spend, so a resumed turn
      * keeps reporting the session total rather than restarting the tally.
      */
-    | { kind: "agent"; messages: NeutralMessage[]; payload?: StartRunPayload; sub?: SubcallUsage };
+    | { kind: "agent"; messages: NeutralMessage[]; payload?: StartRunPayload; sub?: SubcallUsage; nsDropped?: NsDropped };
+
+/**
+ * The record that a run's Python namespace was dropped: when, why, and which names it held. Kept in `runmeta` beside
+ * the payload (docs/spec/ASYNC_CALLS.md, rulings of 2026-11-22, ruling 2), so the move-run lane can say "namespace
+ * reset at <time>: <reason>". `names` is at most {@link NS_DROPPED_NAMES_MAX} and an absent one means unknown; `total`
+ * is the full count of names. Only the latest drop is kept.
+ */
+export interface NsDropped { at: number; reason: string; names?: string[]; total?: number }
+
+/** The most names a {@link NsDropped} record carries: the rest are counted in `total`, not listed. */
+export const NS_DROPPED_NAMES_MAX = 50;
+
+/**
+ * The `runmeta` record to write over `old`, carrying `old`'s {@link NsDropped} forward when `next` is an agent record
+ * without one: every history write builds a fresh record from the payload and `sub`, and would erase it. Shared by
+ * every backend's `append`, so the carry happens in the same transaction as the rewrite.
+ */
+export function carryNsDropped(old: RunMeta | null | undefined, next: RunMeta): RunMeta {
+    if (next.kind !== "agent" || next.nsDropped || old?.kind !== "agent" || !old.nsDropped) return next;
+    return { ...next, nsDropped: old.nsDropped };
+}
 
 /**
  * Everything a {@link SessionHistory} is besides its messages: the record in `runmeta`. Written when it changes (a new
@@ -60,7 +81,7 @@ export type SessionHistory =
  */
 export type RunMeta =
     | { kind: "chat"; session: Omit<StoredSession, "messages"> }
-    | { kind: "agent"; payload?: StartRunPayload; sub?: SubcallUsage };
+    | { kind: "agent"; payload?: StartRunPayload; sub?: SubcallUsage; nsDropped?: NsDropped };
 
 /** What one write does to a session's history: positions put, the positions from `cut` on deleted, and the
  *  `runmeta` record when it changed. Part of the same transaction as the session's events and row. */
@@ -185,6 +206,12 @@ export interface SessionStoreBackend {
     /** the `history` positions `[from, to)` of one session, in order */
     historyRange(hash: string, from: number, to: number): Promise<NeutralMessage[]>;
     runMeta(hash: string): Promise<RunMeta | null>;
+    /**
+     * Put `record` in `hash`'s `runmeta`, replacing an earlier one, in ONE transaction with the read of what is there
+     * (creating an agent record when there is none; a chat record is left alone). `append` carries it forward
+     * ({@link carryNsDropped}).
+     */
+    noteNsDropped(hash: string, record: NsDropped): Promise<void>;
     /** a session's row, events, history and `runmeta`, all of it */
     remove(hashes: string[]): Promise<void>;
 }
@@ -222,12 +249,12 @@ function splitHistory(h: SessionHistory): { messages: NeutralMessage[]; meta: Ru
         const { messages, ...rest } = h.session;
         return { messages: messages ?? [], meta: { kind: "chat", session: rest } };
     }
-    return { messages: h.messages, meta: { kind: "agent", ...(h.payload ? { payload: h.payload } : {}), ...(h.sub ? { sub: h.sub } : {}) } };
+    return { messages: h.messages, meta: { kind: "agent", ...(h.payload ? { payload: h.payload } : {}), ...(h.sub ? { sub: h.sub } : {}), ...(h.nsDropped ? { nsDropped: h.nsDropped } : {}) } };
 }
 
 /** The history a resume reads, put back together from its `runmeta` and its positions. */
 function joinHistory(meta: RunMeta, messages: NeutralMessage[]): SessionHistory {
-    return meta.kind === "chat" ? { kind: "chat", session: { ...meta.session, messages } as StoredSession } : { kind: "agent", messages, ...(meta.payload ? { payload: meta.payload } : {}), ...(meta.sub ? { sub: meta.sub } : {}) };
+    return meta.kind === "chat" ? { kind: "chat", session: { ...meta.session, messages } as StoredSession } : { kind: "agent", messages, ...(meta.payload ? { payload: meta.payload } : {}), ...(meta.sub ? { sub: meta.sub } : {}), ...(meta.nsDropped ? { nsDropped: meta.nsDropped } : {}) };
 }
 
 /** What the writer last wrote for a live session: the message objects (references; the loop already holds them),
@@ -646,27 +673,48 @@ export class SessionStore {
         for (const row of [...this.rows.values()]) {
             if (!row.history || row.form) continue;
             const ok = await new Promise<boolean>((resolve) => {
-                this.flushing = this.flushing.then(async () => {
-                    if (this.rows.get(row.hash) !== row || !row.history) { resolve(false); return; }
-                    // A newer history queued meanwhile wins, and is written by the next flush.
-                    const plan = this.planHistory(row.hash, this.queuedHistory.get(row.hash) ?? row.history);
-                    const { history: _old, ...stored } = row;
-                    const next: StoredSessionRow = { ...stored, form: 2, historyCount: plan.next.refs.length, historyBytes: plan.next.lens.reduce((a, n) => a + n, 0) };
-                    try {
-                        await this.backend.append(next, row.count, [], plan.write);
-                        delete row.history;
-                        Object.assign(row, { form: 2, historyCount: next.historyCount, historyBytes: next.historyBytes });
-                        this.opts.onMigrated?.({ hash: row.hash, positions: next.historyCount ?? 0, bytes: next.historyBytes ?? 0 });
-                        resolve(true);
-                    } catch (err) {
-                        this.opts.onMigrated?.({ hash: row.hash, positions: 0, bytes: 0, error: String((err as Error)?.message || err).slice(0, 200) });
-                        resolve(false);
-                    }
-                }).catch((err) => { this.opts.onError?.(err); resolve(false); });
+                this.flushing = this.flushing.then(async () => { resolve(await this.migrateRow(row)); }).catch((err) => { this.opts.onError?.(err); resolve(false); });
             });
             if (ok) moved++;
         }
         return moved;
+    }
+
+    /** Move one row's history to the version-2 records, in one transaction. Runs INSIDE the write lock. */
+    private async migrateRow(row: StoredSessionRow): Promise<boolean> {
+        if (this.rows.get(row.hash) !== row || !row.history || row.form) return false;
+        // A newer history queued meanwhile wins, and is written by the next flush.
+        const plan = this.planHistory(row.hash, this.queuedHistory.get(row.hash) ?? row.history);
+        const { history: _old, ...stored } = row;
+        const next: StoredSessionRow = { ...stored, form: 2, historyCount: plan.next.refs.length, historyBytes: plan.next.lens.reduce((a, n) => a + n, 0) };
+        try {
+            await this.backend.append(next, row.count, [], plan.write);
+            delete row.history;
+            Object.assign(row, { form: 2, historyCount: next.historyCount, historyBytes: next.historyBytes });
+            this.opts.onMigrated?.({ hash: row.hash, positions: next.historyCount ?? 0, bytes: next.historyBytes ?? 0 });
+            return true;
+        } catch (err) {
+            this.opts.onMigrated?.({ hash: row.hash, positions: 0, bytes: 0, error: String((err as Error)?.message || err).slice(0, 200) });
+            return false;
+        }
+    }
+
+    /**
+     * Record that a session's Python namespace was dropped, in its `runmeta`: the latest record replaces any earlier
+     * one. A row not yet in form 2 is migrated first, so the record is never written beside a history still on the row;
+     * a session this store does not hold is ignored, and no row is created for it. Serialized on the write lock, so it
+     * cannot interleave with a history write, which carries the record forward.
+     */
+    async noteNsDropped(hash: string, record: NsDropped): Promise<void> {
+        await this.open();
+        const rec: NsDropped = { ...record, ...(record.names ? { names: record.names.slice(0, NS_DROPPED_NAMES_MAX) } : {}) };
+        this.flushing = this.flushing.then(async () => {
+            const row = this.rows.get(hash);
+            if (!row) return;
+            if (row.history && !row.form && !(await this.migrateRow(row))) return;
+            await this.backend.noteNsDropped(hash, rec);
+        }).catch((err) => this.opts.onError?.(err));
+        await this.flushing;
     }
 
     /**
@@ -793,7 +841,12 @@ export function indexedDbBackend(factory: IDBFactory = indexedDB): SessionStoreB
                     const h = tx.objectStore(HISTORY);
                     if (history.cut != null) h.delete(IDBKeyRange.bound([row.hash, history.cut], [row.hash, Number.MAX_SAFE_INTEGER]));
                     for (const [pos, m] of history.puts) h.put(m, [row.hash, pos]);
-                    if (history.meta) tx.objectStore(RUNMETA).put(history.meta, row.hash);
+                    if (history.meta) {
+                        // Read what is stored in this same transaction, so a record another path wrote is not erased.
+                        const meta = history.meta, runmeta = tx.objectStore(RUNMETA);
+                        const get = runmeta.get(row.hash);
+                        get.onsuccess = () => { try { runmeta.put(carryNsDropped(get.result as RunMeta | undefined, meta), row.hash); } catch { tx.abort(); } };
+                    }
                 }
             } catch (err) {
                 try { tx.abort(); } catch { /* already finished */ }
@@ -811,6 +864,19 @@ export function indexedDbBackend(factory: IDBFactory = indexedDB): SessionStoreB
         async runMeta(hash) {
             const d = await open();
             return (await done(d.transaction(RUNMETA, "readonly").objectStore(RUNMETA).get(hash) as IDBRequest<RunMeta | undefined>)) ?? null;
+        },
+        async noteNsDropped(hash, record) {
+            const d = await open();
+            const tx = d.transaction(RUNMETA, "readwrite");
+            const finished = committed(tx);
+            const store = tx.objectStore(RUNMETA);
+            const get = store.get(hash);
+            get.onsuccess = () => {
+                const old = get.result as RunMeta | undefined;
+                if (old?.kind === "chat") return;
+                store.put({ ...(old ?? { kind: "agent" }), nsDropped: record }, hash);
+            };
+            await finished;
         },
         async events(hash) {
             const d = await open();
