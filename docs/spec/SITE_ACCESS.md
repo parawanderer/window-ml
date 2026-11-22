@@ -1,9 +1,9 @@
 # Spec: sites get `window.ml` only when someone said yes
 
-**Status: building.** Hostile-site suite first (#373, every attack shown working against the old build); slice 0 (#374)
+**Status: built through slice 3.** Hostile-site suite first (#373, every attack shown working against the old build); slice 0 (#374)
 and slice 1 (#378, origin gate, lists, settings) merged; slice 2 merged in parts (attacks 15 and 16 #392, parts 1b to 4b
-#410 to #583, part 5 #606 and #611; see "Where the build differs from this spec"); slice 3 in progress (its PR 1, the levels in storage and the self-approval list by origin, is
-built), slice 4 not started (slice 3's two levels decided in #578; its implementation reference, decided 2026-10-13, is
+#410 to #583, part 5 #606 and #611; see "Where the build differs from this spec"); slice 3 merged (PR 1 #640, PR 1b #632, PR 2 #647, PR 3 #1127, PR 4 #1132, PR 4b #1189),
+slice 4 replaced by [SITE_PRESENCE.md](SITE_PRESENCE.md) (slice 3's two levels decided in #578; its implementation reference, decided 2026-10-13, is
 [SITE_ACCESS_SLICE3.md](SITE_ACCESS_SLICE3.md)). Written 2026-10-06. Supersedes the idea recorded on 2026-07-29 (a consent prompt only when
 the extension holds "on all sites"): this gates every site, whatever the browser's site-access setting is.
 

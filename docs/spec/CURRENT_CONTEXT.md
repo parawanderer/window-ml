@@ -5,7 +5,8 @@
 a WORKER realm (`readonly-exec.ts`) and the worker-side evaluator (`sw-readonly.ts`) exist and are tested
 (`tests/readonly-current.test.mjs`). The host calls that evaluator first in `sw-run-host.ts`'s `tryReadonly` since the
 site-access work's slice 2 part 1b (#410); the system prompt names it behind `selfIntrospection` (#435); the contract
-type is `MlApi.current` (`contract.ts`); `ml.current.runtime` landed in #616. Where the build departed from the first
+type is `MlApi.current` (`contract.ts`); `ml.current.runtime` landed in #616, `ml.current.env` in #508 and `ml.current.client` in #624, and `policies` and
+`tasks` ([`ASYNC_CALLS.md`](ASYNC_CALLS.md)) are members too (`current-context.ts`). Where the build departed from the first
 draft of this document, the section says so and why.
 
 This is the first step of [`AGENT_COMPACTION.md`](AGENT_COMPACTION.md) — the model deciding what in its own history

@@ -782,24 +782,32 @@ disposes it when the worker dies, which aborts every write still open.
   it closed. A refused write (ENOSPC) fails its writer: later writes raise the same errno and the close aborts, so no
   file lands with part of what was written. A per-cell commit stays possible (the txn shape covers it) and is not built.
 - **Refusals are the reader's.** Where a run may write is the reader's to say, and the mount passes its errno through
-  unchanged: EROFS at the root and in `attached/`, free under `agent/` (ruling 86). The modes carry write bits on
-  purpose: Emscripten checks them before calling the mount and would say EACCES where the answer is EROFS. A symlink and
-  a hard link are EPERM (this core's `os` has no `link`; the node op refuses anyway). A refused first `open` drops the
-  directory's listing, so the next lookup asks the reader, which has no such file: no phantom is left in the mount.
+  unchanged: EROFS at the root and in `attached/`, free under `agent/` (ruling 86) once the reader's write side lands.
+  Until then the reader answers EROFS to every write, `agent/` included (`src/session/ranged-reader.ts`). The modes
+  carry write bits on purpose: Emscripten checks them before calling the mount and would say EACCES where the answer is
+  EROFS. A symlink and a hard link are EPERM (this core's `os` has no `link`; the node op refuses anyway). A refused
+  first `open` drops the directory's listing, so the next lookup asks the reader, which has no such file: no phantom is
+  left in the mount.
 - **The working directory is `/files/agent`**, the reader's `home`, posted with the channel's memory and entered at
   every mount, so a relative `open()` lands where the run writes; `../attached/` reads, and never writes.
-- **A hidden file is refused in the reader's words**, since the model acts on the text and an errno carries none. The
-  mount keeps this cell's EACCES messages by path; `open`, `io.open` and `os.open`, wrapped at boot
-  (`FILES_OPEN_WORDS`), set the `PermissionError`'s `strerror` from them, and a failed cell's error is rewritten from
-  them too (`inWords`) for a refusal no `open` saw. The wrappers are switched in only for a cell outside the dialect,
-  the originals back for one inside. Not `sys.monitoring`: the cancel's spend owns it and refuses a cell that leaves a
-  tool registered (lockdown.ts).
+- **A hidden file is refused in the reader's words**, since the model acts on the text and an errno carries none (the
+  reader's hide rule is a hook nothing sets yet: the offscreen document builds its `RangedReader` with none, so nothing
+  is hidden until POLICIES.md's "Hiding files" is built). The mount keeps this cell's EACCES messages by path; `open`,
+  `io.open` and `os.open`, wrapped at boot (`FILES_OPEN_WORDS`), set the `PermissionError`'s `strerror` from them, and a
+  failed cell's error is rewritten from them too (`inWords`) for a refusal no `open` saw. The wrappers are switched in
+  only for a cell outside the dialect, the originals back for one inside. Not `sys.monitoring`: the cancel's spend owns
+  it and refuses a cell that leaves a tool registered (lockdown.ts).
 - **A Stop never waits on the reader.** Requests are served one at a time, but when the worker abandons the one in
   flight, the queue moves past it at once with a fresh scratch buffer, so a read that never returns holds nothing after
   the first Stop; its late answer is dropped and what it opened is released.
-- **Not on until the reader exists.** `setFilesReader` (files-host.ts) is called by the reader's owner; until then no
-  worker gets a channel and Python sees no `/files`. Tests run the real worker against an in-memory reader on a second
-  thread (`tests/files-mount-py.test.mjs`, `tests/fixtures/files-channel-fake.mjs`).
+- **Switched on by the reader.** `setFilesReader` (files-host.ts) is called by the offscreen document over its one
+  `RangedReader` (#2058); without that call no worker gets a channel and Python sees no `/files`. Tests run the real
+  worker against an in-memory reader on a second thread (`tests/files-mount-py.test.mjs`,
+  `tests/fixtures/files-channel-fake.mjs`).
+- **What the model is told.** `python_exec`'s description, for a worker-hosted run only (the one with `_mintToken`),
+  says the person's attached files are under `/files/attached/` (found with `os.listdir`) and that `/files` is
+  read-only; a page-hosted run's still says it has no filesystem. It promises no write until the reader's write side
+  lands (`tests/worker-media.test.mjs`).
 
 ## `input()` and `getpass()` (proposed, not built)
 

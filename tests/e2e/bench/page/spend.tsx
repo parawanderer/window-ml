@@ -6,7 +6,7 @@
 import type { EnergyForecast, EnergyForecastTally, EnergyTally, ForecastTally, SpendForecast, SpendTally, SweepEnergy, SweepSpend } from "./state";
 import { fmtMoney } from "./format";
 import { IconWarn } from "../../../../src/sidebar/icons";
-import { BASIS_WORDS } from "../electricity.mjs";
+import { BASIS_WORDS } from "../../../../src/spend/energy";
 import { estimateLine } from "../estimate-line.mjs";
 
 /** What one tally covers, said in full: the tip of every spend figure. */

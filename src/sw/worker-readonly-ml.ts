@@ -65,10 +65,10 @@ function columnsFor(runId: string, read: DerefRead): StoredColumnReader | undefi
     const key = read.meta?.table ? read.meta.value : undefined;
     const table = read.meta?.table;
     if (!key || !table) return undefined;
-    return async (names) => {
+    return async (names, plan) => {
         const holders = await valueHolders(key);
         if (holders && !holders.includes(runId)) throw new Error("That stored table is not held by this run.");
-        return await readStoredColumns(key, names, { ...(table.delimiter ? { delimiter: table.delimiter } : {}), ...(table.headerless ? { headerless: true } : {}) }) as Awaited<ReturnType<StoredColumnReader>>;
+        return await readStoredColumns(key, names, { ...(table.delimiter ? { delimiter: table.delimiter } : {}), ...(table.headerless ? { headerless: true } : {}) }, plan) as Awaited<ReturnType<StoredColumnReader>>;
     };
 }
 

@@ -226,7 +226,10 @@ export function setGroupFold(key: string, folded: boolean): void {
 
 /** Where a run was last sent on a runtime, as picked in the start page's "Where it runs": an open tab, by its id and
  *  the address it showed then, or a new tab. */
-export type RememberedTarget = { tabId: number; url: string } | { blank: true };
+export type RememberedTarget = ({ tabId: number; url: string } | { blank: true }) & {
+    /** when it was picked (ms since the epoch); absent on a pick stored before this was kept, which counts as older than any visit */
+    pickedAt?: number;
+};
 
 /** The last target PICKED on each runtime (by runtime id), so a reloaded start page offers it again while that tab is
  *  still open. Only a pick someone made is kept: the start page's own first guess (the tab in front) never is. */
@@ -234,7 +237,7 @@ export const lastTargets = signal<Record<string, RememberedTarget>>({});
 
 /** Remember the target just picked on `runtime`. */
 export function rememberTarget(runtime: string, t: RememberedTarget): void {
-    lastTargets.value = { ...lastTargets.value, [runtime]: t };
+    lastTargets.value = { ...lastTargets.value, [runtime]: { ...t, pickedAt: Date.now() } };
     store?.set(TARGET_KEY, lastTargets.value);
 }
 
@@ -243,9 +246,10 @@ export function targetsFrom(v: unknown): Record<string, RememberedTarget> {
     if (!v || typeof v !== "object" || Array.isArray(v)) return {};
     const out: Record<string, RememberedTarget> = {};
     for (const [rt, t] of Object.entries(v as Record<string, unknown>)) {
-        const o = t as { tabId?: unknown; url?: unknown; blank?: unknown } | null;
-        if (o && o.blank === true) out[rt] = { blank: true };
-        else if (o && typeof o.tabId === "number" && typeof o.url === "string") out[rt] = { tabId: o.tabId, url: o.url };
+        const o = t as { tabId?: unknown; url?: unknown; blank?: unknown; pickedAt?: unknown } | null;
+        const at = o && typeof o.pickedAt === "number" && o.pickedAt > 0 ? { pickedAt: o.pickedAt } : {};
+        if (o && o.blank === true) out[rt] = { blank: true, ...at };
+        else if (o && typeof o.tabId === "number" && typeof o.url === "string") out[rt] = { tabId: o.tabId, url: o.url, ...at };
     }
     return out;
 }
