@@ -905,17 +905,9 @@ html[data-calm]:not([data-theme="light"]), html[data-calm]:not([data-theme="ligh
     @media (prefers-reduced-motion: reduce) { .chat.calm .r-df > .r-df-bar { transition: none; } }
 }
 
-/* A CITATION'S TOOLTIP BELONGS TO ITS CAPTION. An embed is something you READ — a table, a plot — and a tip that
-   fires anywhere over it is an explanation of the frame appearing on top of the contents. The caption is the
-   frame's own text, so that is what carries the explanation; the block itself stays clickable. */
-.chat.calm .tok-block:hover > .tok-tip { opacity: 0; }
+/* A CITATION'S TOOLTIP BELONGS TO ITS CAPTION (`tt` is on `.tok-anno`, not on the block: an embed is something you
+   READ, and a tip that fires anywhere over a table explains the frame on top of its contents). */
 .chat.calm .tok-anno { cursor: help; }
-.chat.calm .tok-anno:hover ~ .tok-tip, .chat.calm .tok-anno:focus-visible ~ .tok-tip { opacity: 1; }
-/* …and it appears AT the caption, not at the top of the embed. The tip is anchored rather than cursor-following
-   (the shared component draws it, and the panel's own tests pin that), so the least confusing thing it can do is
-   sit against the one element that raises it — a tip that opens half a screen from the pointer reads as belonging
-   to something else. */
-.chat.calm .tok-block > .tok-tip { bottom: auto; top: calc(100% + 4px); left: 8px; }
 /* The wash over the whole embed goes with the tip, for the same reason: it fires while you are reading a table, and
    the rail already says where the transclusion starts and stops. It moves to the caption, which is the part that is
    now behaving like a control — and it is `--cite`, like every other mark on a citation. It was the last `--ok` in
@@ -2031,6 +2023,12 @@ html[data-calm] .tt-layer { --notice: var(--accent); --notice-fg: var(--accent-f
    and an answer ends up looking annotated rather than written. The accent says the same thing in the page's own
    voice. Green stays outside calm. */
 .chat.calm { --cite: var(--accent); }
+/* …except the RAIL down an embedded output, which goes to the text's own colour: a quote's bar is a wider grey one
+   (`.md blockquote`), so a thinner, brighter line already says "this came from a tool" without adding a colour to the
+   page. Dimmer at rest and full under the pointer, the same step the accent rail took, since brightening is the only
+   way a rail says it is a control. */
+.chat.calm .fold-rail-cite::before { background: color-mix(in srgb, var(--fg) 55%, transparent); }
+.chat.calm .fold-rail-cite:hover::before { background: var(--fg); }
 /* …and the DOT beside such a row with it, or a session reads as two states at once: an amber dot against blue words
    saying the same thing. `pending` is a run working or a run waiting on you — activity, which is not a warning
    either. The dots that mean something WENT wrong (`err`, `warn`) keep their own colours. */

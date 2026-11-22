@@ -5101,6 +5101,23 @@ test("SECURITY (VALUE_COLUMNS): a stored table's columns are read only for a bac
     }
 });
 
+test("SECURITY (VALUE_COLUMNS plan): a view's limit is pushed down, and a plan outside its closed shape is refused", async () => {
+    const { IDBFactory } = await import("fake-indexeddb");
+    const { ValueStore } = await import("../src/pointers/value-store.ts");
+    const idb = new IDBFactory();
+    const mine = await new ValueStore({ idb, budgetBytes: () => 1e9 }).put(new Blob(["a,b\n1,x\n2,y\n3,z\n"]), { format: "csv", session: "page:9" });
+    const bg = loadBackground({ config: baseConfig(), indexedDB: idb, local: { ml_site_schema: 2, ml_site_selfapprove: ["https://shop.example"] } });
+    const page = { tab: { id: 9 }, url: "https://shop.example/report" };
+    const read = (extra) => bg.send({ type: "VALUE_COLUMNS", runId: "page-run", key: mine.key, names: ["a", "b"], ...extra }, page);
+    assert.deepEqual(await read({ limit: 2 }), { rowCount: 2, columns: { a: [1, 2], b: ["x", "y"] } }, "the head view's n rows, no more");
+    assert.deepEqual((await read({})).rowCount, 3);
+    for (const extra of [{ where: [["a", ">", 1]] }, { sort: "a" }, { limit: -1 }, { limit: "2" }, { limit: 1.5 }]) {
+        const r = await read(extra);
+        assert.match(r.error ?? "", /^Refused: a stored read/, JSON.stringify(extra));
+        assert.equal(r.columns, undefined);
+    }
+});
+
 test("SECURITY (page-hosted values): a tab reads a stored value the worker disclosed TO IT, and nothing else", async () => {
     const { IDBFactory } = await import("fake-indexeddb");
     const { ValueStore } = await import("../src/pointers/value-store.ts");

@@ -326,6 +326,31 @@ command because `session.send` would reach a page that no longer holds the sessi
   a `@tool:` pointer still resolves; live element references, the page's `state`, cached fetches, page-defined
   tools and approval grants dropped, and each named in `dropped`.
 
+#### Proposed: a detached target (TABLESS_RUN.md, not built)
+
+**Status: proposal (2026-11-22, the `[window-ml move-run]` lane); the shape read and accepted by the coordinator on
+#2094, and the Chat Page lane draws the start form's "No tab" and the page chip.**
+A run can have NO page ([`TABLESS_RUN.md`](TABLESS_RUN.md)): started with none, or left with none when its tab closed.
+It reaches the contract as one additive member of an open enumeration, so nothing here breaks:
+
+- **`AgentTarget` gains `{ kind: "detached" }`**, on `agent.start` ("No tab" in the start form) and on
+  `session.resume` (sending to a session whose tab is gone resumes it with no page). A runtime that does not know it
+  answers `unsupported`, as for any unknown `AgentTarget.kind` (the table above), so an older runtime refuses it
+  rather than guessing a tab.
+- **`capabilities.detached`** says the runtime offers it; absent means no, and a client offers neither "No tab" nor a
+  composer-led resume without it. It needs `agent` as well, and not `tabs`: a detached run uses no tab.
+- **A detached session's rows**: `SessionSummary.page` is absent for one that started with no page, and keeps its
+  last `url` and `title`, without `tabId`, for one whose tab closed. `background.noTab` (async's `TaskBackground`)
+  says the run is still held with no tab, so a list can mark it alive; it is not a second field for the same fact.
+- **The `session-resumed` divider** for a detached resume has no new page: `page` is absent, the page it was on is
+  `from` as today, and the kernel line (TABLESS_RUN.md, §Resuming with no page) rides in the same event.
+- **A tab later** is `session.resume` with a `tab` target on the same session, as today; the person picked the tab, so
+  the runtime asks no approval for it. The model's own way to a page, `navigate`, is not a contract command.
+
+The hub needs no change: window-ml-hub names neither `AgentTarget`, `agent.start` nor `capabilities`, and relays the
+sealed command unread. The build PR carries `@hub-compat` all the same, for the phone and any client that renders the
+start form.
+
 ### Devices
 
 Pairing is how a runtime gets clients, and `device.*` is how a person manages the ones it has. Four rules, because

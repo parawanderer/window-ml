@@ -409,7 +409,7 @@ test("answer render (sidebar): a result cited with `| latex` renders as a KaTeX 
     // that names the source step (clicking jumps to the compute step that produced the value).
     const tok = reply.querySelector(".tok-ref");
     assert.ok(tok && tok.querySelector(".katex"), "the typeset value is INSIDE the clickable citation");
-    assert.match(tok.querySelector(".tok-tip")?.textContent || "", /step 1 · python_exec/, "the hover tooltip names the source compute step");
+    assert.match(tok.querySelector(".tt-pop")?.textContent || "", /step 1 · python_exec/, "the hover tooltip names the source compute step");
 });
 
 test("answer render (sidebar): a STANDALONE `| latex` citation → a green DISPLAY block; an INLINE one → inline", async () => {

@@ -11,11 +11,12 @@
 // What stays ours is the part that is about THIS project: which cells become numbers (below), and what a
 // model is shown of a table it did not fetch.
 import Papa from "papaparse";
-import { brandTable, brandStored, brandEditable, storedReader, markFrozenPart, isFrozenTablePart, READ_ONLY_TABLE } from "./table-brand";
+import { brandTable, brandStored, brandEditable, brandCut, isCutTable, storedReader, markFrozenPart, isFrozenTablePart, READ_ONLY_TABLE } from "./table-brand";
 // The TABLE TYPES live in contract.ts, not here: they cross the message channel (a fetch result, a pointer
 // read, an agent output) and `agent_api_docs` is generated from that file, so a type defined here would be
 // invisible to the model that has to use it. This module owns the PARSERS; contract.ts owns the shape.
 import type { TableLike, TableCell, TableDtype, Table } from "../contract/contract-fetch";
+import { StoredReadPlan } from "./table-plan";
 export type { TableLike, TableCell, TableDtype, Table };
 
 /** The most LINES a parse keeps, header included — so a table with a header carries one row fewer. A bound
@@ -522,22 +523,31 @@ const INTEROP_KEYS = new Set(["then", "toJSON", "constructor", "valueOf", "toStr
  *  exactly as `DerefText` is. Pass the underlying `TableLike` across a boundary, wrap on arrival.
  *
  *  `readColumns` makes a STORED table (POINTER_VALUES slice 7): given for a preview whose whole table is in the value
- *  store, `col`, `select`, `records` and a `head` longer than the preview read every row through it, and so return
- *  PROMISES. `rows` stays the preview. A missed `await` is told so rather than handed `undefined`.
+ *  store, `col` and `records` read every row through it, and so return PROMISES. `rows` stays the preview. A missed
+ *  `await` is told so rather than handed `undefined`. Its `select`, and a `head` longer than the preview, are VIEWS
+ *  (docs/spec/ML_TABLE.md, "Views of a stored table in JS"): synchronous stored tables over the rows in hand, whose own
+ *  reads go through the same reader, narrowed to their columns and limited to their rows.
  *
  *  `frozen` makes a READ-ONLY table (ruling 57, as amended): `t` itself is frozen in place at every level, with no copy,
- *  and every table derived from it is read-only too. `copy()` is the way to an editable one. */
-export function asTable(t: TableLike, opts: { python?: boolean; readColumns?: StoredColumnReader; frozen?: boolean; editable?: boolean } = {}): Table {
+ *  and every table derived from it is read-only too. `copy()` is the way to an editable one.
+ *
+ *  `cut` marks a copy of a stored table: it holds only its rows in hand, so `col` and `records` past them are refused. */
+export function asTable(t: TableLike, opts: { python?: boolean; readColumns?: StoredColumnReader; frozen?: boolean; editable?: boolean; cut?: boolean } = {}): Table {
     const reader = opts.readColumns && (t.truncated || t.rows.length < t.shape[0]) ? opts.readColumns : undefined;
     const frozen = !!opts.frozen;
     if (frozen) freezeLike(t);
     const editable = !frozen && !!opts.editable;
-    opts = { python: opts.python, frozen, editable };   // a table built FROM a read is whole, so it carries no reader
+    const cut = !!opts.cut;
+    opts = { python: opts.python, frozen, editable, cut };   // a view is given its reader below, never inherited
+    // A copy of a stored table answers no whole read past the rows it was cut with: the rows it holds are a sample.
+    const partial = cut && t.rows.length < t.shape[0];
+    const refuseWhole = (spelling: string) => new NotATable(`This copy holds the ${t.rows.length.toLocaleString("en-US")} rows in hand of a stored table of ${t.shape[0].toLocaleString("en-US")} rows, and a copy never reads the rest. Read every row from the table you copied (\`await ${spelling}\`), then build on that.`, spelling);
     const target: Table = {
         ...t,
         col(name: string): TableCell[] {
             const i = t.columns.indexOf(name);
             if (i < 0) throw new NotATable(`No column "${name}". This table has: ${t.columns.join(", ")}.`, name);
+            if (partial) throw refuseWhole(`t.col(${JSON.stringify(name)})`);
             return t.rows.map(r => r[i]);
         },
         select(names: string[]): Table {
@@ -551,9 +561,11 @@ export function asTable(t: TableLike, opts: { python?: boolean; readColumns?: St
             // SOURCE's row count, since selecting columns does not change how many rows there are.
             // The SOURCE's dtypes, not re-measured: a subset does not change what a column holds, and re-reading a
             // prefix could disagree with the whole (a null past the prefix makes int64 float64).
-            return asTable({ ...derived([...names], t.rows.map(r => idx.map(i => r[i])), t.shape[0], names), ...(t.headerless ? { headerless: true } : {}) }, opts);
+            // Of a stored table it is a VIEW: the rows in hand narrowed, with the reader, whose reads name only its columns.
+            return asTable({ ...derived([...names], t.rows.map(r => idx.map(i => r[i])), t.shape[0], names), ...(t.headerless ? { headerless: true } : {}) }, reader ? { ...opts, readColumns: reader } : opts);
         },
         records(): Record<string, TableCell>[] {
+            if (partial) throw refuseWhole("t.records()");
             return t.rows.map(r => Object.fromEntries(t.columns.map((c, i) => [c, r[i]])));
         },
         head(n = PREVIEW_ROWS): Table {
@@ -563,8 +575,10 @@ export function asTable(t: TableLike, opts: { python?: boolean; readColumns?: St
             // case: choosing columns does not change how many rows there are, so it keeps the source count.)
             // Except when the table is itself a PREFIX shorter than the head asked for: then the head is as
             // long as the source says, and it is still missing rows, so it keeps saying so.
+            // Of a stored table, a head past the rows in hand is a VIEW whose reads stop at its `want` rows.
             const want = Math.min(Math.max(0, Math.floor(Number(n)) || 0), t.shape[0]);
-            return asTable({ ...derived([...t.columns], t.rows.slice(0, want), want, t.columns), ...(t.delimiter ? { delimiter: t.delimiter } : {}) }, opts);
+            const view = reader && want > t.rows.length ? { ...opts, readColumns: limitedTo(reader, want) } : opts;
+            return asTable({ ...derived([...t.columns], t.rows.slice(0, want), want, t.columns), ...(t.delimiter ? { delimiter: t.delimiter } : {}) }, view);
         },
         copy(): Table {
             return copyTable(facade, { python: opts.python });
@@ -578,28 +592,15 @@ export function asTable(t: TableLike, opts: { python?: boolean; readColumns?: St
         // Built directly rather than through tableOf, which would measure dtypes it is about to be told.
         return { columns, rows, shape: [rowCount, columns.length], dtypes, ...(rowCount > rows.length ? { truncated: true } : {}) };
     }
+    // The two WHOLE reads of a stored table (or a view of one) go to the store; `select` and `head` above stay views.
     if (reader) {
         const known = (n: string) => { if (!t.columns.includes(n)) throw new NotATable(`No column "${n}". This table has: ${t.columns.join(", ")}.`, n); };
-        const whole = (names: string[], cols: Record<string, TableCell[]>, rowCount: number, take = rowCount): Table =>
-            asTable({ ...derived([...names], Array.from({ length: Math.min(take, rowCount) }, (_, r) => names.map((n) => cols[n][r])), Math.min(take, rowCount), names), ...(t.headerless ? { headerless: true } : {}) }, opts);
-        const syncHead = target.head;
         target.col = ((name: string) => {
             known(name);
             return request(reader([name]).then((r) => r.columns[name]), `t.col(${JSON.stringify(name)})`);
         }) as unknown as Table["col"];
-        target.select = ((names: string[]) => {
-            if (!Array.isArray(names)) throw new NotATable(`select() takes a list of column names — \`t.select(["a", "b"])\`.`, "select");
-            names.forEach(known);
-            return request(reader(names).then((r) => whole(names, r.columns, r.rowCount)), `t.select(${JSON.stringify(names)})`);
-        }) as unknown as Table["select"];
         target.records = (() => request(reader(t.columns).then((r) =>
             Array.from({ length: r.rowCount }, (_, i) => Object.fromEntries(t.columns.map((c) => [c, r.columns[c][i]])))), "t.records()")) as unknown as Table["records"];
-        // A head the preview already holds IS those rows, so it stays synchronous; only a longer one is a request.
-        target.head = ((n = PREVIEW_ROWS) => {
-            const want = Math.min(Math.max(0, Math.floor(Number(n)) || 0), t.shape[0]);
-            if (want <= t.rows.length) return syncHead(n);
-            return request(reader(t.columns).then((r) => whole(t.columns, r.columns, r.rowCount, want)), `t.head(${want})`);
-        }) as unknown as Table["head"];
     }
     // BRANDED, so the read-only dialect can recognise it by identity rather than by shape — see
     // table-brand.ts for why a property or a well-known symbol would be a hole rather than a check.
@@ -624,11 +625,18 @@ export function asTable(t: TableLike, opts: { python?: boolean; readColumns?: St
     }));
     if (frozen) markFrozenPart(facade);
     if (editable) brandEditable(facade);
+    if (cut) brandCut(facade);
     return reader ? brandStored(facade, reader) : facade;
 }
 
-/** Reads named columns of a stored table, every row: the page's line to the value store, bound to the run that holds it. */
-export type StoredColumnReader = (names: string[]) => Promise<{ rowCount: number; columns: Record<string, TableCell[]> }>;
+/** Reads named columns of a stored table, every row up to the plan's limit: the page's line to the value store, bound to
+ *  the run that holds it. */
+export type StoredColumnReader = (names: string[], plan?: StoredReadPlan) => Promise<{ rowCount: number; columns: Record<string, TableCell[]> }>;
+
+/** A reader whose reads return at most `n` rows, however many a later view asks for. */
+function limitedTo(reader: StoredColumnReader, n: number): StoredColumnReader {
+    return (names, plan) => reader(names, { ...plan, limit: Math.min(plan?.limit ?? n, n) });
+}
 
 /** A READ-ONLY facade over the same data as `t`, frozen in place, with no copy and the same store reader: for a table
  *  something else goes on holding, such as the fetch cache's. Freezing data already frozen costs nothing. */
@@ -641,16 +649,17 @@ export function freezeTable(t: TableLike, opts: { python?: boolean } = {}): Tabl
     return asTable(like, { ...opts, frozen: true, ...(reader ? { readColumns: reader } : {}) });
 }
 
-/** A COPY of a table facade that its caller owns, editable: new row arrays, new column list, and, for a stored table,
- *  the same store reader, so the copy's `col`/`select`/`records` still read every row. Only the rows in hand are
- *  copied, never the whole stored file. What `t.copy()` answers. */
+/** A COPY of a table facade that its caller owns, editable: new row arrays, new column list. Only the rows in hand are
+ *  copied, never the whole stored file, and a copy of a stored table (or a view of one) keeps no reader: it never
+ *  reads, keeps `shape` and `truncated`, and refuses `col`/`records` past its rows in hand, since a read from the
+ *  source would answer cells it does not have, unedited (docs/spec/ML_TABLE.md, "Views of a stored table in JS"). What
+ *  `t.copy()` answers. */
 export function copyTable(t: Table, opts: { python?: boolean } = {}): Table {
     const like: TableLike = {
         columns: [...t.columns], shape: [t.shape[0], t.shape[1]], dtypes: { ...t.dtypes }, rows: t.rows.map((r) => [...r]),
         ...(t.delimiter ? { delimiter: t.delimiter } : {}), ...(t.truncated ? { truncated: true } : {}), ...(t.headerless ? { headerless: true } : {}),
     };
-    const reader = storedReader(t) as StoredColumnReader | undefined;
-    return asTable(like, { ...opts, editable: true, ...(reader ? { readColumns: reader } : {}) });
+    return asTable(like, { ...opts, editable: true, ...(storedReader(t) || isCutTable(t) ? { cut: true } : {}) });
 }
 
 /** Members a script reaches for on a column or a table when it forgot the `await`. Each throws on a pending read. */
@@ -684,32 +693,51 @@ function pandasHint(key: string, t: TableLike, python: boolean): string {
 export const MAX_STORED_READ_CELLS = 5_000_000;
 
 /**
- * NAMED COLUMNS OF A STORED TABLE, every row (POINTER_VALUES slice 7): what `t.col` / `t.select` / `t.records` on a stored
- * table's facade ask for. Decodes the bytes in the format they were stored in, uncapped, with the same parsers the preview
- * came from, so a column reads as its preview did: a delimited body is split by the preview's `delimiter` and header
- * decision, and cast per column. Throws on an unknown name (listing the real ones), on a read past
- * {@link MAX_STORED_READ_CELLS}, and on a format it does not read.
+ * A STORED TABLE'S BYTES DECODED, every row (POINTER_VALUES slice 7), in the format they were stored in, uncapped, with
+ * the same parsers the preview came from, so a column reads as its preview did: a delimited body is split by the
+ * preview's `delimiter` and header decision, and cast per column. Throws on a format it does not read. The worker keeps
+ * what this returns as Arrow columns (`table-decode-cache.ts`), so it runs once per stored table and options.
  */
-export async function storedColumns(bytes: ArrayBuffer, format: string, names: string[], opts: { delimiter?: string; headerless?: boolean } = {}): Promise<{ rowCount: number; columns: Record<string, TableCell[]> }> {
-    let t: TableLike;
+export async function decodeStored(bytes: ArrayBuffer, format: string, opts: { delimiter?: string; headerless?: boolean } = {}): Promise<TableLike> {
     if (format === "csv" || format === "tsv") {
         // Stored as the text it arrived as: this is a decode of a known text body, not a sniff of unknown bytes.
         const text = new TextDecoder().decode(bytes);
-        t = tableFromDelimited(text, { delimiter: opts.delimiter ?? (format === "tsv" ? "\t" : undefined), header: !opts.headerless, maxRows: Number.MAX_SAFE_INTEGER });
-    } else if (format === "parquet") {
-        t = await tableFromParquet(bytes, { maxRows: Number.MAX_SAFE_INTEGER });
-    } else if (format === "arrow-file" || format === "arrow-stream") {
-        t = await tableFromArrow(bytes, { maxRows: Number.MAX_SAFE_INTEGER });
-    } else {
-        if (format === "paged" || format === "bytes") throw new Error(`this stored value is ${format}, which is not a table, so it cannot be read by column.`);
-        throw new Error(`a stored table in a format that cannot be read by column: ${format}`);
+        return tableFromDelimited(text, { delimiter: opts.delimiter ?? (format === "tsv" ? "\t" : undefined), header: !opts.headerless, maxRows: Number.MAX_SAFE_INTEGER });
     }
-    const idx = names.map((n) => {
-        const i = t.columns.indexOf(n);
-        if (i < 0) throw new NotATable(`No column "${n}". This table has: ${t.columns.join(", ")}.`, n);
+    if (format === "parquet") return tableFromParquet(bytes, { maxRows: Number.MAX_SAFE_INTEGER });
+    if (format === "arrow-file" || format === "arrow-stream") return tableFromArrow(bytes, { maxRows: Number.MAX_SAFE_INTEGER });
+    if (format === "paged" || format === "bytes") throw new Error(`this stored value is ${format}, which is not a table, so it cannot be read by column.`);
+    throw new Error(`a stored table in a format that cannot be read by column: ${format}`);
+}
+
+/** Where each named column sits in `columns`. Throws {@link NotATable} on an unknown name, listing the real ones. */
+export function columnIndexes(columns: string[], names: string[]): number[] {
+    return names.map((n) => {
+        const i = columns.indexOf(n);
+        if (i < 0) throw new NotATable(`No column "${n}". This table has: ${columns.join(", ")}.`, n);
         return i;
     });
-    if (t.rows.length * idx.length > MAX_STORED_READ_CELLS)
-        throw new Error(`reading ${names.length === 1 ? `column "${names[0]}"` : `${names.length} columns`} of this stored table would return ${(t.rows.length * idx.length).toLocaleString("en-US")} cells, more than one read hands back (${MAX_STORED_READ_CELLS.toLocaleString("en-US")}). Compute over it in python_exec instead (tables: { df: "@tool:…" }).`);
-    return { rowCount: t.rows.length, columns: Object.fromEntries(names.map((n, j) => [n, t.rows.map((r) => r[idx[j]])])) };
+}
+
+/** How many rows a stored read returns: the table's, or the plan's limit when smaller. Throws when that many rows of
+ *  `names` would be more than {@link MAX_STORED_READ_CELLS}. */
+export function storedReadRows(rowCount: number, names: string[], plan: StoredReadPlan = {}): number {
+    const n = Math.min(plan.limit ?? rowCount, rowCount);
+    if (n * names.length > MAX_STORED_READ_CELLS)
+        throw new Error(`reading ${names.length === 1 ? `column "${names[0]}"` : `${names.length} columns`} of this stored table would return ${(n * names.length).toLocaleString("en-US")} cells, more than one read hands back (${MAX_STORED_READ_CELLS.toLocaleString("en-US")}). Compute over it in python_exec instead (tables: { df: "@tool:…" }).`);
+    return n;
+}
+
+/**
+ * NAMED COLUMNS OF A STORED TABLE, every row up to the plan's limit: a stored table's whole read, decoded from its bytes
+ * on every call. The service worker reads through its decode cache instead; this is for an extension page, which opens
+ * the same store. Throws on an unknown name, on a read past {@link MAX_STORED_READ_CELLS}, and on a format it does not
+ * read.
+ */
+export async function storedColumns(bytes: ArrayBuffer, format: string, names: string[], opts: { delimiter?: string; headerless?: boolean } = {}, plan: StoredReadPlan = {}): Promise<{ rowCount: number; columns: Record<string, TableCell[]> }> {
+    const t = await decodeStored(bytes, format, opts);
+    const idx = columnIndexes(t.columns, names);
+    const n = storedReadRows(t.rows.length, names, plan);
+    const rows = n < t.rows.length ? t.rows.slice(0, n) : t.rows;
+    return { rowCount: n, columns: Object.fromEntries(names.map((name, j) => [name, rows.map((r) => r[idx[j]])])) };
 }

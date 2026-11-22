@@ -320,7 +320,7 @@ test("phone: starting a chat from the list, and the start page asks only what it
     await kind.click();
     const kinds = page.getByRole("listbox", { name: "Kind" });
     await expect(kinds.getByRole("option")).toHaveCount(2);
-    await expect(kinds.getByRole("option", { name: /^Chat/ })).toContainText("Just the conversation");
+    await expect(kinds.getByRole("option", { name: /^Chat/ })).toHaveText(/^\s*Chat\s*$/);   // the label alone, no hint line under it
     await kinds.getByRole("option", { name: /^Chat/ }).click();
     await expect(page.getByRole("button", { name: "Kind: Chat" })).toBeVisible();
 
@@ -710,7 +710,8 @@ test("an answer that cites its own steps renders the tool's output, not a retypi
     await expect(answer.locator(".tok-block .r-df-table")).toBeVisible();
     await expect(answer.locator(".tok-block img")).toBeVisible();
     await expect(answer.locator(".tok-link")).toHaveText("the survey step");
-    await expect(answer.locator(".tok-anno").first()).toHaveText("Every fare, cheapest first");
+    // What a person reads on the caption: its tip (`.tt-pop`, drawn by the shared layer) is in the DOM but never shown here.
+    await expect(answer.locator(".tok-anno").first()).toHaveText("Every fare, cheapest first", { useInnerText: true });
     // The mark that says this came from a tool and not from the model is a COLOUR, and the inline form carries it
     // too — an inline `code` background over the tint is what made a citation read as something typed in backticks.
     const tint = await answer.locator(".tok-inline").evaluate((el) => getComputedStyle(el).backgroundColor);
@@ -2259,7 +2260,13 @@ test("phone (touch): tapping a step's dot opens its tip, and the tap still opens
 
         await step.locator(".astep-head .dot").first().tap();
         const tip = page.locator(".tt-layer");
-        await expect(tip).toBeVisible();
+        // INSTRUMENT (flaky: the tip stays hidden): a failure carries the last pointer the tip rule saw.
+        try {
+            await expect(tip).toBeVisible();
+        } catch (e) {
+            const seen = await page.evaluate(() => window.__ttLastPointer ?? "the rule never ran");
+            throw new Error(`${e.message}\n the tip rule's last pointer: ${JSON.stringify(seen)}`);
+        }
         await expect(tip).toContainText("Completed successfully");
         // AND IT IS STILL THERE A MOMENT LATER. This assertion is the whole reason the test is not a lie: the tap
         // that opens a tip is very often the same tap that SCROLLS — it opens the step, the transcript grows, its
