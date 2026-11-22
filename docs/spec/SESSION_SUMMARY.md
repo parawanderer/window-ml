@@ -1,8 +1,10 @@
 # Spec (WIP): the session summary page
 
-**Status: specified, not built (2026-11-18).** Contents ruled by Shane (2026-11-18, ruling 50): the list below, open to
-additions and cuts as they come up. Owners and order ruled by the coordinator (2026-11-18, "Owners and order" below). The access
-tab's data is built on the worker side (`docs/spec/POLICIES.md`, "The effective view"); nothing else here is.
+**Status: specified (2026-11-18), partly built.** Contents ruled by Shane (2026-11-18, ruling 50): the list below, open to
+additions and cuts as they come up. Owners and order ruled by the coordinator (2026-11-18, "Owners and order" below). Built: the
+page's shell and its summary tab (#2002, 8d004724), a fork's parent and the current page (#2003, 2185077b), the resources
+tab (#2071, c7d02ab0), and the access tab's data on the worker side (`docs/spec/POLICIES.md`, "The effective view").
+The rest is not.
 
 ## What it is for
 
