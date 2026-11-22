@@ -204,6 +204,33 @@ test("models.list: this runtime's list, another runtime's refused, and an unreac
     assert.deepEqual(await down.run({ type: "models.list", runtime: "local" }), { ok: true, data: { models: [] } });
 });
 
+test("session.release: this browser's own pages only, refused while a turn runs, and handed to the one release path", async () => {
+    const { run, index } = world({ releaseRun: async () => true });
+    index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    index.ingest(ev("aaaa0001", "agent-result", { result: { summary: "done" } }), { tabId: TAB, trusted: true });
+    // A hub device is not the person at the machine.
+    assert.equal(code(await run({ type: "session.release", session: sid("aaaa0001") }, { via: "hub" })), "forbidden");
+    assert.equal(code(await run({ type: "session.release", session: sid("ffff0000") })), "not-found");
+    assert.equal(code(await run({ type: "session.release", session: sid("aaaa0001") })), "ok");
+    // The worker refusing (a turn started since the index said idle) is a conflict too.
+    const busy = world({ releaseRun: async () => false });
+    busy.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    busy.index.ingest(ev("aaaa0001", "agent-result", { result: { summary: "done" } }), { tabId: TAB, trusted: true });
+    assert.equal(code(await busy.run({ type: "session.release", session: sid("aaaa0001") })), "conflict");
+    // A runtime that holds no run to release says so.
+    const none = world();
+    none.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    none.index.ingest(ev("aaaa0001", "agent-result", { result: { summary: "done" } }), { tabId: TAB, trusted: true });
+    assert.equal(code(await none.run({ type: "session.release", session: sid("aaaa0001") })), "unsupported");
+});
+
+test("session.release is refused while the index says a turn is running", async () => {
+    const { run, index } = world({ releaseRun: async () => true });
+    index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    assert.equal(index.get("aaaa0001").status, "running");
+    assert.equal(code(await run({ type: "session.release", session: sid("aaaa0001") })), "conflict");
+});
+
 test("session.pin: bounded, idempotent, and handed to the one pin path", async () => {
     const { run, index, named } = world();
     index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
