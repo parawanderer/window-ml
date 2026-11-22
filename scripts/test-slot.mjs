@@ -129,11 +129,35 @@ export function skipReason(env = process.env) {
     return null;
 }
 
-/** A process's start time as `ps` prints it, or null when it is gone: with the pid, what tells a holder from a reuse. */
+/** A process's start time as `ps` prints it, or null when it is gone: with the pid, what tells a holder from a reuse.
+ *
+ * ONE LOCALE, because the field order of `lstart` follows the session's: macOS `ps` prints `Sun 22 Nov 13:45:20 2026`
+ * under an en_GB locale and `Sun Nov 22 13:45:20 2026` under C/en_US, and two sessions on one machine carry different
+ * LANGs. On 2026-11-22 that made every ticket one session recorded read as a REUSED pid by the next session's reap:
+ * queued tickets were `abandoned` and running jobs went `lost`, freeing slots under live suites. */
 export function startTime(pid) {
-    try { return execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || null; }
+    try { return execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, LANG: "C", LC_ALL: "C", LC_TIME: "C" } }).trim() || null; }
     catch { return null; }
 }
+
+/** A start time keyed so its FIELD ORDER does not matter — the day and the month name swapped is the same instant.
+ *  Null when the string is not a `lstart` shape, or when both tokens are numeric (no month to order). */
+export function startKey(s) {
+    const m = /^(\S+)\s+(\S+)\s+(\S+)\s+(\d\d:\d\d:\d\d)\s+(\d{4})$/.exec(String(s ?? "").trim());
+    if (!m) return null;
+    const [, , a, b, time, year] = m;
+    const aDay = /^\d+$/.test(a), bDay = /^\d+$/.test(b);
+    if (aDay === bDay) return null;
+    const day = aDay ? a : b, mon = aDay ? b : a;
+    return `${year} ${mon.toLowerCase()} ${Number(day)} ${time}`;
+}
+
+/** The same START TIME whatever the field order the `ps` that printed it used; a string of another shape is
+ *  compared exactly, which is what it was before there were two shapes to tell apart. */
+export const sameStart = (a, b) => {
+    const ka = startKey(a), kb = startKey(b);
+    return ka != null && kb != null ? ka === kb : a === b;
+};
 
 /**
  * Whether the process a record names is the one still running: alive, and started when it was recorded.
@@ -143,12 +167,15 @@ export function startTime(pid) {
  * every running job went `lost` and live tickets `abandoned`, so more runs were admitted, load rose, and more reads
  * failed. `probe.alive` (a `kill(pid, 0)`) answers first and needs no `ps`: only a process that is PROVABLY gone, or
  * one whose start time differs (a reused pid), loses its ticket; an unreadable one keeps it.
+ *
+ * A start time that differs only in FIELD ORDER is the same process: records written under the other locale (see
+ * {@link startTime}) must keep their tickets, which is why the comparison goes through {@link sameStart}.
  */
 export const procLive = (pid, started, probe = { alive, startTime }) => {
     if (!pid || !probe.alive(pid)) return false;
     if (!started) return true;
     const seen = probe.startTime(pid);
-    return seen == null || seen === started;
+    return seen == null || sameStart(seen, started);
 };
 
 /** The price of a run of `w` workers: its base plus the slope for each. */
