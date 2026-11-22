@@ -833,11 +833,19 @@ text, so the mask finds it in the page first. For each capture:
    is never stored.
 
 **A capture that reaches the page.** One does: `CAPTURE_TAB` (`page-relay.ts`, `background.ts`) answers an approved
-page with a capture of its own tab, so it can crop to an element. That capture is not painted for `detail` entries. The
-page drew every pixel of it, so painting hides nothing from the page, and a painted rectangle would be the oracle the
-text skip removes: the page draws candidate names and reads which were painted. The same holds for a capture of the
-page's own tab that a page-hosted run's tool returns to the page. A capture the worker takes for a run it hosts, and a
-capture of any other tab in a run a page started, are painted, as text the worker adds is scrubbed.
+page with a capture of its own tab, so it can crop to an element, and a page-hosted run's tool can return a capture to
+the page. The rule is keyed on who receives the bitmap and on the origin of the document captured, never on which tab
+it was or who started the run:
+
+- a capture whose bitmap reaches a page, of a document of the SAME origin as that page: not painted for `detail`
+  entries. The page's origin can draw and read that document's text already, so painting hides nothing, and a painted
+  rectangle would be the oracle the text skip removes (the page draws candidate names and reads which were painted). A
+  second tab of the same origin falls here too;
+- a capture whose bitmap reaches a page, of a document of ANOTHER origin: painted;
+- a capture that never reaches a page (a run the worker hosts, a model backend, the store, an export): painted.
+
+The origin compared is the captured tab's top document's. A same-origin page holding a cross-origin frame gets the
+frame's text painted, since the page cannot read that frame.
 
 A full-page capture taken in tiles gets the two reads for each tile. `locate`'s text answer and the accessibility tree a
 CDP read returns are text crossings, scrubbed with the looser match. A closed shadow root and a cross-origin frame are
@@ -905,8 +913,9 @@ no path. Reading them back crosses the `/files` read scrub, which applies `detai
   error to the page holding it is not marked (no oracle).
 - `detail-worker-text-in-page-run`: in a run a page started, a tool result the worker built from another tab and a
   fetch made with the person's cookies are scrubbed of a registered name.
-- `detail-capture-to-page`: a page's `CAPTURE_TAB` of its own tab comes back with no `detail` painted; the same tab
-  captured for a run the worker hosts, and another tab captured in a page-started run, are painted.
+- `detail-capture-to-page`: a page's `CAPTURE_TAB` of its own tab, and a capture of a second tab of the same origin
+  returned to it, come back with no `detail` painted; a capture of another origin's tab returned to the page, a
+  cross-origin frame inside a same-origin capture, and every capture that reaches no page are painted.
 - `detail-handle-fill`: `type` with a handle fills the field; the arguments, display and exports show
   `[detail: <NAME>]`; reading the field back gives the marker.
 - `detail-handle-origin-asks`: the first fill on an origin asks; a field in a cross-origin frame asks for the frame's
