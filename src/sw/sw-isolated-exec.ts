@@ -31,6 +31,8 @@ import type { IsoAnswer } from "./iso-channel";
 /** What the worker binds in the isolated world: the pointer reads the script names, `ml.current` (or why not), and
  *  whether `ml.sh` is there (the script names it and the worker bound it to the step; its calls ride the channel). */
 export interface IsolatedBindings { reads: readonly PreRead[]; current?: ExecCurrent; currentError?: string; sh?: boolean;
+    /** `ml.fs` is bound: the call's server answers its reads of the run's session (iso-channel.ts). */
+    fs?: boolean;
     /** `ml.settings()`'s entries, read for this exec (sw-change-setting.ts `settingEntries`); only in a run the worker built. */
     settings?: Record<string, unknown> }
 
@@ -41,7 +43,7 @@ export type IsolatedResult = { ok: true; value: string; logs: string[]; dropped:
 export const ISOLATED_HELPERS = ["queryAll", "a11y", "pipe", "schema", "range"] as const;
 
 /** The `ml` members an isolated exec is given; anything else throws a sentence saying so. */
-export const ISOLATED_ML_MEMBERS = ["current", "settings", "dereference", ...ISOLATED_HELPERS, "sh"] as const;
+export const ISOLATED_ML_MEMBERS = ["current", "settings", "dereference", ...ISOLATED_HELPERS, "sh", "fs"] as const;
 
 /**
  * The members one isolated exec is given: `current` only when it was read for it (or failed to be), `settings` and `sh`
@@ -49,7 +51,7 @@ export const ISOLATED_ML_MEMBERS = ["current", "settings", "dereference", ...ISO
  * @param b what was bound
  */
 export const isolatedMembers = (b: IsolatedBindings): string[] =>
-    ISOLATED_ML_MEMBERS.filter((m) => (m !== "current" || b.current || b.currentError) && (m !== "settings" || b.settings) && (m !== "sh" || b.sh));
+    ISOLATED_ML_MEMBERS.filter((m) => (m !== "current" || b.current || b.currentError) && (m !== "settings" || b.settings) && (m !== "sh" || b.sh) && (m !== "fs" || b.fs));
 
 // Live console lines, keyed by the call's nonce: the user-script world posts them through `onUserScriptMessage`, which
 // only a world this extension configured can reach. The nonce is the second check, the tab the first.
@@ -127,6 +129,9 @@ export function isolatedWrapper(inner: string, b: IsolatedBindings, n: string, s
         read(pointer, range) { return __chanAsk({ op: "sh", call: "read", args: range === undefined ? [pointer] : [pointer, range] }); },
         put(file, path) { return __chanAsk({ op: "sh", call: "put", args: [file, path] }); },
     }) : undefined;
+    // ml.fs: Node's fs/promises over the session's files (ml-fs.ts), each read sent over the call's channel to the worker,
+    // which forwards read ops only, to the reader of the run's own session.
+    const __fs = __B.members.includes("fs") && __chanAsk ? __mlIsoKit.mlFs((op, args) => __chanAsk({ op: "fs", call: op, args })) : undefined;
     const __t0 = {
         dereference(ref, opts) {
             const e = __reads.get(JSON.stringify([String(ref), __stages(opts && opts.pipe)]));
@@ -146,6 +151,7 @@ export function isolatedWrapper(inner: string, b: IsolatedBindings, n: string, s
         if (typeof k === "symbol" || k === "then" || k === "toJSON") return undefined;
         if (k === "current") { if (__B.currentError) throw new Error(__B.currentError); if (__cur) return __cur; return __no(k); }
         if (k === "sh") return __sh ?? __no(k);
+        if (k === "fs") return __fs ?? __no(k);
         // A fresh copy each call, so a script that edits what it read changes nothing it reads next.
         if (k === "settings") return __B.settings ? () => JSON.parse(JSON.stringify(__B.settings)) : __no(k);
         return k in t ? t[k] : __no(k);
@@ -359,6 +365,7 @@ const WHY: Record<ExecReason, string> = {
     current: "it reads ml.current",
     settings: "it reads ml.settings",
     sh: "it runs programs through ml.sh",
+    fs: "it reads the session's files through ml.fs",
     pointer: "it reads pointer values",
     requested: "you asked for it",
     default: "it is the default here",
@@ -382,11 +389,13 @@ export async function runIsolatedExec(o: {
     serve?: (req: unknown) => Promise<IsoAnswer>;
     /** `ml.sh` is bound: the server answers its calls for this exec's step. */
     sh?: boolean;
+    /** `ml.fs` is bound: the server answers its reads of the run's session. */
+    fs?: boolean;
     /** Reads `ml.settings()`'s entries for a script that names it, in a run the worker built (undefined: none). */
     settings?: () => Promise<Record<string, unknown>>;
 }): Promise<{ result: string; renderIn: RenderDescriptor; renderOut?: RenderDescriptor }> {
     const renderIn = execCodeIn(o.js);
-    const b: IsolatedBindings = { reads: o.reads, ...(o.sh && o.serve ? { sh: true } : {}) };
+    const b: IsolatedBindings = { reads: o.reads, ...(o.sh && o.serve ? { sh: true } : {}), ...(o.fs && o.serve ? { fs: true } : {}) };
     // Not read, not bound: a script whose settings cannot be read is told ml.settings is not available.
     if (o.settings) b.settings = await o.settings().catch(() => undefined);
     if (o.current) {
@@ -396,7 +405,7 @@ export async function runIsolatedExec(o: {
         } catch (e) { b.currentError = `ml.current could not be read (${(e as Error)?.message || e}).`; }
     }
     const code = expandPointers(o.js).code;
-    const serve = o.reads.some((r) => r.error === undefined) || b.sh ? o.serve : undefined;
+    const serve = o.reads.some((r) => r.error === undefined) || b.sh || b.fs ? o.serve : undefined;
     const r = o.how === "userScripts" ? await runInUserScriptWorld(o.tabId, o.documentId, o.runId, code, b, o.onStream, serve) : await runInCdpWorld(o.tabId, o.documentId, o.runId, code, b, o.onStream, serve);
     const note = `(Ran in an isolated world because ${WHY[o.reason]}: it shares the page's DOM (clicks and reads work), but the page's own scripts and globals are not visible there; ml has only ${isolatedMembers(b).map((m) => `ml.${m}`).join(", ")}, and ml.queryAll does not cross closed shadow roots. If the page behaved differently, read what you need in a read-only exec and act in the next.)`;
     // A page global's miss, where the call could have run in the page's world: the one line that says how.

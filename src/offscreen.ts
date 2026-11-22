@@ -54,6 +54,7 @@ import { importTestCode } from "./python/pkg-install-test";
 import { attachFiles, detachFiles, filesMessage, setFilesReader } from "./python/files-host";
 import { createFilesSource } from "./python/files-source";
 import { RangedReader } from "./session/ranged-reader";
+import { fsServer } from "./session/fs-serve";
 import { scanCode } from "./python/pkg-scan";
 import { readScan, type ScanResult } from "./python/pkg-scan-note";
 import { holdResult, takeResult } from "./python/py-held-results";
@@ -72,6 +73,14 @@ const store = (): ValueStore => values ??= new ValueStore({
 // `/files` in Python (files-host.ts): the reader over this document's value store and the shelf the worker holds. No hide rule yet (POLICIES.md, ruling 34).
 const filesReader = new RangedReader({ source: createFilesSource({ store, send: (m) => chrome.runtime.sendMessage(m) }) });   // state: plumbing — the one reader, a channel per worker
 setFilesReader(() => filesReader.openChannel("files"));
+// ml.fs (fs-serve.ts): a channel per isolated exec on the same reader, read ops only, its session the worker's word.
+const fsChannels = fsServer(() => filesReader.openChannel("files"));   // state: plumbing — an exec's channel, closed with it
+chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
+    if (sender.id !== chrome.runtime.id || sender.tab) return undefined;   // the service worker's word only, like every message here
+    if (msg?.type === "FS_CALL") { void fsChannels.call(msg.key, msg.session, msg.op, msg.args).then(sendResponse); return true; }
+    if (msg?.type === "FS_END") fsChannels.end(msg.key);
+    return undefined;
+});
 
 /**
  * A returned DataFrame larger than its preview → the value store, named on the result as `valueKey` (POINTER_VALUES

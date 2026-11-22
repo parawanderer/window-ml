@@ -37,19 +37,19 @@ const SCRIPTS = {
 };
 
 test("what a script names is read lexically: pointers in any of their forms, ml.current, and nothing in a plain script", () => {
-    assert.deepEqual(execNames(SCRIPTS.plain), { current: false, pointers: false, sh: false, settings: false });
-    assert.deepEqual(execNames(SCRIPTS.pointer), { current: false, pointers: true, sh: false, settings: false });
-    assert.deepEqual(execNames(SCRIPTS.deref), { current: false, pointers: true, sh: false, settings: false });
-    assert.deepEqual(execNames(SCRIPTS.current), { current: true, pointers: false, sh: false, settings: false });
-    assert.deepEqual(execNames(SCRIPTS.both), { current: true, pointers: true, sh: false, settings: false });
-    assert.deepEqual(execNames("return ml . current"), { current: true, pointers: false, sh: false, settings: false }, "spacing does not hide it");
-    assert.deepEqual(execNames("const current = 1; return current"), { current: false, pointers: false, sh: false, settings: false }, "a local named current is not ml.current");
-    assert.deepEqual(execNames(SCRIPTS.sh), { current: false, pointers: false, sh: true, settings: false });
-    assert.deepEqual(execNames(SCRIPTS.shPointer), { current: false, pointers: true, sh: true, settings: false });
-    assert.deepEqual(execNames("return ml\n  .sh.run(['ls'])"), { current: false, pointers: false, sh: true, settings: false }, "a line break does not hide it");
-    assert.deepEqual(execNames("const sh = 1; return ml.shadowRoot ?? sh"), { current: false, pointers: false, sh: false, settings: false }, "a local named sh, or a member starting with sh, is not ml.sh");
-    assert.deepEqual(execNames(SCRIPTS.settings), { current: false, pointers: false, sh: false, settings: true });
-    assert.deepEqual(execNames("const settings = {}; return settings.theme"), { current: false, pointers: false, sh: false, settings: false }, "a local named settings is not ml.settings");
+    assert.deepEqual(execNames(SCRIPTS.plain), { current: false, pointers: false, sh: false, settings: false, fs: false });
+    assert.deepEqual(execNames(SCRIPTS.pointer), { current: false, pointers: true, sh: false, settings: false, fs: false });
+    assert.deepEqual(execNames(SCRIPTS.deref), { current: false, pointers: true, sh: false, settings: false, fs: false });
+    assert.deepEqual(execNames(SCRIPTS.current), { current: true, pointers: false, sh: false, settings: false, fs: false });
+    assert.deepEqual(execNames(SCRIPTS.both), { current: true, pointers: true, sh: false, settings: false, fs: false });
+    assert.deepEqual(execNames("return ml . current"), { current: true, pointers: false, sh: false, settings: false, fs: false }, "spacing does not hide it");
+    assert.deepEqual(execNames("const current = 1; return current"), { current: false, pointers: false, sh: false, settings: false, fs: false }, "a local named current is not ml.current");
+    assert.deepEqual(execNames(SCRIPTS.sh), { current: false, pointers: false, sh: true, settings: false, fs: false });
+    assert.deepEqual(execNames(SCRIPTS.shPointer), { current: false, pointers: true, sh: true, settings: false, fs: false });
+    assert.deepEqual(execNames("return ml\n  .sh.run(['ls'])"), { current: false, pointers: false, sh: true, settings: false, fs: false }, "a line break does not hide it");
+    assert.deepEqual(execNames("const sh = 1; return ml.shadowRoot ?? sh"), { current: false, pointers: false, sh: false, settings: false, fs: false }, "a local named sh, or a member starting with sh, is not ml.sh");
+    assert.deepEqual(execNames(SCRIPTS.settings), { current: false, pointers: false, sh: false, settings: true, fs: false });
+    assert.deepEqual(execNames("const settings = {}; return settings.theme"), { current: false, pointers: false, sh: false, settings: false, fs: false }, "a local named settings is not ml.settings");
 });
 
 test("the route for every page, script and mechanism", () => {
@@ -249,13 +249,14 @@ test("state persists across calls in one world; a throw is returned with the lin
  * `cdp`: the CDP setting, with `onDebuggerCommand` playing the browser. Returns what reached the page, what the user-script
  * worlds were given, what the model read back, and the routing records.
  */
-async function isoRun(scripts, { approved = true, us, cdp = false, onDebuggerCommand, stream = false, local = {}, onExecute, onBg } = {}) {
+async function isoRun(scripts, { approved = true, us, cdp = false, onDebuggerCommand, stream = false, local = {}, onExecute, onBg, auto = false, onFsCall } = {}) {
     let n = 0, bg;
+    const approvals = [];
     const worlds = new Map();
     const userScripts = us === undefined ? undefined : {
         available: us !== "off",
         execute: async (inj) => {
-            const ctx = worlds.get(inj.worldId) ?? world({ chrome: { runtime: { sendMessage: (m) => bg.emitUserScriptMessage(m, { tab: { id: 7 }, frameId: 0 }) } } });
+            const ctx = worlds.get(inj.worldId) ?? world({ TextDecoder, TextEncoder, chrome: { runtime: { sendMessage: (m) => bg.emitUserScriptMessage(m, { tab: { id: 7 }, frameId: 0, documentId: "doc-7", userScriptWorldId: inj.worldId }) } } });
             worlds.set(inj.worldId, ctx);
             if (onExecute) onExecute(bg, inj);
             const r = vm.runInContext(inj.js[0].code, ctx);
@@ -263,7 +264,7 @@ async function isoRun(scripts, { approved = true, us, cdp = false, onDebuggerCom
         },
     };
     bg = loadBackground({
-        config: { ...config, autoApproveReadonly: false, cdp }, openTabs: [SITE], userScripts, onDebuggerCommand,
+        config: { ...config, autoApproveReadonly: auto, cdp }, openTabs: [SITE], userScripts, onDebuggerCommand, onFsCall,
         local: { ...(approved ? SITE_APPROVED : {}), ...local },
         onFetch: (call) => {
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
@@ -277,7 +278,7 @@ async function isoRun(scripts, { approved = true, us, cdp = false, onDebuggerCom
         },
         onTabMessage: async (_t, msg) => {
             if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
-            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) { approvals.push(msg.event.seq); void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } }); }
             if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
             if (msg.payload.finish) return { result: "" };
             if (msg.payload.renderOnly || msg.payload.precheck || msg.payload.readonlyTry) return {};
@@ -296,7 +297,7 @@ async function isoRun(scripts, { approved = true, us, cdp = false, onDebuggerCom
     const log = JSON.parse(JSON.stringify((await bg.context.__mlRunLog.all()).filter((r) => r.run === hash && r.subsystem === "routing" && /^exec-/.test(r.kind))));
     const injected = bg.userScriptCalls.filter(([k]) => k === "execute").map(([, inj]) => JSON.parse(JSON.stringify(inj)));
     const live = panel.messages.map((m) => m.__mlDebug).filter((e) => e?.kind === "agent-step" && typeof e.streamOutput === "string").map((e) => e.streamOutput);
-    return { bg, hash, toPage, results, log, injected, live };
+    return { bg, hash, toPage, results, log, injected, live, approvals };
 }
 
 const FIRST = "window.a = 1; return 1";
@@ -492,3 +493,31 @@ test("a script ending on an expression returns that value in the CDP world", T, 
     assert.match(results[1], /len=\d+/, `got ${results[1]}`);
 });
 
+
+// --- ml.fs: the session's files, in the run's own world ---
+
+test("an exec naming ml.fs asks the person even with the read-only auto-approve on, runs isolated, and reads the run's own session masked", T, async () => {
+    const { RangedReader } = await import("../src/session/ranged-reader.ts");
+    const { fsServer } = await import("../src/session/fs-serve.ts");
+    const SECRET = "sk-live-0123456789abcdef";
+    const sessionsAsked = [], fsMsgs = [];
+    const bytes = new TextEncoder().encode(`KEY=${SECRET}\n`);
+    const source = {
+        attached: async (s) => { sessionsAsked.push(s); return [{ handle: "h1", name: "env.txt", key: "k1", bytes: bytes.length, sha256: "x", attachedMs: 1 }]; },
+        blob: async () => new Blob([bytes]),
+        secretForms: async () => [{ find: SECRET }],
+    };
+    const reader = new RangedReader({ source });
+    const server = fsServer(() => reader.openChannel("files"));
+    const onFsCall = (m) => { fsMsgs.push(JSON.parse(JSON.stringify(m))); return m.type === "FS_CALL" ? server.call(m.key, m.session, m.op, m.args) : (server.end(m.key), undefined); };
+    const { results, log, approvals, hash, toPage } = await isoRun(["return await ml.fs.readFile('/files/attached/h1/env.txt', 'utf8')"], { us: true, auto: true, onFsCall });
+    assert.equal(approvals.length, 1, "the person was asked: the dialect has no ml.fs, and its survey does not answer for it");
+    assert.equal(toPage.length, 0, "nothing of it reached the page's world");
+    assert.deepEqual(log.map((r) => [r.kind, r.reason]), [["exec-isolated", "fs"]]);
+    assert.match(results[0], new RegExp(`KEY=\\*{${SECRET.length}}`));
+    assert.ok(!results[0].includes(SECRET));
+    assert.ok(fsMsgs.filter((m) => m.type === "FS_CALL").every((m) => m.session === hash), "every read names the run's session, from the worker's record");
+    assert.ok(sessionsAsked.length && sessionsAsked.every((s) => s === hash));
+    assert.equal(fsMsgs.at(-1).type, "FS_END", "the exec's channel is closed when it ends");
+    assert.equal(server.size(), 0);
+});
