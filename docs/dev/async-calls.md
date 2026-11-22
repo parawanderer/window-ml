@@ -220,7 +220,7 @@ TaskBackground | null` (null at zero, no `noTab`: the HUD has its tab), through 
 other worker notices go. It is worker-only (`WORKER_ONLY_KINDS`, so a page cannot write one), a live notice (`save:
 false`, not in the session index's known kinds, not in an export) and is not stored: the reducer (`debug-reducer.ts`) holds
 the latest on `Session.background`, replaced on each event and cleared on null, and a panel opened late gets the last one
-from the debug ring. `TaskMark` (`card/task-mark.tsx`, words in `taskMarkText`, `transcript/task-mark-text.ts`) draws
+from the debug ring. `TaskMark` (`card/task-mark.tsx`, words in `taskMarkText`, `src/chat/task-mark-text.ts`, where the chat page's list and the phone's list read it too) draws
 "2 running · 1 result waiting" at the top of the card's body, its tip saying a result is read at the run's next turn.
 The no-tab state on the chat page is not drawn yet: the chat-page lane's. No new state, so `state.md` needs nothing.
 Tests: `tests/task-row.test.mjs`, `tests/session-index.test.mjs`, `tests/task-mark.test.mjs`,

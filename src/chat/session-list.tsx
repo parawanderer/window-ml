@@ -26,7 +26,7 @@ import { endingSeen, isUnread } from "./read-marks";
 import { pinnedInOrder } from "./pin-order";
 import { useReorder } from "./pin-reorder";
 import { approvalsPending, STATUS_LABEL } from "./status-words";
-import { taskMarkText, TASK_MARK_TIP } from "../sidebar/transcript/task-mark-text";
+import { taskMarkText, TASK_MARK_TIP } from "./task-mark-text";
 import { SessionHoverCard } from "./session-summary";
 
 /** The index's status as the panel's status dot draws it. A run stopped at its cap is `err` underneath (the reducer marks

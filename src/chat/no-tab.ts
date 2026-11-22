@@ -2,7 +2,7 @@
 
 import type { TaskBackground } from "../contract/contract-debug";
 import type { Principal, RuntimeInfo, SessionKey, SessionSummary } from "../session/session-host";
-import { taskMarkText } from "../sidebar/transcript/task-mark-text";
+import { taskMarkText } from "./task-mark-text";
 import { mayCommand } from "./grants";
 
 /**
