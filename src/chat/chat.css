@@ -1130,7 +1130,9 @@ html[data-calm]:not([data-theme="light"]), html[data-calm]:not([data-theme="ligh
    step stays `.open` until its body unmounts, and its 16px margins used to drop to 3px in that last frame. */
 .chat.calm .astep.tool.open.closing { margin: 3px 0; padding-bottom: 0; }
 @media (prefers-reduced-motion: reduce) { .chat.calm .astep.tool { transition: none; } }
-.chat.calm .astep-body { padding: 6px 0 10px 4px; }
+/* No room under the last thing in an open step: the fold rail runs the body's full height, so bottom padding drew the rail on past the
+   step's last block or `@tool:` chip, an end that looked like a bug. The room between this step and the next row is outside the body. */
+.chat.calm .astep-body { padding: 6px 0 0 4px; }
 /* THE BODY CONTAINS ITS OWN FLOATS, so the open animation ends on the layout it settles to. `chat-step-open` clips with `overflow: hidden`,
    which makes the body a block formatting context that holds a float (the `@tool:` chip, `float: right` above); when the animation ended
    `overflow` went back to `visible` and the body stopped holding it, losing the chip row's 22px in one frame. Never let the animation
@@ -2248,6 +2250,9 @@ html[data-calm] .tt-layer { --notice: var(--accent); --notice-fg: var(--accent-f
    margin it now holds under the last row and the group's own 3px, makes the 26px the collapsed margin gave (measured: next row 26px under the last one). */
 .chat.calm .astreak-body { display: flow-root; padding-bottom: 17px; }
 .chat.calm .astreak-body > .aturn:last-child { margin-bottom: 0; }
+/* …and the rail stops at the last row, not at the end of that padding: the room under a group is the gap to the next row, not more
+   group. The padding stays (it animates with the body, from 0, where a margin on `.astreak` would snap when the body unmounts). */
+.chat.calm .astreak-body > .fold-rail { bottom: 17px; }
 .astreak-body.closing { animation: chat-step-close .4s cubic-bezier(.4, 0, .2, 1) forwards; }
 @media (prefers-reduced-motion: reduce) {
     .astreak, .chat.calm .astreak.refolding { --astep-close-ms: 0; }
