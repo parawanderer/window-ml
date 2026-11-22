@@ -17,4 +17,4 @@ Each notebook has a generator beside it (`make-<name>.py`, the file to edit) and
   run WITH path resolution (`docs/plan/repl/ONE_DESCRIBER_BUILD.md`, section 5), run against the host's shipped wasm: build
   it in a `window-ml-host` checkout with `tools/build-describer.sh <out-dir>` (not the spike's `build.sh` and `wrapper/`,
   which stay as history), then from `one-describer/`: `node --import tsx fuzz-resolved.mjs <out-dir>/describe.wasm <host
-  checkout> 2000 1,2,3,7`. The mutation generator both fuzzers use is `makeFuzzer` in `one-describer/lib.mjs`.
+  checkout> 2000 1,2,3,7 <label>` (output in `out/resolved/<label>/`; `CONTROL=resolver|pre` makes a control run, `BUILD_OS` and `RUN_ID` are recorded). The run also covers the Ubuntu `describer` artifact of the host's CI and two controls. The mutation generator both fuzzers use is `makeFuzzer` in `one-describer/lib.mjs`.

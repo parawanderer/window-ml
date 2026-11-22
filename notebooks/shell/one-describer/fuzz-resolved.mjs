@@ -2,12 +2,12 @@
 // the TS describer with a `resolve` against the host's wasm describer's `pre` put through the TS resolution step, on the
 // resolved effects, `described` and (reported apart, not in the bar) `why` and `pre`.
 //
-//   node --import tsx fuzz-resolved.mjs <describe.wasm> <window-ml-host checkout> [perProgram=2000] [seeds=1,2,3,7]
+//   [CONTROL=resolver|pre] [BUILD_OS=…] [RUN_ID=…] node --import tsx fuzz-resolved.mjs <describe.wasm> <window-ml-host checkout> [perProgram=2000] [seeds=1,2,3,7] [label=macos]
 //
 // The wasm is the host's `tools/build-describer.sh <out-dir>` output (describe.wasm + describe.json beside it); the host
 // checkout is read only for its HEAD and `rustc --version`. Calls: every vector row unmutated (kind "vectors"), then per
 // seed `perProgram` mutations per program drawn from lib.mjs's makeFuzzer (the same generator, and the same seeds, as
-// fuzz.mjs). Writes out/fuzz-resolved-<seed>.json (one per seed), out/fuzz-resolved-vectors.json and out/fuzz-resolved-meta.json.
+// fuzz.mjs). Writes out/resolved/<label>/{seed-<seed>,vectors,meta}.json, so runs against different wasm files (macOS, the CI artifact) and the controls stay apart.
 //
 // THE FAKE RESOLVER (deterministic per argv index; both sides call this one function, so it is not what is compared):
 //   the placeholder "cwd" and "repo"      -> /w (the workspace root: inRoot, isRoot, not top level)
@@ -19,8 +19,11 @@
 //     4, 5  the SAME path: /w/shared (two different indices resolve to one path)
 //     6     does not exist: /w/new<i>, exists false
 // A call with any argument at index 4 and 5, or 11 and 12 (...), is therefore a call with two arguments on one path.
-// CONTROL=1 makes the wasm side's resolver report every resource as in-root and not secret: a run that must then DISAGREE,
-// to show the harness can see an effects difference at all (record it, do not pin it as the result).
+// CONTROLS (a run that must then DISAGREE, to show the harness can see a difference; recorded as controls, never as the result):
+//   CONTROL=resolver  the wasm side's resolver reports every resource as in-root and not secret (the two sides no longer share a resolver)
+//   CONTROL=pre       each DESCRIBED wasm reply's `pre` is perturbed before it is compared and resolved: if any term has a target, the
+//                     last target of the last term that has one is dropped; else, if a term is "read" or "write", the first such term's
+//                     op is swapped (read <-> write); calls with neither (runs-code, network without paths) are left alone
 // Section 4 of the plan: an argv entry, envSet name or the flavour that is not isWellFormed() is not described on the
 // worker side (the call asks): counted as "asks, lone surrogate", compared on neither side.
 import fs from "node:fs";
@@ -28,8 +31,10 @@ import path from "node:path";
 import { execSync } from "node:child_process";
 import { OUT, TS, vectorRows, loadWasm, makeFuzzer, manifests, PROGRAMS, canon } from "./lib.mjs";
 
-const [WASM_FILE, HOST, PER_ARG, SEEDS_ARG] = process.argv.slice(2);
+const [WASM_FILE, HOST, PER_ARG, SEEDS_ARG, LABEL_ARG] = process.argv.slice(2);
 if (!WASM_FILE || !HOST) { console.error("usage: fuzz-resolved.mjs <describe.wasm> <window-ml-host checkout> [perProgram=2000] [seeds=1,2,3,7]"); process.exit(2); }
+const LABEL = LABEL_ARG ?? "macos", CONTROL = process.env.CONTROL ?? "";
+const RDIR = path.join(OUT, "resolved", LABEL); fs.mkdirSync(RDIR, { recursive: true });
 const PER = +(PER_ARG ?? 2000), SEEDS = (SEEDS_ARG ?? "1,2,3,7").split(",").map(Number);
 const { describePre, resolvePre, describeCall } = await import(`${TS}/src/shell/program-manifest.ts`);
 const { effectKey } = await import(`${TS}/src/effects.ts`);
@@ -58,6 +63,14 @@ const resolver = (seen, control) => (p) => {
     if (seen) { seen.cls[cls] = (seen.cls[cls] ?? 0) + 1; if (typeof p.arg === "number") seen.paths.push(r.path); if (r.inRoot === false) seen.cls.outsideRoots = (seen.cls.outsideRoots ?? 0) + 1; if (r.secret) seen.cls.secretResources = (seen.cls.secretResources ?? 0) + 1; }
     return r;
 };
+/** CONTROL=pre: the deterministic perturbation of a pre (see the header) */
+function perturbPre(pre) {
+    const p = JSON.parse(JSON.stringify(pre));
+    for (let i = p.length - 1; i >= 0; i--) if (p[i].targets.length) { p[i].targets.pop(); return p; }
+    const j = p.findIndex((t) => t.term === "read" || t.term === "write");
+    if (j >= 0) p[j].term = p[j].term === "read" ? "write" : "read";
+    return p;
+}
 const keys = (e) => e === "unknown" ? "unknown" : e.map(effectKey).sort();
 
 let w = await loadWasm(WASM_FILE);
@@ -82,8 +95,9 @@ async function compare(c, tally) {
     if (!w) { w = await loadWasm(WASM_FILE); return { fields: ["WASM-TRAP"], note: a.trap }; }
     if (err) return { fields: ["TS-THROW"], note: String(err).slice(0, 120) };
     if (a.error) return { fields: ["WASM-ERROR"], note: a.error };
+    if (CONTROL === "pre" && a.described) a = { ...a, pre: perturbPre(a.pre) };
     let wasmOut;
-    try { wasmOut = { described: a.described, why: a.why, effects: a.described ? keys(resolvePre(a.pre, resolver(undefined, !!process.env.CONTROL))) : "unknown" }; }
+    try { wasmOut = { described: a.described, why: a.why, effects: a.described ? keys(resolvePre(a.pre, resolver(undefined, CONTROL === "resolver" || CONTROL === "1"))) : "unknown" }; }
     catch (e) { return { fields: ["RESOLVE-THROW"], note: String(e).slice(0, 120), wasm: a.pre }; }
     (tsOut.described ? tally.described++ : tally.notDescribed++);
     if (tsOut.described) {
@@ -104,10 +118,10 @@ async function compare(c, tally) {
 const newTally = () => ({ compared: 0, asks: 0, described: 0, notDescribed: 0, withTargets: 0, twoArgsOnePath: 0, callsOutsideRoots: 0, callsWithSecret: 0, resolverUse: {} });
 
 // a bar field is `described` or `effects`; why and pre are reported apart
-const BAR = new Set(["described", "effects", "WASM-ERROR", "WASM-TRAP", "TS-THROW", "RESOLVE-THROW"]);
+const BAR = new Set(["described", "pre", "effects", "WASM-ERROR", "WASM-TRAP", "TS-THROW", "RESOLVE-THROW"]);
 const causeOf = (c, fields) => {
     const f = fields.join("+");
-    if (f.startsWith("why") || f === "pre") return f + (c.argv.some((x) => /[\u{10000}-\u{10FFFF}]/u.test(x)) ? " / astral" : c.argv.some((x) => /[^\x00-\x7f]/.test(x)) ? " / non-ascii" : " / control-char");
+    if (f.startsWith("why")) return f + (c.argv.some((x) => /[\u{10000}-\u{10FFFF}]/u.test(x)) ? " / astral" : c.argv.some((x) => /[^\x00-\x7f]/.test(x)) ? " / non-ascii" : " / control-char");
     return f;
 };
 async function minimise(c, fields) {
@@ -137,7 +151,7 @@ async function runCalls(label, calls) {
         const byProgram = {}; for (const d of list) byProgram[d.c.program] = (byProgram[d.c.program] ?? 0) + 1;
         const examples = [], seen = new Set();
         for (const d of list) {
-            if (examples.length >= (cause.startsWith("why") || cause === "pre" ? 3 : 10)) break;
+            if (examples.length >= (cause.startsWith("why") ? 3 : 10)) break;
             const m = await minimise(d.c, d.r.fields); const key = JSON.stringify([m.program, m.argv, m.flavour]);
             if (seen.has(key)) continue; seen.add(key);
             const r = await compare(m, newTally());
@@ -157,12 +171,12 @@ const meta = {
     describeJson: JSON.parse(fs.readFileSync(path.join(path.dirname(WASM_FILE), "describe.json"), "utf8")),
     rustc: execSync("rustc --version", { cwd: HOST }).toString().trim(),
     windowMlCommit: execSync("git rev-parse HEAD", { cwd: TS }).toString().trim(),
-    perProgram: PER, seeds: SEEDS, node: process.version,
+    perProgram: PER, seeds: SEEDS, node: process.version, label: LABEL, control: CONTROL || null, buildOs: process.env.BUILD_OS ?? null, runId: process.env.RUN_ID ?? null,
     resolver: { classes: CLASSES, cwdRepo: ROOT, root: ROOT },
 };
 const rows = vectorRows();
 const vec = await runCalls("vectors", rows.map((r) => ({ program: r.program, argv: r.argv, version: r.version, flavour: r.flavour, envSet: [] })));
-fs.writeFileSync(path.join(OUT, "fuzz-resolved-vectors.json"), JSON.stringify(vec, null, 1));
+fs.writeFileSync(path.join(RDIR, "vectors.json"), JSON.stringify(vec, null, 1));
 console.log("vectors", JSON.stringify({ ...vec, groups: vec.groups.map((g) => [g.cause, g.count]) }));
 for (const seed of SEEDS) {
     const { R, ri, pick, mutate, VERS, FLV } = makeFuzzer(seed);
@@ -177,8 +191,8 @@ for (const seed of SEEDS) {
         }
     }
     const r = await runCalls(`seed ${seed}`, calls);
-    fs.writeFileSync(path.join(OUT, `fuzz-resolved-${seed}.json`), JSON.stringify({ seed, ...r }, null, 1));
+    fs.writeFileSync(path.join(RDIR, `seed-${seed}.json`), JSON.stringify({ seed, ...r }, null, 1));
     console.log(`seed ${seed}`, JSON.stringify({ ...r, groups: r.groups.map((g) => [g.cause, g.count, g.bar]) }));
 }
 meta.totalSeconds = (Date.now() - t00) / 1000;
-fs.writeFileSync(path.join(OUT, "fuzz-resolved-meta.json"), JSON.stringify(meta, null, 1));
+fs.writeFileSync(path.join(RDIR, "meta.json"), JSON.stringify(meta, null, 1));
