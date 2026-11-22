@@ -1122,7 +1122,14 @@ html[data-calm]:not([data-theme="light"]), html[data-calm]:not([data-theme="ligh
    step stays `.open` until its body unmounts, and its 16px margins used to drop to 3px in that last frame. */
 .chat.calm .astep.tool.open.closing { margin: 3px 0; padding-bottom: 0; }
 @media (prefers-reduced-motion: reduce) { .chat.calm .astep.tool { transition: none; } }
-.chat.calm .astep-body { padding: 6px 0 10px 4px; }
+/* No room under the last thing in an open step: the fold rail runs the body's full height, so bottom padding drew the rail on past the
+   step's last block or `@tool:` chip, an end that looked like a bug. The room between this step and the next row is outside the body. */
+.chat.calm .astep-body { padding: 6px 0 0 4px; }
+/* THE BODY CONTAINS ITS OWN FLOATS, so the open animation ends on the layout it settles to. `chat-step-open` clips with `overflow: hidden`,
+   which makes the body a block formatting context that holds a float (the `@tool:` chip, `float: right` above); when the animation ended
+   `overflow` went back to `visible` and the body stopped holding it, losing the chip row's 22px in one frame. Never let the animation
+   change what the box contains: see "Traps" in docs/dev/chat-page.md. */
+.chat.calm .astep-body { display: flow-root; }
 /* An open call carries the fold rail down its left, as an open group does: room for its hit strip. */
 .chat.calm .astep-body.railed { padding-left: 13px; }
 .chat.calm .aturn-prose { margin: 6px 0 14px; }
@@ -2146,6 +2153,10 @@ html[data-calm] .tt-layer { --notice: var(--accent); --notice-fg: var(--accent-f
    with the row rather than standing there at once. A row inside a closed group stays plain (the group's head is the line). */
 .chat.calm .astep-said { display: inline-block; max-width: 46ch; vertical-align: bottom; animation: chat-said-in .22s ease-out both; }
 .chat.calm .astreak:not(.expanded) .astep-said { display: none; }
+/* …but it does NOT fade in there. The group's rows mount in the same frame the group starts to open, so `chat-said-in` began every title at
+   opacity 0 on the second frame, under a body that was already open: bare rows, each with its gap, and the titles arriving after. The body's
+   own open animation is the group's arrival; a title is simply part of its row. */
+.chat.calm .astreak .astep-said { animation: none; }
 @keyframes chat-said-in { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .chat.calm .astep-said { animation: none; } }
 
@@ -2231,6 +2242,19 @@ html[data-calm] .tt-layer { --notice: var(--accent); --notice-fg: var(--accent-f
 /* The rail inside it is the shared fold rail (`.fold-rail`, sidebar.css). */
 /* …and it opens and shuts on the same keyframes as a step body, through the same `--astep-close-ms` handshake. */
 .astreak-body { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); }
+/* THE LAST ROW'S BOTTOM MARGIN STAYS INSIDE THE BODY. `.aturn` carries 26px under it; with `overflow: hidden` (the animation) that margin sat inside the
+   body, and at the animation's end `overflow` went back to `visible` and it collapsed out through the unpadded body, so the group lost 29px in one
+   frame. The body is a `flow-root` that holds every margin in both states, and the room under the group is its own padding: 17px, with the 6px of
+   margin it now holds under the last row and the group's own 3px, makes the 26px the collapsed margin gave (measured: next row 26px under the last one). */
+.chat.calm .astreak-body { display: flow-root; padding-bottom: 17px; }
+.chat.calm .astreak-body > .aturn:last-child { margin-bottom: 0; }
+/* …and the rail stops at the last row, not at the end of that padding: the room under a group is the gap to the next row, not more
+   group. The padding stays (it animates with the body, from 0, where a margin on `.astreak` would snap when the body unmounts). */
+.chat.calm .astreak-body > .fold-rail { bottom: 17px; }
+/* …except while the rows REFOLD into a group: that body mounts holding the rows where they stood and only ever closes, so its first frame must
+   be the lone row's layout, 26px of margin under the last row and no padding, or what follows the group steps by the difference. */
+.chat.calm .astreak.refolding > .astreak-body { padding-bottom: 0; }
+.chat.calm .astreak.refolding > .astreak-body > .aturn:last-child { margin-bottom: 26px; }
 .astreak-body.closing { animation: chat-step-close .4s cubic-bezier(.4, 0, .2, 1) forwards; }
 @media (prefers-reduced-motion: reduce) {
     .astreak, .chat.calm .astreak.refolding { --astep-close-ms: 0; }

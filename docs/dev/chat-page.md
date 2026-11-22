@@ -1132,6 +1132,7 @@ resume and reset already are the reconciliation.
 
 ## Traps
 
+- **An open animation must not change what its box contains.** `chat-step-open` clips with `overflow: hidden`, which makes the body a block formatting context: it holds a float (the `@tool:` chip) and keeps its last child's bottom margin, and when the animation ends `overflow` reverts and both fall out in one frame (a step lost 22px, a group 29px). The bodies are `display: flow-root` so both states agree, and the room under a group is padding, not a margin. A row title (`.astep-said`) inside a group does not fade in: its rows mount with the group. Guarded by `tests/e2e/chat-expand-snap.spec.mjs`.
 - **One design language across the surfaces.** The phone app and the chat page's CALM view are the same product on two
   screens: same palette, same glyphs, same order, unless a device fact (a thumb, a sheet, a back gesture) makes one
   wrong. A change to the page's colours or icons is a change to `mobile/` in the same breath. The rule and how the two
