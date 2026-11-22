@@ -1734,6 +1734,38 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   SHELL_INTERACTIVE.md, SESSION_HISTORY_STORE.md, COMMAND_MODE.md); the unreachable unhardened branches in the
   offscreen document and the Python worker (the Pyodide lane's to delete); the fork's numpy dtype KeyError (issue
   #2040, no owner); e3's probes for ruling 93 and #2066, drafted locally.
+- **Exact coverage on the policy card: a follow-up, NOT scheduled (Shane, 2026-11-22, in the coordinator's session:
+  "write it down as a follow-up item somewhere but not schedule it yet").** Today a proposed settings rule
+  (`propose_policy` with consumer `setting`) is MEASURED: the card tries it on about 5,100 changes (key, from, to),
+  the rule's own literals with plus and minus one among them, and reports which it allowed. That is a test on a finite
+  sample; a rule can allow a change the sample never tried. The follow-up: for rules in a restricted fragment
+  (comparisons on `c.key`, `c.from` and `c.to` joined by and/or), compute the allowed set exactly. Every key has a
+  known domain (an interval of numbers or a short list), so the allowed set is a union of boxes over that domain, and
+  the card says "allows exactly these" with no sampling error. A rule outside the fragment keeps the sampled measure
+  and the card says which of the two it shows. Open before it is scheduled: the fragment's grammar; whether the same
+  method should cover every policy consumer and not only `setting`, which is a larger design with its own spec. Nobody
+  assigned; settings specs is idle.
+- **2026-11-22, after the resume, each verified with gh.**
+  - Merged: #2077 (647c6c04, the plan), #2064 (76fa29af, the resource chart's gestures take a ChartView; flaky-ci's
+    naming 7079018614), #2076 (353b6c34), #2078 (b0c05faa, SECRET_HANDLES.md: rulings 93, 94, 96 and 97 written out).
+  - #2078's figures, the coordinator's calls and provisional until the build PR measures them: a personal detail is at
+    least 6 characters after normalisation; up to 4 variants an entry; a phone value of 7 digits or more matches
+    across separators; the screenshot mask's text walk is bounded at 4 MiB and the capture is refused past it.
+  - #2078's capture rule: whether a personal detail is painted depends on who receives the bitmap and on the captured
+    top document's origin. Reaching a page of the same origin: not painted (the site drew it; painting would confirm a
+    guess). Reaching a page of another origin, a cross-origin frame included: painted. Reaching no page: always
+    painted. Stated residual: an approved site that also controls the other origin can confirm a guess from the
+    painted rectangles.
+  - Shane, in the coordinator's session: a masked card is answered only in the renderer the extension hosts in the
+    first build; answering from the phone "can stay unbuilt until later".
+  - The hide rule (ruling 34, files-host) is three PRs: A here (the `files` hide and show entries, the judge, the
+    resolved list feeding `RangedReader`'s hide seam, the view rows, one session-contract command), B in the host (the
+    spawn field), C here (the model's proposal card). Until B lands a hide does not bind a spawned process, and A's
+    view row says so. Session-store's `ml.fs` reads go only through `RangedReader` (both lanes' account), so A covers
+    them.
+  - In progress: an Opus agent of the coordinator's aligns every doc that describes `/files` with the rulings and with
+    main, as one docs PR (Shane's word); files-host and session-store fact-check it. Packages has not answered the
+    resume; #2062 is unmoved at 7813d148.
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
