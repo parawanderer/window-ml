@@ -841,8 +841,8 @@ built.
 
 **Every reader of a root is bound by it.** The list binds every way a file under a root is read, not only a `spawn`:
 `ml.fs` and its one ranged reader, an `@files` reference, the file browser's content view, and Python's `/files`
-mount (built, #2026; the reader asks a hide rule at every open and read, and nothing sets one until this list is
-built). One list, every reader: a reader the host does not sandbox applies the worker's resolved list
+mount (built, #2026; the reader asks the hide rule at every open and read, and the rule is this list, set by PR A
+of this section's build). One list, every reader: a reader the host does not sandbox applies the worker's resolved list
 itself before it reads. A hidden file readable through `ml.fs` is the defect this rules out, and a row asserts it for
 each reader.
 
