@@ -741,7 +741,7 @@ most 512 characters, a name matching `[A-Z0-9_]{1,40}`. The minimum length diffe
 **The looser match.** A detail is written by people and pages in many ways, so the exact match misses most of them. The
 rule, applied to the registered value and to the text alike:
 
-1. Unicode NFKC, then `toLowerCase()` with no locale, which folds case (`SHANE` and `Shane` match).
+1. Unicode NFKC, then `toLowerCase()` with no locale, which folds case (`ANN LEE` and `Ann Lee` match).
 2. Each run of whitespace (any character `\s` matches, the no-break space, a newline and a tab included) becomes one
    space, and the registered value is trimmed. An address split over two lines matches the same address on one.
 3. A match is bounded: the character before it and the one after it are neither a letter nor a digit (`\p{L}`,
@@ -750,7 +750,10 @@ rule, applied to the registered value and to the text alike:
    its own case and whitespace included.
 
 **Not folded**, each a limit stated to the person: diacritics (`Zoë` and `Zoe` are two values), punctuation and
-abbreviation (`St.` and `Street`), a hyphen for a space, and order (`Lee, Ann`). An entry may carry up to 4 variants
+abbreviation (`St.` and `Street`), a hyphen for a space, and order (`Lee, Ann`). In a script written without spaces
+(Chinese, Japanese, Thai) a name inside a sentence has a letter on both sides, so step 3's bound never lets it match:
+a gap, not lifted in the first build, since dropping the bound for those scripts would match a short name inside
+unrelated words. An entry may carry up to 4 variants
 under one name (proposed), each matched as the value is. A variant counts toward the registry's forms, not its entries.
 
 **A phone number** (proposed, beyond the ruling's minimum). A value made of digits and the separators `+`, space, `.`,
@@ -760,9 +763,9 @@ bounded by non-digits. `+32 470 12 34 56` then matches `+32470123456` and `+32 (
 country. The rule applies only when the value holds at least 7 digits.
 
 **The forms.** The looser match applies to the value as written and JSON-escaped, where the escapes `\n`, `\r`, `\t`
-and ` ` count as whitespace. A percent-encoded form matches with a space as `%20` or `+` and the hex digits in
-either case. The base64 and shell-escaped forms are matched exactly as written, since case folding breaks base64; a
-detail inside base64 is caught only in the case it was registered in.
+and the no-break space's escape (a backslash, then `u00a0`) count as whitespace. A percent-encoded form matches with a
+space as `%20` or `+` and the hex digits in either case. The base64 and shell-escaped forms are matched exactly as
+written, since case folding breaks base64; a detail inside base64 is caught only in the case it was registered in.
 
 **The minimum length, and what a false hit costs** (proposed). A `detail` is at least 6 characters after normalisation,
 not 8. `Ann Lee` is 7, and a detail is meant to match ordinary text, so the floor's reason for a `mask` entry (a short
@@ -780,13 +783,17 @@ The hit rate on real pages is measured in the build PR, on captured page text wi
 addresses, as ruling 39's patterns are measured on real output; the floor of 6 stays provisional until then (the
 coordinator's call).
 
-**Where it is matched.** Every crossing "The scrub as built" lists, with two exceptions. A page-started model request
-and an error answered to a page (`forPage`) skip `detail` entries. The page composed every message of its own request
-and holds the text of its own error, so scrubbing a detail there hides nothing from the page. Scrubbing it would also
-give an approved page a cheap way to confirm a guess: it sends a candidate name, and the model it drives repeats the
-marker. For a high-entropy `mask` value that oracle is the known limit already stated; a name or an address is cheap to
-guess, so for those it becomes a real leak. The turn the person sends is scrubbed of details as of any entry (ruling
-39).
+**Where it is matched.** Every crossing "The scrub as built" lists, with two exceptions, and each covers only text the
+page itself supplied. A page-started model request (`FETCH_LLM` and the stream port) and an error answered to a page
+(`forPage`) skip `detail` entries. The page composed every message of its own request and holds the text of its own
+error, so scrubbing a detail there hides nothing from the page. Text the worker adds to a run a page started (a fetch
+made with the person's cookies, a tool result from another tab, in a run the worker hosts) is the worker's, not the
+page's, and is scrubbed of details as of any entry. A detail the worker hands a page inside an answer's `data` is
+outside the scrub already ("Known limits" of "The scrub as built"), so the skip adds no route of its own. Scrubbing it
+would also give an approved page a cheap way to confirm a guess: it sends a candidate name, and the model it drives
+repeats the marker. For a high-entropy `mask` value that oracle is the known limit already stated; a name or an address
+is cheap to guess, so for those it becomes a real leak. The turn the person sends is scrubbed of details as of any entry
+(ruling 39).
 
 **Use by handle.** A `detail` is filled by name with the handle mechanism ("Shape" above): the run is granted entries
 by name, and the model holds a handle with no data in it. What differs from a `use` secret:
@@ -794,9 +801,10 @@ by name, and the model holds a handle with no data in it. What differs from a `u
 - **The sink is a page field, not a background fetch.** `type` takes a handle for the whole value of a field
   (`{ handle: "HOME_ADDRESS" }`). The worker writes the value; the model's arguments, the step's display and both
   exports show `[detail: HOME_ADDRESS]`.
-- **The scope is an origin.** The first fill of an entry on an origin in a run asks, and the card names the entry and
-  the origin. A policy can allow it after that (`docs/spec/POLICIES.md`). A `use` secret's path, method and header scope
-  do not apply.
+- **The scope is an origin**: the origin of the frame that owns the field, not the top page's. The first fill of an
+  entry on that origin in a run asks, and the card names the entry and the origin. A field in a cross-origin frame
+  asks for that frame's origin, and the card shows both the frame's origin and the top page's. A policy can allow it
+  after that (`docs/spec/POLICIES.md`). A `use` secret's path, method and header scope do not apply.
 - **No `echoes` refusal.** A page that shows the detail back (an order's confirmation) is the normal case. The scrub
   blanks it on the way to the model, so nothing is refused.
 - **Ruling 30's exemption does not apply.** That exemption covers a password-class field holding what the run typed.
@@ -824,6 +832,13 @@ text, so the mask finds it in the page first. For each capture:
 4. The painted image is the one the run keeps, so the sidebar and both exports show what the model saw. The raw capture
    is never stored.
 
+**A capture that reaches the page.** One does: `CAPTURE_TAB` (`page-relay.ts`, `background.ts`) answers an approved
+page with a capture of its own tab, so it can crop to an element. That capture is not painted for `detail` entries. The
+page drew every pixel of it, so painting hides nothing from the page, and a painted rectangle would be the oracle the
+text skip removes: the page draws candidate names and reads which were painted. The same holds for a capture of the
+page's own tab that a page-hosted run's tool returns to the page. A capture the worker takes for a run it hosts, and a
+capture of any other tab in a run a page started, are painted, as text the worker adds is scrubbed.
+
 A full-page capture taken in tiles gets the two reads for each tile. `locate`'s text answer and the accessibility tree a
 CDP read returns are text crossings, scrubbed with the looser match. A closed shadow root and a cross-origin frame are
 read only through CDP's piercing DOM read, when CDP is attached; otherwise their text is not masked. The walk's bound
@@ -839,10 +854,13 @@ read only through CDP's piercing DOM read, when CDP is attached; otherwise their
 - **It filters; it detects nothing.** Only registered details are blanked. A name the person did not register, a first
   name alone when the full name is registered, and a detail that was transformed (initials, reversed, encoded) all
   reach the model.
+- **Text drawn only between the two reads** (an animation, a marquee, a value that blinks in): neither read sees it,
+  and the capture does.
 - **Layout leaks a little.** A painted rectangle has the width of the text it covers.
 
-**A session secret: a second registration origin** (the coordinator's relay of Shane's direction, 2026-11-20,
-[`SHELL_INTERACTIVE.md`](SHELL_INTERACTIVE.md), "A masked answer"). An entry has an origin as well as a kind. `settings`
+**A session secret: a second registration origin** (rulings 96, the question card, and 97, the session secret: Shane,
+2026-11-20, in the coordinator's session, numbered in the plan by #2077; [`SHELL_INTERACTIVE.md`](SHELL_INTERACTIVE.md),
+"A masked answer"). An entry has an origin as well as a kind. `settings`
 is the person in Settings, kept in `ml_secret_registry`. `session` is the harness at run time: the answer to a masked
 card (a `getpass()` in a cell). A `session` entry is kind `mask`. It is kept with ruling 30's page values in
 `chrome.storage.session`, never on disk, and is removed when its session is deleted or archived, and in any case when
@@ -877,7 +895,7 @@ no path. Reading them back crosses the `/files` read scrub, which applies `detai
 
 **Rows e3 will need**, by name:
 
-- `detail-case-and-space`: `SHANE`, a newline and `b` match `Shane B`; `Joann Leeds` does not match `Ann Lee`.
+- `detail-case-and-space`: `ANN`, a newline and `lee` match `Ann Lee`; `Joann Leeds` does not match `Ann Lee`.
 - `detail-replaces-original-span`: the replacement covers the original text, its case and whitespace included.
 - `detail-phone-separators`: each separator form of one number matches; a run of the same digits inside a longer
   digit run does not.
@@ -885,16 +903,22 @@ no path. Reading them back crosses the `/files` read scrub, which applies `detai
 - `detail-floor`: a 5-character detail is refused at registration; a one-word detail is accepted with the warning.
 - `detail-not-on-page-request`: a page-started request holding a registered name reaches the backend unchanged, and an
   error to the page holding it is not marked (no oracle).
+- `detail-worker-text-in-page-run`: in a run a page started, a tool result the worker built from another tab and a
+  fetch made with the person's cookies are scrubbed of a registered name.
+- `detail-capture-to-page`: a page's `CAPTURE_TAB` of its own tab comes back with no `detail` painted; the same tab
+  captured for a run the worker hosts, and another tab captured in a page-started run, are painted.
 - `detail-handle-fill`: `type` with a handle fills the field; the arguments, display and exports show
   `[detail: <NAME>]`; reading the field back gives the marker.
-- `detail-handle-origin-asks`: the first fill on an origin asks; a page cannot start a fill.
+- `detail-handle-origin-asks`: the first fill on an origin asks; a field in a cross-origin frame asks for the frame's
+  origin and the card shows both origins; a page cannot start a fill.
 - `detail-screenshot-painted`: a page with the name in one text node, in `<b>Ann</b> Lee` and in an input is captured
   with all three rectangles painted. The stored image is the painted one.
 - `detail-screenshot-moved`: a page that moves the text between the two reads gets the union painted and a
   `mask-moved` record.
 - `detail-screenshot-bound`: a page past the walk's bound gets the capture refused, never sent unmasked.
-- `detail-gaps-stated`: the name in an image, in a canvas, in `::before` content and split across two cells is NOT
-  masked. These rows pin the stated gaps, so a change to them is seen.
+- `detail-gaps-stated`: the name in an image, in a canvas, in `::before` content, split across two cells, inside a
+  Japanese sentence with no spaces, and drawn only between the two reads is NOT masked. These rows pin the stated gaps,
+  so a change to them is seen.
 - `session-secret-registered-before-resume`: a `getpass` answer is scrubbed from the cell's next output, and is gone
   with the session.
 - `session-secret-remote-refused`: a masked card answered from a remote host is refused.
