@@ -711,7 +711,11 @@ if (sessionStore) {
         .then(() => store.open())
         .then(async (rows) => {
             const openTabs = await tabsOfThisBrowser().catch(() => undefined);
-            sessionServer.restored(sessionServer.index.restore(rows.map((r) => ({ summary: r.summary, count: r.count })), openTabs));
+            const restored = sessionServer.index.restore(rows.map((r) => ({ summary: r.summary, count: r.count })), openTabs);
+            sessionServer.restored(restored);
+            // A dropped id is written back, or the next start in this browser restores it again, onto whatever tab holds it then.
+            const stale = new Set(rows.filter((r) => r.summary.page?.tabId != null).map((r) => r.summary.id?.hash));
+            for (const row of restored) if (stale.has(row.id.hash) && row.page?.tabId == null) store.putSummary(row);
             void recordStorageSnapshot().catch(() => { /* storage unavailable */ });
             // Whatever a previous worker saved and never compacted, sessions from before compaction existed included.
             imageCompaction?.kick();
@@ -999,7 +1003,8 @@ export async function unarchiveSession(hash: string): Promise<boolean> {
         get: async (k) => (await chrome.storage.local.get(k))[k],
         set: (k, v) => chrome.storage.local.set({ [k]: v }),
     }).catch(() => { /* storage unavailable: the chat reads, it just does not resume */ });
-    sessionServer.restored(sessionServer.index.restore([{ summary: got.summary, count: got.events.length }]));
+    // An archived session has no live tab behind it: whatever id its row kept names another tab now, or none.
+    sessionServer.restored(sessionServer.index.restore([{ summary: got.summary, count: got.events.length }], new Set()));
     await archiveCall("remove", { hash }).catch(() => { /* in both until the next archive: harmless */ });
     scheduleFolderSync();
     return true;
@@ -1063,6 +1068,17 @@ export function saveRunHistory(hash: string, history: Omit<Extract<SessionHistor
  */
 export function sessionPageMoved(tabId: number, url: string): void {
     for (const row of sessionServer.pageMoved(tabId, url)) if (row.saved) sessionStore?.putSummary(row);
+}
+
+/**
+ * A tab's document went away (`tabs.onRemoved`, `onReplaced`, a navigation that ends a page's run): the rows it changed
+ * are sent, and a saved one is written, so the next worker does not restore a `page.tabId` the browser may hand to
+ * another tab.
+ * @param tabId the tab
+ * @param opts whether the tab closed, or only its document went
+ */
+export function sessionPageGone(tabId: number, opts: { closed: boolean }): void {
+    for (const row of sessionServer.pageGone(tabId, opts)) if (row.saved) sessionStore?.putSummary(row);
 }
 
 /** Fold one debug event into the index, and save it when the session is one we keep. Never throws: a malformed event
