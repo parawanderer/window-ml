@@ -15,6 +15,7 @@ import type { StartRunPayload, StoredSession } from "../contract/contract-messag
 import type { SessionSummary } from "./session-host";
 import { addBytes, emptyBytes, measureEvents, snapshotRows, type SessionBytes, type StorageSnapshot } from "./session-storage-stats";
 import { collectPngs, replaceImages } from "./image-compact";
+import { scrubSecrets } from "../secret-scrub";
 
 /** How much of a person's disk the saved sessions may use before the oldest are dropped. */
 export const STORE_BUDGET_BYTES = 256 * 1024 * 1024;
@@ -64,6 +65,29 @@ export interface NsDropped { at: number; reason: string; names?: string[]; total
 
 /** The most names a {@link NsDropped} record carries: the rest are counted in `total`, not listed. */
 export const NS_DROPPED_NAMES_MAX = 50;
+
+/** The longest name or reason a {@link NsDropped} record keeps, in characters: a Python identifier fits with room. */
+export const NS_DROPPED_TEXT_MAX = 255;
+
+/** One line of a record's text: control characters gone, scrubbed of secret shapes, then clipped. */
+const nsText = (s: string): string => scrubSecrets(s.replace(/[\u0000-\u001f\u007f]/g, ""), []).slice(0, NS_DROPPED_TEXT_MAX);
+
+/**
+ * The record {@link SessionStore.noteNsDropped} stores, built from its named fields only: each text one line,
+ * scrubbed and bounded, non-string names dropped, the list capped at {@link NS_DROPPED_NAMES_MAX}.
+ * @throws {TypeError} a non-record, a non-finite `at`, a non-string `reason`, a `names` that is not a list, or a `total`
+ * that is not a count
+ */
+export function nsDroppedRecord(raw: unknown): NsDropped {
+    if (!raw || typeof raw !== "object") throw new TypeError("noteNsDropped: the record is not an object");
+    const r = raw as Record<string, unknown>;
+    if (typeof r.at !== "number" || !Number.isFinite(r.at)) throw new TypeError("noteNsDropped: `at` is not a time");
+    if (typeof r.reason !== "string") throw new TypeError("noteNsDropped: `reason` is not text");
+    if (r.names !== undefined && !Array.isArray(r.names)) throw new TypeError("noteNsDropped: `names` is not a list");
+    if (r.total !== undefined && !(Number.isSafeInteger(r.total) && (r.total as number) >= 0)) throw new TypeError("noteNsDropped: `total` is not a count");
+    const names = (r.names as unknown[] | undefined)?.filter((n): n is string => typeof n === "string").slice(0, NS_DROPPED_NAMES_MAX).map(nsText);
+    return { at: r.at, reason: nsText(r.reason), ...(names ? { names } : {}), ...(r.total !== undefined ? { total: r.total as number } : {}) };
+}
 
 /**
  * The `runmeta` record to write over `old`, carrying `old`'s {@link NsDropped} forward when `next` is an agent record
@@ -703,11 +727,12 @@ export class SessionStore {
      * Record that a session's Python namespace was dropped, in its `runmeta`: the latest record replaces any earlier
      * one. A row not yet in form 2 is migrated first, so the record is never written beside a history still on the row;
      * a session this store does not hold is ignored, and no row is created for it. Serialized on the write lock, so it
-     * cannot interleave with a history write, which carries the record forward.
+     * cannot interleave with a history write, which carries the record forward. The record is rebuilt by
+     * {@link nsDroppedRecord} first, and a malformed one throws to the caller with nothing written.
      */
     async noteNsDropped(hash: string, record: NsDropped): Promise<void> {
+        const rec = nsDroppedRecord(record);
         await this.open();
-        const rec: NsDropped = { ...record, ...(record.names ? { names: record.names.slice(0, NS_DROPPED_NAMES_MAX) } : {}) };
         this.flushing = this.flushing.then(async () => {
             const row = this.rows.get(hash);
             if (!row) return;
