@@ -119,7 +119,7 @@ export function GearMenu({ graphsRt, benchRt, logRt, stateRt, labelled }: {
                     {/* CALM VIEW is the one reading choice that belongs at the top level: it is the coarse switch, and
                         its fine one ("Group all tool calls") lives in Settings → This page with the page's other
                         display preferences, where a switch that only applies inside calm view can say so. */}
-                    <MenuItem icon={<IconBrain />} label="Calm view" note="the conversation, with the machinery one hover away"
+                    <MenuItem icon={<IconBrain />} label="Calm view"
                         on={calm.value} onPick={pick(() => setCalm(!calm.value))} />
                     {/* THE PANELS TOGETHER, under one row. These two are a different kind of thing from the rows
                         around them: not how the page reads or what it is set to, but an extra surface opened ONTO a
