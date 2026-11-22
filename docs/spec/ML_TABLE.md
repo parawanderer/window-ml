@@ -13,7 +13,8 @@ owns (ruling 68).
 
 - **Python: `t = ml.table(src, raw=False, delimiter=None, header=None, decimal=None)`**, a synchronous call (ruling 77).
   - The facade blocks on the wire answer through JSPI (`pyodide.ffi.run_sync`), with no fork change and no `Await`
-    node. The spelling is the same inside and outside the dialect.
+    node. The spelling is the same inside and outside the dialect. Not built: the facade's members are `async` today,
+    and a call from inside needs the dialect's data to admit the facade ([`ML_WIRE.md`](ML_WIRE.md), "Step 1").
   - It returns a pandas DataFrame (ruling 78), built in the cell from the table's bytes. The source facts go on
     `t.attrs`: `source`, `delimiter`, `truncated` and `headerless`.
   - Past the materialise cap, it returns the lazy table instead ("Tables too large to load").

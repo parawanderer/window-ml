@@ -123,41 +123,65 @@ one spent. The budget measures the worker's work, never the person's time, so a 
 ## The members a Python cell has, and the order the rest are built (2026-11-22)
 
 Shane, 2026-11-22, in the coordinator's session: Python is to get the functions that work in JS, and the work starts
-now. The mechanism is built: a cell's `ml` (`src/python/ml-facade.ts`) sends each call by its dotted name and the
-server decides whether the member exists (`membersFor`, `src/sw/sw-ml-wire.ts`). So the mirror is this list of members
-and nothing else. A row here is the record of what a cell can call; a member is added to the server's table and to
-this table in the same PR.
+now. The transport is built: a cell's `ml` (`src/python/ml-facade.ts`) sends each call by its dotted name and the
+server decides whether the member exists (`membersFor`, `src/sw/sw-ml-wire.ts`). A row here is the record of what a
+cell can call; a member is added to the server's table and to this table in the same PR.
+
+**What is not built is a call from INSIDE the dialect** (the packages lane's measurement on the pinned restricted
+core, 2026-11-22). The facade's members are `async`, and `Await` is excluded from the Python dialect, so every cell
+that calls `ml` today leaves the dialect and is asked. A synchronous member built through JSPI is refused too, as an
+attribute of a type the dialect does not admit. So "served" below means served on the wire to a cell the person
+approved; the read-only realm's members have no Python caller yet.
 
 | Member | In JS | In a Python cell | Owner and order |
 | --- | --- | --- | --- |
-| `getModel`, `config`, `models`, `capabilities`, `ps`, `serverTools`, `info`, `schema`, `range`, `dereference` | built | built (the worker survey's own members) | none |
-| `settings` | built | built, for a client bound to a run the worker built | none |
-| `sh.run`, `sh.read`, `sh.put` | built | built, for an approved client a running step of its run opened | none |
-| `names` | no member (JS has `ml.state`) | NOT built; ruling 99 | packages, first |
-| `table` | built (#2043) | NOT built; specified in [`ML_TABLE.md`](ML_TABLE.md), "The member" | packages, second |
-| `fetch` | built | NOT built; specified in [`ML_TABLE.md`](ML_TABLE.md), "The member" | packages, with `table` |
+| `getModel`, `config`, `models`, `capabilities`, `ps`, `serverTools`, `info`, `schema`, `range`, `dereference` | built | served; reachable only from an approved cell until step 1 below | packages, step 1 |
+| `settings` | built | served to a client bound to a run the worker built; reachable as the row above | packages, step 1 |
+| `sh.run`, `sh.read`, `sh.put` | built | served to an approved client that a running step of its run opened; never inside the dialect | none |
+| `names` | no member (JS has `ml.state`) | NOT built; ruling 99 | packages, step 2 |
+| `table` | built (#2043) | NOT built; specified in [`ML_TABLE.md`](ML_TABLE.md), "The member" | packages, step 3 |
+| `fetch` | built | NOT built; specified in [`ML_TABLE.md`](ML_TABLE.md), "The member" | packages, step 3 |
 | `current` | built | NOT built and not specified; [`ASYNC_CALLS.md`](ASYNC_CALLS.md) records it as open. Its `tasks` are reached today by the `Detached` error on `sh.run` and the `task` tool | no owner; a spec section first |
 | `state` | built (the page heap) | NOT built; [`PYTHON_DIALECT.md`](PYTHON_DIALECT.md) specifies the read, by copy or as a pointer | no owner; after `table` |
 | `queryAll`, `a11y` | built | absent: they read the page, and the worker's realm has no page | not planned |
 | `chat`, `click`, a credentialed or rendered fetch | built, each behind its own gate | absent; each comes with its consent path ("Per-call asking") | not scheduled |
 | `fs` | the read members are #2083 | NOT A MEMBER, by design: Python has the `/files` mount and its own `open` and `os` ([`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md), "Python is not this API") | none |
 
+**Step 1: the facade becomes synchronous and the dialect admits its read-only members** (the coordinator's calls; one PR, before any new member).
+
+- **Every member is synchronous, the old ones included.** The facade blocks on the wire answer through JSPI
+  (`pyodide.ffi.run_sync`, captured by the harness before the cell runs), as ruling 77 decided for `table`. One
+  spelling for every member and for every cell: a member that is awaited in one place and called plainly in another is
+  a trap for the model, and `Await` can never be in the dialect. `await ml.x()` stops working; the error a cell gets
+  for it names the plain call. Every model-facing text that shows the `await` form in Python changes in the same PR,
+  under the prompt-review rules.
+- **The dialect admits the facade by the harness's own type object, never by a name.** An approved cell can define a
+  class with the facade's name and leave an instance in the namespace for a later cell inside the dialect; that
+  instance is not admitted. Admitted inside: the members of `ML_READONLY_METHODS` that the worker's realm has, and
+  `names` once built. Not admitted: `sh.*` and anything gated, which stay with the approved client. This is a change
+  to the dialect's data and to no fork source; a change that turns out to need the fork is stopped and brought to the
+  coordinator.
+- **It is an extension of the dialect**, so it lands with adversarial tests and a re-check of the whole contract
+  (halting, failure, the doc), and e4 red-teams it: a look-alike class, a rebound or shadowed `ml`, a subclass, an
+  attribute set on the facade, a member name reached through `getattr` or a computed string, a hostile value passed as
+  an argument, and the cell's one budget under a loop of calls.
+
 The rules every new member follows (the coordinator's calls):
 
 - **The spelling is the JS one.** A member has the name and the argument order it has in JS, and a keyword where JS
-  takes an options object. A call is synchronous in Python (ruling 77): the facade blocks on the wire answer, inside
-  and outside the dialect.
-- **A member that reads and has no effect does not ask.** Whether a cell calling it stays in the Python dialect is
-  decided where `sh.read` is decided today. A member that needs a change to the dialect's whitelist or to the fork is
-  stopped and brought to the coordinator before the change is made.
+  takes an options object.
+- **A member that reads and has no effect does not ask**, once step 1 has landed and the member is in the admitted
+  list. Nothing decides this for a Python cell today: `sh.read` is served only to an approved client.
 - **A member is gated exactly as it is in JS.** `table` and `fetch` are judged as [`ML_TABLE.md`](ML_TABLE.md) says,
   by the same function the JS member calls, never by a second copy of the rule.
 - **What a member answers is scrubbed and capped on the server**, as a tool result is, and charged to the cell's one
   budget ("One budget a cell").
-- **`names()`** answers the cell's namespace as `{ names: [{ name, type }], total }`, sorted by name, at most 50
-  entries, each string one line of at most 64 characters. It reads the list the bench's Variables view already keeps,
-  runs no code of the cell's, and is absent for a stateless call, which keeps no namespace. It is not the retired
-  `ml.current.env`: nothing is added to a result or to the prompt unless the model calls it.
+- **`names()`** answers the run's namespace as `{ names: [{ name, type }], total }`, sorted by name, at most 50
+  entries, each string one line of at most 64 characters. It reads the run's scope manifest (`python.run-namespace`,
+  written when a cell finishes), so it lists the names as they stood at the end of the LAST FINISHED cell: a name the
+  calling cell bound is not in it, and the member's one line of description says so. It runs no code of the cell's. It
+  is absent for a client with no run, which keeps no namespace. It is not the retired `ml.current.env`: nothing is
+  added to a result or to the prompt unless the model calls it.
 - **Each member gets a red-team pass** (AGENTS.md, a new `ml.*` member): what a hostile page, a hostile value left in
   the namespace by an approved cell, and a hostile program's output must not get from it.
 
