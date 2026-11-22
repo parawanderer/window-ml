@@ -864,6 +864,9 @@ read only through CDP's piercing DOM read, when CDP is attached; otherwise their
   reach the model.
 - **Text drawn only between the two reads** (an animation, a marquee, a value that blinks in): neither read sees it,
   and the capture does.
+- **A site that controls a second origin.** An approved site that also controls the other origin (its own second
+  domain, in a frame or in another tab) can draw candidate names there and read the painted rectangles from the
+  capture it receives. Painting stays the rule; this residual is stated, not closed.
 - **Layout leaks a little.** A painted rectangle has the width of the text it covers.
 
 **A session secret: a second registration origin** (rulings 96, the question card, and 97, the session secret: Shane,
@@ -926,7 +929,8 @@ no path. Reading them back crosses the `/files` read scrub, which applies `detai
   `mask-moved` record.
 - `detail-screenshot-bound`: a page past the walk's bound gets the capture refused, never sent unmasked.
 - `detail-gaps-stated`: the name in an image, in a canvas, in `::before` content, split across two cells, inside a
-  Japanese sentence with no spaces, and drawn only between the two reads is NOT masked. These rows pin the stated gaps,
+  Japanese sentence with no spaces, and drawn only between the two reads is NOT masked; a page that controls a second
+  origin drawn in a frame reads which candidates were painted (the stated residual). These rows pin the stated gaps,
   so a change to them is seen.
 - `session-secret-registered-before-resume`: a `getpass` answer is scrubbed from the cell's next output, and is gone
   with the session.
