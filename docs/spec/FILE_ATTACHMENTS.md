@@ -3,8 +3,12 @@
 **Status: slices 1 and 2 built (2026-10-28/29); slice 3 under way: the held rows, the `@file:` pointer, the `pages`
 verb, attaching a PDF to an agent run, and every attachment to a worker-built run (any message) and a long paste as
 pointers, `ml.dereference` of `@file:`, `look` at a document and upload progress are built; Python's `files` and the
-files panel are next (Shane and the calm-chat-motion session); a session's files as a directory `/files/` is ruled,
-not built (2026-11-12), read by range with `ml.fs` for JS (ruled 2026-11-17).** The order is
+files panel are next (Shane and the calm-chat-motion session). A session's files as a directory, `/files/`, is
+ruled and PARTLY BUILT (2026-11-22): the ranged reader's read side (#2048), its wiring in the offscreen document and its
+scrub (#2058), and Python's mount in a worker-hosted run (#2026). Not built: `ml.fs`, the write side (every write
+answers EROFS, `agent/` included), the quota, the file browser, and the folder on the person's disk (ruling 91).** The
+current design of `/files` is in "`/files`: the layout, `ml.fs`, Python's mounts and the backup" and "`/files/` read
+by range, and `ml.fs`"; the older sections below it name what they lost, and to which ruling. The order is
 three slices, each landing on its own: text files, then PDFs, then documents as `@file:` pointers in agent runs. Slice
 3's contact points with the python, shell and policies lanes were ruled on by their coordinator (2026-10-28,
 "Rulings" below).
@@ -375,10 +379,12 @@ and `bytes` (raw bytes).
 **Python.** An attached file reaches `python_exec` as an INJECTED value, like a stored table, not as a path: there is
 no `/attached/` directory and no `open()` of one. The call names it, `files: { name: "@file:3fa91c2" }`, and the
 `tables` map accepts an `@file:` pointer as a source like a URL; the sandbox's existing `read_csv`/`open` redirect
-resolves a name it was given. Specified on the python side in PYTHON_DIALECT.md. REOPENED 2026-11-12 for approved and
-`full` cells, which get a mounted `/files/` ("A session's files as a directory", below); the restricted dialect
+resolves a name it was given. Specified on the python side in PYTHON_DIALECT.md. REOPENED 2026-11-12 for cells that
+can open a file, which get a mounted `/files/` ("A session's files as a directory", below); the restricted dialect
 keeps this. AMENDED 2026-11-17: `files` becomes paths under `/files/`, read by range, for every cell, the restricted
 dialect included through the loader redirect ("`/files/` read by range, and `ml.fs`", "Slice 3's `files` in Python").
+AS BUILT 2026-11-22: the mount is in a worker-hosted run's own worker only (#2026), where a cell outside the dialect
+opens `/files/attached/<handle>/<name>`; the `files` argument is not built (`python_exec` has none on main).
 
 A paged document is injected as the pages, not only as its bytes (Shane, 2026-10-28): raw PDF bytes are close to
 useless in the sandbox, which has no PDF library and would spend its step budget parsing one.
@@ -586,8 +592,10 @@ survey, a worker chat past the cap reading held-back pages with `read_pages`, an
 
 RULED 2026-11-12 (Shane, in the coordinator's session; designed with the async lane, conditions from the Pyodide lane's
 answer, session-mail `20261112-1630Z-python-packages-to-chat-page-files-mount.md`). This reopens ruling 1 and the
-"Python" paragraph above, and PYTHON_DIALECT.md's ruling of 2026-10-28, for the cells that can open a file. Nothing
-below is built.
+"Python" paragraph above, and PYTHON_DIALECT.md's ruling of 2026-10-28, for the cells that can open a file.
+AMENDED 2026-11-22: three parts of this section were replaced and are kept below as one dated line each: its layout
+(by ruling 36, "The layout"), its mount (by "`/files/` read by range, and `ml.fs`", built for Python in #2026) and
+its quota multiplier. What is built is in the status line at the top.
 
 **What it is for.** `python_exec`'s interpreter can die mid-run (an import that traps in wasm fails Pyodide fatally),
 and the restart the async lane is building tells the model its namespace is gone. Work computed over many cells
@@ -598,7 +606,9 @@ second place: everything a model can keep, the person can see and delete (the fi
 
 **Layout.**
 
-- `/files/` is writable: the model's working directory, kept for the session.
+- `/files/agent/` is the model's writable working directory, kept for the session, and the root takes no new entry
+  ("The layout", ruling 36, the home of this rule). SUPERSEDED 2026-11-18: this bullet said `/files/` itself was
+  writable.
 - `/files/attached/` is read-only and holds what the person attached, each file in a directory named for its handle. A
   file attached mid-run appears there and the model is told its name. The person's files never change; a model that
   wants to edit one copies it out.
@@ -610,7 +620,9 @@ second place: everything a model can keep, the person can see and delete (the fi
   creates each `<handle>/` from JS before the write operations are sealed, so a cell cannot make one.
 - Provenance follows from the folder: a file under `attached/` is the person's; any other was made by a run.
 
-**Which cells see it.** Cells that can open a file, an approved cell and `full` mode, see it as a directory; the
+**Which cells see it.** The cells of a worker-hosted run's own worker, and no other worker's (AS BUILT, #2026: a
+page's, the bench's, `library` and an install's candidate get no mount; the coordinator's call after ruling 86, "the
+reader's premise"). A cell outside the dialect opens it as a directory; the
 restricted dialect reads it only through the loader redirect. The read-only (restricted) dialect has no `open()` or `os`
 (PYTHON_DIALECT.md), and its writes roll back when a cell fails, so it keeps what it has today: an attachment as an
 injected value (`files:`, `@file:` in `tables`) and the loader redirect (`docs/dev/python-sandbox.md`, "Loader
@@ -624,53 +636,35 @@ lane's read of this spec):
 - A path that exists is that file: the loader patches redirect a name (`'current'`, a selector, the URL a table was
   loaded from, an attachment's name) only when no such file exists. So a cell that writes `/files/current` changes
   what `read_csv('current')` returns; that is accepted, not refused, and has its own test row.
-- The cell's directory is `/files/`, and each cell starts there: a worker-hosted run keeps its interpreter across
-  cells, so an `os.chdir` in one cell would otherwise change how the next resolves a bare name.
+- The cell's directory is `/files/agent/`, and each cell starts there: a worker-hosted run keeps its interpreter
+  across cells, so an `os.chdir` in one cell would otherwise change how the next resolves a bare name. AMENDED
+  2026-11-19 (the coordinator's layout call after ruling 86): this said `/files/`. BUILT (#2026): the mount enters the
+  reader's `home` at every cell's remount.
 - Two attachments with one name resolve to neither: the fallback refuses, and the hint lists both `@file:` handles,
   as `@file:"name"` does ("The name, and two files with one name", above).
 
-**The mount** (the Pyodide lane's conditions, measured in Node against `pyodide-core/`, not in a browser worker):
+**The mount.** BUILT (#2026) as route A's file system type over the one ranged reader, lazy at every size, in a
+worker-hosted run's own worker; how it works is `docs/dev/python-sandbox.md`, "`/files` in Python", and the design is
+"`/files/` read by range, and `ml.fs`" and "Python's view: one mount type over the reader" below. The six conditions the
+Pyodide lane set on 2026-11-12 (measured in Node against `pyodide-core/`), each with what became of it; the
+measurements are in session-mail `20261112-1712Z-python-packages-to-chat-page-files-lazy-and-flush.md`:
 
-1. MEMFS, loaded from the shelf when the interpreter starts as an eager listing whose nodes are zero-copy views of the
-   transferred buffers (`node.contents = new Uint8Array(buffer)`): start-up costs one times the directory's size, held
-   as ArrayBuffers, with no wasm growth (measured: a 50 MB file added nothing beyond its buffer). Loading a file's bytes
-   on its first open was measured too and works on every read path, but saves nothing, since the bytes are already in
-   the worker by then; if it is ever built, `O_TRUNC` truncates before the open hook runs, so `open('w')` needs a
-   `setattr` wrapper or it restores the old bytes. A truly lazy mount, nothing held until a file is opened, needs a
-   synchronous channel (`FS.createLazyFile` uses synchronous XHR; WORKERFS over posted Blobs is unmeasured, needs
-   `FileReaderSync`, which the lockdown does not allow, and fails a write with EIO, not EROFS); it is not proposed.
-   SUPERSEDED 2026-11-17: `/files/` is read by range over route A's file system type ("`/files/` read by range, and
-   `ml.fs`", below). A
-   cell still raises the cost: reading a whole file grows wasm memory by its size, `mmap` copies into the heap, and a
-   copy out of `attached/` is a new node, so item 6's three times bounds the worst case. Emscripten's JS-side
-   `FS.trackingDelegate` (`onCloseFile`, `onWriteToFile`) sees every close, raw `os.open`/`os.write`/`os.close`
-   included. No Atomics-backed FS: Pyodide ships no synchronous remote backend, `Atomics.wait` would block the interrupt
-   buffer so Stop would fall through to the kill, and it would save almost nothing on a terminate. The hooks live on the
-   Module/FS object, which the lockdown seals from cells (`PYODIDE_JS_SEAL`); they stay synchronous.
-2. `/files/attached/` is its own mount whose write operations fail with EROFS (open for writing, chmod, unlink,
-   create, mkdir, utime; rename across it is EXDEV, rmdir of it EBUSY). File modes do not hold: a cell's own
-   `os.chmod` undoes `0444` (measured). The shelf refuses a write to a person's file too, whatever path asks.
-3. On each close of a writable file the bytes are posted, transferred, through the worker's closure-held `post` to the
-   offscreen document, which owns the shelf write and acknowledges each post. At cell end the harness, never the
-   epilogue a cell can rebind, flushes what is still open as a safety net: it scans `gc.get_objects()` by EXACT type
-   (`BufferedWriter`, `BufferedRandom`, a `TextIOWrapper` over a real `FileIO`, and `mmap.mmap`; never `isinstance`,
-   which would run a cell's own subclass's `flush()` inside the runner), skips the standard streams, flushes each, and
-   posts it, resolving an `os.fdopen` file's path from its fd. Measured, it found a file held in a global, a closure,
-   a list, an attribute, an unreferenced cycle and a suspended generator, at 7 to 99 ms by what is imported (349 ms
-   with a million objects held); an audit hook on `open` limits the scan to cells that opened a file. A flush over the
-   quota raises ENOSPC and the bytes stay buffered: each flush is wrapped, and the cell's result names the file and
-   the error. The flush cannot rescue gzip, zip or sqlite (each writes its last structure on close or commit), so the
-   model is still told: close your files.
-   The offscreen re-checks every post itself: the path canonical and under `/files/`, never under `attached/`, a regular
-   file, and the quota. A `full` cell keeps `js.postMessage` and can forge a post, so nothing the post claims is taken
-   on its word.
-4. One `/files/` per session. The `full` worker is shared across runs, so the directory is the session's, never the
-   worker's: one directory per session in it, not a reload per cell, which would cost about three times the
-   directory's size on every cell (item 6).
-5. Regular files only, canonicalised (`FS.getPath`): a symlink a cell makes is never persisted, so a link pointing out
-   is never saved.
-6. The quota counts about three times a file's size: a 50 MB file cost 154 MB of ArrayBuffers and grew wasm memory to
-   75 MB, which never shrinks (measured), and the worker dies at a 2.6 GB JS heap (`docs/dev/python-sandbox.md`).
+1. SUPERSEDED 2026-11-17 (ruling 22): an eager MEMFS loaded from the shelf at interpreter start, one times the
+   directory held as ArrayBuffers, with a lazy mount set aside for want of a synchronous channel and because
+   `Atomics.wait` would block Stop. Route A's sliced wait answered both ("Host directories in the sandbox",
+   "Measured").
+2. Holds: `/files/attached/` refuses every write with EROFS, and file modes do not hold (a cell's own `os.chmod` undoes
+   `0444`, measured), so the refusal is the reader's, whatever path asks. BUILT: the reader answers EROFS there.
+3. SUPERSEDED 2026-11-19 (ruling 75): bytes posted to the offscreen document on each close, and a cell-end flush of
+   every open file found by a `gc.get_objects()` scan. A file now commits when it is closed, as one transaction, through
+   the reader's write verbs; the cell-end flush is not built. The offscreen document stays the boundary: it re-checks
+   every request, never taking a path on the worker's word.
+4. SUPERSEDED 2026-11-19 (the coordinator, "the reader's premise, corrected by async"): one directory per session
+   inside a `full` worker shared across runs. A worker serves one run, so its session is fixed per worker, and no
+   shared worker gets a mount.
+5. Holds: regular files only. BUILT: a symlink and a hard link answer EPERM in the mount.
+6. SUPERSEDED 2026-11-17: a quota of about three times a file's size, which was this MEMFS's cost. The quota counts
+   stored size ("Writes").
 
 **A kernel death.** The restart terminates the worker (the existing kill path). What was posted is safe; files still
 open are lost, and nothing is salvaged from the dead interpreter's heap, which may be corrupt. The restart reloads
@@ -683,9 +677,10 @@ result, or an inbox item for a detached cell): `variables gone; /files/ kept
 into an immutable version, an `@file:` the transcript can name, only when it leaves the directory or enters the
 record: `dereference`, `look`, `ml.sh.put`, the transcript and the exports. The log stays truthful the way a coding
 agent's does: it records what was read, never the file's current bytes. Two runs of one session writing the same file:
-the last close wins. Two live runs of one session in different workers (an approved run's and the shared `full`
-worker) see each other's files as they are kept: each acknowledged post is pushed to the session's other live
-workers, so a read is never of a copy older than the shelf's.
+the last commit wins, with a run-log note (the coordinator's reader call under rulings 54 and 75). Two live runs of
+one session see each other's files as they are committed: every cell remounts and asks the reader, and a descriptor
+already open keeps the version it pinned until it is closed. AMENDED 2026-11-19: this said each post was pushed to
+the session's other live workers, a premise of the MEMFS mount (item 1).
 
 **Provenance is a field, and every sentence reads it.** A file pointer carries who made it: the person, run R's cell N,
 or a read from disk at a path (below). Every model-facing sentence that today says "attached by the person" (the
@@ -694,10 +689,10 @@ reads the field. A file a run made is never described to the model as the person
 model-made or page-derived file must not borrow. Its text is untrusted input like any other ("Trust", below).
 
 **Lifetime and quota.** A session's files last as long as the session, until the person deletes them, the same as an
-attachment today. Nothing is evicted silently. When the session's files made by its runs are over the quota, a post is
-refused by name and the cell's result says so: `w.npy was not kept: the session holds 1.4 GB of files made by its runs;
-delete some in the files panel.` A flush over the quota raises ENOSPC for that file
-when it is made, and the cell's result names it (item 3). A restore can leave a session over its quota; it is then
+attachment today. Nothing is evicted silently. When the session's files made by its runs are over the quota, a write
+is refused with ENOSPC by name and the cell's result says so: `w.npy was not kept: the session holds 1.4 GB of files
+made by its runs; delete some in the files panel.` The quota's value and where it is checked are "Writes" below (not
+built: no `filesQuotaMB` on main). A restore can leave a session over its quota; it is then
 marked over it and refuses writes the same way until it is back under (ruling 48, "A restore over the quota", below).
 
 **The host's disk.** `/files/` is the browser sandbox's, never the `ml.sh` workspace's, and the two never alias: an argv
@@ -717,7 +712,9 @@ Python gets plain `open`. **The principle: each language gets the file API the m
 narrower, the error names the form that works.** Written by the session-store lane from
 `docs/spec/SESSION_HISTORY_STORE.md` §6a, with the coordinator's rulings of the same day. It amends items 1, 4 and 6 of
 "The mount", the restart in "A kernel death", slice 3's "Python" paragraph, "The files API" (whose `ml.files` it
-replaces) and the quota's open question. Nothing here is built.
+replaces) and the quota's open question. BUILT (2026-11-22): the reader's read side (slice 1 below, #2048), its
+wiring and scrub (#2058), and the Python mount (#2026). Not built: `ml.fs` (session-store's next PR, ruling 54), the
+write side and the quota, and the file browser.
 
 **Why it changes.** The mount above is eager: every file's bytes reach the worker at interpreter start, one times the
 directory, up to three times once cells read it (item 6), against a worker that dies at a 2.6 GB JS heap. A
@@ -747,7 +744,7 @@ front ends call it and nothing else:
 | What | Bound |
 | --- | --- |
 | One read, reader to front end | at most one 512 KiB chunk per request (`READ_CHUNK`, `src/shell/host-protocol.ts:16`); a longer read is several |
-| One session's cache in the worker | a fixed number of chunks (proposed 32, 16 MiB), oldest dropped |
+| One session's cache in the worker | a fixed number of chunks (32, 16 MiB, `READ_CACHE_SLOTS` in `src/python/files-mount.ts`), oldest dropped |
 | What a cell holds | what the cell itself reads into a variable, as today; a whole-file `f.read()` still grows wasm memory by the file |
 | The offscreen document, all sessions | the chunks in flight: sessions × one chunk, plus the Blob handles, which hold no bytes |
 | `ml.fs` | `readFile` refuses above a cap (below); `handle.read` returns at most one chunk per call |
@@ -790,24 +787,28 @@ true })` gives Dirent-shaped entries; errors are `Error`s with Node's `code`, `s
 | --- | --- | --- |
 | `readFile(path, options?)` | read | refuses above `ML_FS_READFILE_MAX` (proposed 8 MiB) with `ERR_FS_FILE_TOO_LARGE`, Node's own code for the same refusal past 2 GiB; the message names `open()` with `handle.read()` or `handle.readLines()` |
 | `readdir(path, options?)` | read | `withFileTypes` supported; `recursive` supported |
+| `opendir(path)` | read | pages its entries, so a directory of a hundred thousand files is never one array (the coordinator, 2026-11-20) |
 | `stat(path)`, `lstat(path)` | read | `lstat` answers as `stat`: no symlinks exist |
 | `access(path, mode?)` | read | `W_OK` on `attached/` rejects with `EROFS` |
 | `open(path, "r")` | read | returns a FileHandle |
 | `handle.read({ buffer?, offset?, length?, position? })` | read | at most one chunk (512 KiB) per call; `bytesRead` as Node's |
 | `handle.readLines(options?)` | read | an async iterator of lines, read chunk by chunk |
 | `handle.stat()`, `handle.close()` | read | |
+| `createReadStream(path, { start, end })` | read | streams a range, chunk by chunk (the coordinator, 2026-11-20); `createWriteStream` is not a member |
 | `writeFile(path, data)` | write | chunked to the shelf (below) |
 | `appendFile(path, data)` | write | |
 | `open(path, flag)` with a write flag; `handle.write`, `handle.truncate` | write | |
 | `mkdir(path, options?)`, `rmdir(path)` | write | `recursive` supported |
 | `rm(path, options?)`, `unlink(path)` | write | `ml.files.remove`'s rule, below |
-| `rename(from, to)`, `copyFile(from, to)` | write | within the session's files only |
+| `rename(from, to)`, `copyFile(from, to)` | write | within the session's files only; `ml.fs` has `rename`, not `mv` (the coordinator, 2026-11-20) |
 | `cp(src, dest, options?)` | write | AMENDED 2026-11-20 (rulings 36 and 60, as ML_TABLE.md uses it): `src` is a path in the session's files (a directory needs `recursive: true`, as Node's) or a `@tool:` pointer or fetch result, whose stored whole is written ("Dumping a `@tool:` value into `agent/`"); `dest` must be under `/files/agent/` |
 
-**The gate.** The READ members join the read-only dialect: a survey may call them on the session's own files without
-asking. The WRITE members follow the rule this spec already has for files a run makes: a write to a run-made file in
-`/files/` runs free, as a cell's would ("Lifetime and quota"); a write that touches the person's file (`attached/`)
-is refused with `EROFS`, as the mount refuses it (item 2); a delete follows `ml.files.remove`'s rule (below), which
+**The gate.** The READ members land with every exec that names `ml.fs` asking, and join the read-only dialect only
+after the hide rule exists (ruling 34; POLICIES.md, "Hiding files"); from then a survey may call them on the session's
+own files without asking (the coordinator, 2026-11-20 to 22; this said they joined the dialect at once). The WRITE
+members follow "The layout": a write under `/files/agent/` runs free, as a cell's would ("Lifetime and quota"); a
+write anywhere else, the root and the person's files (`attached/`), is refused with `EROFS`, as the mount refuses it
+(item 2); a delete follows `ml.files.remove`'s rule (below), which
 keeps a cited file's frozen version. A write member in a survey takes the survey out of the dialect, as any other
 effect does. Extending the dialect carries what docs/dev/readonly-exec.md, "The rule for extending the dialect",
 requires: adversarial tests that try to reach a write, a path outside the session, a handle used after `close`, and a
@@ -834,8 +835,9 @@ version. Node's own fields keep Node's meaning, and a field we cannot answer is 
 
 - `/` is that root; `/files/` is the same directory, so `/files/x` and `/x` name one file, and a path a Python cell
   printed works unchanged.
-- A relative path resolves against `/files/`. `..` is resolved lexically and stops at the root: `/files/../../etc/x`
-  is `/etc/x` under the root, which does not exist.
+- A relative path resolves against `/files/agent/`, the working directory (AMENDED 2026-11-19, the coordinator's
+  layout call after ruling 86: this said `/files/`; "The layout"). `..` is resolved lexically and stops at the root:
+  `/files/../../etc/x` is `/etc/x` under the root, which does not exist.
 - Anything that does not name a file in this session's files is `ENOENT`, with the same message whether or not
   something exists elsewhere: another session's file, a host path, an extension file. The error never says why.
 - No symlinks: `symlink`, `link` and `readlink` are missing members (below).
@@ -873,24 +875,18 @@ world, an exec naming `ml.fs` is refused; it is never bound for a page-started c
 main world, and a page's `window.ml` has no `fs`. The session is the run's, read from the worker's run record, never
 from anything the script says. The current session's files only.
 
-**The scrub.** A model reads `ml.fs` text through the exec's result, which crosses `forModel` as every tool result
-does. A ranged read adds one rule, because `scrubSecrets` works on a whole string: a text range is scrubbed over a
-window widened on each side by the longest form in the current secret set, computed per read from what `secretsOf`
-returns, then cut back to the range. A secret that overlaps the range is replaced in the read where it starts and
-removed from the read it ends in, so **a read never returns a secret split across two reads**, and `bytesRead` counts
-the source bytes consumed. **Text and binary, in one rule:** a range read with an encoding (`readFile(p, "utf8")`,
-`readLines`, `handle.read` decoded) is TEXT and is scrubbed by the window above; a range read without one (a
-`Uint8Array`) is BINARY and is returned unscrubbed, as an attachment's bytes are today, its bytes reaching the model
-only inside an exec's result, which `forModel` scrubs whole. The residual this leaves is named: a script that decodes
-byte ranges itself and returns them in separate execs can split a secret across two results, as any script can split
-a string it built today; the boundary is `forModel`'s, unchanged.
+**The scrub.** Every `ml.fs` read, text or binary, returns the reader's masked bytes: a registered value is replaced
+by `*` (0x2A) at the same length, inside `RangedReader.read`, the one path every read takes (BUILT, #2058; "Python's
+view: one mount type over the reader" holds the rule). So a text read's length equals `stat`'s size, offsets stay
+true, and the model is not told which secret was hidden (the coordinator, 2026-11-20 to 22). The exec's result then
+crosses `forModel` as every tool result does. The residual is named: a script that decodes byte ranges itself and
+returns them in separate execs can split a secret across two results, as any script can split a string it built
+today; the boundary is `forModel`'s, unchanged.
 
-The window's bound: the secret registry's cap (8 to 512 characters, the coordinator's call, landing with files-host's
-scrub PR 1 in SECRET_HANDLES.md) bounds it at 512 once that rule merges. Until then a config secret has no length cap,
-so the window is unbounded today; the reader therefore never widens past a CEILING of 4,096 characters. When the
-longest form exceeds it, a text range of a file at most `ML_FS_READFILE_MAX` (8 MiB) is scrubbed over the whole file
-and then cut, and a text range of a larger file is refused with an error naming the setting's KEY only (`modelFilter`,
-say), never its value or its length. A form that long is a filter or URL nobody keeps; the refusal is the honest outcome.
+SUPERSEDED 2026-11-20 to 22 (the coordinator, the same call): a text range scrubbed to `[REDACTED:<NAME>]` over a
+window widened by the longest form, with a 4,096-character ceiling and an 8 MiB whole-file fallback, and a binary
+range returned unscrubbed (the coordinator's ranged-scrub call under rulings 22 to 25). That window is built as
+`scrubRange` (`src/secret-scrub-range.ts`, #2048) and has no caller in the product on main.
 
 **Long results** follow the existing pointer rule: a long `ml.fs` value reaches the model as a `@tool:` pointer with a
 preview, like any other exec value.
@@ -932,8 +928,8 @@ person's ask unless a policy allows, and a cited file keeps its frozen version. 
 
 #### Slice 3's `files` in Python
 
-The Python mount's design is not fixed until the packages lane's measurement of the mounts (ruling 36, "Python's view:
-two mounts", below); that slice is the packages lane's.
+The Python mount is built (#2026, "Python's view: one mount type over the reader", below); the `files` argument this
+recommends is not (`python_exec` has none on main).
 
 RECOMMENDATION: **`files` becomes paths under `/files/`, read by range,** for every cell, the restricted dialect
 included. `files: { name: "@file:3fa91c2" }` binds `name` to the path `/files/attached/3fa91c2/<name>`; the loader
@@ -997,21 +993,24 @@ are what the model reads.
    volume beside it. The shelf reaches it through a `FilesSource`: a session's attachments and a stored Blob by key,
    neither of which loads bytes; a read slices one range of the Blob into the caller's buffer. The hide rule is a
    function the reader asks at every open and every read, and lists nothing until the hide-list rule lands. Every
-   byte read is masked by the length-preserving scrub of "Python's view: two mounts" (below), so slice 2's `ml.fs`
-   byte reads get it too, and a text read there sees `*` where a value was; whether slice 2 keeps that or reads
-   unmasked for its `[REDACTED:<NAME>]` text window is slice 2's call. The text window of "The scrub" is `scrubRange`
-   (`src/secret-scrub-range.ts`). The write verbs check the transaction and the path
+   byte read is masked by the length-preserving scrub of "Python's view: one mount type over the reader" (below), so
+   slice 2's `ml.fs` reads get it too, text and binary alike (the coordinator, 2026-11-20 to 22, "The scrub"; the
+   `[REDACTED:<NAME>]` window, `scrubRange` in `src/secret-scrub-range.ts`, is not used for them). The write verbs
+   check the transaction and the path
    and then answer `EROFS` everywhere, `agent/` included, until slice 3 lands the write side; `begin`, `commitTx` and
    `abortTx` of an empty transaction succeed, so a front end that opens one per cell works read-only. The offscreen
    document's wiring has landed: `setFilesReader` over one `RangedReader` whose source (`src/python/files-source.ts`)
    asks the service worker for a session's files with `FILES_ATTACHED`, answered from the offscreen document only,
    and reads the bytes from the offscreen document's own value store, held rows of that session only.
-2. `ml.fs` read members in the isolated world, the routing, the dialect entry with its tests, the scrub window, the
-   red-team pass, and the Node parity corpus for the read members. Must not break: `ml.current`'s and `ml.sh`'s routing rows.
+2. `ml.fs` read members in the isolated world, the routing, the red-team pass, and the Node parity corpus for the
+   read members, landing with every exec that names `ml.fs` asking; the dialect entry with its tests follows the hide
+   rule (ruling 34, "The gate"). Must not break: `ml.current`'s and `ml.sh`'s routing rows. In flight
+   (session-store, 2026-11-22), not built.
 3. `ml.fs` write members, the quota setting, and the parity corpus extended to them.
-4. The Python mount on route A's type over the reader, slice 3's `files` as paths, the restart's remount, once the
-   packages lane's measurement of the mounts (ruling 36) fixes its design. Must not break: route A's Stop rows, rerun
-   on this server.
+4. The Python mount on route A's type over the reader, slice 3's `files` as paths, the restart's remount. Must not
+   break: route A's Stop rows, rerun on this server. BUILT (#2026, the async lane): the mount, remounted at every
+   cell; its design was fixed by ruling 75's one store, not by the packages measurement. Not built: slice 3's `files`
+   as paths.
 5. The file browser over the mounts, its listing command and event, and the menu's first command. Test obligation:
    the listing and one command round-trip through the chat page's web build against the fake host, with no `chrome`
    (the `chat-web` skill).
@@ -1024,9 +1023,12 @@ design.
 
 ### Host directories in the sandbox, and a cell's edits as diffs (proposed 2026-11-13)
 
-PROPOSED 2026-11-13 (Shane, in the calm-chat-motion session); not ruled, waiting on the measurement below and e3's
-pass. Nothing is built. It reopens "the two never alias" above for a directory the person mounts, and item 1's "No
-Atomics-backed FS" for those mounts only.
+PROPOSED 2026-11-13 (Shane, in the calm-chat-motion session). Ruled since: route A ("What follows", the coordinator,
+2026-11-13), the initial decisions (Shane, 2026-11-13) and the host's rows (H1 to H18, "What window-ml-host must do"
+below). Built: route A's channel, which serves the browser's own `/files` mount (#2026), not a host directory; the
+host's mount calls (window-ml-host#40) and the extension's wire and judge for them (`docs/dev/shell.md`, "A session's
+folders"), which nothing calls yet. No host directory is mounted into a cell on main. It reopens "the two never
+alias" above for a directory the person mounts.
 
 **What it is for.** Models edit files by writing a Python script that calls `open()`, not only through an edit tool.
 That should work the same on the browser sandbox's `/files/` and on the host's disk, with one syntax, and the person
@@ -1055,27 +1057,26 @@ host's `/`, or `/home`, which would shadow `/home/pyodide`):
 **A path outside every mount** fails with `PermissionError`, never `FileNotFoundError`, since the file may exist:
 `~/other is not mounted in this sandbox; reach it through ml.sh, or ask the person to mount it.`
 
-**`/files/` in an `ml.sh` argv** (chosen by Shane, 2026-11-13; replaced by H9 below, a mapping). An argv item under
-`/files/` is refused, unless that path exists on the host: `/files/ is this sandbox's; pass the file with ml.sh.put.` On
-a host that has a `/files` directory the person accepts the alias: there `/files/x` is the host's file in `ml.sh` and
-the sandbox's in a cell.
+**`/files/` in an `ml.sh` argv** is H9's mapping below. SUPERSEDED 2026-11-13 (Shane, H9): this refused a `/files/`
+argv item unless the host had such a path.
 
-**The channel.** Pyodide has no synchronous remote backend, so a host-backed node needs one. Two routes; A was
-measured on 2026-11-13 and holds ("Measured", below):
+**The channel.** Pyodide has no synchronous remote backend, so a host-backed node needs one. Route A was measured on
+2026-11-13 and ruled ("What follows", below); route B is kept as the line that was dropped:
 
 - A: a sliced wait, no rebuild. The node posts a request (worker, offscreen, service worker, host) and waits on
   `Atomics.wait` in slices of about 50 ms, checking the interrupt flag between slices and raising `KeyboardInterrupt`
   when Stop is set. The worker already holds a shared interrupt buffer (`py.setInterruptBuffer`,
   `src/python/python-worker.ts`). Item 1's objection, that `Atomics.wait` blocks the interrupt buffer, is to an
   unsliced wait; that a sliced one keeps Stop working is inferred.
-- B: JSPI-suspending file syscalls, a rebuild (`docs/dev/pyodide-build.md`): Emscripten's file syscall imports become
-  suspending, so a read awaits a promise and the worker's event loop stays free. Only if A's Stop or latency is bad.
+- B: JSPI-suspending file syscalls, a rebuild (`docs/dev/pyodide-build.md`). DROPPED 2026-11-13 ("What follows"):
+  A's Stop and latency held.
 
-Either way a file is fetched whole on open and pushed on close, the close hooks item 1 already has, with the listing
-cached per cell: a change the host makes during a cell is seen at the next open. A host that is not connected fails
-the open with EIO. Every request carries an id, and a reply to a request whose wait was interrupted (Stop, a timeout)
-is discarded by that id. A push never leaves a half-written file on the person's disk: the host writes beside the file
-and renames it into place, so a Stop or a dropped connection mid-transfer leaves the old file whole.
+A host-backed file is read in chunks and stored through a staged open, write and commit (H1, as amended 2026-11-13; this
+said fetched whole on open and pushed on close), with the listing cached per cell: a change the host makes during a cell
+is seen at the next open. A host that is not connected fails the open with EIO. Every request carries an id, and a reply
+to a request whose wait was interrupted (Stop, a timeout) is discarded by that id. A push never leaves a half-written
+file on the person's disk: the host writes beside the file and renames it into place, so a Stop or a dropped connection
+mid-transfer leaves the old file whole.
 
 **Security** (each mount is a new surface the model reaches: e3's pass, Shane's ruling). The approval is per mount,
 not per call, so a mounted directory is read and written with no card per `open()`. The host enforces the scope
@@ -1186,9 +1187,12 @@ the coordinator's value, Shane may override).
 **Initial decisions** (Shane, 2026-11-13: decided now, changed if they cause trouble).
 
 - The cell's directory. With a workspace mounted, each cell starts in the workspace's real path, so a relative path
-  means the same file in a cell as in `ml.sh`; with none, in `/files/`, as ruled above. Every cell still starts there
-  afresh. So a bare `open("notes.txt", "w")` writes to the person's disk when a read-write workspace is mounted, as a
-  coding agent's would; `/files/` is reached by its absolute path.
+  means the same file in a cell as in `ml.sh`; with none, in `/files/agent/`, as ruled above (AMENDED 2026-11-19, the
+  coordinator's layout call; this said `/files/`). Every cell still starts there afresh. So a bare
+  `open("notes.txt", "w")` writes to the person's disk when a read-write workspace is mounted, as a coding agent's
+  would; `/files/` is reached by its absolute path. NEEDS A RULING (2026-11-22): the layout call puts the working
+  directory at `/files/agent/` with no exception, and this decision puts it in the workspace while one is mounted;
+  neither names the other.
 - Approving a mount. Only the person mounts, per session, until they remove it. The model can ask through an approval
   card naming the real path, with two choices, "read and write" and "read only", neither preselected; it never mounts
   one itself. A page-started run never has a mount. A read-only mount fails a write with EROFS.
@@ -1219,9 +1223,11 @@ stated in "What window-ml-host must do" below.
 ### `/files` on the person's disk, when a host is connected (proposed 2026-11-13)
 
 PROPOSED 2026-11-13, from Shane's rulings in the coordinator's session (what `ml.sh` is for, the setup, per-platform
-mounts, the size limits, removing the disk, which copy is primary) and the files API (Shane's). Not ruled;
-nothing is built. Where it disagrees with "Host directories in the sandbox" above, this wins: the argv refusal on
-`/files/` goes away, and the `ml.sh` snapshot question is answered by git.
+mounts, the size limits, removing the disk, which copy is primary) and the files API (Shane's). Ruled since: one folder
+per session and the sibling deny (ruling 91, 2026-11-20) and the folder's name (the coordinator, the same day). Nothing
+of it is built: no session mounts a folder, and the host's H16 to H18 are not built. Where it disagrees with "Host
+directories in the sandbox" above, this wins: the argv refusal on `/files/` goes away, and the `ml.sh` snapshot question
+is answered by git.
 
 **Use cases** (Shane's, collected as they come; the design follows them, not the other way round):
 
@@ -1246,8 +1252,8 @@ host is mounted (Shane):
   `~/git/proj/window-ml-files/2026-11-20-q3-sales-7c41e2/attached/3fa91c2/data.csv`), with no `ml.sh.put` or
   read-back to teach the model; those stay as mechanisms, not as advice. Finder is the truth for the person; the panel
   is a view of the folder.
-- The browser store (MEMFS over the shelf, as ruled above) is then a capped backup, synced when convenient. A file over
-  the quota lives on disk and is not backed up; the panel shows it with its size.
+- The browser store (the shelf, read by range, "`/files/` read by range, and `ml.fs`") is then a capped backup, synced
+  when convenient. A file over the quota lives on disk and is not backed up; the panel shows it with its size.
 - With no host present, or when the host dies, the browser copy is the working store and the model works there, as
   today. The changes made meanwhile sync forward into the folder when the host returns.
 - The sync covers that folder only, never the rest of the workspace. Authority: for `/files`, the folder while a host
@@ -1416,17 +1422,9 @@ into the repository's object store and hash every build output. A delete or over
 and that card, kept in the transcript, is the only record of it. A workspace that is not a git repository falls back
 to #1780's before copies for cells, and gets no diff for an `ml.sh` call (open).
 
-**The files API.** SUPERSEDED 2026-11-19 by `ml.fs` (RULED 2026-11-19, Shane, ruling 60, in the coordinator's session: "`ml.files` is superseded", above), which keeps both
-rules below: `list()` is `readdir` with `stat`, `remove(paths)` is `rm`/`unlink`. As proposed on 2026-11-13: the model
-lists, ages and clears its own files in code (use case 6), with the same names in JS and Python:
-
-- `ml.files.list()` returns one row per file: path, size, who made it, created, modified, last read, and whether a
-  transcript cites it. It is a read, so the read-only dialect may call it. On a disk backing Python's `os.scandir`
-  already answers everything but who made it.
-- `ml.files.remove(paths)` deletes, judged as above: the runs' files go free, the person's ask unless a policy allows
-  it. Deleting a file the transcript cites keeps its frozen version, so the record never loses what the model read.
-- The quota refusal ("Lifetime and quota") names the way out: `... delete some with ml.fs.rm, or in the files
-  panel.` The Python binding's form is the Pyodide lane's to choose.
+**The files API** (`ml.files.list()` and `ml.files.remove()`, proposed 2026-11-13 for use case 6). SUPERSEDED
+2026-11-19 by `ml.fs` (ruling 60); its two rules are kept in "`ml.files` is superseded" above, and the quota refusal
+that names `ml.fs.rm` is in "Writes".
 
 **Dropped alternatives.**
 
@@ -1472,14 +1470,18 @@ not name is never written into.
   header, with `SHELL.md`'s "a text pipe over a held value" beside it); and the scrub (`sw-scrub.ts`, exists for the
   server URL and the API key) catches reflections as a backstop that lowers the rate and does not close the hole.
 
-**Owners.** This text, the panel's view of both copies, the sync's rules, provenance and the files API's JS side: the
-chat-page lane. The mount, the fallback and the Python binding: the Pyodide lane. The host's folder, the git snapshot
-and the per-request judging, the folder watch: the host lane, as stated in "What window-ml-host must do" below (the
-folder, its `.git/info/exclude` and the watch are H16, the step after H15).
+**Owners.** This text, the panel's view of both copies, the sync's rules and provenance: the chat-page lane. `ml.fs`,
+which replaced the files API: the session-store lane (the coordinator, under rulings 54 and 75). The mount, the fallback
+and the Python binding: the Pyodide lane. The host's folder, the git snapshot and the per-request judging, the folder
+watch: the host lane, as stated in "What window-ml-host must do" below (the folder, its `.git/info/exclude` and the
+watch are H16, the step after H15).
 
 ### What window-ml-host must do for mounts, `/files` and `ml.sh` diffs (ruled 2026-11-13)
 
-RULED 2026-11-13 (Shane: "fine for now", to be changed where building shows one wrong). Nothing is built. The
+RULED 2026-11-13 (Shane: "fine for now", to be changed where building shows one wrong). BUILT in window-ml-host (its
+log, 2026-11-22): H1 to H8 (host#40), H9 (host#43, with the extension's side in #1873), H10 (host#45), H11 (host#51),
+H12 (host#54) and H13 (host#55); of H15, `hello` sends `mounts` and `filesArgv`, not `snapshot`. Not built: H13b,
+H14, H16, H17 and H18, and the extension does not call the mount verbs yet (`docs/dev/shell.md`). The
 coordinator's ruling (Shane, 2026-11-13): with this ruled, one host lane opens, in its own window-ml-host clone, and
 takes the scope check (H1 to H8) first, then the argv mapping (H9), then the snapshot (H10 to H14) and the `hello` flags
 (H15). It states as requirements on the host what the two sections above leave to "the `ml.sh` and window-ml-host
@@ -1505,7 +1507,8 @@ configured roots (`configure`), one list, not a second one beside it.
     the basis the worker judged on, so a judged call costs two round trips, accepted.
   - `fetch` is chunked by offset and length, 512 KiB a chunk, each chunk carrying the basis. `store` is staged as open,
     write and commit through the held descriptor, and the commit does the compare and swap (H8) and the rename. The
-    cap is per call, from the worker, and the host clamps it to 64 MiB (provisional).
+    cap is per call, from the worker, and the host clamps it to 64 MiB (provisional). NEEDS A RULING (2026-11-22):
+    the open's size cap ruled the same day is 256 MB ("What follows"); which one bounds a mounted file is not said.
   - `mount` takes an optional `uploads` path, relative to the mount, which must exist with `attached/` inside it.
   - Path rule, on every platform: a mount-relative path refuses `\`, a leading drive letter (`C:`) and a leading `//`.
     Named cost: a unix file whose name contains a backslash cannot be reached through a mount.
@@ -1917,12 +1920,13 @@ paragraph under the table).
 window-ml-host clone, scope check (H1 to H8) first. The worker's judging of the facts and the table's default policy:
 the `ml.sh` extension side (`docs/dev/shell.md`).
 
-**The person deletes or moves a file.** The files panel can delete, rename and move files in the writable part. During
-a live run the model is told the file's name through the run's inbox, the same as any other notice; a move is a delete
-plus a new name. The delete or move is also applied to every live worker holding that session's `/files/` (the
-offscreen sends the unlink or rename): a mounted cell's MEMFS would otherwise keep the stale copy, `open()` would
-succeed on it, and its next close would bring the deleted file back to the shelf. Uploading straight into the
-writable part waits: the model copies from `attached/`.
+**The person deletes or moves a file.** The files panel can delete, rename and move files in the writable part.
+During a live run the model is told the file's name through the run's inbox, the same as any other notice; a move is a
+delete plus a new name. The change goes through the reader, so the next cell sees it (every cell remounts, #2026), and a
+descriptor already open keeps the version it pinned until it is closed. AMENDED 2026-11-19: this said the offscreen
+document pushed the unlink or rename into each live worker's MEMFS (item 1). Uploading straight into the writable part
+waits: the model copies from `attached/` (session-store's account: a person cannot upload into `agent/`, but can
+rename, move and delete there).
 
 **The files panel and a storage page.** The files panel (above) becomes the browser for this directory: a row per file
 with its name, size, who made it (the person, run R cell N, read from disk), when it was created and last modified, its
@@ -1940,13 +1944,15 @@ and the read-back from disk: the async lane.
 - a forged post from a `full` cell persisting a path outside `/files/`, into `attached/`, past the quota, or into
   another session's directory;
 - a symlink or a non-regular file persisted;
-- one session's `/files/` seen by another session's cell in the shared `full` worker;
+- one session's `/files/` seen by another session's cell (AMENDED 2026-11-19: a worker serves one run's session, and
+  no shared worker gets a mount; the row asserts both);
 - a cell reaching the hook closure or `post` (a lifted-bridge or introspection route; not measured);
 - a page-started run, or a page, reading `/files/` or any file in it;
 - a model-made file described to the model as attached by the person, in every sentence that names a file.
 
-**Not measured.** A terminate racing the last post (the ack is there for it); a lifted-bridge route to the FS object;
-anything in a real browser worker rather than Node; WORKERFS over posted Blobs (item 1); the audit hook under the
+**Not measured** (of the MEMFS mount, items 1 and 3, both superseded; kept as the record). A terminate racing the last
+post (the ack is there for it); a lifted-bridge route to the FS object; anything in a real browser worker rather than
+Node; WORKERFS over posted Blobs (item 1); the audit hook under the
 lockdown (item 3). Measured since the spec merged (session-mail
 `20261112-1712Z-python-packages-to-chat-page-files-lazy-and-flush.md`): the zero-copy listing (item 1) and the flush at
 cell end (item 3).
@@ -1973,12 +1979,14 @@ Fetched values stay out.
 ## `/files`: the layout, `ml.fs`, Python's mounts and the backup (rulings 22, 23, 35, 36; proposed 2026-11-18)
 
 Shane's rulings 22, 23, 35 and 36 (2026-11-17 and 2026-11-18, in the coordinator's session), with the coordinator's
-calls under 22 to 25 (docs/plan/repl/README.md). Nothing below is built. This section SUPERSEDES three things in "A
-session's files as a directory" above: its layout (`/files/` itself writable), its mount (an eager MEMFS that loads the
-whole directory into the worker) and its quota multiplier (the three times measured for that MEMFS). The rest of that
-section stands: the handle folders under `attached/`, provenance as a field, frozen when cited, the kernel-death
-message, and the host's disk never aliasing `/files` while no session folder is mounted. AMENDED 2026-11-20 (ruling
-91): once a session's own folder is mounted, that folder backs `/files` for the session ("One folder per session").
+calls under 22 to 25 (docs/plan/repl/README.md). BUILT (2026-11-22): Python's mount (#2026) and the reader's read side
+(#2048, #2058). Not built: `ml.fs`, every write, the dump, and backup and the archive carrying files. This section
+SUPERSEDES three things in "A session's files as a directory" above: its layout (`/files/` itself writable), its mount
+(an eager MEMFS that loads the whole directory into the worker) and its quota multiplier (the three times measured for
+that MEMFS). The rest of that section stands: the handle folders under `attached/`, provenance as a field, frozen when
+cited, the kernel-death message, and the host's disk never aliasing `/files` while no session folder is mounted. AMENDED
+2026-11-20 (ruling 91): once a session's own folder is mounted, that folder backs `/files` for the session ("One folder
+per session").
 
 **The principle (ruling 22).** No part of `/files` ever holds all of a session's files in memory, and several sessions
 at once stay usable. Every read is ranged or streamed, every listing is lazy, one directory at a time, and a write is
@@ -1995,6 +2003,18 @@ JavaScript gets Node's `fs`, as `ml.fs`.
   `attached/` and `agent/`, and later `history/` when the session-history store gives it one, and nothing else. A
   write, a `mkdir` or a rename at the root fails with EROFS in Python and an `EROFS` error from `ml.fs`.
 - Provenance follows from the folder: a file under `attached/` is the person's, one under `agent/` was made by a run.
+- **The working directory is `/files/agent/`.** A cell starts there, and a relative `ml.fs` path resolves against it
+  (the coordinator's layout call after ruling 86, 2026-11-19, amending #1999's "against `/files/`"). `ml.fs.cp`'s
+  destination is under `/files/agent/`.
+- **Whose it is** (rulings 81 and 86): `/files/agent/` is the model's own, with subfolders it makes, where rm, rename
+  and overwrite are free; everything else under `/files` is the person's and read-only to the model. `/files` is one
+  private file system per session: there is no per-model subfolder, and another session's files are not reachable
+  (sharing between sessions is deferred, ruling 81; on disk, ruling 91's "One folder per session").
+- **The quota is per session** ("Writes", `filesQuotaMB`). **No restorable rm:** a delete is final, except that a cited
+  file keeps its frozen version ("Mutable, frozen when cited").
+- AS BUILT (#2026, #2048, #2058): the reader lists the root as `agent/` and `attached/`, and `attached/<handle>/<name>`
+  from the session's attachments; `agent/` is listed empty and every write, there too, answers EROFS until the write
+  side lands (slice 3 of "What it owes"). The Python mount enters `/files/agent/` at every cell.
 
 ### `/files/notes/` and `/shared/notes/`: the agent's notes (IDEA, Shane, 2026-11-22; nothing assigned, nothing built)
 
@@ -2078,24 +2098,12 @@ the code the cell runs.**
 
 ### `ml.fs` (rulings 22 and 23)
 
-`ml.fs` is Node's `fs.promises` surface, the subset that keeps the principle, over the one ranged reader the
-coordinator's call names (one reader over the shelf, `Blob.slice`, with three front ends: the Python mount, `ml.fs`
-and later `/history/`). It is offered to worker-built runs only, in the isolated world, never page-started, and the
-`python_install` candidate worker gets neither it nor the mount. It replaces the `ml.files` this spec proposed.
+The surface (its members with `opendir` and `createReadStream`, its paths, the gate, the scrub and the writes) has ONE
+home: "`ml.fs`: Node's `fs/promises`, with a session's files as its disk" above, over the one ranged reader, offered to
+worker-built runs only, in the isolated world, never page-started; the `python_install` candidate worker gets neither
+it nor the mount. AMENDED 2026-11-22: this section restated it, with reading, listing and writing rules that the home
+now carries. Not built; session-store's read members are in flight. What this section keeps:
 
-- **Reading.** `open(path)` gives a handle whose `read(buffer, offset, length, position)` reads a range;
-  `createReadStream(path, { start, end })` streams one. `readFile(path)` reads a whole file only up to the text bound
-  (a file up to 8 MiB, the coordinator's call); a larger one is refused with an error that names the setting key and
-  points at the ranged read. Every text read crosses the scrub (`forModel`'s registry), widened by the longest
-  registered form and cut back (the coordinator's ranged-scrub call: a window ceiling of 4,096 characters; above it,
-  a text range of a file up to 8 MiB is scrubbed whole and then cut, and a larger file's text range is refused).
-- **Listing.** `readdir(path)` and `opendir(path)` list one directory, lazily: `opendir` pages its entries, so a
-  directory of a hundred thousand files is never one array. An entry carries its name, kind and size, and `hidden: true`
-  when the path is hidden; a hidden entry's bytes are never read for a listing.
-- **Writing, only under `agent/`.** `writeFile`, `appendFile`, `mkdir`, `rm`, `unlink` and `rename` within `agent/`;
-  `open(path, "w")` gives a handle whose `write` streams. `copyFile` from `attached/` into `agent/` is the copy out, and
-  streams. Any write outside `agent/` fails with `EROFS`, whatever the path's spelling: the path is canonicalised
-  before it is judged, `..` and a symlink included.
 - **A hidden file.** "Hidden" is the effective list of [POLICIES.md](POLICIES.md), "Hiding files", which binds every
   reader of `/files`, the mounts and `ml.fs` included: a path is hidden when a default holds it (a dotenv name, a
   credential file, a linked template) or a `hide` entry does, whichever way the entry was made, the person's mark in
@@ -2137,10 +2145,12 @@ declares `int64` or `bool` that holds a missing value is recorded in the sidecar
 `object`, a column without and with a missing value, plus a `str` column holding both an empty string and a missing
 value; dump then reload equals the stored table, its values and its declared dtypes, on both reload paths.
 
-### Python's view: two mounts (ruling 36)
+### Python's view: one mount type over the reader (ruling 36, as amended under ruling 75)
 
-BUILT, the mount only (2026-11-19, docs/dev/python-sandbox.md, "`/files` in Python"): route A's type over the ranged
-reader for both folders, as below; it is switched on when the reader lands (`setFilesReader`).
+BUILT, the mount only (#2026, docs/dev/python-sandbox.md, "`/files` in Python"): route A's type over the ranged
+reader for both folders, as below, switched on in the offscreen document by `setFilesReader` (#2058). Writes answer
+EROFS until the reader's write side lands. Ruling 36 named two mounts (WORKERFS for `attached/`, a custom mount over
+OPFS for `agent/`); the coordinator's call of 2026-11-19 under ruling 75 replaced them with this one type.
 
 Python sees `/files` through Emscripten mounts, never a mount that loads whole files. ONE store, the shelf, holds
 both folders (the coordinator's call, 2026-11-19): no OPFS copy of `agent/`, so the quota, the atomic commit, the
@@ -2177,10 +2187,11 @@ backup and any commit-on-cell-success live in one place.
   registry stores plaintext values, so the plaintext forms cover every registered value; when it lands, the forms'
   source changes and this read does not.
 
-**To be measured by the packages notebook, before this is fixed** (ruling 36, no figure here is this section's):
-whether the restricted fork gates `open()` on a mount; whether worker memory stays flat reading ranges of a 1 GiB
-file; the cost of the scrub inside the read, both the plaintext registry's and
-ruling 32's hash-only matcher's; and whether a Parquet writer wheel exists.
+**Asked by ruling 36 of the packages notebook, still not on main** (the design was fixed and built without them):
+whether worker memory stays flat reading ranges of a 1 GiB file; the cost of the scrub inside the read, both the
+plaintext registry's and ruling 32's hash-only matcher's; and whether a Parquet writer wheel exists. Whether the
+restricted fork gates `open()` on a mount was measured on the branch `measure/py-files-mount` (the route table of
+[`ML_TABLE.md`](../plan/repl/ML_TABLE.md)'s item 7).
 
 ### Backup and restore carry the files (ruling 35)
 
