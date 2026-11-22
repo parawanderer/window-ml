@@ -58,6 +58,8 @@ import { scanCode } from "./python/pkg-scan";
 import { readScan, type ScanResult } from "./python/pkg-scan-note";
 import { holdResult, takeResult } from "./python/py-held-results";
 import { shownText } from "./python/pkg-card";
+import { makeHideRule } from "./session/files-hide-rule";
+import type { HideEntry } from "./files-hide";
 
 // The value store, reached here rather than in the worker: stored bytes are TRANSFERRED to the worker (no copy), and the
 // one copy is the worker's, into Pyodide's memory. A returned frame's IPC comes back the same way and is written here,
@@ -69,8 +71,11 @@ const store = (): ValueStore => values ??= new ValueStore({
     onEvict: (e) => reportHousekeeping({ subsystem: "value-store", kind: "evict", reason: e.reason, key: e.key, bytes: e.shared ? 0 : e.bytes, ...(e.source || e.shared ? { detail: { ...(e.source ? { source: e.source } : {}), ...(e.shared ? { shared: true } : {}) } } : {}) }),
 });
 
-// `/files` in Python (files-host.ts): the reader over this document's value store and the shelf the worker holds. No hide rule yet (POLICIES.md, ruling 34).
-const filesReader = new RangedReader({ source: createFilesSource({ store, send: (m) => chrome.runtime.sendMessage(m) }) });   // state: plumbing — the one reader, a channel per worker
+// `/files` in Python (files-host.ts) and `ml.fs`: the reader over this document's value store and the shelf the worker holds,
+// bound by the session's hiding rules (POLICIES.md, "Hiding files", ruling 34), which the worker resolves.
+const filesHide = makeHideRule(async (session) => ((await chrome.runtime.sendMessage({ type: "FILES_HIDE_LIST", session })) as { entries?: HideEntry[] | null } | undefined)?.entries ?? null);   // state: plumbing — one rule for the one reader
+chrome.runtime.onMessage.addListener((msg: { type?: unknown } | undefined) => { if (msg?.type === "FILES_HIDE_CHANGED") filesHide.forget(); return false; });
+const filesReader = new RangedReader({ source: createFilesSource({ store, send: (m) => chrome.runtime.sendMessage(m) }), hidden: filesHide.rule });   // state: plumbing — the one reader, a channel per worker
 setFilesReader(() => filesReader.openChannel("files"));
 
 /**

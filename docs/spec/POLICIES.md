@@ -764,7 +764,16 @@ Shane's ruling 34 (2026-11-17): the files the host's sandbox holds unreadable ar
 them. Make the default reasonable; someone with an idiosyncratic layout fixes it with an override, not with a new
 default rule. Two things stay defects whatever the policies say: a path the call's facts list as hidden
 (`hiddenSecrets`) that the call can read, and a default-held value reaching the model with no override. The rest of
-this section is the coordinator's calls under the ruling, each surfaced to Shane. Nothing here is built.
+this section is the coordinator's calls under the ruling, each surfaced to Shane.
+
+**Built so far (the extension's readers, the first of three PRs).** The `files` consumer with `hide` and `show` entries
+in the policy store, the four defaults as built-in rows, the layer rule and its refusals (`src/files-hide.ts`), the
+`policy.files` command, the view's rows (`src/sw/files-hide-view.ts`), and the `/files` reader in the offscreen document
+bound by the resolved list (`src/session/files-hide-rule.ts`), which Python's mount and `ml.fs` both read through. NOT
+built: what the host gets (a `spawn` applies no entry yet, so a `hide` does not bind a program the shell starts, and
+every `files` row in the view says so), the model's proposal card, and the offer when a root is added. In the browser
+copy, which has no symlinks, `default:link-target` and `default:linked-template` hold nothing, and the linked-template
+refusal of a `show` is the host's to make.
 
 **One list, two verbs, the policy store's.** A hiding rule is a `StoredPolicy` with consumer `files`, effect `hide` or
 `show`, and `source` a path or a glob. Scope `global`, or `run`, which is the session's and keyed by its hash, as for

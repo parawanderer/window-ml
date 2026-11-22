@@ -209,6 +209,7 @@ runtime answers a type or option it does not offer with `unsupported`.
 | `tab.screenshot`: on demand, size-capped | screen | `screenshots` | `CAPTURE_TAB` |
 | `page.highlight`: a selector, a canvas token, or clear | drive | `highlight` | `__mlHighlight` → `ML_HL_REMOTE` |
 | `side.call`: a utility-model call about a session | drive | `sideCalls` | `FETCH_LLM` with `extend: "utility"` |
+| `policy.files`: add a hiding rule for a session's files (`op: "add"`, `effect` `hide` or `show`, a path or glob `source`, `scope` `session` or `global`), or remove one by `id` (`op: "remove"`; removing a `hide` widens and answers `confirm` until sent with `confirm: true`); POLICIES.md, "Hiding files" | approve | | nothing |
 | `file.put`: one chunk of a file sent ahead of the message that names it (a PDF, or a text file that will not go whole, `sentWhole`), over the hub only: `{ runtime, sha256, index, count, bytes }`, the chunk's raw bytes after the JSON and a zero byte in the sealed body. Answers `{ held, complete }`; `complete` once every chunk is in and the bytes hash to `sha256`. At most 4 unanswered (FILE_ATTACHMENTS.md, "Over the hub") | drive | (the hub path; `unsupported` from a runtime that takes none, and the client sends inline) | nothing |
 | `file.have`: which chunks of a file this runtime holds, `{ held, count, complete }`, so a client sends only the rest | drive | (as `file.put`) | nothing |
 | `device.list` | admin | `devices` | nothing |

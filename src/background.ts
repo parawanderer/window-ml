@@ -72,6 +72,7 @@ import { runControlPayloadError } from "./sw/run-payload-check";
 import { asIsTokens, forBackendFromPage, forPage, forTurn, scanTurn } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets; a page's model request, without a registered secret
 import { TurnUnreadable } from "./secret-registry";
 import { secretRegistryOp } from "./sw/sw-secret-registry";
+import { filesHideList, signalFilesHideChanges } from "./sw/sw-files-hide";
 import { pythonPrewarm, pythonExec, pythonInterrupt, relayPyStdout, deletePythonRun, dropPythonLibraries, pythonReaped, filesAttached, filesSecretForms, pythonStarted, pythonDone } from "./sw/sw-python";
 import { focusLineFor } from "./sw/sw-focus";
 import { chatHashFor, openChatPage } from "./sw/sw-open-chat";
@@ -1035,6 +1036,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     if (message.type === "PY_REAPED") { pythonReaped(message, sender, noteRunLine); return false; }
     if (message.type === "FILES_ATTACHED") { sendResponse(filesAttached(message, sender)); return false; }
     if (message.type === "FILES_SECRET_FORMS") { void filesSecretForms(sender).then(sendResponse); return true; }
+    if (message.type === "FILES_HIDE_LIST") { void filesHideList(message, sender).then(sendResponse); return true; }
     if (message.type === "SERVER_TOOL_EXEC") {
         // Run ONE OpenWebUI-configured tool. CHOKE POINT, and a real one: the fetch spends the user's API
         // key, and the tool it runs is caller-chosen — a hostile page reaching this handler directly could
@@ -1636,6 +1638,8 @@ function rightClickedContext(tabId: number): Promise<unknown> {
 // A redirect hop's target, read for the worker's judged fetches (sw-redirects.ts); registered at the top level, so a
 // fetch in a worker that just woke still sees its hop.
 watchRedirects();
+// The `/files` reader's hiding rules: a policy change makes the offscreen reader ask for its lists again (sw-files-hide.ts).
+signalFilesHideChanges();
 
 chrome.runtime.onInstalled?.addListener((details) => {
     // A deliberate reload or an update (NOT an idle SW respawn — that never fires onInstalled): invalidate any
