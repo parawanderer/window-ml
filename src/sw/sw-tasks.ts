@@ -593,7 +593,7 @@ export async function endTasks(runId: string, reason = "session-release", opts: 
             kept.set(id, t);
         }
     }
-    if (kept.size) { tasks.set(runId, kept); persist(runId); }
+    if (kept.size) { tasks.set(runId, kept); persist(runId); announceCounts(runId); }
     else {
         tasks.delete(runId);
         announceCounts(runId);

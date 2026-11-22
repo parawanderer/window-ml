@@ -124,6 +124,34 @@ test("a run with a running task gets no deadline until its last running task end
     assert.equal(r.row().background.waiting, 1, "its result waits, and the run is on its deadline all the same");
 });
 
+test("a worker that starts reads the stored task table before it releases: a Python cell still running holds the run", T, async () => {
+    const r = await settled();
+    r.closeTab();
+    assert.ok(await until(() => r.entry()));
+    await r.bg.context.__mlEvictForTest();
+    await tick();
+    // What a worker evicted while a detached cell ran left behind: the cell's row, still running, and a deadline now due.
+    r.bg.sessionStore[`ml_tasks:${r.hash}`] = [{ v: 1, id: "t00ab01", tool: "python_exec", startedMs: Date.now() - 5_000, leaseMs: 15_000, expectMs: null, status: "running", result: null, text: null, delivered: false, code: null, ref: { kind: "py", cell: "cell-live" } }];
+    r.bg.sessionStore[r.key] = { due: Date.now() - 1, closedAt: Date.now() - 1000 };
+    r.bg.alarms.fire("ml-release");
+    assert.ok(await until(() => r.entry()?.due === null), JSON.stringify(r.entry()));
+    assert.equal(r.bg.pyDeletes.length, 0, "the cell read back from storage still runs: nothing is released");
+});
+
+test("a deadline that comes due while a task runs keeps the entry with no deadline, so the task's end sets one", T, async () => {
+    const r = await settled();
+    const t = r.detach();
+    assert.ok(await until(() => r.row()?.background?.running === 1));
+    r.closeTab();
+    assert.ok(await until(() => r.entry()));
+    r.bg.sessionStore[r.key] = { due: Date.now() - 1, closedAt: Date.now() - 1000 };
+    r.bg.alarms.fire("ml-release");
+    assert.ok(await until(() => r.entry()?.due === null), JSON.stringify(r.entry()));
+    assert.equal(r.bg.pyDeletes.length, 0, "a run with a running task is not released");
+    t.finish({ text: "built" });
+    assert.ok(await until(() => typeof r.entry()?.due === "number"), "the task's end set the deadline");
+});
+
 // --- what cancels it ---
 
 test("a person's message that starts a turn removes the deadline, the alarm and the row's releaseAt", T, async () => {

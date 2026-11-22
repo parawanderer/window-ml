@@ -10,7 +10,7 @@
 import { defineState } from "../state-registry";
 import { DEFAULT_CONFIG } from "../contract/contract-config";
 import { activeRuns, bgRuns, releaseSessionTokens, runControllers, runInboxes, startingControllers, type ReleaseReason } from "./sw-runs";
-import { onTaskCounts, taskCounts } from "./sw-tasks";
+import { hydrateTasks, onTaskCounts, taskCounts } from "./sw-tasks";
 import { refreshTaskRow } from "./sw-task-rows";
 
 /** What a stored deadline holds. `due` is null while the run still has a running task: the entry says the tab closed, and
@@ -66,11 +66,11 @@ async function writeEntry(runId: string, e: ReleaseEntry | null): Promise<void> 
     try { await (e ? chrome.storage.session.set({ [KEY(runId)]: e }) : chrome.storage.session.remove(KEY(runId))); } catch { /* memory holds nothing else: the deadline is lost with the write */ }
 }
 
-/** The grace period in ms: the person's `closedRunGraceMin` (0 to 1440 minutes), else the default. */
+/** The grace period in ms: the person's `closedRunGraceMin`, held to 0 to 1440 minutes (a longer one reads as a day), else the default. */
 export async function releaseGraceMs(): Promise<number> {
     let v: unknown = DEFAULT_CONFIG.closedRunGraceMin;
     try { v = (await chrome.storage.sync.get({ closedRunGraceMin: DEFAULT_CONFIG.closedRunGraceMin }))?.closedRunGraceMin; } catch { /* the default */ }
-    const n = typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= MAX_GRACE_MIN ? v : DEFAULT_CONFIG.closedRunGraceMin;
+    const n = typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.min(v, MAX_GRACE_MIN) : DEFAULT_CONFIG.closedRunGraceMin;
     return Math.round(n * 60_000);
 }
 
@@ -83,6 +83,13 @@ export async function runLacksTab(runId: string): Promise<boolean> {
     const id = held.tabId;
     if (typeof id !== "number" || id < 0) return true;
     try { return !(await chrome.tabs.get(id)); } catch { return true; }
+}
+
+/** How many of the run's tasks are running, read back from storage first: a worker started since holds none in memory, and
+ *  a count of 0 there would release a run whose task still runs. */
+async function runningTasks(runId: string): Promise<number> {
+    await hydrateTasks(runId).catch(() => { /* an unreadable table holds nothing */ });
+    return taskCounts(runId).running;
 }
 
 /** A turn of the run is live or starting: such a run is never released. */
@@ -114,7 +121,7 @@ export async function releaseAtOf(runId: string): Promise<number | undefined> {
  */
 export async function armRelease(runId: string, closedAt = Date.now()): Promise<void> {
     const grace = await releaseGraceMs();
-    const hold = taskCounts(runId).running > 0;
+    const hold = (await runningTasks(runId)) > 0;
     await serial(async () => {
         await writeEntry(runId, { due: hold ? null : Date.now() + grace, closedAt });
         await reschedule();
@@ -173,15 +180,20 @@ export async function releaseRun(runId: string, reason: ReleaseReason): Promise<
 }
 
 /**
- * Release every run whose deadline has come, then set the alarm again. A run with a turn live, a running task or a tab (asked
- * for again here) is not released and loses its entry: a turn's end and a task's end set a new one.
+ * Release every run whose deadline has come, then set the alarm again. A run with a turn live or a tab (asked for again here)
+ * is not released and loses its entry: the turn's end sets a new one. A run with a running task keeps its entry with no
+ * deadline, which the task's end fills in.
  */
 export async function releaseDue(): Promise<void> {
     const now = Date.now();
-    const due = [...(await readAll())].filter(([, e]) => e.due !== null && e.due <= now).map(([id]) => id);
-    for (const runId of due) {
-        const alive = turnLive(runId) || taskCounts(runId).running > 0 || !(await runLacksTab(runId));
-        if (alive) { await cancelRelease(runId); continue; }
+    const due = [...(await readAll())].filter(([, e]) => e.due !== null && e.due <= now);
+    for (const [runId, e] of due) {
+        if (turnLive(runId) || !(await runLacksTab(runId))) { await cancelRelease(runId); continue; }
+        if ((await runningTasks(runId)) > 0) {
+            await serial(async () => { await writeEntry(runId, { due: null, closedAt: e.closedAt }); await reschedule(); });
+            void refreshTaskRow(runId);
+            continue;
+        }
         await releaseRun(runId, "tab-closed");
     }
     await serial(reschedule);

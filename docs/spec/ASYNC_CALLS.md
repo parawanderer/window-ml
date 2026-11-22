@@ -508,8 +508,8 @@ read against main 69a73569. The rest was the lane's proposal, now ruled.
 ### The proposal
 
 1. **The trigger.** A tab closes. Each run the worker holds on it (`bgRuns` with that `tabId`) gets a release deadline
-   of now plus `closedRunGraceMin` (default 10, 0 releases at once). It is a DevTools setting, a guarded number, and
-   may be added to the popup but never only there. A run with a RUNNING task gets no deadline: `onTaskCounts` sets it
+   of now plus `closedRunGraceMin` (default 10, 0 releases at once). It is a DevTools setting, an ordinary number of
+   minutes (0 to 1440, a longer one read as 1440), and may be added to the popup but never only there. A run with a RUNNING task gets no deadline: `onTaskCounts` sets it
    when the run's last running task ends while the run still has no tab. A task's result that waits (`waiting`) does
    not hold the run (point 5).
 2. **A deadline that survives eviction.** The deadline is stored as `ml_release_due:<runId>` in
