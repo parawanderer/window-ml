@@ -38,8 +38,9 @@ should be no reason the model can't help the user use its own tool.)"
 **Why a spec of its own.** No existing spec fits. [`POLICIES.md`](POLICIES.md) is the mechanism this uses, not a home
 for one consumer's surface (the `fetch`, `sh` and `act` consumers each live with their own feature); the
 [`SITE_ACCESS.md`](SITE_ACCESS.md) rules are about pages, and this surface is one a page never reaches. The nearest
-precedent in shape is the files API in [`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md), "`/files` on the person's disk",
-whose "deleting the person's files asks unless a policy allows it" is the rule reused here.
+precedent in shape is the delete rule of [`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md), "`/files` on the person's disk"
+(the files API proposed there is now `ml.fs`, ruling 60): "deleting the person's files asks unless a policy allows it"
+is the rule reused here.
 
 ## What exists today
 
@@ -191,7 +192,7 @@ class beside their own keys in `store.ts` and the same domain union; that is ope
 | Class | Read-write | A change | Keys (the initial classification; the code's table is the truth) |
 | --- | --- | --- | --- |
 | **secret** | never; not readable | impossible | `chatUrl`, `apiKey`, `modelFilter`, `priceSnapshotUrl` (exactly `SECRET_KEYS`), and the legacy `pageApprovalDomains` (it is a site list) |
-| **gate** | never; readable through `ml.config()`, or only through `ml.settings()` for `shellRevealsAllow` and `scrubPersonInput` | impossible; refused with a link to the row (`window-ml:setting/<key>`, LINKS.md), so the model can say where the person changes it | `autoApproveReadonly`, `autoApprovePython`, `autoApproveSelfSource`, `shellRevealsAllow` (the programs that reveal other processes the person lets run free, [`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md)): the approval gate itself, where one approved change would remove every later approval of its kind |
+| **gate** | never; readable through `ml.config()`, or only through `ml.settings()` for `shellRevealsAllow` and `scrubPersonInput` | impossible; refused with a link to the row (`window-ml:setting/<key>`, LINKS.md), so the model can say where the person changes it | `autoApproveReadonly`, `autoApprovePython`, `autoApproveSelfSource`, `shellRevealsAllow` (the programs that reveal other processes the person lets run free, [`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md)): the approval gate itself, where one approved change would remove every later approval of its kind; and `scrubPersonInput`, which takes registered secrets out of what the person sends before the model reads it, so it decides what of the person's own messages the model reads |
 | **guarded** | yes | always asks, in either direction; a policy may deny, never allow | what widens what the model reaches; what sends the person's data somewhere it did not go before; what shrinks the person's record of what happened. Exactly the next table |
 | **ordinary** | yes | asks unless a policy allows it | everything else: models and their context sizes, appearance, the HUD, titling, electricity prices, `protoStream`, the Python idle and detached-task limits. `autoTitles` and `groundingEnabled` send more to the model server when turned on, and are ordinary on purpose: they reach only the server the person configured, with data already going there |
 
