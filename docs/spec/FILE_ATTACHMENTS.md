@@ -795,7 +795,7 @@ true })` gives Dirent-shaped entries; errors are `Error`s with Node's `code`, `s
 | `handle.read({ buffer?, offset?, length?, position? })` | read | at most one chunk (512 KiB) per call; `bytesRead` as Node's |
 | `handle.readLines(options?)` | read | an async iterator of lines, read chunk by chunk |
 | `handle.stat()`, `handle.close()` | read | |
-| `createReadStream(path, { start, end })` | read | streams a range, chunk by chunk (the coordinator, 2026-11-20); `createWriteStream` is not a member |
+| `createReadStream(path, { start, end })` | read | streams a range, chunk by chunk (the coordinator, 2026-11-20); `createWriteStream` is not a member; narrower than Node's ReadStream: async-iterable chunks, no EventEmitter and no pipe |
 | `writeFile(path, data)` | write | chunked to the shelf (below) |
 | `appendFile(path, data)` | write | |
 | `open(path, flag)` with a write flag; `handle.write`, `handle.truncate` | write | |
@@ -876,13 +876,13 @@ world, an exec naming `ml.fs` is refused; it is never bound for a page-started c
 main world, and a page's `window.ml` has no `fs`. The session is the run's, read from the worker's run record, never
 from anything the script says. The current session's files only.
 
-**The scrub.** Every `ml.fs` read, text or binary, returns the reader's masked bytes: a registered value is replaced
-by `*` (0x2A) at the same length, inside `RangedReader.read`, the one path every read takes (BUILT, #2058; "Python's
-view: one mount type over the reader" holds the rule). So a text read's length equals `stat`'s size, offsets stay
-true, and the model is not told which secret was hidden (the coordinator, 2026-11-20 to 22). The exec's result then
-crosses `forModel` as every tool result does. The residual is named: a script that decodes byte ranges itself and
-returns them in separate execs can split a secret across two results, as any script can split a string it built
-today; the boundary is `forModel`'s, unchanged.
+**The scrub.** Every `ml.fs` read, text or binary, returns the reader's masked bytes: a registered value is replaced by
+`*` (0x2A) at the same length, inside `RangedReader.read`, the one path every read takes (BUILT, #2058; "Python's view:
+one mount type over the reader" holds the rule). So a masked value keeps its length and offsets stay true: for an ASCII
+file a text read's length equals `stat`'s size, and the model is not told which secret was hidden (the coordinator,
+2026-11-20 to 22). The exec's result then crosses `forModel` as every tool result does. The residual is the mask's
+(#2058): a value in another encoding (UTF-16) or inside a compressed or encoded container (a deflated zip member, gzip)
+is not matched.
 
 SUPERSEDED 2026-11-20 to 22 (the coordinator, the same call): a text range scrubbed to `[REDACTED:<NAME>]` over a
 window widened by the longest form, with a 4,096-character ceiling and an 8 MiB whole-file fallback, and a binary
