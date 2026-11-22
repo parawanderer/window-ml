@@ -681,8 +681,9 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
             ...(libraries?.library ? { library: libraries.library } : {}),
             // A run's installs (python_install): the ones this worker lacks, with their bytes (`wheelsForCell`).
             ...(wheels.length ? { wheels } : {}) }, [...transfer, ...wheels.map((x) => x.bytes)]);
-        // Whether THIS post set the mark: the service worker writes the run log's record of it from the result.
-        if (!wasMarked && outsideMarks.has(w)) pending.get(id)!.markSet = true;
+        // Whether THIS post set the mark: the service worker writes the run log's record of it from the result. Only a
+        // run's own worker is told: no other principal has a run log.
+        if (!wasMarked && outsideMarks.has(w) && principal.startsWith("run:")) pending.get(id)!.markSet = true;
     });
 }
 
