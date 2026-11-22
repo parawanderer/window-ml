@@ -199,10 +199,11 @@ export default {
 
 ## Examples: Python
 
-**A Python read-only dialect is decided and not yet built** ([`PYTHON_DIALECT.md`](PYTHON_DIALECT.md), 2026-10-15); until
-it exists everything built is JavaScript. (`python_exec`'s `mode: "readonly"` shares only the name: it cuts the
-sandbox's network and JS bridges ([`docs/dev/python-sandbox.md`](../dev/python-sandbox.md)), does not bound work, and
-tracks no ownership; the dialect replaces it.) **The Python dialect is this spec's main consumer**: in JS the dialect has
+**A Python read-only dialect is built** ([`PYTHON_DIALECT.md`](PYTHON_DIALECT.md), decided 2026-10-15): the restricted
+CPython fork's gate decides a cell's membership by running it ([`docs/dev/python-sandbox.md`](../dev/python-sandbox.md),
+"Membership is decided by RUNNING the cell"). (`python_exec`'s former `mode: "readonly"`, removed 2026-10-19, shared
+only the name: it cut the sandbox's network and JS bridges, did not bound work, and tracked no ownership; the dialect
+replaced it.) **The Python dialect is this spec's main consumer**: in JS the dialect has
 few native libraries to worry about, while in Python every useful cell is numpy or pandas, so these examples are the
 ones that matter first. The parser is `ast.parse`, the evaluator is CPython itself under a restricted mode the fork adds,
 and the native leaves are C extensions, as builtins are in JS. Tier 1 is the practical tier for them (no charge hook

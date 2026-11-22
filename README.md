@@ -1,32 +1,16 @@
 # window.ml
 
-> **Status:** Unmaintained Experimental Artifact / Read-Only Archive
-> 
-> This repository contains the raw, uninspected output of an unattended automated code-generation loop (~521,000 lines across 3,122 commits). The code is disposable scaffolding used solely to collect empirical measurements for inference and context-addressability experiments.
-> 
+> **Personal Side Experiment — Not a Product, Portfolio, or Research Agenda**
+>
+> This repository is the raw, uninspected output of an unattended LLM code-generation loop (~521,000 lines across 3,122 commits). It started strictly out of consumer annoyance: testing what happens when you point an agent at broken AI chat wrappers and tell it to build something less irritating.
+>
 > * **No human inspection or maintenance has ever been performed on this code.**
-> * **This is not a software product, library, or engineering portfolio.**
-> * **Issues, pull requests, and software engineering inquiries will be ignored.**
-> 
-> For mathematical findings and empirical data, see `notebooks/`.
+> * **This is not a software product, engineering portfolio, or my actual research area.** I have no professional interest in browser tooling, sandboxes, or inference plumbing.
+> * **Issues, pull requests, and engineering inquiries will be ignored.**
 
-I'm an applied mathematician. This repo holds experiments on LLM inference: whether a server can learn where to
-load a model and for how long from recorded use, whether it can predict decode speed and correct itself, and what
-becomes possible once every piece of a context has an address. Agents write and maintain the code and I don't read
-it. What I'm after is the findings. Some of it replaced chat UIs I was fed up with, and I use those parts daily.
+Agents write and maintain all of this; I don't read it. It stays up only because the unattended loop accidentally produced cleaner primitives than the commercial wrappers I was fed up with, and I'm still curious how far it runs before collapsing under its own weight.
 
-The loose theme: what would it take for calling a model to be as boring as calling `fetch`? You call it and stop thinking
-about it. It fails in known ways, takes about as long as you expected, and when something does go wrong you can see
-exactly what happened.
-
-An idea gets tried in the cheapest place first, usually an agent with a prompt and a tool. If it still looks good it
-goes further down: into the serving layer, the inference engine, and for a few, eventually training. Some only work
-if several of those change together, which is why the [apparatus](#apparatus) spans all of them.
-
-So this is a hypothesis-testing apparatus more than a codebase. Every row of the table below is a claim that might
-be wrong rather than a feature that is planned. What should outlast any of them is the finding: a short technical
-note on how the thing works and whether it held up, and a proper implementation wherever it actually belongs. That
-is what the third column is saying. None of those places is this repository.
+A few empirical measurements fell out along the way (in `notebooks/`), mostly because once a bot builds a throwaway rig, checking whether an idea holds up is cheap. None of the rows below are a roadmap or planned features - just things I had an agent test out of curiosity, and where they would belong if anyone who actually cares about this domain ever implemented them properly.
 
 ## The ideas, and how far each got
 
@@ -72,9 +56,6 @@ reassembling its own history from the original frames, and a fresh window judgin
 being fitted. What it shares is the cost. One sample from a stochastic model says little, so each K needs several
 runs; for scale, ContextCite reports its results from 32 ablations per attribution.
 
-**Right now.** Finishing the first row, because the rest depends on it: the benchmark tooling reads that data and
-the pointer A/B needs the benchmark, so both are paused until it is done. In the serving layer I am working on
-predicting placement and keep-alive from recorded use, which is a statistics problem rather than a coding one.
 
 ## Apparatus
 
@@ -174,9 +155,7 @@ defined yet.
 It is glue: whatever an idea needed in order to be tried at all, and that turns out to be a lot. The tests are not
 a quality claim. They are there so the agents do not break the rest of the glue while they build the next piece.
 
-So expect it to be uneven, and expect interfaces to change whenever an experiment needs them to. If an idea here
-works, what is worth having is the write-up and a real implementation in the place the idea belongs, not this code
-borrowed. The glue is scaffolding.
+Expect everything here to be uneven and unstable. It is disposable scaffolding; don't borrow it for anything serious.
 
 ## If you run it
 
