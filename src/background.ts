@@ -31,8 +31,9 @@ import { workerLook } from "./sw/worker-look";
 import { workerLocate } from "./sw/worker-locate";
 import { fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw/sw-fetch";   // outbound fetch layer (ml.fetch, rendered fetch, credentialed Google Sheets CSV)
 import { executeServerTool, serverToolResult } from "./sw/sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
-import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw/sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
+import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, observeRequests, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw/sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw/sw-events";
+import { energyRequest, cutOpenStretches, watchPower } from "./sw/sw-energy";
 import { configureSessionCommands, handleSessionTitle, ingestSessionEvent, sessionPageMoved, keepSession, liveHeldSessions, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw/sw-sessions";   // the cross-tab session index the chat page reads
 import { backupAction, backupFailure } from "./sw/sw-backup";   // backup and restore, for Settings
 import { folderAction } from "./sw/sw-archive";   // the session archive's folder, for Settings
@@ -116,6 +117,11 @@ const inflight = new Map<string, AbortController>();
 // respawn doesn't miss the in-flight run (the respawn race).
 // Logs this worker's start, and infers the previous one's eviction from a heartbeat it left in storage.session.
 void housekeeping.start();
+// The energy hold (sw-energy.ts): a record a dead worker left open is marked cut first, then every session's model
+// call is heard, so a local runtime's draw is watched while it generates; every stream says whether its box reports power.
+void cutOpenStretches();
+watchPower();
+observeRequests(energyRequest);
 // A worker evicted mid-run leaves its tabs pinned against discard with nobody left who knows why. After the
 // rehydrate — so a run that came back keeps its own tab — release the ones that did not.
 void hydrationDone.then(() => reconcileTabPins());
