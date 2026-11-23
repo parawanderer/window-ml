@@ -76,19 +76,20 @@ const mint = (prefix: string): string => prefix + [...crypto.getRandomValues(new
  */
 export class AgentFiles {
     private db: Promise<IDBDatabase> | null = null;   // state: cache — a handle to the database
-    private readonly idb: IDBFactory;
+    private readonly idb: IDBFactory | undefined;
     private readonly dbName: string;
     private readonly now: () => number;
 
     constructor(o: { idb?: IDBFactory; dbName?: string; now?: () => number } = {}) {
-        this.idb = o.idb ?? indexedDB;
+        // Resolved at the first open, not here: a realm without IndexedDB may still build the reader that holds this.
+        this.idb = o.idb;
         this.dbName = o.dbName ?? AGENT_FILES_DB;
         this.now = o.now ?? Date.now;
     }
 
     private open(): Promise<IDBDatabase> {
         if (!this.db) this.db = new Promise((res, rej) => {
-            const req = this.idb.open(this.dbName, DB_VERSION);
+            const req = (this.idb ?? indexedDB).open(this.dbName, DB_VERSION);
             req.onupgradeneeded = () => {
                 const db = req.result;
                 const nodes = db.createObjectStore(NODES, { keyPath: ["session", "path"] });
