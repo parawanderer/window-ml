@@ -24,7 +24,7 @@ import type { NeutralMessage } from "../contract/contract-chat";
 import { cleanTitle, titleMessages } from "../session/session-title";
 import { defineState } from "../state-registry";
 import { bindTaskRows, refreshTaskRow, syncTaskRows } from "./sw-task-rows";
-import { bgRuns, hydrationDone, keptOnRebuild, makeWorkerRun, pageValueSession, runControllers, runRebuilds, startingControllers, trackRun, untrackRun, workerRunsStarting } from "./sw-runs";
+import { bgRuns, hydrationDone, keptOnRebuild, makeWorkerRun, pageValueSession, runControllers, runInboxes, runRebuilds, startingControllers, trackRun, untrackRun, workerRunsStarting } from "./sw-runs";
 import { moveRun } from "./move-run";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { isExtensionSender } from "./sw-site-access";
@@ -445,6 +445,8 @@ export function configureSessionCommands(run: RunDeps): void {
             // move, never hosted a second time: its memory is fresher than the saved history, so that is not read back.
             // On its own tab it is resumed as before.
             const held = bgRuns.get(hash);
+            // A turn running is not resumed: it is moved, from a surface that says it waits for the step (`moveRun`).
+            if (runControllers.has(hash) || runInboxes.has(hash)) return "busy";
             if (held && held.tabId !== tabId) {
                 const rebuild = held.p.rebuild;
                 if (!rebuild) return "none";

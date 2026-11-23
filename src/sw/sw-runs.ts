@@ -113,7 +113,7 @@ export const bgRuns = new Map<string, { p: StartRunPayload; tabId: number; messa
  * @returns `{ leftTabs }`, or nothing when the run never moved
  */
 export const keptOnRebuild = (runId: string): { leftTabs?: number[] } => {
-    const left = bgRuns.get(runId)?.leftTabs;
+    const left = bgRuns.get(runId)?.leftTabs ?? firstTurnLeftTabs.get(runId);
     return left?.length ? { leftTabs: left } : {};
 };
 defineState({
@@ -684,6 +684,10 @@ defineState({
         return tabId == null ? undefined : { tabId, url: tabPageUrl.get(tabId) ?? null };
     },
 });
+
+/** The tabs a run was moved off during its FIRST turn, before it has a `bgRuns` entry to keep them in (move-run.ts): read by
+ *  {@link keptOnRebuild}, so the turn's checkpoint and its end carry them, and dropped once the turn's end has. */
+export const firstTurnLeftTabs = new Map<string, number[]>();   // state: plumbing — handed to the run's bgRuns entry at its first turn's end
 
 /** Each live turn's TAB CELL (MOVE_RUN.md, shape (b)): the setter `hostTurn` registers for the length of the turn,
  *  through which every page send the turn makes from then on goes to the tab given. */
