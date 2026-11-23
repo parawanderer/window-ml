@@ -111,6 +111,19 @@ card shows the call's resolved facts, not the script.
      hold does not fire, and the call asks anyway; one that tests an absence fires. Either way no `ask` fails open.
      A BROKEN `ask` is no opinion, like a broken `deny`: a call an `allow` or the built-in default frees still runs, and
      the policy page shows the `ask` as broken.
+     **RULED 2026-11-23 (Shane, ruling 108): a broken `deny` or `ask` makes the call ASK.** The sentence above and "a
+     broken policy fails closed" (in "Why the read-only dialect") disagreed, and the code followed this one: a `deny`
+     with a typo in a field name, one that used its whole step budget and one that overflowed the stack were each
+     skipped, and a call an `allow` or the built-in default frees then ran (small-fixes' audit of main 8356772f,
+     re-run by it; the coordinator read `judgeCall`). From this ruling a broken `deny` or `ask` yields `ask`, with
+     that policy as the reason; a broken `allow` stays no opinion; a `deny` that evaluates cleanly still wins. The
+     card says inline why the call escalated and what to do (Shane): it names the policy, gives the break in plain
+     words, carries an action that opens the policy for editing, and offers no "remember". The cause slug is
+     `broken-policy`. Not built; small-fixes builds it. Two more findings of the same audit: the dialect's
+     `try`/`catch` catches the host's stack overflow, below `MAX_CALL_DEPTH`, so a policy can return the opposite
+     answer with nothing recorded, and the outcome depends on the caller's stack depth (small-fixes repairs it for
+     both realms: the overflow becomes a stop no script catches and the depth limit moves below the host's); and
+     `propose_policy` vets a proposal against one probe only.
   2. **The card says why.** It names the `ask` policy that raised it, and offers no "remember" whose only result would be
      an `allow` the `ask` overrides.
   3. **The upgrade.** Builds before this one load only `allow` and `deny` (`sw-policies.ts`, the load filter), so a stored

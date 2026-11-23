@@ -58,6 +58,7 @@ A source is judged exactly as a source in `python_exec`'s `tables` was:
 | an http(s) URL | it is in the run's fetch cache (the person approved that fetch) | asks; it never fetches unasked (ruling 37) |
 | a fetch result | as its `url` above: it is read by its URL alone, never by its `.text` or `.table` | as its URL |
 | a path under `/files/` | the path is readable to the model ([`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md)) | refused, with that spec's errno |
+| an `@file:` pointer (ruling 107) | as the `/files/attached/` path of the file it names | as that path; a name two files share is refused as [`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md) refuses it |
 
 - **Built as of 2026-11-20 (#2043)** (`src/ml/ml-table.ts`; the table above is the design, and these differ from it):
   - A Sheet always asks in the read-only dialect: the run's approved store (`approvedSheets`) is not read there yet, so
@@ -75,6 +76,11 @@ A source is judged exactly as a source in `python_exec`'s `tables` was:
   - A pointer is live only inside an `ml.agent` run, and its output must be a table.
   - A page table with merged or nested cells throws; `delimiter` and `header` apply only to delimited text (a fetched
     CSV, a Sheet) and throw for a page table, a pointer or a table value.
+- **An `@file:` pointer is a source (ruling 107; Shane, 2026-11-23; not built).** The attachment's outline hands the
+  model the file as `@file:<id>`, and in bench's first corpus that is the form models passed as a table source (39 of
+  86 cells, every one refused; bench's account). `ml.table("@file:<id>")` is `ml.table(<that file's /files/attached/
+  path>)`: one file, one judgement, one set of bytes, in Python and in JS. `pd.read_csv` does not take the pointer: it
+  takes the path, as pandas does. A file that is not delimited text is refused with a sentence naming `dereference`.
 - **The rule runs at call time, on the resolved value,** whether the code named it as a literal or computed it.
 - **A literal scan only hoists.** It finds the `ml.table("…")` sources in the code, so the card can show them above
   the code and an approval can grant them up front. In JS this is the `fetchUrlLiterals` pattern; in Python it is an
