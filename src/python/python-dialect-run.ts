@@ -380,8 +380,12 @@ def _ml_read_csv_inside(_restricted, restricted, _done):
     # worker installs the prelude's loader redirect before this setup, and that wrapper is the identity a cell calls.
     # The check runs lifted, before the call. It charges the input's bytes to the cell's budget first, so a parse that
     # cannot fit asks and none is half-done.
-    import io, math, os, stat, pandas as _pd, __main__ as _main
-    from pandas.io.common import is_url as _is_url, infer_compression as _compression
+    import io, math, os, stat, __main__ as _main
+    try:
+        import pandas as _pd
+        from pandas.io.common import is_url as _is_url, infer_compression as _compression
+    except ImportError:     # not loaded here, so load_manifests admitted nothing of it either
+        return ""
     _f = _pd.read_csv
     _restricted.allow_module("pandas", sorted(set(_done["modules"].get("pandas", [])) | {"read_csv"}))
     _kw = frozenset(${JSON.stringify(DIALECT_READ_CSV_KEYWORDS)})
