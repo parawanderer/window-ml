@@ -523,8 +523,13 @@ export class SessionIndex {
      *
      * A session that was RUNNING when the worker died is restored as `interrupted`: the loop died with the worker,
      * and a list that still showed it as running would be waiting for an event that cannot arrive.
+     *
+     * `openTabs` is every tab open in this browser now, empty after a browser restart (the old ids name nothing, and
+     * a new tab can be handed one of them). A row's `page.tabId` outside it is dropped: that tab closed while no
+     * worker was there to see it, and a row still naming it offered a peek, a focus and a resume on a tab that is
+     * gone, or on an unrelated one that got its id. Absent means not known, and every `tabId` is kept.
      */
-    restore(entries: readonly { summary: SessionSummary; count: number }[]): SessionSummary[] {
+    restore(entries: readonly { summary: SessionSummary; count: number }[], openTabs?: ReadonlySet<number>): SessionSummary[] {
         const out: SessionSummary[] = [];
         for (const { summary, count } of entries) {
             const hash = summary.id?.hash;
@@ -540,6 +545,10 @@ export class SessionIndex {
             // `background` is dropped the same way: a saved summary is not the task table, which is read again at startup.
             const { background: _bg, ...kept } = summary;
             const restored: SessionSummary = { ...kept, id: { runtime: this.runtime, hash }, status, saved: true, pendingApprovals: 0 };
+            if (openTabs && restored.page?.tabId != null && !openTabs.has(restored.page.tabId)) {
+                const { tabId: _gone, ...page } = restored.page;
+                restored.page = page;
+            }
             const s: Indexed = {
                 id: restored.id, kind: restored.kind, gen: 0, ring: [], seen: count, bytes: 0,
                 lostThrough: count, lastCursor: count,
@@ -694,6 +703,13 @@ export class SessionIndex {
     pageGone(tabId: number, opts: { closed: boolean }): SessionSummary[] {
         const changed: SessionSummary[] = [];
         for (const s of this.sessions.values()) {
+            // A RESTORED row has no owner, only the `page.tabId` its saved summary names: the tab closing ends that too.
+            if (s.owner == null && opts.closed && s.summary.page?.tabId === tabId) {
+                delete s.summary.page.tabId;
+                s.summaryJson = "";
+                changed.push(s.summary);
+                continue;
+            }
             if (s.owner !== tabId) continue;
             if (opts.closed) {
                 s.owner = undefined;

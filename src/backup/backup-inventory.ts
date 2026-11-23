@@ -103,6 +103,7 @@ export const INVENTORY: readonly InventoryEntry[] = [
     local("ml_handed_to_worker", "run-state", "runs handed from a page to the worker"),
     session("ml_pagebuilt", "run-state", "which tab and site built a page's session; tab ids, meaningless in another browser"),
     session("ml_pinned_tabs", "run-state", "tab ids, meaningless in another browser"),
+    session("ml_sessions_browser_seen", "run-state", "only that a worker has started in this browser session, which tells an eviction from a restart; meaningless in another browser"),
     session("ml_pkginstalls", "run-state", "the Python packages each run installed; dies with the run's namespace, and the wheels themselves are in the mirror"),
     session("ml_setting_declined", "run-state", "the guarded settings each run's person declined, which that run does not ask again; meaningless outside the run"),
     session("ml_card_dismissed", "run-state", "the runs whose page card the person closed, so it stays closed across navigation; run hashes, meaningless in another browser"),
