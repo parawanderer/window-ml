@@ -1,6 +1,6 @@
 # Moving a run to another tab
 
-**Status: shape (a) built in the worker (`move-run.ts`), with its two callers; shape (b) in two slices, the first (the turn's tab cell) built.** Written 2026-11-12 by the async lane, assigned by the coordinator as the lane
+**Status: shape (a) built in the worker (`move-run.ts`), with its two callers; shape (b) in two slices, both built: the turn's tab cell, then moving a running turn (2026-11-22).** Written 2026-11-12 by the async lane, assigned by the coordinator as the lane
 closest to it. Shane confirmed the decisions below in the coordinator's session on 2026-11-12 (a move, not a fork; the
 same runtime only; started only by the person). The build is the `[window-ml move-run]` lane's, started after this note
 and the page-health change land; the chat page's "move to tab…" entry is the Chat Page lane's afterwards. Revised the
@@ -59,9 +59,24 @@ stays, it lives per run). So:
      and a turn finds them there: `retabWorkerRun` (`worker-tools.ts`) points them at the turn's tab at each turn's start
      (a move between turns) and from the cell. `rekeyRunInbox` is the cell's one caller: it moves the inbox and calls the
      cell. Its first flow is a replaced tab (`retabRuns`, below).
-  2. **Moving a running turn.** `moveRun` on a run with a live turn: what is filed by tab (the tracking entry and the
-     pin, the replay ring) moved for the one run, `rekeyRunInbox`, the page-bound tasks cancelled (rule 4a), and the
-     model told at its next step through the inbox. Waits for slice 1.
+  2. **Moving a running turn, built.** `moveRun` on a run with a live turn moves nothing at once: a call of the
+     current step may be out on the old page, or waiting at a gate there. It checks the destination, QUEUES the move
+     (a later ask replaces it; asking for the tab the run is on cancels it) and answers so ("it moves to this tab when
+     its current step ends", `MOVE_QUEUED`). The turn takes it at its next step BOUNDARY, at the start of its next model
+     request (`applyLiveMove`, called from `hostTurn`'s `callModel`): every call of the previous step has answered and
+     the next has not been asked for. There, for the one run: the destination page is adopted (`adoptOnTab`); then
+     the tracking entry and pin, the replay ring, `rekeyRunInbox` (the inbox and the tab cell), the old page's hold
+     dropped (`clearArrival`), the start origin and the turn's own page fields and consent (step 4 below, for the
+     turn), the tabs it left (`leftTabs`; in a first turn, `firstTurnLeftTabs` until its end), the old page told to end
+     the run's registration and its card told it moved (step 5), the page-bound tasks cancelled (rule 4a), and a
+     `tab`/`moved` record with `live: true`. The model is told in a SYSTEM message before that request, the between-turns
+     note with the new page's context as an arrival gives it. A destination that is no longer an ordinary page, or whose
+     page does not take the run's tools, DROPS the move (`tab`/`move-dropped`, with the reason) and the turn goes on
+     where it was. A turn that ends before its next boundary (its last step, a stop) makes the move after `settle`,
+     as a move between turns (`moveAfterTurn`). Refused while a turn is STARTING, for a run a page script built (its
+     page waits on the turn's result) and for a run started not to leave its page (`navigate: false`: nothing
+     rebuilds its tools elsewhere). `session.resume` of a run whose turn is running is refused as a `conflict` before
+     it adopts anything: a running run is moved, not resumed.
 
 ## What a move carries
 
@@ -76,8 +91,8 @@ nothing away from it:
 | its detached tasks, filed by run and still running (`ASYNC_CALLS.md`, rule 4b; none is page-bound yet, rule 4a) | its tracking entry and the tab's pin (`untrackRun`; the tab is unpinned and `tab`/`released` logged when it was the tab's last run) | |
 | the run's Python namespace (it lives per run) | | point and box tokens: see below |
 
-For shape (b) the middle column is live, so a move between steps would also carry the inbox,
-and cancel the page-bound tasks (`ASYNC_CALLS.md`, rule 4a).
+For shape (b) the middle column is live, so a move between steps also carries the inbox and the tracking entry, and
+cancels the page-bound tasks (`ASYNC_CALLS.md`, rule 4a; none exists yet, so the cancel is the scaffolding's).
 
 **Point and box tokens.** A page-world `@pt`/`@box` token lives in that page's `pointRegistry` (`util.ts`); on another
 tab it does not exist and fails as "Unknown point token … may be stale" (`builtin-tools.ts`). A worker-held shot is
@@ -168,7 +183,6 @@ so its next page call, its events and its settle go to the restored tab. `tests/
 
 ## Open
 
-- Shape (b), slice 2: a move between steps of a running turn, on the tab cell (above), with rule 4a's cancels.
 - Whether a crash ends the turn, or offers a move (the hook: the crashed branch in `delegate-send.ts` and
   `page-reachable.ts`'s watch). To be decided on how models behave against the failing tool.
 - A move between runtimes (another browser through the hub), after this exists.

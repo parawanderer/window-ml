@@ -10,6 +10,8 @@ export interface BringableSession {
     lastTs: number;
     /** true when this worker holds it in memory (a move); false for a saved session (a resume) */
     held: boolean;
+    /** its turn is running: bringing it queues the move for the turn's next step boundary */
+    running?: true;
 }
 
 /** The order the HUD lists sessions in: this tab's site first, then the most recent (Shane, 2026-11-12). */
