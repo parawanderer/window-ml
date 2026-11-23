@@ -121,6 +121,20 @@ step rate and will get the constant wrong in the cheap direction. So a manifest 
 (`n log n` in `xs.length`), and the host measures the constant on its own machine, as `PIPE_CHARS_PER_STEP` was
 calibrated on the slowest pipe stage. A declared constant, if present, is a hint the host may raise but never lower.
 
+**RULED 2026-11-23 (Shane, ruling 105): tier 1 is to be built for the Python dialect; today it is not.** As built
+(packages, read from the fork at 35bd1d69), a call into a C leaf spends ONE step whatever its input, and a manifest's
+`cost` is a string naming a shape that nothing charges. The only checks before a call are `range` past 1,000,000, the
+regex backtracking bound and the memory cap. So a cell inside the budget can still run for hours (a bounded `for` that
+sorts a large frame on each pass), and "cost is bounded" does not hold for a lifted leaf. The ruling: every lifted
+leaf is CHARGED, before it runs, by a cost FUNCTION of its arguments' size measures, as this section describes; a call
+whose charge does not fit the remaining budget is refused before any work. The points the build has to settle, each
+with a measurement in the notebook: (1) the function's form in a JSON manifest (an expression over size measures such
+as `len`, `size`, `shape`, `rows`, evaluated by the fork, never reading contents and never calling cell code such as a
+`__len__` the cell defined); (2) the constant per shape, measured by the host so one charged step costs about what one
+interpreter step costs; (3) a leaf whose entry still has only a shape string, charged by the size of its largest
+argument until it has a function; (4) a metered leaf (tier 2) only where no closed form exists, with the hard cap this
+section already requires. The worst in-budget cell is measured before and after.
+
 ## Format
 
 The cost of a wrong annotation is what separates this from a type stub. A wrong type in a `.d.ts` is a compile error.
