@@ -2017,6 +2017,26 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     by composition"): `ml.table` takes an `@file:` pointer (ML_TABLE.md). Open: a read-only subset of `os`, `os.path`,
     `glob` and `pathlib` inside the dialect (Shane: scanning the virtual file system is fine; packages costs it); an
     owner for the 633,699-character `exec` result that filled one run's context.
+  - **Ruling 108 and the policy realm, 2026-11-23.** `while` is refused in the policy realm (the coordinator's call).
+    Shane: policies "should probably be even more restricted than anything else" and "may as well be like those total
+    kernel programs": verified at save, total by structure, a pure function of the call's facts, fail closed.
+    small-fixes' audit of main 8356772f against that target: not verified at save (a person's policy is stored
+    unchecked, a model's is vetted on one probe); not total by structure (recursion and `for…of` under a 50,000-step
+    budget); pure but for stack depth and, inferred, locale; not fail closed; every matching policy runs per call with
+    no cap on the count and no shared meter. RULING 108 (Shane: "Sure, I think it should also show an actionable
+    inline modal and text of why the escalation happened"): a broken `deny` or `ask` makes the call ask, and the card
+    says why and what to do (POLICIES.md). small-fixes builds it, and separately the stack-overflow repair (the
+    coordinator's call), each its own PR from main ahead of its PR three; redteam-e3 writes rows, flaky-ci reviews.
+    The cut to the language is NOT ruled. The coordinator proposed removing recursion and helper functions,
+    `try`/`catch`, regexes built from facts, `Set`, `Map`, `JSON.parse`, `sort`, `reduce`, `async` and locale methods,
+    adding a check at save and a per-call meter. Shane: there are no users, so stored policies do not matter, but a
+    form our own examples need belongs in the language. small-fixes enumerates every policy source we ship or show and
+    the forms each uses; the cut is decided on that table. Also recorded: host #58's third accepted limit (`?` matches
+    a byte under Seatbelt and a character on Linux, erring toward hiding); packages' Stop without shared memory
+    (cannot be raised from Python; proposed as an externally set trip in the fork's tick, about 1% cost; not
+    scheduled, only if the framed sandbox page is chosen); the page-hosted `python_exec` description read by every
+    person-started run (session-store's fix at the model-tools point, not yet opened). Merged since: #2108 at
+    8356772f. Open: #2125, move-run's "No tab" run, at c602a60f.
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
