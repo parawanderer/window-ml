@@ -323,6 +323,32 @@ test("a quota ask that throws refuses the open with EIO", T, async () => {
     await refused(ch.openWrite("agent/a", "w", t), "EIO");
 });
 
+test("review: a file sealed by its close, then aborted, stops counting against the quota", T, async () => {
+    const { ch, more } = setup({ quota: async () => 10 });
+    const t = await ch.begin();
+    const { wfd } = await ch.openWrite("agent/a", "w", t);
+    await ch.write(wfd, 0, enc("123456"));
+    await ch.closeWrite(wfd);
+    await ch.abortTx(t);
+    const other = more();
+    const u = await other.begin();
+    const w = await other.openWrite("agent/b", "w", u);
+    await other.write(w.wfd, 0, enc("0123456789"));
+    await other.closeWrite(w.wfd);
+    await other.commitTx(u);
+    assert.equal(await slurp(other, "agent/b"), "0123456789");
+});
+
+test("review: after one commit, another channel's pending part is still refused on the chunk that crosses the quota", T, async () => {
+    const { ch, more } = setup({ quota: async () => 10 });
+    const other = more();
+    const u = await other.begin();
+    const w = await other.openWrite("agent/b", "w", u);
+    await put(ch, "agent/a", "123456");
+    await refused(other.write(w.wfd, 0, enc("12345")), "ENOSPC");
+    await other.write(w.wfd, 0, enc("1234"));
+});
+
 // --- commit, abort, dispose, setSession ---
 
 test("commitTx with a writer not yet closed is EINVAL, and closing it lets the commit land", T, async () => {
@@ -409,6 +435,18 @@ test("a disposed writer stops counting against the quota of the others", T, asyn
     await other.write(b.wfd, 0, enc("1234567890"));
 });
 
+test("review: a channel's end reports a file sealed by its close but not committed, and frees its quota", T, async () => {
+    const { reader, ch, lost, more } = setup({ quota: async () => 10 });
+    const t = await ch.begin();
+    const { wfd } = await ch.openWrite("agent/a", "w", t);
+    await ch.write(wfd, 0, enc("123456"));
+    await ch.closeWrite(wfd);
+    ch.dispose();
+    assert.deepEqual(lost.map((r) => [r.path, r.reason]), [["agent/a", "channel-ended"]]);
+    assert.equal(reader.writers.get("s1")?.size ?? 0, 0, "no pending part is left counting");
+    await put(more(), "agent/b", "0123456789");
+});
+
 // --- read-only places ---
 
 test("with no agent dep, openWrite under agent/ is EROFS", T, async () => {
@@ -440,6 +478,22 @@ test("a hidden path refuses a write with EACCES", T, async () => {
     const { ch } = setup({ hidden: (s, p) => p === "agent/secret" });
     const t = await ch.begin();
     await refused(ch.openWrite("agent/secret", "w", t), "EACCES");
+});
+
+test("review: a path hidden after its file was opened is not committed (EACCES), and nothing of the transaction lands", T, async () => {
+    let hide = false;
+    const { ch } = setup({ hidden: (s, p) => hide && p === "agent/late" });
+    const t = await ch.begin();
+    await ch.mkdir("agent/d", t);
+    const { wfd } = await ch.openWrite("agent/late", "w", t);
+    await ch.write(wfd, 0, enc("x"));
+    await ch.closeWrite(wfd);
+    hide = true;
+    await refused(ch.commitTx(t), "EACCES");
+    await ch.abortTx(t);
+    hide = false;
+    await refused(ch.stat("agent/late"), "ENOENT");
+    await refused(ch.stat("agent/d"), "ENOENT");
 });
 
 // --- names: mkdir, rmdir, rename, unlink ---
@@ -550,6 +604,27 @@ test("a transaction number from another channel is EBADF", T, async () => {
     const t = await other.begin();
     await refused(ch.openWrite("agent/a", "w", t), "EBADF");
     await refused(ch.commitTx(t), "EBADF");
+});
+
+test("review: a folder this transaction renamed into is a folder for a later open in it", T, async () => {
+    const { ch } = setup();
+    const t0 = await ch.begin(); await ch.mkdir("agent/a", t0); await ch.commitTx(t0);
+    const t = await ch.begin();
+    await ch.rename("agent/a", "agent/b", t);
+    const { wfd } = await ch.openWrite("agent/b/new", "w", t);
+    await ch.write(wfd, 0, enc("ok"));
+    await ch.closeWrite(wfd);
+    await ch.commitTx(t);
+    assert.equal(await slurp(ch, "agent/b/new"), "ok");
+    await refused(ch.stat("agent/a"), "ENOENT");
+});
+
+test("review: a FILE renamed onto a name is not a folder for an open under it (ENOTDIR)", T, async () => {
+    const { ch } = setup();
+    await put(ch, "agent/f", "x");
+    const t = await ch.begin();
+    await ch.rename("agent/f", "agent/g", t);
+    await refused(ch.openWrite("agent/g/new", "w", t), "ENOTDIR");
 });
 
 // --- races between two channels' commits ---

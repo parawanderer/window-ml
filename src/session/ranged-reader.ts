@@ -192,15 +192,18 @@ interface TxnState { session: string; items: Array<Writer | AgentOp> }
 
 /**
  * Whether a transaction's own queued changes leave `dir` (relative to `agent/`) a folder: true after its mkdir, false
- * after its rmdir or a rename away, undefined when the transaction did not touch it and what is stored decides.
+ * after its rmdir or a rename away, the stored path it was renamed from when what is stored there decides, and
+ * undefined when the transaction did not touch it and what is stored decides.
  */
-function pendingDir(st: TxnState, dir: string): boolean | undefined {
-    let made: boolean | undefined;
-    for (const i of st.items) {
+function pendingDir(items: TxnState["items"], dir: string): boolean | string | undefined {
+    let made: boolean | string | undefined;
+    for (const [k, i] of items.entries()) {
         if ("sealed" in i) continue;
         if (i.op === "mkdir" && i.path === dir) made = true;
         else if (i.op === "rmdir" && i.path === dir) made = false;
         else if (i.op === "rename" && i.from === dir) made = false;
+        // A rename onto it: `dir` is now what `from` was at that point of the transaction.
+        else if (i.op === "rename" && i.to === dir) made = pendingDir(items.slice(0, k), i.from) ?? i.from;
     }
     return made;
 }
@@ -323,14 +326,15 @@ export class RangedReader {
             return w;
         };
         const forget = (w: Writer) => { reader.writers.get(w.session)?.delete(w); };
-        /** Drop a transaction's pending parts; `lost` reports each file, as a channel's end does. */
+        /** Drop a transaction's pending parts, the files still open and the ones sealed by their close alike; `lost`
+         *  reports each file, as a channel's end does. */
         const discard = (id: Txn, lost: boolean) => {
             const st = txs.get(id);
             txs.delete(id);
             txns.delete(id);
-            for (const [fd, w] of wfds) {
-                if (w.txn !== id) continue;
-                wfds.delete(fd);
+            for (const [fd, w] of wfds) if (w.txn === id) wfds.delete(fd);
+            for (const w of st?.items ?? []) {
+                if (!("sealed" in w)) continue;
                 forget(w);
                 if (lost) { try { reader.deps.onLost?.({ session: w.session, path: w.path, at: (reader.deps.now ?? Date.now)(), reason: "channel-ended" }); } catch { /* a report must not stop the end */ } }
             }
@@ -443,8 +447,8 @@ export class RangedReader {
                     if (flags === "r+") throw fsError("ENOENT", "open", p);
                     // A folder this transaction made counts: its commit applies the mkdir before the file.
                     const parent = p.slice(0, p.lastIndexOf("/"));
-                    const made = pendingDir(st, rel(parent));
-                    const up = made === undefined ? await resolve(s, parent, "open") : made ? { kind: "dir" } : null;
+                    const made = pendingDir(st.items, rel(parent));
+                    const up = made === undefined ? await resolve(s, parent, "open") : typeof made === "string" ? await resolve(s, `agent/${made}`, "open") : made ? { kind: "dir" } : null;
                     if (!up) throw fsError("ENOENT", "open", p);
                     if (up.kind !== "dir") throw fsError("ENOTDIR", "open", p);
                 }
@@ -500,6 +504,13 @@ export class RangedReader {
                 if (st.items.some((i) => "sealed" in i && !i.sealed)) throw fsError("EINVAL", "commit", undefined, "EINVAL: a file of this transaction is still open");
                 const writers = st.items.filter((i): i is Writer => "sealed" in i);
                 for (const w of writers) if (!reader.fits(w, w.data.size)) throw fsError("ENOSPC", "commit", w.path, noSpace(w));
+                // The hide rule again: a path hidden since its file was opened is not written, as it is no longer read.
+                for (const i of st.items) {
+                    const named = "sealed" in i ? [i.path] : i.op === "rename" ? [`agent/${i.from}`, `agent/${i.to}`] : [`agent/${i.path}`];
+                    for (const p of named) if (await isHidden(s, p)) throw hiddenRefusal("commit", p);
+                }
+                live("commit");
+                if (txs.get(id) !== st) throw fsError("EBADF", "commit", undefined, `bad transaction ${String(txn)}`);
                 const ops: AgentOp[] = st.items.map((i) => ("sealed" in i ? { op: "put", path: rel(i.path), data: i.data } : i));
                 txs.delete(id);
                 txns.delete(id);
@@ -508,13 +519,17 @@ export class RangedReader {
                 const quota = writers.length ? Math.min(...writers.map((w) => w.quota)) : undefined;
                 try { await agent!.commit(s, ops, quota !== undefined && Number.isFinite(quota) ? { maxBytes: quota } : {}); }
                 catch (e) {
+                    for (const w of writers) forget(w);
                     if (e instanceof AgentFilesError && e.code === "ENOSPC") throw fsError("ENOSPC", "commit", `agent/${e.path}`, noSpace({ path: `agent/${e.path}`, quota: quota! }));
                     if (e instanceof AgentFilesError) throw fsError(e.code, "commit", `agent/${e.path}`);
                     throw e;
-                } finally {
-                    for (const w of writers) forget(w);
-                    reader.stored.delete(s);
                 }
+                // What is stored now, for every other pending part's next chunk: the store's figure, or, when it cannot
+                // be read, the last one plus what this commit grew by, never nothing (which would read as an empty store).
+                const grew = writers.reduce((n, w) => n + w.data.size - w.was, 0);
+                for (const w of writers) forget(w);
+                const now = await agent!.usage(s).catch(() => (reader.stored.get(s) ?? 0) + grew);
+                reader.stored.set(s, now);
             }),
             abortTx: (txn) => call("abort", (s) => { discard(txnOf(s, txn, "abort"), false); }),
             dispose() {
