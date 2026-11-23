@@ -2037,6 +2037,13 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     scheduled, only if the framed sandbox page is chosen); the page-hosted `python_exec` description read by every
     person-started run (session-store's fix at the model-tools point, not yet opened). Merged since: #2108 at
     8356772f. Open: #2125, move-run's "No tab" run, at c602a60f.
+  - **Ruling 109, 2026-11-23 (Shane: "I agree to these" for the expression, the ternary and leading `const`; "Sure I
+    think that is reasonable right now" for `Set`, `new URL` and `for…of` without `let`).** The policy language is the
+    loop-free predicate language in POLICIES.md, checked at save for both authors, with one meter per call. Decided on
+    small-fixes' census: no shipped or documented policy uses a refused form; the four forms models reached for are
+    admitted. small-fixes builds it as its own PR from main after its ruling 108 PR and its stack-overflow PR;
+    redteam-e3 writes rows, flaky-ci reviews. Merged since: #2126 (ruling 108) at 069e48c0. Open: #2127, small-fixes'
+    charge for a DOM collection's copy, at 4b6e4af1, flaky-ci reviewing.
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
