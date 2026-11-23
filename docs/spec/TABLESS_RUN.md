@@ -1,6 +1,7 @@
 # A run that starts with no tab
 
-**Status: proposal, nothing built (2026-11-14, from Shane's idea in the window-ml-9b session; the tab invariant read
+**Status: Order item 2 partly built (2026-11-22): a closed tab's worker run goes on with no tab (§As built, part 1);
+the rest is a proposal (2026-11-14, from Shane's idea in the window-ml-9b session; the tab invariant read
 by the `[window-ml move-run]` lane on move-run-b 0e0b6707; the build is that lane's, after MOVE_RUN slice 2, by the
 coordinator's ruling of 2026-11-16).** It changes a decision in [`CHAT_PAGE.md`](CHAT_PAGE.md) ("an agent chat needs a
 primary page") and extends [`MOVE_RUN.md`](MOVE_RUN.md) shape (a). It waits on that shape, not on shape (b). Resuming a
@@ -208,6 +209,33 @@ The boundary (the coordinator's ruling, 2026-11-17, on #1947):
   is written once, in the move-run build; the release does not add a second.
 - **Order**: the release first, then this section (Order, item 4). A session released before the record existed
   takes the "what is known" form.
+
+## As built, part 1 (2026-11-22)
+
+A run whose tab closes BECOMES a run with no tab, for a run the worker drives; a run a page built still ends with its
+page. Not built yet: "No tab" in the start form, `navigate` from no tab, the grace period's release (the async
+lane's), and everything in §Resuming with no page after a worker eviction.
+
+- **The sentinel host is one tab id**, `NO_TAB` (`no-tab.ts`): the browser's own `chrome.tabs.TAB_ID_NONE` (-1), which
+  no tab has. `bgRuns`, its snapshot and the turn's tab cell keep `tabId: number`, so the restore after an eviction
+  keeps a snapshot that names it (the UPGRADE row in `tests/no-tab-run.test.mjs`).
+- **One predicate, `isNoTab`, at every helper filed by tab**, not at the sends: `trackRun` registers on no tab (the
+  rebuild is kept, so a move can adopt), no pin, no arrival watcher, no page UI or DevTools relay, and the session
+  index is told no tab, so no row names -1. `delegateSend` refuses the sentinel outright. The replay ring of a run
+  with no tab is kept by RUN (`noTabReplay`), filled from the closed tab's ring, and taken whole by a move.
+- **The tab closing** (`detachTabRuns`, first in `tabs.onRemoved`): a settled run's `bgRuns` entry and a live turn's
+  inbox move to the sentinel, the live turn through its tab cell. The index does not mark such a run interrupted
+  (`pageGone`'s `noTab`). The execution log writes `tab`/`no-tab`, reason `tab-closed`.
+- **A page tool is answered before the gate** (the loop's `unrunnable`): `"<tool>" needs a page, and this run has no
+  tab. The tools that need no page still work. The person can bring this session to a tab.` It stays in the tool
+  list. `look` and `locate` on an attached file's pages, the worker's tools and a server's remote tools run as ever.
+- **The session row** keeps its `page` without `tabId`, and `background.noTab` says the run is held
+  (`runHasNoTab`, plugged into async's `noTabReader`, refreshed on each tab loss and gain and after the restore). The
+  chat page gives such a row the composer, not the closed-tab bar (`resumableHere`).
+- **The person's message is a turn with no page**: `session.send` asks the worker for the run's tab when the index
+  names none (`workerTab`), and `userRunAction` adopts nothing for the sentinel.
+- **A tab again**: "bring a session here" (`moveRun`) from no tab skips the leave note, adds no `leftTabs` entry,
+  rebuilds the destination's card from the run's own ring, and clears `background.noTab`.
 
 ## Order
 

@@ -76,6 +76,7 @@ import { focusLineFor } from "./sw-focus";
 import { delegateSend, CHANNEL_GONE } from "./delegate-send";
 import { NAV_COMMIT_MS } from "./nav-barrier";
 import { GATED_BUILTINS } from "../tools/tool-registry";
+import { isNoTab, needsPage, noPageText } from "./no-tab";
 import { checkVerifyRequest, verifyAsked, verifyVerb, withoutPageVision, workerVerify, VERIFY_REFUSED, VERIFY_WITHHELD, type VerifyOutcome, type WorkerVerify } from "./worker-verify";
 import { topDocument } from "./worker-vision";
 import { capPageAnswer, capPageContext } from "./page-answer-caps";
@@ -693,6 +694,12 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         if (held) {
             if (payload.renderOnly || payload.precheck || payload.readonlyTry) throw new Error("the run is held on this page");
             return { result: held.kind === "deny" ? arrivalDeniedText(held) : arrivalWaitingText(held) };
+        }
+        // Nor anything at all for a run with NO tab (no-tab.ts): a page tool is answered with how the run gets a page, and
+        // stays in the tool list so the model learns there is one (TABLESS_RUN.md). The worker's own tools run as ever.
+        if (isNoTab(tabId) && needsPage(payload.name, payload.args, p.tools.some((t) => t.name === payload.name && !!t.remote))) {
+            if (payload.renderOnly || payload.precheck || payload.readonlyTry) throw new Error("the run has no page");
+            return { result: noPageText(payload.name) };
         }
         // A call built for the page-built run, whose run is the worker's now: built again (`againIfHandedOver`).
         const handedSince = (): void => { if (pageRouted && byWorker()) throw new HandedOverMidCall(); };
@@ -1877,6 +1884,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // A click on a link a policy denies is refused before the click: the describe layer of the arrival rule.
                     return name === "click" ? clickLinkRefusal(env?.href) ?? null : null;
                 },
+                // A page tool of a run with no tab: answered before the gate, which would ask on a card no tab shows.
+                unrunnable: (name, args) => (isNoTab(tabId) && needsPage(name, args, p.tools.some((t) => t.name === name && !!t.remote)) ? noPageText(name) : null),
                 approve: async ({ tool, arguments: args, seq, step, askWhy: gateWhy }) => {
                     // A page the run is held on is answered first (nav-arrival.ts): this call's card follows only if the
                     // person lets the run act there.

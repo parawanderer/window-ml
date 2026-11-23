@@ -4,6 +4,7 @@ import type { HousekeepingReport } from "../log/housekeeping";
 import { type TabState, watchWhileWaiting, PageUnreachable, PING_TIMEOUT_MS } from "./page-reachable";
 import { noteRunMechanic, navBarrier } from "./sw-runs";
 import { READOPT_TIMEOUT_MS } from "./nav-barrier";
+import { isNoTab } from "./no-tab";
 
 // EVERY RUN_TOOL_IN_PAGE send goes through this: it waits out any in-flight navigation on the tab before
 // delegating. On a tab with no navigation pending, whenReady resolves immediately (zero cost) — so a
@@ -64,6 +65,8 @@ const sendDetail = (tabId: number, msg: unknown): Record<string, string | number
  *  (see above). Also how the worker pushes a run's toolset into a tab (sw-run-start.ts `adoptOnTab`). `beforeSend`, if
  *  given, runs just before each send, after every wait, and refuses it by throwing or rejecting. */
 export const delegateSend = async (tabId: number, msg: unknown, documentId?: string, beforeSend?: () => void | Promise<void>): Promise<any> => {
+    // A run with no tab (no-tab.ts): its page tools are answered before they get here, and anything else has no page.
+    if (isNoTab(tabId)) throw new Error("the run has no tab");
     // THE RUN'S LOG, not the transcript: a step already shows how long a tool took. What it cannot show is that
     // the wait was the browser rather than the tool — a navigation being committed, a discarded tab rebuilt, a
     // page that stopped answering. Those are the lines someone asking "where did the time go" comes for.
