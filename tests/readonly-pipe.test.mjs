@@ -105,7 +105,7 @@ function inWorker(src, stepBudget = 200_000) {
 async function fallsBack(src, why, stepBudget) {
     const r = await inWorker(src, stepBudget);
     assertNotHung(r, why, stepBudget);
-    assert.ok(r.threw === "NotInDialect" || r.threw === "Denied", `${why}: expected a fall-back to approval, got ${JSON.stringify(r)}`);
+    assert.ok(r.threw === "NotInDialect" || r.threw === "Denied" || r.threw === "ResourceStop", `${why}: expected a fall-back to approval or a budget stop, got ${JSON.stringify(r)}`);
     return r;
 }
 // One line of `a`s ending in a character the pattern cannot match: the classic catastrophic-backtracking input.
@@ -162,13 +162,14 @@ test("HALTING: pipes inside a long .map spend the step budget, so they end at th
     // never sees; charged at its input and output it is a handful of calls.
     const r = await fallsBack(`const t = ml.range(200000).join("\\n"); return ml.range(1000).map(() => ml.pipe(t, "sort")).length`,
         "a thousand sorts of 1.3M characters");
-    assert.match(r.message, /too much work/);
+    assert.match(r.message, /^(Error: )?Stopped: the script /);
 });
 
 test("HALTING: a pretty-print that would be quadratic is refused before it builds anything", async () => {
     // 6,000 characters of nesting re-emitted through `.` was 18,000,000 characters (measured), in one host call.
     const r = await fallsBack(`ml.pipe("[".repeat(3000) + "]".repeat(3000), ".")`, "3,000-deep JSON through a path stage", 3_000_000);
-    assert.match(r.message, /nested 3,000 levels deep/);
+    assert.equal(r.threw, "ResourceStop", "a size stop, an error the model reads");
+    assert.match(r.message, /built a string of over 10,000,000 characters/);
     // The same through `values`, the other stage that emits a nested value.
     await fallsBack(`ml.pipe('{"a":' + "[".repeat(3000) + "]".repeat(3000) + "}", "values")`, "3,000-deep JSON through values", 3_000_000);
 });
@@ -176,13 +177,15 @@ test("HALTING: a pretty-print that would be quadratic is refused before it build
 test("HALTING: sed may not multiply its input past the cap, and a line stage may not either", async () => {
     // One copy of a 200-character replacement per character: 20M from 100k, refused before the line is built.
     const r = await fallsBack(`ml.pipe("x".repeat(100000), "sed s/./" + "y".repeat(200) + "/g")`, "sed growing 200x", 3_000_000);
-    assert.match(r.message, /sed: this substitution would produce over/);
+    assert.equal(r.threw, "ResourceStop");
+    assert.match(r.message, /built a string of over 10,000,000 characters/);
     // A `$&` inserts the match, so it counts as a whole line: the bound is an upper bound, never an estimate.
     await fallsBack(`ml.pipe("x".repeat(100000), "sed 's/x/$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&$&/g'")`,
         "sed growing by $& references", 3_000_000);
     // `grep -on .` numbers every character, four times its input: the per-stage output check catches it.
     const g = await fallsBack(`ml.pipe("a".repeat(3000000), "grep -on .")`, "grep -on over 3M characters", 3_000_000);
-    assert.match(g.message, /produced over/);
+    assert.equal(g.threw, "ResourceStop");
+    assert.match(g.message, /built a string of over 10,000,000 characters/);
 });
 
 // --- ADVERSARIAL: the `pages` verb inside a survey ----------------------------------------------------------------------
@@ -197,7 +200,7 @@ test("ADVERSARIAL: `pages` in a survey reads a paged string, and a request past 
     for (const [pipe, why] of [["pages 1-999999", /at most 50 pages/], ["pages 1-" + "9".repeat(300), /can't read/], ["pages 2001", /holds pages 1-2000; it has no page 2001/]]) {
         const r = await inWorker(`return ml.pipe(${PAGED}, ${JSON.stringify(pipe)})`);
         assertNotHung(r, pipe, 200_000);
-        assert.ok(r.threw && r.threw !== "NotInDialect" && r.threw !== "Denied", `${pipe}: ${JSON.stringify(r)}`);
+        assert.ok(r.threw && r.threw !== "NotInDialect" && r.threw !== "Denied" && r.threw !== "ResourceStop", `${pipe}: ${JSON.stringify(r)}`);
         assert.match(r.message, why, pipe);
     }
 });
@@ -205,7 +208,7 @@ test("ADVERSARIAL: `pages` in a survey reads a paged string, and a request past 
 test("HALTING: `pages` over a large paged string, many times over, spends the step budget and ends at the human gate", async () => {
     const r = await fallsBack(`const t = ${PAGED} + "\\n" + "x".repeat(1000000); return ml.range(2000).map(() => ml.pipe(t, "pages 3")).length`,
         "two thousand page reads of a 1M-character string");
-    assert.match(r.message, /too much work/);
+    assert.match(r.message, /^(Error: )?Stopped: the script /);
 });
 
 // --- FAILURE: a refused pipe leaves nothing behind ----------------------------------------------------------------------

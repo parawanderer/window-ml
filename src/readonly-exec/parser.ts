@@ -3,7 +3,7 @@
 // Pratt/precedence-climbing over the token array. Every unexpected shape throws
 // NotInDialect, so the parser can be deliberately incomplete and still safe.
 
-import { NotInDialect } from "./limits";
+import { NotInDialect, ResourceStop } from "./limits";
 import { Tok, COMPOUND, tokenize } from "./tokenizer";
 
 /** An AST node of the dialect, as the parser builds it and the evaluator walks it. */
@@ -15,6 +15,38 @@ const BP: Record<string, number> = {
     // EXPONENTIATION binds tighter than `*` and is RIGHT-associative (`2 ** 3 ** 2` is `2 ** 9`), exactly as in JS.
     "**": 7,
 };
+
+/** The statements that END a loop from inside its body: today only `return`. A loop checks ONE completion signal (the
+ *  evaluator's `completed`), so a later `break` joins here and there, not as a special case in each loop. */
+const EXIT_KINDS: ReadonlySet<string> = new Set(["Return"]);
+
+/** Is `test` a constant-true loop test? A truthy literal (`true`, a non-zero number, a non-empty string), or `!` of a
+ *  falsy one (`false`, `0`, `""`, `null`, `undefined`). Nothing cleverer: `1 < 2` or `!!1` is not recognised, and the
+ *  budget bounds such a loop instead of a refusal. */
+function constantTrue(test: Node): boolean {
+    const lit = (n: Node): boolean => n?.type === "Lit";
+    if (lit(test)) return !!test.value && typeof test.value !== "object";
+    return test?.type === "Unary" && test.op === "!" && lit(test.arg) && !test.arg.value;
+}
+
+/** Does `node` hold an exit of the loop whose body it is? Looks through every statement and expression but not into a
+ *  function or arrow: a `return` there leaves THAT function. */
+function hasExit(node: unknown): boolean {
+    if (node === null || typeof node !== "object") return false;
+    if (Array.isArray(node)) return node.some(hasExit);
+    const n = node as Node;
+    if (n.type === "Arrow") return false;
+    if (typeof n.type === "string" && EXIT_KINDS.has(n.type)) return true;
+    return Object.values(n).some(hasExit);
+}
+
+/** A `while`/`do…while` node, or a refusal when its test is constant-true and its body has no exit: it could only end
+ *  by spending the whole budget, so it is stopped before it runs, as an error the model reads (nothing to roll back). */
+function loopWithoutExit(loop: Node): Node {
+    if (constantTrue(loop.test) && !hasExit(loop.body))
+        throw new ResourceStop("loop");
+    return loop;
+}
 
 /** The dialect's Pratt parser: tokens to an AST, throwing NotInDialect on any shape it does not model. */
 export class Parser {
@@ -80,6 +112,26 @@ export class Parser {
             this.eat(")");
             const body = this.parseStatement();
             return pattern ? { type: "ForOf", kind: kw.v, pattern, iter, body } : { type: "ForOf", kind: kw.v, name: id!.v, iter, body };
+        }
+        // `while (test) body` and `do body while (test)`: admitted under the step budget (docs/dev/readonly-exec.md,
+        // "Halting", ruling 104), so the loop needs no bound of its own. What is refused HERE, before anything runs, is a
+        // loop that cannot end: a constant-true test with no exit in its body (`loopWithoutExit`).
+        if (t.t === "name" && t.v === "while") {
+            this.next(); this.eat("(");
+            const test = this.parseExpression();
+            this.eat(")");
+            const body = this.parseStatement();
+            return loopWithoutExit({ type: "While", test, body });
+        }
+        if (t.t === "name" && t.v === "do") {
+            this.next();
+            const body = this.parseStatement();
+            if (!(this.peek().t === "name" && this.peek().v === "while")) throw new NotInDialect("expected `while` after the body of a `do`");
+            this.next(); this.eat("(");
+            const test = this.parseExpression();
+            this.eat(")");
+            if (this.is(";")) this.i++;
+            return loopWithoutExit({ type: "DoWhile", test, body });
         }
         if (t.t === "name" && (t.v === "const" || t.v === "let" || t.v === "var")) {
             this.next();

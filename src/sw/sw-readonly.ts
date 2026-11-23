@@ -17,7 +17,7 @@
 // The call site is the host's `tryReadonly` (sw-run-host.ts), which hands it the run's `ml.current` and a read-only `ml`
 // with the run's pointers (worker-readonly-ml.ts), and records where each survey went in the execution log.
 
-import { evalReadonly, NeedsPage, NotInDialect, Denied } from "../readonly-exec";
+import { evalReadonly, NeedsPage, NotInDialect, Denied, ResourceStop } from "../readonly-exec";
 import { expandPointers, execCodeIn } from "../pointers/pointer-macro";
 import { formatReadonlyExec } from "../agent/approval";
 import { descriptorFor } from "../tools/render-descriptor";
@@ -45,13 +45,16 @@ export interface WorkerReadonlyDeps {
      *  (`execCodeIn`), so a step answered here looks like one answered there. */
     tool?: MlTool;
     /** The call's live output (the loop's `LiveOutput`): console lines stream into it as they print, after a short
-     *  hold (`WORKER_STREAM_HOLD_MS`). On `needs-page` and `refused` it is taken back here, so the page's retry, or the
+     *  hold (`WORKER_STREAM_HOLD_MS`). On `needs-page`, `refused` and a budget trip it is taken back here, so the page's retry, or the
      *  approved run, streams from empty. */
     live?: LiveOutput;
+    /** The run is offered `ml.sh` (the prompt's shell clause: `shellTurnedOn`, and this `exec`): a budget trip names it. */
+    shell?: boolean;
 }
 
 /** The outcome. `answered`: auto-approved, with the result the page path would have produced. `needs-page`: delegate
- *  it to the page as before. `refused`: out of dialect, so it goes to the human gate. */
+ *  it to the page as before. `refused`: out of dialect, so it goes to the human gate. A script that ran out of steps is `answered`, with the
+ *  trip as its error result: asking a person about work that does not end is the wrong question. */
 export type WorkerReadonlyOutcome =
     | { kind: "answered"; result: string; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor }
     | { kind: "needs-page" }
@@ -105,7 +108,7 @@ export async function evalReadonlyInWorker(args: Record<string, unknown>, deps: 
     const out = heldLive(deps.live);
     try {
         const ro = await evalReadonly(code, null, deps.ml ?? {}, undefined, { realm: "worker", current,
-            onLog: out ? out.push : undefined, signal: deps.signal });
+            onLog: out ? out.push : undefined, signal: deps.signal, ...(deps.shell ? { shell: true } : {}) });
         out?.settle();
         const { result, render } = formatReadonlyExec(ro.value, ro.logs, ro.prints, ro.dropped, args.maxChars);
         const { in: renderIn, out: renderOut } = descriptorFor(deps.tool, { result, render, ...(deps.tool ? {} : { renderIn: codeIn }) }, args);
@@ -113,7 +116,8 @@ export async function evalReadonlyInWorker(args: Record<string, unknown>, deps: 
     } catch (e) {
         if (e instanceof NeedsPage) { out?.drop(); return { kind: "needs-page" }; }
         if (e instanceof NotInDialect || e instanceof Denied) { out?.drop(); return { kind: "refused" }; }
-        out?.settle();
+        // A trip is answered here as an error, and what the run printed before it is taken back with the rest of the attempt.
+        if (e instanceof ResourceStop) out?.drop(); else out?.settle();
         // A runtime error in the script is the model's to fix, reported with its line, exactly as the page path does.
         const { at, where } = surveyWhere(e);
         const error = `${errText(e)}${where}`;

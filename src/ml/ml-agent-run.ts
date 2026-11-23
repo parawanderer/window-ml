@@ -33,7 +33,7 @@ import { type AgentControl, sameOriginNav, sameOriginFetch } from "./ml-agent";
 import { TokenStore } from "../pointers/token-pipe";
 import { columnsViaBackground } from "../tools/deref-read";
 import { expandPointers } from "../pointers/pointer-macro";
-import { evalReadonly } from "../readonly-exec";
+import { evalReadonly, ResourceStop } from "../readonly-exec";
 import { descriptorFor } from "../tools/render-descriptor";
 import { parseInfo } from "../resource/resource-capacity";
 import { registerRun, endRun, runAnswer } from "../agent/run-delegation";
@@ -518,6 +518,8 @@ export const agent = async function(this: MlApi, task: string, { host = null, to
                 // readonlyRefused — approving a typo cannot make it run, and the approved attempt
                 // throws the same error a moment later having spent the interrupt.
                 if (readonlyRefused(e)) return null;
+                // A trip is the model's to read, and the lines it had printed went with the attempt.
+                if (e instanceof ResourceStop) live?.discard();
                 // The line the interpreter was on, when it knows it — the same fact the approved path
                 // reports from a real stack, and the model is retrying this code either way.
                 const { at, where } = surveyWhere(e);

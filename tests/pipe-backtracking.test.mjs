@@ -154,13 +154,13 @@ test("the model's dereference tool answers a quadratic pipe with the refusal, an
 test("a survey's ml.pipe over a long run falls back to approval when the pattern is quadratic, and answers when it is not", T, async () => {
     // In process, not in the worker: 60,000 characters is ~21M steps against the 3M budget but ~1 s if the guard regressed.
     // (The wire harness cannot carry this: fetch_url keeps ~4 KB of a body, so `ml.dereference` never sees a long run.)
-    const { evalReadonly, NotInDialect, Denied } = await import("../src/readonly-exec.ts");
+    const { evalReadonly, NotInDialect, Denied, ResourceStop } = await import("../src/readonly-exec.ts");
     const { mlPipe } = await import("../src/pointers/text-pipe.ts");
     const { JSDOM } = await import("jsdom");
     const doc = new JSDOM("<!doctype html><body></body>").window.document;
     const survey = (pipe) => evalReadonly(`ml.pipe("a".repeat(60000), ${JSON.stringify(pipe)})`, doc, { pipe: mlPipe });
     for (const p of ["grep -E 'a+b'", "grep -o -E 'a+b'", "sed 's/a+b/x/'"])
-        await assert.rejects(() => timed(() => survey(p)), (e) => (e instanceof NotInDialect || e instanceof Denied) && /too much work|backtrack/.test(e.message), p);
+        await assert.rejects(() => timed(() => survey(p)), (e) => (e instanceof NotInDialect || e instanceof Denied || e instanceof ResourceStop) && /Stopped|backtrack/.test(e.message), p);
     assert.equal((await survey("grep -c a")).value.trim(), "1", "positive control: a linear pipe over the same run answers");
     assert.equal((await survey("grep -E '^a+b'")).value, "", "positive control: an anchored pattern runs");
 });

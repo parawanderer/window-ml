@@ -9,7 +9,7 @@ import { test, after } from "node:test";
 import assert from "node:assert";
 import { Worker } from "node:worker_threads";
 import { JSDOM } from "jsdom";
-import { evalReadonly, NotInDialect, Denied, STEP_BUDGET } from "../src/readonly-exec.ts";
+import { evalReadonly, NotInDialect, Denied, ResourceStop, STEP_BUDGET } from "../src/readonly-exec.ts";
 import { AnswerSet, makeAnswerFacade } from "../src/pointers/answer-set.ts";
 import { vectors } from "./dialect-vectors.mjs";
 import { watchdogMs, assertNotHung } from "./fixtures/hang-watchdog.mjs";
@@ -60,7 +60,7 @@ function inWorker(src, { setup, stepBudget = 200_000, ms } = {}) {
 async function fallsBack(src, why, o = {}) {
     const r = await inWorker(src, o);
     assertNotHung(r, why, o.stepBudget ?? 200_000);
-    assert.ok(r.threw === "NotInDialect" || r.threw === "Denied", `${why}: expected a fall-back to approval, got ${JSON.stringify(r)}`);
+    assert.ok(r.threw === "NotInDialect" || r.threw === "Denied" || r.threw === "ResourceStop", `${why}: expected a fall-back to approval or a budget stop, got ${JSON.stringify(r)}`);
     return r;
 }
 
@@ -139,7 +139,7 @@ test("HALTING: an `ml` member's arguments are walked, except the two that read t
     const doc = new JSDOM("<!doctype html><body></body>").window.document;
     const facade = Object.assign(Object.create(null), { add: (x) => (typeof x === "string" ? 1 : String(x).length), remove() {}, clear() {}, dump: () => [] });
     await assert.rejects(evalReadonly(`let d = [1]; for (const _ of Array(30).keys()) d = [d, d]; ml.answer.add(d)`, doc, { getModel: async () => "m" }, facade, { stepBudget: 200_000 }),
-        NotInDialect, "ml.answer.add of a shared-part array is refused before the facade coerces it");
+        ResourceStop, "ml.answer.add of a shared-part array is refused before the facade coerces it");
 });
 
 test("HALTING: a Map or a Set does not hide an array that shares its parts", async () => {
@@ -226,7 +226,8 @@ test("HALTING: a replace is refused before it builds a result over MAX_STRING, t
     // Refused by THIS check, before the host builds anything: the reason is the replace's own, not `sized`'s after it.
     for (const v of lifted("halting", "a replace is refused before it builds a result over MAX_STRING")) {
         const r = await fallsBack(v.js, v.name, { stepBudget: v.budget, ms: 8000 });
-        assert.match(r.message, /a replace that would build over [\d,]+ characters/, v.name);
+        assert.equal(r.threw, "ResourceStop", v.name);
+        assert.match(r.message, /built a string of over 10,000,000 characters/, v.name);
     }
 });
 
@@ -275,7 +276,7 @@ test("FAILURE: a survey that curates its answer and then trips an expansion, a c
     for (const [js, why, stepBudget] of cases) {
         const set = new AnswerSet();
         await assert.rejects(evalReadonly(js, doc, { getModel: async () => "m" }, makeAnswerFacade(set),
-            { checkpoint: () => set.checkpoint(), stepBudget }), (e) => e instanceof NotInDialect || e instanceof Denied, why);
+            { checkpoint: () => set.checkpoint(), stepBudget }), (e) => e instanceof NotInDialect || e instanceof Denied || e instanceof ResourceStop, why);
         assert.equal(set.dump().length, 0, `${why}: the add before the refusal was rolled back`);
     }
 });

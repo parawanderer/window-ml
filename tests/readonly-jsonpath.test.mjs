@@ -143,7 +143,7 @@ function inWorker(src, stepBudget = 3_000_000) {
 async function fallsBack(src, why, stepBudget) {
     const r = await inWorker(src, stepBudget);
     assertNotHung(r, why, stepBudget ?? 3_000_000);
-    assert.ok(r.threw === "NotInDialect" || r.threw === "Denied", `${why}: expected a fall-back to approval, got ${JSON.stringify(r)}`);
+    assert.ok(r.threw === "NotInDialect" || r.threw === "Denied" || r.threw === "ResourceStop", `${why}: expected a fall-back to approval or a budget stop, got ${JSON.stringify(r)}`);
     return r;
 }
 // JSON nested `n` deep, as a string: the dialect builds it in one step, and the engine parses it.
@@ -155,14 +155,14 @@ test("HALTING: `$..[?@..x]` is quadratic in depth, and every node it visits spen
     // also selects a member, which is charged on its own; with a name that is never there, only the walk is.
     for (const q of ["$..[?@..x]", "$..[?@..absent]"]) {
         const r = await fallsBack(`ml.jsonPath(${DEEP_OBJ(3000)}, "${q}").length`, `${q} over 3,000-deep JSON`);
-        assert.match(r.message, /too much work/);
+        assert.match(r.message, /^Stopped: the script /);
     }
 });
 
 test("HALTING: a query inside a long .map spends the same budget, so it ends at the human gate", async () => {
     const r = await fallsBack(`const d = ml.range(2000).map(i => ({ id: i })); return ml.range(2000).map(() => ml.jsonPath(d, "$[*].id").length).length`,
         "two thousand queries over two thousand rows");
-    assert.match(r.message, /too much work/);
+    assert.match(r.message, /^Stopped: the script /);
 });
 
 test("HALTING: a path is never copied per node, and materialising Normalized Paths is charged by depth", async () => {
@@ -174,7 +174,7 @@ test("HALTING: a path is never copied per node, and materialising Normalized Pat
     assert.ok(!plain.hung, "a walk of 100,000-deep JSON is linear");
     assert.equal(plain.value, 99999);
     const r = await fallsBack(`ml.jsonPath(${DEEP_ARR(100000)}, "$..*", { paths: true })`, "100,000 paths, each 100,000 deep");
-    assert.match(r.message, /too much work/);
+    assert.match(r.message, /^Stopped: the script /);
 });
 
 test("HALTING: a cyclic object the script built is an error under `..`, and a budget stop under `==`", async () => {
@@ -186,7 +186,7 @@ test("HALTING: a cyclic object the script built is an error under `..`, and a bu
     // Two DIFFERENT cycles of the same shape never compare unequal; the comparison is charged, so it stops.
     const r = await fallsBack(`const a = { k: 1 }; a.s = a; const b = { k: 1 }; b.s = b; return ml.jsonPath({ a, b }, "$[?@ == $.b]")`,
         "equality over two distinct cycles");
-    assert.match(r.message, /too much work/);
+    assert.match(r.message, /^Stopped: the script /);
 });
 
 test("ADVERSARIAL: try/catch cannot swallow a query's refusal — of a pattern, or of the budget", async () => {
@@ -201,7 +201,7 @@ test("ADVERSARIAL: try/catch cannot swallow a query's refusal — of a pattern, 
 test("HALTING: `search()` with a quadratic pattern over a long run is priced and falls back; `match()` is anchored, so it is linear and runs", async () => {
     const RUN = `["a".repeat(300000)]`;
     const r = await fallsBack(`ml.jsonPath(${RUN}, '$[?search(@, "a+b")]')`, "search(@, a+b) over 300,000 characters");
-    assert.match(r.message, /too much work|backtrack/);
+    assert.match(r.message, /^Stopped: the script |backtrack/);
     // Positive controls on the same value: `match` is `^(?:a+b)$`, tried once, and a literal `search` is one scan.
     const m = await inWorker(`ml.jsonPath(${RUN}, '$[?match(@, "a+b")]').length`);
     assert.ok(!m.hung, "match() over the run ended");

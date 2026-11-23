@@ -2,7 +2,7 @@
 import { test, after } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import { evalReadonly, NotInDialect, Denied, STEP_BUDGET } from "../src/readonly-exec.ts";
+import { evalReadonly, NotInDialect, Denied, ResourceStop, STEP_BUDGET } from "../src/readonly-exec.ts";
 import { expandPointers } from "../src/pointers/pointer-macro.ts";
 import { vectors } from "./dialect-vectors.mjs";
 
@@ -10,7 +10,7 @@ import { vectors } from "./dialect-vectors.mjs";
 const lifted = (genre, label) => vectors(genre, `tests/readonly-exec.test.mjs ${label}`);
 /** Asserts one vector's expectation for a survey run through `run`: refused, or ended with its value. */
 async function checkVector(v, runner = run) {
-    if (v.expect === "refused") await assert.rejects(runner(v.js), outOfDialect, v.name);
+    if (v.expect === "refused") await assert.rejects(runner(v.js), ended, v.name);
     else assert.deepEqual((await runner(v.js)).value, v.expect.value, v.name);
 }
 
@@ -63,6 +63,8 @@ const ML = {
 };
 const run = (js, doc = world(), ml = ML) => evalReadonly(js, doc, ml);
 const outOfDialect = e => e instanceof NotInDialect || e instanceof Denied;
+/** Ended with no value: a refusal (asks a person) or a ResourceStop (an error the model reads). The shared vectors' "refused" means this. */
+const ended = e => outOfDialect(e) || e instanceof ResourceStop;
 // REFUSED-OR-ABSENT. Since the method gate is scoped by receiver, a name can fail two ways: the dialect
 // withholds it (NotInDialect/Denied — escalates to a human), or the receiver simply has no such method
 // (TypeError — reported to the model, since no approval could make a typo run). Both mean IT DID NOT RUN,
@@ -1142,7 +1144,8 @@ test("ADVERSARIAL: the pipe argument is data, not a second execution channel", a
 test("ADVERSARIAL: dereference can't be looped unboundedly to burn the page down", async () => {
     // The dialect has no unbounded loop construct; a while/for is out of dialect, so a deref storm isn't
     // expressible (and each call is a pure read anyway).
-    await assert.rejects(run(`while (true) { ml.dereference("@tool:a"); }`), outOfDialect);
+    await assert.rejects(run(`while (true) { ml.dereference("@tool:a"); }`), (e) => e instanceof ResourceStop && e.kind === "loop", "a while with no exit is stopped when parsed");
+    await assert.rejects(evalReadonly(`let i = 0; while (i >= 0) { i++; ml.dereference("@tool:a"); }`, world(), ML, undefined, { stepBudget: 20_000 }), (e) => e instanceof ResourceStop && e.kind === "steps", "and one with an exit is bounded by the budget");
     await assert.rejects(run(`for (;;) ml.dereference("@tool:a");`), outOfDialect);
 });
 
@@ -1346,7 +1349,8 @@ function inWorker(src, stepBudget = TEST_BUDGET) {
 async function fallsBack(src, why, stepBudget) {
     const r = await inWorker(src, stepBudget);
     assertNotHung(r, why, stepBudget ?? TEST_BUDGET);
-    assert.ok(r.threw === "NotInDialect" || r.threw === "Denied", `${why}: expected a fall-back to approval, got ${JSON.stringify(r)}`);
+    // Ends WITHOUT a value: a refusal falls back to approval, a budget trip (ResourceStop) is the model's to read.
+    assert.ok(r.threw === "NotInDialect" || r.threw === "Denied" || r.threw === "ResourceStop", `${why}: expected a fall-back to approval or a budget stop, got ${JSON.stringify(r)}`);
     return r;
 }
 /** Asserts a halting vector in the worker: refused (fell back to approval) or ended with its value. */
@@ -1371,12 +1375,12 @@ test("ADVERSARIAL (halting): recursion is bounded, however a function reaches it
     // tree is finite; the step budget bounds how BIG that finite tree may get. Every one of these ran forever, or
     // stopped only when the JS stack overflowed — a RangeError a dialect `try` could have caught and retried.
     const WHY = {
-        "unbounded linear recursion": /nested more than 256 deep/,
-        "branching recursion through its own name": /over \d+ steps/,
-        "fresh closures of one arrow (the Y-combinator shape)": /over \d+ steps/,
-        "branching recursion through a host callback": /over \d+ steps/,
+        "unbounded linear recursion": /nested past the depth limit \(256 calls\)/,
+        "branching recursion through its own name": /^(Error: )?Stopped: the script /,
+        "fresh closures of one arrow (the Y-combinator shape)": /^(Error: )?Stopped: the script /,
+        "branching recursion through a host callback": /^(Error: )?Stopped: the script /,
         "recursion through an object property": /method 'f' not allowed/,   // not even reachable: calling a function stored on an object is outside the dialect
-        "a runaway recursion inside try/catch": /nested more than 256 deep/,
+        "a runaway recursion inside try/catch": /nested past the depth limit \(256 calls\)/,
     };
     for (const v of lifted("halting", "recursion is bounded")) {
         const r = await checkHalting(v);
@@ -1412,7 +1416,8 @@ test("ADVERSARIAL (cost): a try/catch cannot swallow the budget, at the REAL bud
     const [v] = lifted("halting", "a try/catch cannot swallow the budget at the real budget");
     assert.equal(v.budget, STEP_BUDGET, "the vector carries the shipped budget");
     const r = await checkHalting(v);
-    assert.match(r.message, new RegExp(`over ${STEP_BUDGET} steps`));
+    assert.equal(r.threw, "ResourceStop", "a trip is its own error, not a refusal that asks");
+    assert.match(r.message, new RegExp(`^Stopped: the script used its whole step budget \\(${STEP_BUDGET.toLocaleString("en-US")} steps\\)`));
 });
 
 test("the budget leaves room for a realistic survey of a large page", async () => {
@@ -1625,7 +1630,8 @@ test("a runtime throw reports the LINE it happened on — an interpreter has no 
     await assert.rejects(run(js), (e) => e.mlLine === 3, "the line of the statement that threw");
     // A REFUSAL carries none: it is about the script's shape, it escalates to a human, and a line number
     // there would be answering a question nobody asked.
-    await assert.rejects(run(`while (true) {}`), (e) => outOfDialect(e) && e.mlLine === undefined);
+    await assert.rejects(run(`for (;;) {}`), (e) => outOfDialect(e) && e.mlLine === undefined);
+    await assert.rejects(run(`while (true) {}`), (e) => e instanceof ResourceStop && e.mlLine === undefined, "nor does a loop stopped when parsed");
 });
 
 test("on a LONG line, a runtime throw also carries the piece of the line it came out of", async () => {
@@ -1764,7 +1770,7 @@ test("HALTING (table facade): one call's work is checked BEFORE it runs, and ref
         `return @tool:a1b2c3d.table.head(2000).shape`,
     ]) {
         const t0 = Date.now();
-        await assert.rejects(facadeRun(js, wide), (e) => e instanceof NotInDialect && /too large/.test(e.message), js);
+        await assert.rejects(facadeRun(js, wide), (e) => e instanceof ResourceStop && e.kind === "collection" && /array, set or map of over 1,000,000 elements/.test(e.message), js);
         assert.ok(Date.now() - t0 < 1_000, `${js} was refused before doing the work`);
     }
     // Under the cap the same calls run: the check is about size, not about the method.
@@ -2054,12 +2060,12 @@ test("ADVERSARIAL (stored table): the reader cannot be reached, extracted or poi
 test("HALTING (stored table): a read is sized by the table's shape before it is made, and all reads in a script are bounded", async () => {
     // Two rows in hand, two million in the store: a col is a million-plus cells of work in one host call.
     const big = storedRun(`return @tool:a1b2c3d.table.col("n").length`, { total: 2_000_000 });
-    await assert.rejects(big.run, (e) => e instanceof NotInDialect && /too large/.test(e.message));
+    await assert.rejects(big.run, (e) => e instanceof ResourceStop && e.kind === "collection");
     assert.equal(big.calls.length, 0, "refused before the request, not after");
     // Each read below is under the cap, but a loop of them is not: the total stops the script (→ approval).
     const loop = storedRun(`const t = @tool:a1b2c3d.table; const counts = []; for (const i of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) counts.push(t.col("n").length); return counts`, { total: 900_000 });
     const t0 = Date.now();
-    await assert.rejects(loop.run, (e) => e instanceof NotInDialect && /cells of stored tables/.test(e.message));
+    await assert.rejects(loop.run, (e) => e instanceof ResourceStop && e.kind === "cells" && /cells of stored tables/.test(e.message));
     assert.ok(loop.calls.length <= 6, `stopped after ${loop.calls.length} reads of 900,000 cells, at the 5,000,000 total`);
     assert.ok(Date.now() - t0 < 10_000);
 });
@@ -2219,7 +2225,7 @@ test("join's refusal is the SAME gate when the array falls out of dialect afterw
 
 test("join over a large nested array is still bounded before the element check, and finishes", async () => {
     // Halting: the walk is `expands`-bounded first (a shared-part array refuses), then each node is visited once.
-    await assert.rejects(run(`let d = [1]; for (const i of Array.from({ length: 40 }, (_, k) => k)) d = [d, d]; return d.join(",")`), outOfDialect);
+    await assert.rejects(run(`let d = [1]; for (const i of Array.from({ length: 40 }, (_, k) => k)) d = [d, d]; return d.join(",")`), ended);
     const t0 = Date.now();
     assert.equal((await run(`return Array.from({ length: 2000 }, (_, k) => k).join(",").length`)).value, 8889);
     assert.ok(Date.now() - t0 < 5000);
@@ -2256,12 +2262,12 @@ test("sort(undefined) is a comparator-less sort, and its refusal names sort, not
 test("the guard's remaining branches: an expanding coercion is still refused, an enormous length is refused unread, a lying length is refused", async () => {
     // `expands` after `joinsData` in a coercion: a part-sharing array of primitives passes the element check once and is then
     // refused by the expansion bound, instead of the host building a 2^40-element string.
-    await assert.rejects(run(`let d = [1]; for (const k of Array.from({ length: 40 }, (_, i) => i)) d = [d, d]; return d + ""`), outOfDialect);
-    await assert.rejects(run("let d = [1]; for (const k of Array.from({ length: 40 }, (_, i) => i)) d = [d, d]; return `${d}`"), outOfDialect);
+    await assert.rejects(run(`let d = [1]; for (const k of Array.from({ length: 40 }, (_, i) => i)) d = [d, d]; return d + ""`), ended);
+    await assert.rejects(run("let d = [1]; for (const k of Array.from({ length: 40 }, (_, i) => i)) d = [d, d]; return `${d}`"), ended);
     // joinsData's own cap: refused from the length alone, before one element is read.
     const huge = Array.from({ length: 6 }, () => { const a = []; a.length = 1_000_000; return a; });
     const t0 = Date.now();
-    await assert.rejects(run(`const a = await ml.models(); return a + ""`, world(), handed(huge)), (e) => outOfDialect(e) && /too large for the operator \+ without asking/.test(e.message));
+    await assert.rejects(run(`const a = await ml.models(); return a + ""`, world(), handed(huge)), (e) => e instanceof ResourceStop && e.kind === "expanded");
     assert.ok(Date.now() - t0 < 2000, "the length was refused without walking it");
     // A length the page reports as something other than a number (a Proxy's descriptor trap) is not trusted.
     const lying = new Proxy([], { getOwnPropertyDescriptor(t, k) { return k === "length" ? { value: "2", writable: true, enumerable: false, configurable: false } : Reflect.getOwnPropertyDescriptor(t, k); } });

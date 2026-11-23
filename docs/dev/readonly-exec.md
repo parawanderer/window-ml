@@ -13,7 +13,7 @@ below, so nothing outside the folder imports `readonly-exec/` directly. The piec
 | File | Holds |
 | --- | --- |
 | `readonly-exec.ts` | `evalReadonly`: builds the root scope, parses, runs the evaluator, restores on failure, attaches the failing line and, on a long line, the piece of it the throw came from (`execErrorExcerpt`) |
-| `readonly-exec/limits.ts` | the refusals (`NotInDialect`, `Denied`, `NeedsPage`), the halting rationale and bounds (`STEP_BUDGET`, `MAX_COLLECTION`, `MAX_STORED_CELLS`, `MAX_STRING`, `MAX_CALL_DEPTH`, `PIPE_CHARS_PER_STEP`), `riskyRegex` |
+| `readonly-exec/limits.ts` | the refusals (`NotInDialect`, `Denied`, `NeedsPage`) and the resource stop (`ResourceStop`, an error the model reads, not a refusal), the halting rationale and bounds (`STEP_BUDGET`, `MAX_COLLECTION`, `MAX_STORED_CELLS`, `MAX_STRING`, `MAX_CALL_DEPTH`, `PIPE_CHARS_PER_STEP`), `riskyRegex` |
 | `readonly-exec/regex-cost.ts` | `regexWork`/`regexSteps`: the bound on one regex search's backtracking over its input, and `REGEX_UNITS_PER_STEP` (the Halting row) |
 | `readonly-exec/replace-size.ts` | `replaceWorstCase`/`replaceSize`: how many characters a String `replace` will build, counted before the host builds it; the evaluator's `replaceCharge` and the pipe's `sed` both use it (the `replaceCharge` row) |
 | `readonly-exec/tokenizer.ts` | `tokenize`, regex-vs-division, template literals, the punctuators and `COMPOUND` |
@@ -56,7 +56,7 @@ Good for:
 - Walking a nested structure recursively, to a bounded depth.
 
 Not for, and falls back to approval: anything with an effect (a click, typing, a fetch of a new URL, changing the
-page), a long computation (use `python_exec`), `while` loops, classes, generators, `await` inside a callback, and
+page), a long computation (use `python_exec`; one that does not fit the step budget ends with an error, not a prompt), classes, generators, `await` inside a callback, and
 calling a function stored on an object.
 
 ## The contract
@@ -130,10 +130,11 @@ and stay safe.
   `if`/`else`, `for (const x of …)` (the loop variable a name or the same shorthand pattern, `for (const [k, v] of
   Object.entries(o))`, bound per iteration through `bindPattern` like a `const`), `try`/`catch`/`finally`, `return`, blocks, expression statements. The value of
   a program is its last expression statement or its `return`.
-- Deliberately absent: `while`, `do`, C-style `for(;;)`, `for…in` (a prototype-chain read), the short-circuiting
+- `while (test) body` and `do body while (test)` (ruling 104, "Halting"). Every turn spends steps like any node, so the step budget bounds them; the one refusal made at parse time is a loop that cannot end (`while (true) {}`, below). `return` is the only way out of a loop: `break`, `continue`, labels, `throw` and `switch` are not in the dialect, so a loop using one is refused as it always was (`tests/readonly-while.test.mjs` pins it).
+- Deliberately absent: C-style `for(;;)`, `for…in` (a prototype-chain read), the short-circuiting
   compound forms `||= &&= ??=` (whether the write happens at all depends on the value, and a form whose effect you
   have to evaluate the operand to predict is the wrong one for a dialect that exists to be predictable), classes,
-  generators, getters, labels, `this`, `delete`.
+  generators, getters, labels, `break`, `continue`, `throw`, `switch`, `this`, `delete`.
 
 #### Assignment to a bare name
 
@@ -333,32 +334,64 @@ can never swallow one, so wrapping a refused operation in `try` does not make it
 Two properties, kept apart on purpose. The bounds below, and the comment stating both properties, are in
 `readonly-exec/limits.ts`.
 
-**A. Every script halts, by construction.** This is a property of the language: no script can express an infinite
-loop.
+**A. Every script halts within the budget.** This is a property of the language, and it is a proof for every program:
+the step count is a natural number that every evaluated node and every iterated element spends, no script can read or
+reset it, and the run ends when it is spent (ruling 104). It needs no restriction on loop forms, so `while` is in.
 
-- The only loops iterate collections: `for…of`, and the callbacks host methods run over one. There is no `while`,
-  no `for(;;)`, no generator and no custom iterator (`Symbol` is not in scope).
-- A collection cannot change while it is being iterated. `for…of` holds its iterable for the loop's whole life, and a
-  host call that is handed a callback holds its receiver (and `Array.from`'s source) for the call. A mutator or a
-  property write on a held collection is `Denied`. So every loop's trip count is fixed when it starts.
-- Calls nest at most `MAX_CALL_DEPTH` (256) deep. Recursion is allowed, the way `ml.range` allows a loop: bounded.
-  A call tree of bounded depth in which every call does finitely much is finite.
-- A MUTABLE BINDING does not change any of that, which is the obvious worry about it and the reason the argument is
-  written out here. A `while` is what a mutable counter buys you in a normal language, and there is no `while` to
-  buy: `for…of` over an iterable captured at loop entry is the only loop form. Rebinding the NAME the iterable came
-  from is invisible to a loop already holding the value, so `let a = [1]; for (const x of a) a = a.concat([x])`
-  terminates — while `a.push(x)` on the same loop is still `Denied`, because the hold is on the value. And a counter
-  cannot buy call depth, which is fixed by the source.
+- Loops: `for…of`, `while`, `do…while`, and the callbacks host methods run over a collection. A `while` holds nothing:
+  its body may change what its test reads, which is what a counter is. `for…of` still holds its iterable for the
+  loop's whole life, and a host call that is handed a callback holds its receiver (and `Array.from`'s source); a
+  mutator or a property write on a held collection is `Denied`, so a `while` inside such a loop cannot grow it either.
+- Calls nest at most `MAX_CALL_DEPTH` (256) deep. Recursion with two self-calls is a tree of 2^256 calls, so depth is no
+  bound on cost: the step budget is.
+- **A loop that cannot end is stopped before it runs** (`loopWithoutExit`, `parser.ts`), as a `ResourceStop` of kind
+  `loop` with one line of reason, an error and not a card, so nothing has to be rolled back. A loop is that when its test is CONSTANT-TRUE and its body has no
+  exit. Constant-true is the whole definition: a literal that is truthy (`true`, a non-zero number, a non-empty string)
+  or `!` of a falsy literal (`false`, `0`, `""`, `null`, `undefined`). Nothing cleverer is recognised (`-1`, `!!1`,
+  `1 < 2`, a variable holding `true`): those loops are bounded by the budget instead. An exit is a `return` anywhere in
+  the body, including inside a nested loop, but not inside a function or arrow, where it leaves that function. The exits
+  are one set (`EXIT_KINDS`) and one completion signal the loops check (`completed`, `evaluator.ts`); today the set
+  holds `return` alone, and an unlabelled `break` or `continue` would join it there. The check is about what the
+  source says: a `return` that can never be reached counts, and the budget bounds that loop.
+- **A resource stop is an error the model reads, not an approval.** When the budget is spent, or a value passes a size
+  cap, or calls nest too deep, the evaluator throws `ResourceStop` (`limits.ts`), which is NOT a `NotInDialect`: the
+  callers that ask a person (`readonlyRefused`, the worker's `refused` outcome, the page leg's `null`) do not see it, so
+  it is returned as the call's error result, with the line it stopped on. One class with a `kind`; each kind has its
+  own text, naming the bound with its figure, saying what was kept (nothing the script computed, printed or added), and
+  the way on. A script's `try`/`catch`/`finally` cannot swallow it, and a `finally` does not get to run (its first node
+  spends a step the budget no longer has). The same script stops at the same step with the same words. Only the step
+  kinds may name `ml.sh` (`opts.shell`; the worker's survey passes the run's shell flag). Texts and sizes:
+  `docs/spec/PROMPT_BUDGET.md`. A stop leaves nothing behind: the answer set is restored by the same checkpoint any
+  failed attempt gets, the lines it printed are not in the error (the worker drops them from the live view, the page
+  loop discards its sink), nothing is stored (a pointer read only reads, and the stored-cell count lives on the
+  evaluator). What it cannot take back is what left the interpreter through a member judged on its own, a program
+  `ml.sh` started or an `ml.embed` request; both are bounded and judged as always.
+- **Every resource refusal, and whether it asks.** An error is for a bound the script can work within by being smaller;
+  an ask is for a decision that is not the script's to make.
 
-**RULED 2026-11-23 (Shane, ruling 104), not built: `while` is admitted under the step budget, here as in the Python
-dialect.** Property A as written is true and does not bind: recursion to `MAX_CALL_DEPTH` with two self-calls is a
-tree of 2^256 calls. Property B is the bound, and it is a proof for every program: the step count is a natural number
-that every evaluated node and iterated element spends and no script can reset. With `while` admitted, the argument
-above that a mutable binding buys nothing is no longer needed, and A is restated as "halts within the budget". The
-cost rows below become the whole obligation: no step may do unbounded work. A trip is an error the model reads, not a
-refusal that goes to approval. `while (true)` with no `break`, `return` or `throw` in its body is still refused before
-it runs. On the page realm a replaced built-in can still loop outside the count (`docs/plan/repl/README.md`, ruling
-102); that is unchanged. No lane owns this build yet.
+| Bound | Limit | Outcome | Why |
+| --- | --- | --- | --- |
+| steps spent (`tick`) | `STEP_BUDGET` 3,000,000 | error, `steps` | the work does not end; a person cannot make it end |
+| a regex search priced over what is left (`regexCharge`) | what is left of the budget | error, `steps-left` | the same fuel, decided before the search runs |
+| a walk over what is left (`expanded`) | `fuel * EXPANDED_PARTS_PER_STEP`, under `MAX_EXPANDED` | error, `steps-left` | the same fuel |
+| a string (`sized`, `repeat`/`pad`/`join`, a replace, a pipe stage's output) | `MAX_STRING` 10,000,000 chars | error, `string` | a value too big for one step; smaller input or pieces fix it |
+| an array, set or map (`sized`, `Array(n)`, `Array.from({ length })`, a table read) | `MAX_COLLECTION` 1,000,000 | error, `collection` | the same |
+| a value walked by a host call or a coercion | `MAX_EXPANDED` 5,000,000 parts | error, `expanded` | the same |
+| the strings of a walked value | `MAX_EXPANDED_CHARS` 100,000,000 | error, `expanded-chars` | the same |
+| cells read from stored tables | `MAX_STORED_CELLS` 5,000,000 | error, `cells` | the same: read fewer rows or columns |
+| call depth | `MAX_CALL_DEPTH` 256 | error, `depth` | recursion that deep is a loop in disguise |
+| a loop with a constant-true test and no exit | static | error, `loop` | decided from the source; nothing ran |
+| `ml.embed` caps | `EMBED_SURVEY_CALLS` 32, `EMBED_SURVEY_CHARS` 500,000, `EMBED_CALL_INPUTS` 512 | ASKS (`NotInDialect`) | another machine's work and a spending question: the person's to answer |
+| a regex that could backtrack without end (`riskyRegex`, also a pipe's pattern) | the pattern's form | ASKS (`NotInDialect`, `Denied` for a pipe) | a judgement from the pattern's shape with false positives, so a person is the only appeal |
+| every non-resource refusal (an effect, a name outside the dialect, a coercion that runs page code) | none | ASKS | the script wants something the dialect withholds |
+
+- The same value can be an error of two kinds: an array sharing its parts is `expanded` at the real budget and
+  `steps-left` under a small one, because the walk stops at whichever cap is lower.
+- A MUTABLE BINDING does not change any of that. A counter cannot buy call depth, which is fixed by the source, and it
+  cannot buy steps, which are spent by every turn.
+
+On the page realm a replaced built-in can still loop outside the count (`docs/plan/repl/README.md`, ruling 102); that
+is unchanged.
 
 **B. Every script's cost is bounded.** This is a resource policy, not a language property. A script that halts can
 still take hours: loops nested over large collections, an array doubled forty times.
@@ -928,6 +961,8 @@ is the page realm's DOM gap above.
 - On the page realm, a DOM read is O(the DOM) and the step count does not see it: `querySelector` on a page built to
   be huge, a selector whose descendant combinators backtrack over a deep tree, a read that forces layout. Only the
   page's own main thread is held, which the page could do to itself anyway, so it is not charged.
+- `while` does not widen the page-realm DOM-read gap above: nested `for…of` already reaches about 3M such reads
+  within the same budget.
 - The halting rules are conservative too: a callback that mutates the array its own `.map` is walking is refused,
   although array methods fix their length and would halt.
 - `join` on an array of very long strings can allocate up to V8's string limit before the result check refuses it.
@@ -936,9 +971,9 @@ is the page realm's DOM gap above.
 
 ## Related designs
 
-- **Starlark** (Bazel's configuration language) guarantees termination the same way: no `while`, no recursion by
-  default, and mutating a collection while iterating over it is an error. The halting rules here arrived at the
-  same place independently.
+- **Starlark** (Bazel's configuration language) guarantees termination by construction: no `while`, no recursion by
+  default, and mutating a collection while iterating over it is an error. This dialect took the other route (ruling 104):
+  every step spends from a budget, so any loop form is bounded.
 - **The eBPF verifier** admits a program into the kernel only if it can show the program terminates and stays in
   bounds, and refuses it otherwise. Same shape: execution gated on what the program provably cannot do.
 - **smolagents' local executor** walks agent-written Python with an import allowlist and an operation cap.

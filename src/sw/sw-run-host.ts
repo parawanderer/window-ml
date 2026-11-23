@@ -72,6 +72,7 @@ import { claimValue, runMayClaim, valueHolders, readStoredBytes, readStoredColum
 import { isoServer, type IsoDeps } from "./iso-channel";
 import { fsCallFor } from "./sw-fs-call";
 import { shPut, shRead, shRun, takeShSpans } from "./sw-shell-call";
+import { shellTurnedOn } from "./sw-shell";
 import { focusLineFor } from "./sw-focus";
 import { delegateSend, CHANNEL_GONE } from "./delegate-send";
 import { NAV_COMMIT_MS } from "./nav-barrier";
@@ -1774,12 +1775,15 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     const sh = typeof args.js === "string" && call && byWorker() && execNames(args.js).sh
                         ? surveySh({ runId, seq: seqBase + call.seq, local: call, signal: abortCtl.signal, tokens: sessionTokens(runId), origin: () => turnByRun.get(runId)?.()?.origin })
                         : undefined;
+                    // The prompt's own condition for naming `ml.sh` (a run the worker built, the shell turned on): a budget trip then names it.
+                    const shellOffered = byWorker() && await getConfig().then(shellTurnedOn, () => false);
                     const w = await guardSurvey(sh, () => evalReadonlyInWorker(args, {
                         ...(snap ? { current: () => current ?? snap({ model: modelNow(), log }) } : {}),
                         // ml.settings: a free read, only in a run the worker built (decided from its record, never the script).
                         ml: { ...workerReadonlyMl(tabPageUrl.get(tabId) ?? "", derefByRun.get(runId), runId), ...(byWorker() ? { settings: surveySettings } : {}), ...(sh ? { sh: sh.host } : {}) },
                         live,
                         signal: abortCtl.signal,
+                        ...(shellOffered ? { shell: true } : {}),
                     }));
                     if (w.kind === "stopped") {
                         recordRunLog(runId, { subsystem: "routing", kind: "readonly-sh-stopped", reason: w.why, detail: { tool: name, calls: sh?.started.length ?? 0 } });
