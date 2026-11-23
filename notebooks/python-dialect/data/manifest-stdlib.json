@@ -10,6 +10,14 @@
     ],
     "decimal": [
       "Decimal",
+      "ROUND_05UP",
+      "ROUND_CEILING",
+      "ROUND_DOWN",
+      "ROUND_FLOOR",
+      "ROUND_HALF_DOWN",
+      "ROUND_HALF_EVEN",
+      "ROUND_HALF_UP",
+      "ROUND_UP",
       "getcontext"
     ],
     "io": [
@@ -31,8 +39,15 @@
   },
   "kinds": {
     "Decimal": [
-      "max"
+      "max",
+      "quantize"
+    ],
+    "FrameLocalsProxy": [
+      "keys"
     ]
+  },
+  "kind_types": {
+    "FrameLocalsProxy": "builtins.FrameLocalsProxy"
   },
   "leaves": {
     "Decimal.max": {
@@ -40,6 +55,18 @@
       "returns": "fresh",
       "cost": "O(1)",
       "why": "a new Decimal (measured: not either argument); Decimal is immutable either way"
+    },
+    "Decimal.quantize": {
+      "effects": "pure; sets the thread context's sticky flags (Inexact, Rounded), as Decimal arithmetic does, which the inside run puts back",
+      "returns": "fresh",
+      "cost": "digits",
+      "why": "a new Decimal rounded to the exponent; its context= can only be the thread context, the one getcontext() returns, which the cell never owns (ruled in, coverage 2026-11-23)"
+    },
+    "FrameLocalsProxy.keys": {
+      "effects": "pure",
+      "returns": "fresh",
+      "cost": "names",
+      "why": "a new list of the frame's local names, which bare dir() sorts; only names, never the values (ruled in, coverage 2026-11-23)"
     },
     "csv.DictReader": {
       "effects": "pure",
@@ -60,6 +87,54 @@
       "returns": "fresh",
       "cost": "digits",
       "why": "a C type used by 10% of cells; ruled a day-one entry (repl-specs 2026-10-15)"
+    },
+    "decimal.ROUND_05UP": {
+      "effects": "pure",
+      "returns": "internal",
+      "cost": "O(1)",
+      "why": "a rounding mode, a module-level str constant that quantize's rounding= takes (ruled in, coverage 2026-11-23)"
+    },
+    "decimal.ROUND_CEILING": {
+      "effects": "pure",
+      "returns": "internal",
+      "cost": "O(1)",
+      "why": "a rounding mode, a module-level str constant that quantize's rounding= takes (ruled in, coverage 2026-11-23)"
+    },
+    "decimal.ROUND_DOWN": {
+      "effects": "pure",
+      "returns": "internal",
+      "cost": "O(1)",
+      "why": "a rounding mode, a module-level str constant that quantize's rounding= takes (ruled in, coverage 2026-11-23)"
+    },
+    "decimal.ROUND_FLOOR": {
+      "effects": "pure",
+      "returns": "internal",
+      "cost": "O(1)",
+      "why": "a rounding mode, a module-level str constant that quantize's rounding= takes (ruled in, coverage 2026-11-23)"
+    },
+    "decimal.ROUND_HALF_DOWN": {
+      "effects": "pure",
+      "returns": "internal",
+      "cost": "O(1)",
+      "why": "a rounding mode, a module-level str constant that quantize's rounding= takes (ruled in, coverage 2026-11-23)"
+    },
+    "decimal.ROUND_HALF_EVEN": {
+      "effects": "pure",
+      "returns": "internal",
+      "cost": "O(1)",
+      "why": "a rounding mode, a module-level str constant that quantize's rounding= takes (ruled in, coverage 2026-11-23)"
+    },
+    "decimal.ROUND_HALF_UP": {
+      "effects": "pure",
+      "returns": "internal",
+      "cost": "O(1)",
+      "why": "a rounding mode, a module-level str constant that quantize's rounding= takes (ruled in, coverage 2026-11-23)"
+    },
+    "decimal.ROUND_UP": {
+      "effects": "pure",
+      "returns": "internal",
+      "cost": "O(1)",
+      "why": "a rounding mode, a module-level str constant that quantize's rounding= takes (ruled in, coverage 2026-11-23)"
     },
     "decimal.getcontext": {
       "effects": "pure",

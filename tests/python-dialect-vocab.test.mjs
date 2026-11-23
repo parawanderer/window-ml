@@ -71,6 +71,18 @@ const CALLS = {
     "re.findall": [`import re\nre.findall("a", "banana")`, `["a","a","a"]`],
     "re.search": [`import re\nbool(re.search("a+", "caat"))`, "true"],
     "Decimal.max": [`from decimal import Decimal\nstr(Decimal(1).max(Decimal(2)))`, `"2"`],
+    "Decimal.quantize": [`from decimal import Decimal\nstr(Decimal("1.234").quantize(Decimal("0.01")))`, `"1.23"`],
+    // A top-level cell's names are globals, so its frame has no locals: bare dir() is [] here and on the full path alike.
+    "FrameLocalsProxy.keys": [`x = 1\ndir()`, "[]"],
+    // The rounding modes are values, read and passed: 2.5 to the unit under each.
+    "decimal.ROUND_CEILING": [`from decimal import Decimal, ROUND_CEILING\nstr(Decimal("2.5").quantize(Decimal("1"), rounding=ROUND_CEILING))`, `"3"`],
+    "decimal.ROUND_DOWN": [`from decimal import Decimal, ROUND_DOWN\nstr(Decimal("2.5").quantize(Decimal("1"), rounding=ROUND_DOWN))`, `"2"`],
+    "decimal.ROUND_FLOOR": [`from decimal import Decimal, ROUND_FLOOR\nstr(Decimal("2.5").quantize(Decimal("1"), rounding=ROUND_FLOOR))`, `"2"`],
+    "decimal.ROUND_HALF_DOWN": [`from decimal import Decimal, ROUND_HALF_DOWN\nstr(Decimal("2.5").quantize(Decimal("1"), rounding=ROUND_HALF_DOWN))`, `"2"`],
+    "decimal.ROUND_HALF_EVEN": [`from decimal import Decimal, ROUND_HALF_EVEN\nstr(Decimal("2.5").quantize(Decimal("1"), rounding=ROUND_HALF_EVEN))`, `"2"`],
+    "decimal.ROUND_HALF_UP": [`from decimal import Decimal, ROUND_HALF_UP\nstr(Decimal("2.5").quantize(Decimal("1"), rounding=ROUND_HALF_UP))`, `"3"`],
+    "decimal.ROUND_UP": [`from decimal import Decimal, ROUND_UP\nstr(Decimal("2.5").quantize(Decimal("1"), rounding=ROUND_UP))`, `"3"`],
+    "decimal.ROUND_05UP": [`from decimal import Decimal, ROUND_05UP\nstr(Decimal("2.5").quantize(Decimal("1"), rounding=ROUND_05UP))`, `"2"`],
 };
 /** Listed names this file does not call, with why. */
 const ELSEWHERE = {
@@ -107,7 +119,9 @@ test("AGREE: what _ml_stdlib registered is the manifest's names, less the fork's
     if (skip) return t.skip(skip);
     const registered = JSON.parse(py.runPython(`import json, sys\njson.dumps(sys.modules["_ml_libraries"].stdlib)`));
     const forks = new Set(JSON.parse(py.runPython(`import json, restricted\njson.dumps(list(restricted._REGEX))`)).map((n) => `re.${n}`));
-    const want = LISTED.filter((n) => !forks.has(n) && !(n in DIALECT_STDLIB_REFUSED) && !(n in ELSEWHERE));
+    // A listed value that is not callable (decimal's rounding modes) is admitted for reading and registers no call.
+    const values = new Set(JSON.parse(py.runPython(`import importlib, json\njson.dumps([m + "." + n for m, ns in ${JSON.stringify(STDLIB.modules)}.items() for n in ns if "." not in n and not callable(getattr(importlib.import_module(m), n))])`)));
+    const want = LISTED.filter((n) => !forks.has(n) && !values.has(n) && !(n in DIALECT_STDLIB_REFUSED) && !(n in ELSEWHERE));
     assert.deepEqual(registered, want);
 });
 
@@ -152,9 +166,11 @@ test("ADVERSARIAL: the context itself is never the cell's: prec, traps and flags
     assert.strictEqual(json((await cell(`import decimal\n[decimal.getcontext().prec, decimal.getcontext().traps[decimal.Inexact]]`, true)).value), "[28,false]");
 });
 
-test("ADVERSARIAL: a stdlib value's unlisted methods ask (Decimal.quantize, StringIO.write, a DictReader's reader)", { timeout: 60000 }, async (t) => {
+test("ADVERSARIAL: a stdlib value's unlisted methods ask (Decimal.as_tuple, StringIO.write, a DictReader's reader)", { timeout: 60000 }, async (t) => {
+    // Decimal.as_tuple is not listed: C builds its DecimalTuple through type.__new__, which the gate refuses whatever is
+    // registered, so listing it would change nothing.
     if (skip) return t.skip(skip);
-    for (const code of [`from decimal import Decimal\nstr(Decimal("1.234").quantize(Decimal("0.01")))`, `import io\nio.StringIO("x").write("y")`,
+    for (const code of [`from decimal import Decimal\nDecimal("1.25").as_tuple()`, `import io\nio.StringIO("x").write("y")`,
         `import io\nio.StringIO("x").read()`, `import csv\ncsv.DictReader(["a"]).reader is not None`, `import csv\ncsv.DictReader(["a"]).fieldnames`])
         assert.ok((await cell(code)).refused, code);
 });
@@ -214,3 +230,84 @@ for (const [label, code] of STILL_ASKS) {
         assert.strictEqual(injected(), UNTOUCHED);
     });
 }
+
+// --- bare dir(), numpy's scalar types and Decimal.quantize: the coverage rulings of 2026-11-23 ---
+
+const NUMPY = JSON.parse(FILES["manifest-numpy.json"]);
+/** numpy's sized scalar types, ruled in as values and constructors (make-corpus-count.py NP_SCALARS). */
+const NP_SCALARS = ["bool_", "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64", "float16", "float32", "float64", "complex64", "complex128"];
+
+test("AGREE: the numpy names that are types are exactly the sized scalar types", { timeout: 60000 }, (t) => {
+    if (skip) return t.skip(skip);
+    const types = JSON.parse(py.runPython(`import json, numpy\njson.dumps(sorted(n for n in ${JSON.stringify(NUMPY.functions)} if isinstance(getattr(numpy, n, None), type)))`));
+    assert.deepEqual(types, [...NP_SCALARS].sort());
+});
+
+for (const name of NP_SCALARS) {
+    test(`runs inside: numpy.${name} built from a number`, { timeout: 60000 }, async (t) => {
+        if (skip) return t.skip(skip);
+        const r = await cell(`import numpy as np\nbool(np.${name}(1) == 1)`);
+        assert.strictEqual(json(r.value ?? "null"), "true", JSON.stringify(r));
+    });
+}
+
+test("runs inside: a scalar type named as a value (astype(np.int64)), the handed frame untouched", { timeout: 60000 }, async (t) => {
+    if (skip) return t.skip(skip);
+    reset();
+    const r = await cell(`import numpy as np\ndf["a"].astype(np.int64).tolist()`);
+    assert.strictEqual(json(r.value ?? "null"), "[1,2]", JSON.stringify(r));
+    assert.strictEqual(injected(), UNTOUCHED);
+});
+
+test("ADVERSARIAL: a scalar type is a value, not a namespace: its attributes ask (fromhex, max, a dunder), and np.iinfo is not listed", { timeout: 60000 }, async (t) => {
+    if (skip) return t.skip(skip);
+    for (const code of [`import numpy as np\nnp.float64.fromhex("0x1p0")`, `import numpy as np\nnp.int64.max`, `import numpy as np\nnp.int64.__mro__`,
+        `import numpy as np\nnp.iinfo(np.int64).max`])
+        assert.ok((await cell(code)).refused, code);
+});
+
+test("bare dir() answers inside what it answers on the full path, and only names", { timeout: 60000 }, async (t) => {
+    if (skip) return t.skip(skip);
+    for (const code of [`dir()`, `y = 2\n"y" in dir()`, `[n for n in dir() if not n.startswith("__")]`]) {
+        const inside = await cell(code), full = await cell(code, true);
+        assert.ok("value" in inside, `${code}: ${JSON.stringify(inside)}`);
+        assert.strictEqual(json(inside.value), json(full.value), code);
+    }
+});
+
+test("ADVERSARIAL: only BARE dir() is in: dir(obj), vars(), locals() and globals() ask, and so does dir() in a cell's own function", { timeout: 60000 }, async (t) => {
+    // In a function the proxy has locals, and dir() reads them by item, which is not listed: it asks, where the full path
+    // answers ["a"]. An ask, never a different answer.
+    if (skip) return t.skip(skip);
+    for (const code of [`import pandas as pd\ndir(pd.DataFrame())`, `vars()`, `locals()`, `globals()`, `len(globals())`, `def f(a):\n    return dir()\nf(1)`])
+        assert.ok((await cell(code)).refused, code);
+});
+
+test("Decimal.quantize raises inside what it raises on the full path (InvalidOperation past the precision)", { timeout: 60000 }, async (t) => {
+    if (skip) return t.skip(skip);
+    const code = `from decimal import Decimal\nstr(Decimal("1e30").quantize(Decimal("1")))`;
+    const inside = await cell(code), full = await cell(code, true);
+    assert.match(inside.error ?? "", /InvalidOperation/, JSON.stringify(inside));
+    assert.match(full.error ?? "", /InvalidOperation/);
+});
+
+test("ADVERSARIAL: quantize through the thread context leaves its flags and traps as they were, and no trap can be enabled", { timeout: 60000 }, async (t) => {
+    if (skip) return t.skip(skip);
+    await cell(`import decimal\ndecimal.getcontext().clear_flags()\n1`, true);
+    const r = await cell(`from decimal import Decimal, getcontext, ROUND_HALF_UP\nstr(Decimal("1.235").quantize(Decimal("0.01"), rounding=ROUND_HALF_UP, context=getcontext()))`);
+    assert.strictEqual(json(r.value ?? "null"), json(`"1.24"`), JSON.stringify(r));
+    assert.strictEqual(json((await cell(FLAGS, true)).value), "[]");
+    for (const code of [`from decimal import Inexact\n1`, `import decimal\ndecimal.getcontext().traps[decimal.Inexact] = True\n1`,
+        `import decimal\ndecimal.getcontext().traps`, `import decimal\ndecimal.setcontext(decimal.Context(traps=[decimal.Inexact]))\n1`,
+        `import decimal\ndecimal.localcontext()`])
+        assert.ok((await cell(code)).refused, code);
+    assert.strictEqual(json((await cell(`import decimal\nsorted(k.__name__ for k, v in decimal.getcontext().traps.items() if v)`, true)).value),
+        json(`["DivisionByZero","FloatOperation","InvalidOperation","Overflow"]`).replace(',"FloatOperation"', ""));
+});
+
+test("ADVERSARIAL: a rounding mode is read, never written: assigning decimal.ROUND_HALF_UP asks, and the module keeps its value", { timeout: 60000 }, async (t) => {
+    if (skip) return t.skip(skip);
+    for (const code of [`import decimal\ndecimal.ROUND_HALF_UP = "ROUND_DOWN"\n1`, `import decimal\nsetattr(decimal, "ROUND_HALF_UP", "ROUND_DOWN")\n1`])
+        assert.ok((await cell(code)).refused, code);
+    assert.strictEqual(json((await cell(`import decimal\ndecimal.ROUND_HALF_UP`, true)).value), json(`"ROUND_HALF_UP"`));
+});

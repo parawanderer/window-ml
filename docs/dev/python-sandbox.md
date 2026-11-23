@@ -343,7 +343,14 @@ worker drives with `autoApprovePython` on:
    indexer and never writes one: the barrier would judge the indexer, not the Series. `Series.dtype` and
    `DataFrame.dtypes` are not listed: `str()` of a numpy dtype imports from C under the cell's frame, which has no
    `__builtins__`, so it raises KeyError (#2040). `tests/python-dialect-vocab.test.mjs` holds every listed stdlib name to a call
-   that runs inside or a reason. Both functions go when the fork does this itself.
+   that runs inside or a reason. Both functions go when the fork does this itself. **A stdlib kind no listed module
+   name reaches** is named in the manifest's `kind_types` and resolved by `_ml_stdlib`, so its methods are readable
+   while its module stays unadmitted: `FrameLocalsProxy.keys` is what bare `dir()` reads. A cell's bindings are
+   globals, so bare `dir()` is `[]` inside and on the full path alike; `dir(obj)`, `vars()`, `locals()` and
+   `globals()` still ask, and so does `dir()` in a cell's own function (it reads the proxy by item, which is not
+   listed). numpy's sized scalar types (`np.int64`, `np.float64` and the rest) are listed as values and constructors;
+   their own attributes ask. `Decimal.quantize` and the `ROUND_*` modes are listed; `Decimal.as_tuple` is not, since C
+   builds its `DecimalTuple` through `type.__new__`, which the gate refuses whatever is registered.
 3. `wrapUserScript(…, inside)` runs the cell through `run_cell` (`INSIDE_CELL`, `python-dialect-run.ts`) in a COPY of the namespace that holds no `_` name.
    A bare trailing expression gets `return ` spliced in at its own column, so the value matches the full path. Decimal
    arithmetic sets the thread context's sticky flags from C, which no ownership check sees, so the context's flags and

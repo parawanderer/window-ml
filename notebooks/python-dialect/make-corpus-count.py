@@ -343,7 +343,22 @@ UNLISTED = {("numpy", "ndarray"): {"round": "a C method that writes its out argu
 # where each stopped a cell the count's threshold had not reached. Series.dtype and DataFrame.dtypes are NOT here:
 # str() of a numpy dtype imports from C under the cell's frame, which has no __builtins__ (KeyError), so admitting
 # them would hand the model an error a full run never gives (#2040).
-LISTED = {("numpy", None): {"rint"}, ("pandas", "DataFrame"): {"columns", "shape"}, ("pandas", "Series"): {"iloc"}}
+# numpy's sized scalar types are ruled in too (coverage, repl-specs 2026-11-23): `.astype(np.int64)` names one as a value,
+# and calling one builds an immutable scalar from its argument.
+NP_SCALARS = {"bool_", "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64", "float16", "float32", "float64",
+              "complex64", "complex128"}
+LISTED = {("numpy", None): {"rint"} | NP_SCALARS, ("pandas", "DataFrame"): {"columns", "shape"}, ("pandas", "Series"): {"iloc"}}
+
+# The stdlib's names ruled in whatever the count (coverage, repl-specs 2026-11-23), from the cell replay's first refusals
+# on main: bare dir() reads its frame's locals through FrameLocalsProxy.keys; Decimal.quantize, and the rounding modes it
+# takes. A kind that no listed module name reaches is resolved by STDLIB_KIND_TYPES, so admitting its methods admits no
+# new module name. Decimal.as_tuple is NOT here: C builds its DecimalTuple through type.__new__, which the gate refuses
+# even with the constructor lifted, so it would refuse anyway; one cell does not justify admitting that slot lookup
+# (coverage ruling, 2026-11-23): do not retry it.
+STDLIB_LISTED = {"modules": {"decimal": {"ROUND_CEILING", "ROUND_DOWN", "ROUND_FLOOR", "ROUND_HALF_DOWN", "ROUND_HALF_EVEN",
+                                         "ROUND_HALF_UP", "ROUND_UP", "ROUND_05UP"}},
+                 "kinds": {"Decimal": {"quantize"}, "FrameLocalsProxy": {"keys"}}}
+STDLIB_KIND_TYPES = {"FrameLocalsProxy": "builtins.FrameLocalsProxy"}
 
 def manifest(mod):
     fns = module_names(mod)
@@ -366,7 +381,10 @@ def stdlib_manifest():
     fns = {m: module_names(m) for m in mods}
     kinds = kind_methods(KINDS["stdlib"])
     pick = lambda d: sorted(k for k, v in d.items() if v >= MIN_CELLS)
-    return {"modules": {m: pick(f) for m, f in fns.items() if f}, "kinds": {k: pick(v) for k, v in kinds.items()},
+    ruled = lambda d, k: STDLIB_LISTED[d].get(k, set())
+    return {"modules": {m: sorted(set(pick(f)) | ruled("modules", m)) for m, f in fns.items() if f},
+            "kinds": {k: sorted(set(pick(kinds.get(k, {}))) | ruled("kinds", k)) for k in sorted(set(kinds) | set(STDLIB_LISTED["kinds"]))},
+            "kind_types": STDLIB_KIND_TYPES,
             "leaves": {"decimal.Decimal": {"effects": "pure", "returns": "fresh", "cost": "digits",
                                            "why": "a C type used by 10% of cells; ruled a day-one entry (repl-specs 2026-10-15)"},
                        **{f"csv.{n}": {"effects": "pure", "returns": "fresh", "cost": "input length",
