@@ -46,6 +46,7 @@ import { adoptOnTab } from "./adopt-run";
 import { holdStands } from "./nav-arrival";
 import { toPageUi } from "./sw-side-panel";
 import { resetTaskChain, setTaskTurnHost, taskTurnHasWork } from "./sw-tasks";
+import { isNoTab } from "./no-tab";
 
 /** Whether a run the worker builds offers `python_install`. On since the install step (docs/plan/repl/PACKAGES_INSTALL.md,
  *  slice 4): an approved card is installed into the run's own Python worker. */
@@ -464,7 +465,8 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
         let hosted = false;
         try {
             try {
-                if (!stored.p.rebuild || (!await holdStands(tabId, hash) && (await adoptOnTab(tabId, hash, stored.p.rebuild)).error)) { endStart(hash, starting); return takeBack("none"); }
+                // A run with no tab (no-tab.ts) has no page to adopt or judge: its turn starts with none.
+                if (!stored.p.rebuild || (!isNoTab(tabId) && !await holdStands(tabId, hash) && (await adoptOnTab(tabId, hash, stored.p.rebuild)).error)) { endStart(hash, starting); return takeBack("none"); }
                 if (starting.signal.aborted) { endStart(hash, starting); return takeBack("none"); }
             } catch (e) {
                 endStart(hash, starting);

@@ -8,6 +8,7 @@
 // side panel" on a tab whose panel is disabled (measured, Chromium 151). Nothing here reads what a page posted.
 
 import { presence } from "./sw-presence";
+import { isNoTab } from "./no-tab";
 
 /** The port a side panel connects on, beside the DevTools panel's `ml-devtools` (sw-debug.ts serves both feeds). */
 export const SIDE_PANEL_PORT = "ml-sidepanel";
@@ -102,6 +103,7 @@ export function forgetTab(tabId: number): void {
  * @param options which frame or document
  */
 export function toPageUi(tabId: number, message: Record<string, unknown>, options?: chrome.tabs.MessageSendOptions): void {
+    if (isNoTab(tabId)) return;   // a run with no tab has no page UI: the chat page reads it from the session index
     const send = (): void => { void chrome.tabs.sendMessage(tabId, message, options ?? {}).catch(() => { /* the tab is gone, or no shell */ }); };
     // A browser with no side panel has nowhere else to show a run: the page's own surfaces stay as they were.
     if (!globalThis.chrome?.sidePanel) { send(); return; }
