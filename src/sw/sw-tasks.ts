@@ -589,7 +589,8 @@ export async function endTasks(runId: string, reason = "session-release", opts: 
         const at = Date.now();
         for (const [id, t] of mine) {
             if (t.status === "running" || t.delivered || t.endedMs === undefined || t.text === null) continue;
-            t.result = null; t.releasedAt = at;
+            // What the call drew and the key of the whole it was cut from go with the value: the row keeps only its text.
+            t.result = null; delete t.image; delete t.value; delete t.chars; t.releasedAt = at;
             kept.set(id, t);
         }
     }
