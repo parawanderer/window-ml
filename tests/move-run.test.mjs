@@ -207,20 +207,22 @@ const exec = { name: "exec", args: { js: PAGE_JS } };
 /**
  * A worker-built run on tab 7 whose first turn is `first` (tool calls, then "done"), with tabs 8 (another site) and 9 (a
  * browser page) open.
- * @returns the worker, the run id, `turns()` (how many turns have ended), `pageCalls(tab)`, `lastBody()`, `script`
+ * @returns the worker, the run id, `turns()` (how many turns have ended), `pageCalls(tab)`, `lastBody()`, `script`, and
+ *   `tabs` (the open tabs, which a test may close)
  */
-async function settled({ first = [exec], onExec, indexedDB } = {}) {
+async function settled({ first = [exec], onExec, onAdopt, indexedDB } = {}) {
     const script = [...first, null];
     let bg;
+    const tabs = [
+        { id: 7, windowId: 3, active: false, url: SITE_URL, title: "Site" },
+        { id: 8, windowId: 3, active: true, url: OTHER_URL, title: "Other" },
+        { id: 9, windowId: 3, active: false, url: "chrome://newtab/", title: "New Tab" },
+        { id: 10, windowId: 3, active: false, url: "https://third.example/page", title: "Third" },
+    ];
     bg = loadBackground({
         config: { chatUrl: "http://host/api/chat/completions", apiKey: "k", model: "m", apiFormat: "openai", debugMode: "off" },
         ...(indexedDB ? { indexedDB } : {}),
-        openTabs: [
-            { id: 7, windowId: 3, active: false, url: SITE_URL, title: "Site" },
-            { id: 8, windowId: 3, active: true, url: OTHER_URL, title: "Other" },
-            { id: 9, windowId: 3, active: false, url: "chrome://newtab/", title: "New Tab" },
-            { id: 10, windowId: 3, active: false, url: "https://third.example/page", title: "Third" },
-        ],
+        openTabs: tabs,
         onFetch: async (call) => {
             if (call.url.endsWith("/api/models")) return jsonResponse({ data: [{ id: "m" }] });
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
@@ -229,7 +231,7 @@ async function settled({ first = [exec], onExec, indexedDB } = {}) {
             return jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: `c${Math.random()}`, type: "function", function: { name: step.name, arguments: JSON.stringify(step.args) } }] } }] });
         },
         onTabMessage: async (t, msg) => {
-            if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
+            if (msg.type === "ADOPT_RUN_NOW") return onAdopt ? onAdopt(t) : { pageInfo: "" };
             if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } }, shellOn(t));
             if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
             if (msg.payload.finish || msg.payload.renderOnly || msg.payload.precheck || msg.payload.readonlyTry) return {};
@@ -244,7 +246,7 @@ async function settled({ first = [exec], onExec, indexedDB } = {}) {
     const lastBody = () => bg.calls.filter((c) => c.url.includes("/chat/completions")).at(-1)?.body;
     const settledNow = () => turns() >= 1 && !bg.context.__mlRunStateForTest().controllers.includes(hash);
     assert.ok(await until(settledNow), "the first turn settles");
-    return { bg, hash, script, turns, pageCalls, lastBody };
+    return { bg, hash, script, turns, pageCalls, lastBody, tabs };
 }
 /** The run-log records of one run. */
 const runLogOf = async (bg, hash) => (await bg.context.__mlRunLog.all()).filter((e) => e.run === hash);
@@ -307,18 +309,9 @@ test("moving a run to the tab it is already on is a no-op: no record, no note", 
     assert.equal(movedNotes(r.lastBody()).length, 0);
 });
 
-test("a move is refused, and the run stays where it was, for: a running turn, a run this worker does not hold, a browser page", T, async () => {
-    let release;
-    const held = new Promise((res) => { release = res; });
-    const r = await settled({ first: [], onExec: () => held.then(() => ({ result: "ran" })) });
-    // A running turn: the next turn's exec is held open while the move is asked for.
-    r.script.unshift(exec);
-    const turn = r.bg.context.__mlUserRunActionForTest(r.hash, "send", { text: "go on", surface: "hud" });
-    assert.ok(await until(() => r.pageCalls(7) === 1), "the turn's page call is out");
-    const running = await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudOn(8));
-    assert.match(running.error ?? "", /running/);
-    release(); await turn;
-    assert.ok(await until(() => !r.bg.context.__mlRunStateForTest().controllers.includes(r.hash)));
+test("a move is refused, and the run stays where it was, for: a run this worker does not hold, a browser page", T, async () => {
+    // A running turn is no longer refused: its move is queued (the section on moving a running turn, below).
+    const r = await settled({ first: [] });
     const unknown = await r.bg.send({ type: "MOVE_RUN", payload: { runId: "nobody01" } }, hudOn(8));
     assert.ok(unknown.error, "a run nobody holds and nobody saved is refused");
     const browserPage = await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, { ...hudOn(9), tab: { id: 9, url: "chrome://newtab/" } });
@@ -489,6 +482,46 @@ test("the HUD's list offers a settled run held on another tab, never one already
     assert.match(page.error ?? "", /^Refused/);
 });
 
+/** Starts the run's next turn with a tool call held open in the page: an ungated tool, so the session reads "running", not "waiting". */
+async function holdTurn(r) {
+    let release;
+    r.hold = new Promise((res) => { release = res; });
+    r.script.unshift({ name: "findByText", args: { text: "x" } });
+    const turn = r.bg.context.__mlUserRunActionForTest(r.hash, "send", { text: "go on", surface: "hud" });
+    assert.ok(await until(() => r.held), "the turn's page call is out");
+    return { turn, release: async () => { release(); await turn; assert.ok(await until(() => !r.bg.context.__mlRunStateForTest().controllers.includes(r.hash))); } };
+}
+const listed = async (bg, tab) => (await bg.send({ type: "LIST_BRINGABLE" }, hudOn(tab))).data;
+
+test("the HUD's list offers a RUNNING worker run on another tab, marked running and held, and not on its own tab", T, async () => {
+    const r = await settled({ first: [], onExec: () => { r.held = true; return r.hold.then(() => ({ result: "ran" })); } });
+    const t = await holdTurn(r);
+    assert.deepEqual((await listed(r.bg, 8)).map((s) => [s.hash, s.held, s.running, s.url]), [[r.hash, true, true, SITE_URL]]);
+    assert.deepEqual(await listed(r.bg, 7), [], "not offered on the tab it is running on");
+    await t.release();
+    assert.deepEqual((await listed(r.bg, 8)).map((s) => [s.hash, s.running]), [[r.hash, undefined]], "settled, it is listed without the mark");
+});
+
+test("the HUD's list does not offer a running run a page script started, with a rebuild or without one (no rebuild is no live move either)", T, async () => {
+    let n = 0;
+    const r = await settled({ first: [], onExec: () => { n++; return r.hold.then(() => ({ result: "ran" })); } });
+    let release;
+    r.hold = new Promise((res) => { release = res; });
+    const page = { tab: { id: 7, url: SITE_URL }, url: SITE_URL, origin: "https://site.example", frameId: 0 };
+    const tools = [{ name: "findByText", description: "find", parameters: { type: "object", properties: { text: { type: "string" } } }, requiresApproval: false, capabilities: [] }];
+    const rebuild = { toolNames: ["findByText"], model: "m", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: false };
+    for (const [runId, extra] of [["pagerun1", { rebuild }], ["pagerun2", {}]]) {
+        r.script.unshift({ name: "findByText", args: { text: "x" } });
+        void r.bg.send({ type: "START_RUN", payload: { runId, task: "x", systemPrompt: "S", tools, model: "m", think: null, maxSteps: 3, surface: "off", autoApproveReadonly: false, ...extra } }, page);
+        assert.ok(await until(() => n === (runId === "pagerun1" ? 1 : 2)), `${runId}'s page call is out`);
+    }
+    const state = r.bg.context.__mlRunStateForTest();
+    assert.ok(state.controllers.includes("pagerun1") && state.controllers.includes("pagerun2"), "both page runs are running");
+    assert.ok(state.rebuilds.includes("pagerun1") && !state.rebuilds.includes("pagerun2"), "one has a rebuild, one has none");
+    assert.deepEqual((await listed(r.bg, 8)).map((x) => x.hash), [r.hash], "only the settled worker run is offered, neither page run");
+    release();
+});
+
 test("BRING_HERE_ORDER: this tab's site first, then the most recent", async () => {
     const { BRING_HERE_ORDER } = await import("../src/sw/bring-order.ts");
     const rows = [
@@ -547,4 +580,166 @@ test("control, no move: once the run's tab leaves its start origin, a read of it
     const r = await settled({ first: [] });
     r.bg.commit(7, { documentId: "doc-7b", url: "https://third.example/x" });
     assert.deepStrictEqual(await readOnce(r, OLD_API), [[OLD_API, "start-left"]]);
+});
+
+// --- moving a RUNNING turn, between its steps (MOVE_RUN.md, shape (b), slice 2) ---
+// The person moves a run whose turn is running: nothing moves while a call of the current step is out (it may be on the
+// old page, or waiting at a gate there). The move is queued, answered so, and the turn takes it at its next step
+// boundary (`applyLiveMove`, at the start of the next model request), or after its end when it ends first.
+
+/**
+ * A settled run's next turn, started with `steps` tool calls, whose first page call on tab 7 is held open until
+ * `release()`; the move is asked for while it is out.
+ * @returns the run (as `settled`), the turn's promise, and `release`
+ */
+async function heldTurn({ steps = [exec, exec], onAdopt } = {}) {
+    let release;
+    const held = new Promise((res) => { release = res; });
+    let first = true;
+    const r = await settled({ first: [], onAdopt, onExec: (t) => (t === 7 && first ? (first = false, held.then(() => ({ result: "ran on 7" }))) : { result: `ran on ${t}` }) });
+    r.script.unshift(...steps);
+    const turn = r.bg.context.__mlUserRunActionForTest(r.hash, "send", { text: "go on", surface: "hud" });
+    assert.ok(await until(() => r.pageCalls(7) === 1), "the turn's first page call is out on tab 7");
+    return { ...r, turn, release };
+}
+/** Waits for the run's turn to end. */
+const turnEnds = async (r) => { await r.turn; assert.ok(await until(() => !r.bg.context.__mlRunStateForTest().controllers.includes(r.hash)), "the turn ends"); };
+/** How many `exec` messages went to a tab, its precheck included: an exec on a site that may not use window.ml runs in an
+ *  isolated world, and only its precheck is a page message. */
+const execsTo = (r, tab) => r.bg.tabMessages.filter(([t, m]) => t === tab && m?.type === "RUN_TOOL_IN_PAGE" && m.payload?.name === "exec").length;
+/** The chat-completion bodies the worker sent, in order. */
+const modelBodies = (bg) => bg.calls.filter((c) => c.url.includes("/chat/completions")).map((c) => c.body);
+
+test("a move asked for while a page call is out is queued, and the turn's next page call goes to the new tab", T, async () => {
+    const r = await heldTurn();
+    const res = await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudOn(8));
+    assert.match(res.data?.queued ?? "", /when its current step ends/, "the person is told it waits for the step");
+    assert.equal(r.pageCalls(8), 0, "nothing moved while the call was out");
+    r.release();
+    await turnEnds(r);
+    assert.equal(r.pageCalls(7), 1, "the old tab had only the call that was out");
+    assert.ok(execsTo(r, 8) >= 1, "the next step's call went to the new tab");
+    assert.ok(r.bg.tabMessages.some(([t, m]) => t === 8 && m?.type === "ADOPT_RUN_NOW"), "the new page was given the run's tools first");
+    assert.ok(r.bg.tabMessages.some(([t, m]) => t === 8 && m?.type === "ML_DEBUG_TO_PAGE" && m.event?.kind === "agent-result" && m.event.id === r.hash), "the turn's end is told to the new tab");
+    const moved = (await runLogOf(r.bg, r.hash)).filter((e) => e.subsystem === "tab" && e.kind === "moved");
+    assert.deepEqual(moved.map((e) => e.detail), [{ from: 7, to: 8, live: true }], "one record, saying it moved mid-turn");
+});
+
+test("the model is told at the step after a live move, once, as a system note, and not before it", T, async () => {
+    const r = await heldTurn();
+    const before = modelBodies(r.bg).length;
+    await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudOn(8));
+    r.release();
+    await turnEnds(r);
+    const bodies = modelBodies(r.bg).slice(before);
+    assert.ok(bodies.length >= 2, "the turn asked the model again after the held call");
+    assert.equal(movedNotes(bodies[0]).length, 1, "the request right after the step that was out carries the note");
+    assert.match(movedNotes(bodies[0])[0].content, /from tab "Site" \(https:\/\/site\.example\/page\) to tab "Other" \(https:\/\/other\.example\/doc\)/);
+    assert.equal(movedNotes(bodies.at(-1)).length, 1, "it stays in the history once");
+    const earlier = modelBodies(r.bg).slice(0, before);
+    assert.ok(earlier.every((b) => movedNotes(b).length === 0), "no request before the move carried it");
+});
+
+test("after a live move the run is held on the new tab, the old tab is told it moved and drops its registration", T, async () => {
+    const r = await heldTurn();
+    await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudOn(8));
+    r.release();
+    await turnEnds(r);
+    const st = r.bg.context.__mlRunStateForTest();
+    assert.deepEqual(st.activeRuns.filter(([, ids]) => ids.includes(r.hash)), [], "no tab tracks the settled turn");
+    assert.ok(r.bg.tabMessages.some(([t, m]) => t === 7 && m?.type === "ML_DEBUG_TO_PAGE" && m.event?.kind === "agent-note" && /moved to another tab/.test(m.event.text)), "the old tab's card is told");
+    assert.ok(!r.bg.tabMessages.some(([t, m]) => t === 8 && m?.event?.kind === "agent-note" && /moved to another tab/.test(m.event?.text ?? "")), "the new tab is not");
+    assert.ok(r.bg.tabMessages.some(([t, m]) => t === 7 && m?.type === "RUN_TOOL_IN_PAGE" && m.payload?.finish && m.payload.runId === r.hash), "the old page ends the run's registration");
+    // The next turn is the new tab's from its start.
+    const since = r.bg.tabMessages.length;
+    r.script.unshift(exec);
+    await nextTurn(r);
+    assert.ok(r.bg.tabMessages.slice(since).some(([t, m]) => t === 8 && m?.type === "RUN_TOOL_IN_PAGE" && m.payload?.name === "exec"), "the next turn runs on the new tab");
+});
+
+test("the HUD's list offers a turn whose gated call is out as running too: its move waits for the step like any other", T, async () => {
+    const r = await heldTurn();
+    assert.deepEqual((await listed(r.bg, 8)).map((s) => [s.hash, s.running]), [[r.hash, true]]);
+    r.release();
+    await turnEnds(r);
+});
+
+test("moving a running turn back to the tab it is on before the step ends cancels the queued move", T, async () => {
+    const r = await heldTurn();
+    await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudOn(8));
+    assert.deepEqual(await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudOn(7)), { data: true });
+    r.release();
+    await turnEnds(r);
+    assert.equal(execsTo(r, 8), 0, "nothing went to the tab first chosen");
+    assert.equal(r.pageCalls(7), 2, "the turn stayed on its own tab");
+    assert.equal((await runLogOf(r.bg, r.hash)).filter((e) => e.kind === "moved").length, 0);
+});
+
+test("a later move while the step is out replaces the earlier one: the turn goes to the last tab chosen", T, async () => {
+    const r = await heldTurn();
+    await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudOn(8));
+    await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, { ...hudOn(10), tab: { id: 10, url: "https://third.example/page" } });
+    r.release();
+    await turnEnds(r);
+    assert.equal(execsTo(r, 8), 0);
+    assert.ok(execsTo(r, 10) >= 1);
+});
+
+test("a destination that closes before the step ends: the move is dropped and logged, and the turn goes on where it was", T, async () => {
+    const r = await heldTurn();
+    await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudOn(8));
+    r.tabs.splice(r.tabs.findIndex((t) => t.id === 8), 1);
+    r.bg.closeTab(8);
+    r.release();
+    await turnEnds(r);
+    assert.equal(r.pageCalls(7), 2, "both calls ran on the tab it never left");
+    const log = await runLogOf(r.bg, r.hash);
+    assert.equal(log.filter((e) => e.kind === "moved").length, 0);
+    assert.equal(log.filter((e) => e.kind === "move-dropped").length, 1, "the drop is recorded");
+    assert.equal(movedNotes(r.lastBody()).length, 0, "the model is told nothing");
+});
+
+test("a destination page that does not take the run's tools: the move is dropped, and the turn goes on where it was", T, async () => {
+    const r = await heldTurn({ onAdopt: (t) => (t === 8 ? { error: "the extension cannot run there" } : { pageInfo: "" }) });
+    await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudOn(8));
+    r.release();
+    await turnEnds(r);
+    assert.equal(execsTo(r, 8), 0);
+    assert.equal(r.pageCalls(7), 2);
+    assert.deepEqual((await runLogOf(r.bg, r.hash)).filter((e) => e.kind === "move-dropped").map((e) => e.reason), ["no-adopt"]);
+});
+
+test("a move queued in a turn stopped before its next step is made as the turn ends, between turns", T, async () => {
+    const r = await heldTurn();
+    await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudOn(8));
+    void r.bg.send({ type: "CANCEL_RUN", payload: { runId: r.hash } }, shellOn(7));
+    r.release();
+    await turnEnds(r);
+    assert.ok(await until(() => r.bg.tabMessages.some(([t, m]) => t === 7 && m?.event?.kind === "agent-note")), "the old tab is told it moved");
+    const moved = (await runLogOf(r.bg, r.hash)).filter((e) => e.kind === "moved");
+    assert.equal(moved.length, 1, "moved once, between turns");
+    assert.equal(moved[0].detail.live, undefined, "as a between-turns move");
+    const since = r.bg.tabMessages.length;
+    r.script.unshift(exec);
+    await nextTurn(r);
+    assert.ok(r.bg.tabMessages.slice(since).some(([t, m]) => t === 8 && m?.type === "RUN_TOOL_IN_PAGE" && m.payload?.name === "exec"), "the next turn runs on the new tab");
+    assert.equal(movedNotes(r.lastBody()).length, 1, "and tells the model");
+});
+
+test("session.resume of a run whose turn is running is refused as a conflict, and adopts nothing on the target tab", T, async () => {
+    const { IDBFactory } = await import("fake-indexeddb");
+    let release;
+    const held = new Promise((res) => { release = res; });
+    let first = true;
+    const r = await settled({ first: [], indexedDB: new IDBFactory(), onExec: (t) => (t === 7 && first ? (first = false, held.then(() => ({ result: "ran" }))) : { result: "ran" }) });
+    r.bg.context.__mlKeepSessionForTest(r.hash);
+    await nextTurn(r, "first");
+    r.script.unshift(exec);
+    const turn = r.bg.context.__mlUserRunActionForTest(r.hash, "send", { text: "go on", surface: "hud" });
+    assert.ok(await until(() => r.pageCalls(7) === 1));
+    const adopts = () => r.bg.tabMessages.filter(([t, m]) => t === 8 && m?.type === "ADOPT_RUN_NOW").length;
+    const res = await command(r.bg, { type: "session.resume", session: { runtime: "local", hash: r.hash }, target: { kind: "tab", tabId: 8 } });
+    assert.equal(res.result?.error?.code, "conflict", "refused: a running session is moved, not resumed");
+    assert.equal(adopts(), 0, "nothing was adopted on the target");
+    release(); await turn;
 });

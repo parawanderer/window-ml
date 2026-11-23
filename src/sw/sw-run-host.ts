@@ -65,8 +65,8 @@ import { fetchTarget } from "./sw-fetch-url";
 import { grantRunFetch, grantRunOrigin, runOriginGranted, runOrigins, runFetchConsented, grantRunPython, takePyRefusal, pythonDialectReady, retabWorkerRun } from "./worker-tools";
 import { autoApprovePython } from "../agent/auto-approve";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
-import { takeMovedNote } from "./move-run";
-import { WORKER_ONLY_TOOLS, withoutWorkerOnly, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, keptOnRebuild, turnTabCells, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
+import { applyLiveMove, moveAfterTurn, takeMovedNote, type LiveTurn } from "./move-run";
+import { WORKER_ONLY_TOOLS, withoutWorkerOnly, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, firstTurnLeftTabs, runControllers, runInboxes, trackRun, persistRun, keptOnRebuild, turnTabCells, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { drawStoredPages } from "./sw-attach";
 import { claimValue, runMayClaim, valueHolders, readStoredBytes, readStoredColumns, readStoredText, withHeldValuesOnly } from "./sw-values";
@@ -773,7 +773,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     let unhostAsks: (() => void) | undefined;   // set once the run's steps may raise nested asks (sw-asks.ts)
     let unwatchArrivals: (() => void) | undefined;   // set once the run judges its tab's arrivals (nav-arrival.ts)
     let rewatchArrivals: (() => void) | undefined;   // the same judge, moved to the turn's tab now
-    const settle = (): void => { turnTabCells.delete(runId); unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); closeTurnTasks(runId); void rearmAfterTurn(runId); untrackRun(tabId, runId); deleteRun(runId); endPythonTurn(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); the turn's end: the run's Python namespace stays, the shared full worker's dict goes
+    const settle = (): void => { turnTabCells.delete(runId); unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); closeTurnTasks(runId); void rearmAfterTurn(runId); untrackRun(tabId, runId); deleteRun(runId); endPythonTurn(runId); releaseDebugger(tabId); moveAfterTurn(runId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); the turn's end: the run's Python namespace stays, the shared full worker's dict goes
     /** Ends the run's session on every surface when the setup throws after its start event went out; set once the fan exists. */
     let endSession: ((error: string) => void) | undefined;
     try {
@@ -825,6 +825,14 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // "One consent, scoped by the origin"): the worker's grant outlives the turn, so the turn starts from it.
         const consentedOrigins = new Set<string>(runOrigins(runId));
         if (p.pageOrigin) consentedOrigins.add(p.pageOrigin);
+        // What a move the person makes while this turn runs re-points (move-run.ts `applyLiveMove`): the destination becomes
+        // the turn's start page, as a move between turns makes it the run's (MOVE_RUN.md, step 4).
+        const liveTurn: LiveTurn = {
+            tabId: () => tabId,
+            page: () => ({ title: p.pageTitle, url: tabUrlNow() }),
+            rebuild: () => (p.crossPage === false ? undefined : runRebuilds.get(runId) ?? p.rebuild),
+            onPage: ({ origin, url, title }) => { p = { ...p, pageOrigin: origin, pageUrl: url, pageTitle: title }; consentedOrigins.add(origin); },
+        };
         // Origins an `allow` row let an arrival reach: consented for NAVIGATION only (POLICIES.md, ruling (b) as built). The
         // FETCH_URL choke point does not count them, so the gate does not either: a read there goes to its card.
         const navOnlyOrigins = new Set<string>();
@@ -1229,6 +1237,14 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         // A run the person moved to another tab since its last turn is told so, the same way (move-run.ts).
                         const moved = resumeMessages?.length && p.builtBy === "worker" ? takeMovedNote(runId) : undefined;
                         if (moved) (messages as { role: string; content: string }[]).push({ role: "system", content: moved });
+                    }
+                    // A move the person asked for while this turn ran lands HERE (MOVE_RUN.md, shape (b), slice 2): every call
+                    // of the previous step has answered and this request has not gone out, so nothing in flight points at the
+                    // old tab. The model is told as a move between turns tells it, with the new page's context as an arrival's.
+                    const liveMove = await applyLiveMove(runId, liveTurn);
+                    if (liveMove) {
+                        const info = liveMove.pageInfo ? `\n\nYou are now on the new page:\n${capPageContext(liveMove.pageInfo, byWorker())}` : "";
+                        (messages as { role: string; content: string }[]).push({ role: "system", content: liveMove.note + info });
                     }
                     // WHAT THIS REQUEST IS FOR: an agent step, in this run's session (see RequestHint).
                     const hint: RequestHint = { use: "agent", session: hintSession(runId), ...(opts?.after ? { after: opts.after } : {}) };
@@ -2254,6 +2270,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 // A run handed to the worker while this turn ran stays the worker's (`storedP`).
                 const resumeP = { ...storedP(), stepBase: stepBase + runMaxStep, seqBase: seqBase + runMaxSeq };
                 bgRuns.set(runId, { p: resumeP, tabId, messages, sub: snapSub(), ...keptOnRebuild(runId) });
+                firstTurnLeftTabs.delete(runId);
                 // The same snapshot `bgRuns` holds, where it outlives the run: `resumeP` so a later turn continues
                 // AFTER this one's steps rather than colliding with them.
                 saveRunHistory(runId, { messages, payload: resumeP, sub: snapSub() });

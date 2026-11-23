@@ -5,12 +5,13 @@
 // exist yet (the files host's hide and show) needs only a removal class registered here, not a change to the read.
 
 import type { PolicyEffect } from "../readonly-exec";
+import type { HideEffect } from "../files-hide";
 
 /** Where a row sits: the built-in default under everything, then the person's global policies, then the session's own. */
 export type PolicyLayer = "default" | "global" | "session";
 
 /** What a row shows of one policy: its words and its verdict, nothing a call carried (the read has no value field). */
-export interface PolicyEntry { id: string; label: string; source: string; effect: PolicyEffect; origin?: string; created?: number; broken?: string }
+export interface PolicyEntry { id: string; label: string; source: string; effect: PolicyEffect | HideEffect; origin?: string; created?: number; broken?: string }
 
 /** What removing a row does to what runs without asking. */
 export interface PolicyRemoval {
@@ -38,7 +39,7 @@ export interface PolicyRow {
 }
 
 /** The strictness `judgeCall` applies across every scope: a `deny` refuses, then an `ask` asks, then an `allow` lets it run. */
-const STRICT: Record<PolicyEffect, number> = { deny: 3, ask: 2, allow: 1 };
+const STRICT: Record<PolicyEffect | HideEffect, number> = { deny: 3, ask: 2, allow: 1, hide: 0, show: 0 };
 
 /** Whether row `a` beats row `b` on a call both match: the order a consumer's own judge applies. */
 export type Precedence = (a: PolicyEntry, b: PolicyEntry) => boolean;

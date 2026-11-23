@@ -32,8 +32,9 @@ export interface FilesSource {
 }
 
 /** Whether a path of a session's files is hidden (POLICIES.md, "Hiding files", ruling 34): asked at every open and
- *  every read, so a mark made mid-session stops reads through a descriptor already open. */
-export type HideRule = (session: string, path: string) => boolean;
+ *  every read, so a mark made mid-session stops reads through a descriptor already open. A rule that rejects hides the
+ *  path: a list that cannot be read never lets a read past it. */
+export type HideRule = (session: string, path: string) => boolean | Promise<boolean>;
 
 /** The volumes a channel may be opened on: `files` now; `history` (SESSION_HISTORY_STORE.md §6b) once it has one. */
 export type VolumeName = "files";
@@ -196,8 +197,10 @@ export class RangedReader {
         const resolve = async (s: string, p: string, syscall: string): Promise<VNode | null> => {
             try { return await vol.node(s, p); } catch (e) { if (isFsError(e) && e.code === "ENOTDIR") throw fsError("ENOTDIR", syscall, p); throw e; }
         };
-        const statOf = (s: string, p: string, n: VNode): FileStat =>
-            ({ kind: n.kind, size: n.size, mtimeMs: n.mtimeMs, birthtimeMs: n.birthtimeMs, hidden: reader.hidden(s, p), readonly: n.readonly });
+        /** The rule's answer for one path, hidden when the rule throws or rejects. */
+        const isHidden = async (s: string, p: string): Promise<boolean> => { try { return await reader.hidden(s, p); } catch { return true; } };
+        const statOf = async (s: string, p: string, n: VNode): Promise<FileStat> =>
+            ({ kind: n.kind, size: n.size, mtimeMs: n.mtimeMs, birthtimeMs: n.birthtimeMs, hidden: await isHidden(s, p), readonly: n.readonly });
         const hiddenRefusal = (syscall: string, p: string): FsError => fsError("EACCES", syscall, p, `EACCES: '${p}' is hidden`);
         /** A write verb's answer until the write side lands: the path checked as any call checks it, then EROFS. */
         const readOnly = async (syscall: string, path: unknown, t: unknown): Promise<never> => call(syscall, (s) => {
@@ -220,7 +223,7 @@ export class RangedReader {
                 const p = canonical(path, "stat");
                 const n = await resolve(s, p, "stat");
                 if (!n) throw fsError("ENOENT", "stat", p);
-                return statOf(s, p, n);
+                return await statOf(s, p, n);
             }),
             opendir: (path, opts) => call("opendir", async (s): Promise<DirPage> => {
                 if (opts?.txn != null) txnOf(s, opts.txn, "opendir");
@@ -240,7 +243,7 @@ export class RangedReader {
                 for (const name of page) {
                     const q = p === "" ? name : `${p}/${name}`;
                     const c = await resolve(s, q, "opendir");
-                    if (c) entries.push({ name, ...statOf(s, q, c) });
+                    if (c) entries.push({ name, ...await statOf(s, q, c) });
                 }
                 return { entries, ...(names.length > page.length ? { next: CURSOR + page[page.length - 1] } : {}) };
             }),
@@ -250,7 +253,7 @@ export class RangedReader {
                 const n = await resolve(s, p, "open");
                 if (!n) throw fsError("ENOENT", "open", p);
                 if (n.kind === "dir") throw fsError("EISDIR", "open", p);
-                if (reader.hidden(s, p)) throw hiddenRefusal("open", p);
+                if (await isHidden(s, p)) throw hiddenRefusal("open", p);
                 const blob = await n.blob!();
                 // The channel may have ended, or its session changed, while the Blob was found.
                 live("open");
@@ -262,7 +265,7 @@ export class RangedReader {
             read: (fd, position, length, dest) => call("read", async (s) => {
                 const f = fdOf(s, fd, "read");
                 if (!Number.isInteger(position) || position < 0 || !Number.isInteger(length) || length < 0 || length > FILES_CHUNK || !(dest instanceof Uint8Array)) throw fsError("EINVAL", "read");
-                if (reader.hidden(s, f.path)) throw hiddenRefusal("read", f.path);
+                if (await isHidden(s, f.path)) throw hiddenRefusal("read", f.path);
                 const n = Math.min(length, f.blob.size - position, dest.length);
                 if (n <= 0) return 0;
                 // The scrub inside the mount's read (FILE_ATTACHMENTS.md, "Python's view: two mounts"): the range is

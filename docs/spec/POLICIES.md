@@ -764,14 +764,32 @@ Shane's ruling 34 (2026-11-17): the files the host's sandbox holds unreadable ar
 them. Make the default reasonable; someone with an idiosyncratic layout fixes it with an override, not with a new
 default rule. Two things stay defects whatever the policies say: a path the call's facts list as hidden
 (`hiddenSecrets`) that the call can read, and a default-held value reaching the model with no override. The rest of
-this section is the coordinator's calls under the ruling, each surfaced to Shane. Nothing here is built.
+this section is the coordinator's calls under the ruling, each surfaced to Shane.
+
+**Built so far (the extension's readers, the first of three PRs).** The `files` consumer with `hide` and `show` entries
+in the policy store, the four defaults as built-in rows, the layer rule and its refusals (`src/files-hide.ts`), the
+`policy.files` command, the view's rows (`src/sw/files-hide-view.ts`), and the `/files` reader in the offscreen document
+bound by the resolved list (`src/session/files-hide-rule.ts`), which Python's mount and `ml.fs` both read through. NOT
+built: what the host gets (a `spawn` applies no entry yet, so a `hide` does not bind a program the shell starts, and
+every `files` row in the view says so in its label), the model's proposal card, the offer when a root is added, and
+the four defaults in the view of a session with no `files` rule: as for every consumer, a default row appears once the
+consumer has a rule (a stated gap, closed before PR C merges, with the three tests that pin it). In the browser
+copy, which has no symlinks, `default:link-target` and `default:linked-template` hold nothing, and the linked-template
+refusal of a `show` is the host's to make. Three choices made in building it, on the red team's findings at #2088: the
+policy page's generic edit and remove refuse a `files` row (an `allow` saved over a `hide` held nothing, and one click
+removed a `hide` with no confirmation), so a hiding rule is removed only from a session's view, which confirms, and
+DevTools Settings' own form for these rows is PR C; a `hide` that matches a directory holds everything under it, as the
+offer's one row for a credential directory needs, while a `show` releases only what it matches; and
+`ml.current.policies` carries no `files` row, since a hidden file reads as absent and its path in that list would say
+it exists.
 
 **One list, two verbs, the policy store's.** A hiding rule is a `StoredPolicy` with consumer `files`, effect `hide` or
 `show`, and `source` a path or a glob. Scope `global`, or `run`, which is the session's and keyed by its hash, as for
-every policy. Origin `person`, `card` or `proposed`. There is no second store: the policy page, its edit and remove,
-and the run-scope lifetime rules (it survives a resume and is removed at archive) are the ones above.
+every policy. Origin `person`, `card` or `proposed`. There is no second store: the policy page and the run-scope
+lifetime rules (it survives a resume and is removed at archive) are the ones above.
 
-- **`hide <pattern>`** holds what it matches, for reading and writing, like a default hold.
+- **`hide <pattern>`** holds what it matches, and everything under a directory it matches, for reading and writing,
+  like a default hold.
 - **`show <pattern>`** releases a hold on what it matches: a default (a dotenv name, one of the three credential files
   at a root's top, a held symlink target, or a linked template), or a `hide` in a layer below it. By the layer rule
   below, a session `show` overrides a person's global `hide`. A shown path is readable AND writable, and is never listed
@@ -832,8 +850,8 @@ built.
 
 **Every reader of a root is bound by it.** The list binds every way a file under a root is read, not only a `spawn`:
 `ml.fs` and its one ranged reader, an `@files` reference, the file browser's content view, and Python's `/files`
-mount (built, #2026; the reader asks a hide rule at every open and read, and nothing sets one until this list is
-built). One list, every reader: a reader the host does not sandbox applies the worker's resolved list
+mount (built, #2026; the reader asks the hide rule at every open and read, and the rule is this list, set by PR A
+of this section's build). One list, every reader: a reader the host does not sandbox applies the worker's resolved list
 itself before it reads. A hidden file readable through `ml.fs` is the defect this rules out, and a row asserts it for
 each reader.
 
@@ -913,7 +931,8 @@ hidden until the person picks it, and never all at once by default. The coordina
   through a `spawn`.
 - Naming a hidden path in `pathArgs` asks, names the `hide`, and no `allow` policy frees the ask.
 - The upgrade: there was no earlier hide list, so the fixture is today's policy store, with no `files` rows, read by
-  the new code. Its policies decide as before, and the view shows the four defaults only.
+  the new code. Its policies decide as before. As built (PR A), the view holds no `files` row until a rule exists,
+  then the four defaults first; showing the defaults with no rule is the follow-up below.
 
 **Other sessions' files, later** (ruling 91, 2026-11-20; NOT BUILT AND NOT SCHEDULED). Each session's folder on disk
 is private to it, and the host refuses every other session's folder under `window-ml-files/` by default
