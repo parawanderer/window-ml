@@ -662,7 +662,7 @@ export function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown,
                 charge: (chars: number) => meter?.charge(Math.ceil(chars / PIPE_CHARS_PER_STEP)),
                 ...(meter ? { steps: (n: number) => meter.charge(n) } : {}),
                 maxChars: MAX_STRING,
-                tooLarge: (): never => { throw new ResourceStop("string"); },
+                tooLarge: (_msg: string, stage: string): never => { throw new ResourceStop("string", { stage }); },
             });
         };
     }

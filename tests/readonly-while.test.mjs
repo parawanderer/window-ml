@@ -8,6 +8,7 @@ import { evalReadonly, NotInDialect, Denied, ResourceStop, STEP_BUDGET, MAX_STRI
 import { AnswerSet, makeAnswerFacade } from "../src/pointers/answer-set.ts";
 import { evalReadonlyInWorker } from "../src/sw/sw-readonly.ts";
 import { readonlyRefused } from "../src/agent/approval.ts";
+import { evalPolicy } from "../src/readonly-exec.ts";
 import { mlPipe } from "../src/pointers/text-pipe.ts";
 import { asTable } from "../src/table/table-data.ts";
 import { expandPointers } from "../src/pointers/pointer-macro.ts";
@@ -256,6 +257,7 @@ test("UPGRADE: a survey that used to trip and ask a person now returns the budge
 const KEPT = "and nothing it computed, printed or added was kept";
 const PIECES = "Narrow the selection or work in pieces.";
 const STRING = `Stopped: the script built a string of over 10,000,000 characters, the most one step may hold, ${KEPT}. ${PIECES}`;
+const STRING_IN = (stage) => `Stopped: the script built a string of over 10,000,000 characters in the ${stage} stage, the most one step may hold, ${KEPT}. ${PIECES}`;
 const COLLECTION = `Stopped: the script built an array, set or map of over 1,000,000 elements, the most one step may hold, ${KEPT}. ${PIECES}`;
 const STORED = (total) => ({ columns: ["n", "s"], rows: [[0, "a"], [1, "b"]], shape: [total, 2], dtypes: { n: "int64", s: "str" }, truncated: true });
 /** A host whose `dereference` hands back a stored table of `total` rows, read in full on demand. */
@@ -271,7 +273,7 @@ const CAPS = [
     ["string", `"a".padEnd(20000000)`, STRING],
     ["string", `ml.range(3).join("x".repeat(6000000))`, STRING],
     ["string", `"a".repeat(6000000).replace(/a/g, "bb")`, STRING],
-    ["string", `ml.pipe("x".repeat(100000), "sed s/./" + "y".repeat(200) + "/g")`, STRING],
+    ["string", `ml.pipe("x".repeat(100000), "sed s/./" + "y".repeat(200) + "/g")`, STRING_IN("sed")],
     ["collection", `Array(2000000)`, COLLECTION],
     ["collection", `Array.from({ length: 2000000 })`, COLLECTION],
     ["collection", `let a = [1, 2]; while (true) { a = a.concat(a); if (a.length < 0) return 1 }`, COLLECTION],
@@ -284,7 +286,7 @@ const CAPS = [
     ["depth", `const f = (n) => f(n + 1); f(0)`,
         `Stopped: the script's own functions nested past the depth limit (256 calls) ${KEPT}. Write the recursion as a loop.`],
     ["loop", `while (true) { }`,
-        "Stopped: the loop has a test that is always true and no `return` in its body, so it could not end, and nothing ran. Add a `return` or give it a test that can turn false."],
+        "Not run: the loop has a test that is always true and no `return` in its body, so it never ends. Add a `return` or give it a test that can turn false."],
 ];
 
 test("each cap stops the script with its own text: which cap and its figure, what was kept, the way on", async () => {
@@ -329,4 +331,38 @@ test("what STILL asks a person: the ml.embed caps, a regex that could backtrack,
     await asks("for (;;) {}", "a loop form outside the dialect");
     for (const js of ["/(a+)+$/.test('aaaa')", "for (;;) {}", "[].constructor"])
         assert.equal((await evalReadonlyInWorker({ js }, { ml: embedHost })).kind, "refused", `${js}: the worker still hands it to the person`);
+});
+
+test("a pipe's size stop names the STAGE that hit it, at each of text-pipe's three sites", async () => {
+    const stage = async (js, name) => {
+        const e = await evalReadonly(js, doc(), { ...ml(), pipe: mlPipe }, undefined, {}).catch((x) => x);
+        assert.ok(e instanceof ResourceStop && e.kind === "string", js);
+        assert.equal(e.message, STRING_IN(name), js);
+        assert.equal(readonlyRefused(e), false);
+    };
+    // sed: a substitution that would produce over the cap, refused before it builds anything.
+    await stage(`ml.pipe("x".repeat(100000), "sed s/./" + "y".repeat(200) + "/g")`, "sed");
+    // The JSON pretty-printers: the `values` stage, and a `.path` stage (named for itself).
+    await stage(`ml.pipe('{"a":' + "[".repeat(3000) + "]".repeat(3000) + "}", "values")`, "values");
+    await stage(`ml.pipe("[".repeat(3000) + "]".repeat(3000), ".")`, "path");
+    // Any other stage whose OUTPUT is over the cap: named by its command.
+    await stage(`ml.pipe("a".repeat(3000000), "grep -on .")`, "grep");
+});
+
+test("a policy containing `while` or `do…while` is broken when parsed: the loop forms are exec-realm only", () => {
+    for (const src of ["(c) => { while (false) { } return true }", "(c) => { let i = 0; while (i < 2) { i++ } return true }", "(c) => { do { } while (false); return true }"]) {
+        const r = evalPolicy(src, {}, "allow");
+        assert.equal(r.decision, undefined, src);
+        assert.match(r.broken, /^not allowed in a policy: `while` and `do…while` are for scripts/, src);
+    }
+    // The same source in a policy that loops with for…of is untouched.
+    assert.equal(evalPolicy("(c) => { for (const x of [1]) { } return true }", {}, "allow").decision, "allow");
+});
+
+test("the budget text names ml.sh by the SETTINGS check today (FLIP TO THE FIXED FLAG: the worker survey's `shell` is `shellTurnedOn`, not host presence)", async () => {
+    // When async's fix makes the run's shell flag mean host present AND setting on, sw-run-host.ts (`shellOffered`) reads it
+    // and these two rows become the host-absent, capability-absent and both-present rows.
+    const via = (shell) => evalReadonlyInWorker({ js: "let i = 0; while (i >= 0) { i++ }" }, { ...(shell ? { shell: true } : {}) });
+    assert.ok(!/ml\.sh/.test((await via(false)).result));
+    assert.match((await via(true)).result, /detached through ml\.sh\./);
 });

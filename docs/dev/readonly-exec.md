@@ -130,7 +130,7 @@ and stay safe.
   `if`/`else`, `for (const x of …)` (the loop variable a name or the same shorthand pattern, `for (const [k, v] of
   Object.entries(o))`, bound per iteration through `bindPattern` like a `const`), `try`/`catch`/`finally`, `return`, blocks, expression statements. The value of
   a program is its last expression statement or its `return`.
-- `while (test) body` and `do body while (test)` (ruling 104, "Halting"). Every turn spends steps like any node, so the step budget bounds them; the one refusal made at parse time is a loop that cannot end (`while (true) {}`, below). `return` is the only way out of a loop: `break`, `continue`, labels, `throw` and `switch` are not in the dialect, so a loop using one is refused as it always was (`tests/readonly-while.test.mjs` pins it).
+- `while (test) body` and `do body while (test)` (ruling 104, "Halting"), in the EXEC realm only: a policy that contains one is refused when it is parsed (`policy-realm.ts`), and so will be `break`, `continue` and the classic `for` when they join. Every turn spends steps like any node, so the step budget bounds them; the one refusal made at parse time is a loop that cannot end (`while (true) {}`, below). `return` is the only way out of a loop: `break`, `continue`, labels, `throw` and `switch` are not in the dialect, so a loop using one is refused as it always was (`tests/readonly-while.test.mjs` pins it).
 - Deliberately absent: C-style `for(;;)`, `for…in` (a prototype-chain read), the short-circuiting
   compound forms `||= &&= ??=` (whether the write happens at all depends on the value, and a form whose effect you
   have to evaluate the operand to predict is the wrong one for a dialect that exists to be predictable), classes,
@@ -345,7 +345,7 @@ reset it, and the run ends when it is spent (ruling 104). It needs no restrictio
 - Calls nest at most `MAX_CALL_DEPTH` (256) deep. Recursion with two self-calls is a tree of 2^256 calls, so depth is no
   bound on cost: the step budget is.
 - **A loop that cannot end is stopped before it runs** (`loopWithoutExit`, `parser.ts`), as a `ResourceStop` of kind
-  `loop` with one line of reason, an error and not a card, so nothing has to be rolled back. A loop is that when its test is CONSTANT-TRUE and its body has no
+  `loop` with one line of reason, an error and not a card, so nothing has to be rolled back (its text starts "Not run", the one stop that did not run anything). A loop is that when its test is CONSTANT-TRUE and its body has no
   exit. Constant-true is the whole definition: a literal that is truthy (`true`, a non-zero number, a non-empty string)
   or `!` of a falsy literal (`false`, `0`, `""`, `null`, `undefined`). Nothing cleverer is recognised (`-1`, `!!1`,
   `1 < 2`, a variable holding `true`): those loops are bounded by the budget instead. An exit is a `return` anywhere in

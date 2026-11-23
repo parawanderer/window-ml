@@ -40,7 +40,11 @@ function parse(source: string): Node {
             // Refused when PARSED, not only when reached: a `==` on a branch most calls skip would otherwise leave the
             // policy looking sound until the one call that takes it. (The evaluator refuses it too, keyed on the realm.)
             const loose = findNode(ast, (n) => n.type === "Binary" && (n.op === "==" || n.op === "!="));
-            hit = loose ? { error: `not allowed in a policy: ${loose.op} coerces; compare with ${loose.op}=` } : { ast };
+            // `while` and `do…while` are exec-realm only (docs/dev/policies.md): a policy is a function of the call, and its
+            // loops are `for…of` over what the call holds. Refused when parsed, whatever the test or the body.
+            const loop = findNode(ast, (n) => n.type === "While" || n.type === "DoWhile");
+            hit = loose ? { error: `not allowed in a policy: ${loose.op} coerces; compare with ${loose.op}=` }
+                : loop ? { error: "not allowed in a policy: `while` and `do…while` are for scripts, not policies; loop with `for (const x of …)`" } : { ast };
         } catch (e) { hit = { error: reason(e) }; }
         parsed.set(source, hit);
         if (parsed.size > PARSE_CACHE_SIZE) parsed.delete(parsed.keys().next().value as string);

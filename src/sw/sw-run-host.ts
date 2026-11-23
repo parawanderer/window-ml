@@ -1783,6 +1783,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         ? surveySh({ runId, seq: seqBase + call.seq, local: call, signal: abortCtl.signal, tokens: sessionTokens(runId), origin: () => turnByRun.get(runId)?.()?.origin })
                         : undefined;
                     // The prompt's own condition for naming `ml.sh` (a run the worker built, the shell turned on): a budget trip then names it.
+                    // FLIP TO THE FIXED FLAG: this reads the SETTINGS check only (`shellTurnedOn`), not whether the process host is present. When the
+                    // async lane's fix makes the run's `shell` flag mean host present AND setting on, read that flag here instead.
                     const shellOffered = byWorker() && await getConfig().then(shellTurnedOn, () => false);
                     const w = await guardSurvey(sh, () => evalReadonlyInWorker(args, {
                         ...(snap ? { current: () => current ?? snap({ model: modelNow(), log }) } : {}),

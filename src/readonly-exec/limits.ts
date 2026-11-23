@@ -37,8 +37,8 @@ export type StopKind = "steps" | "steps-left" | "string" | "collection" | "expan
 export class ResourceStop extends Error {
     /** @param kind which bound
      *  @param o `budget` the steps allowed (steps kinds), `left` what was left when a step would not fit (`steps-left`),
-     *    `shell` the run is offered `ml.sh`, so the way on may name running a script detached through it (steps kinds only) */
-    constructor(readonly kind: StopKind, o: { budget?: number; left?: number; shell?: boolean } = {}) {
+     *    `stage` the `ml.pipe` stage that built too big a string (kind `string` only); `shell` the run is offered `ml.sh`, so the way on may name running a script detached through it (steps kinds only) */
+    constructor(readonly kind: StopKind, o: { budget?: number; left?: number; shell?: boolean; stage?: string } = {}) {
         super(stopText(kind, o));
         this.name = "ResourceStop";
     }
@@ -46,7 +46,7 @@ export class ResourceStop extends Error {
 
 const num = (n: number): string => n.toLocaleString("en-US");
 const KEPT = "and nothing it computed, printed or added was kept";
-function stopText(kind: StopKind, o: { budget?: number; left?: number; shell?: boolean }): string {
+function stopText(kind: StopKind, o: { budget?: number; left?: number; shell?: boolean; stage?: string }): string {
     switch (kind) {
         case "steps":
         case "steps-left": {
@@ -54,13 +54,13 @@ function stopText(kind: StopKind, o: { budget?: number; left?: number; shell?: b
                 : `the script reached a step that needs more than the ${num(Math.max(0, o.left ?? 0))} steps left of its ${num(o.budget ?? 0)}-step budget`;
             return `Stopped: ${cause} ${KEPT}. Bound the loop or narrow the work${o.shell ? "; for a long computation, run a script detached through ml.sh" : ""}.`;
         }
-        case "string": return `Stopped: the script built a string of over ${num(MAX_STRING)} characters, the most one step may hold, ${KEPT}. Narrow the selection or work in pieces.`;
+        case "string": return `Stopped: the script built a string of over ${num(MAX_STRING)} characters${o.stage ? ` in the ${o.stage} stage` : ""}, the most one step may hold, ${KEPT}. Narrow the selection or work in pieces.`;
         case "collection": return `Stopped: the script built an array, set or map of over ${num(MAX_COLLECTION)} elements, the most one step may hold, ${KEPT}. Narrow the selection or work in pieces.`;
         case "expanded": return `Stopped: the script used a value that expands to over ${num(MAX_EXPANDED)} parts (an array holding the same array twice counts it twice), the most one step may walk, ${KEPT}. Narrow the selection or work in pieces.`;
         case "expanded-chars": return `Stopped: the script used a value whose strings expand to over ${num(MAX_EXPANDED_CHARS)} characters, the most one step may walk, ${KEPT}. Narrow the selection or work in pieces.`;
         case "cells": return `Stopped: the script read over ${num(MAX_STORED_CELLS)} cells of stored tables, the most one script may read, ${KEPT}. Read fewer rows or columns, or work in pieces.`;
         case "depth": return `Stopped: the script's own functions nested past the depth limit (${MAX_CALL_DEPTH} calls) ${KEPT}. Write the recursion as a loop.`;
-        case "loop": return "Stopped: the loop has a test that is always true and no `return` in its body, so it could not end, and nothing ran. Add a `return` or give it a test that can turn false.";
+        case "loop": return "Not run: the loop has a test that is always true and no `return` in its body, so it never ends. Add a `return` or give it a test that can turn false.";
     }
 }
 

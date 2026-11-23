@@ -526,12 +526,13 @@ the shell on; the size texts never carry it.
 | steps-left | 196 | 49 | Stopped: the script reached a step that needs more than the 2,994,135 steps left of its 3,000,000-step budget and nothing it computed, printed or added was kept. Bound the loop or narrow the work. |
 | steps-left, ml.sh offered | 257 | 64 | The same, with the `ml.sh` ending above. |
 | string | 185 | 46 | Stopped: the script built a string of over 10,000,000 characters, the most one step may hold, and nothing it computed, printed or added was kept. Narrow the selection or work in pieces. |
+| string, in an `ml.pipe` stage | 202 | 51 | The same, with " in the sed stage" after "characters" (the stage's own name: `sed`, `values`, a path stage, or the stage that produced the output). |
 | collection | 194 | 49 | Stopped: the script built an array, set or map of over 1,000,000 elements, the most one step may hold, and nothing it computed, printed or added was kept. Narrow the selection or work in pieces. |
 | expanded | 246 | 62 | Stopped: the script used a value that expands to over 5,000,000 parts (an array holding the same array twice counts it twice), the most one step may walk, and nothing it computed, printed or added was kept. Narrow the selection or work in pieces. |
 | expanded-chars | 205 | 51 | Stopped: the script used a value whose strings expand to over 100,000,000 characters, the most one step may walk, and nothing it computed, printed or added was kept. Narrow the selection or work in pieces. |
 | cells | 192 | 48 | Stopped: the script read over 5,000,000 cells of stored tables, the most one script may read, and nothing it computed, printed or added was kept. Read fewer rows or columns, or work in pieces. |
 | depth | 158 | 40 | Stopped: the script's own functions nested past the depth limit (256 calls) and nothing it computed, printed or added was kept. Write the recursion as a loop. |
-| loop | 169 | 42 | Stopped: the loop has a test that is always true and no `return` in its body, so it could not end, and nothing ran. Add a `return` or give it a test that can turn false. |
+| loop | 149 | 37 | Not run: the loop has a test that is always true and no `return` in its body, so it never ends. Add a `return` or give it a test that can turn false. |
 
 Paid only by a call that stops, once; nothing is added to any prompt. "Nothing it computed, printed or added was kept"
 is true of the interpreter (the answer set is restored, no value or log comes with the error); a program `ml.sh`
