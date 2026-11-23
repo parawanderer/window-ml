@@ -1944,6 +1944,30 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     cannot read fails the spawn, and two limits are accepted and go in the extension's view row: on Linux a file that
     appears after a call starts is readable to that call, and on both platforms a hard link made earlier under another
     name still opens a hidden file.
+  - **105 (Shane, 2026-11-23, in the coordinator's session). A lifted leaf is charged by a cost function, before it
+    runs.** Packages read from the fork that a C leaf spends one step whatever its input and that a manifest's `cost`
+    is documentation, so ruling 104's premise fails as built and a cell inside the 15,000,000-step budget can run for
+    hours. Shane: charge the cost, and build the planned form in which a cost is a function of the arguments
+    (READONLY_LIBRARY_MANIFEST.md, "Cost: three tiers", tier 1, specified since the manifest spec and never built).
+    Packages builds it, folded into its fork PR (2) or the PR after; `while` waits for it. The coordinator's defaults
+    until packages proposes better: steps proportional to the work in size measures, a constant the host measures, and
+    a leaf with no function charged by its largest argument.
+  - Packages' probe of an opaque-origin sandbox page (its account; the build of #2117, core 35bd1d69). The core boots
+    in a framed sandbox page only from a `blob:` worker, with numpy and pandas, at today's start-up cost. From inside:
+    no extension API, no storage, no parent access, and no network while the page's CSP forbids it (the CSP is the
+    only network wall there). Chrome reports the frame out of process. A framed page gets no SharedArrayBuffer, so the
+    interrupt buffer and the `/files` mount's shared buffers do not work there; JSPI does, so step 1's sync `ml` wire
+    is unaffected. The sandbox CSP is one string for every sandbox page, mermaid's included. Open with packages: the
+    same probe framed in the offscreen document, an in-place interrupt through JSPI, and keeping mermaid's page as
+    tight as today. A restart of a run's worker costs a cold start of about 2.5 to 3 seconds; what can be carried is
+    the inert list the dialect already enforces, by value, with functions dropped. No decision on the second wall
+    before redteam-e4's audit.
+  - Merged since: #2088 (the hide rule's part A, 0f0c6edc), #2087 (move-run slice 2, 2531d296). Move-run's remaining
+    scope, the coordinator's call: #2106, then `navigate` from the no-tab state, then resuming with no page; deferred
+    are the shell bench step, the kernel line and the "No tab" start-form choice with its hub change. Bench's corpus
+    is three models on Shane's word in bench's session (bench's account): `qwen3.8-flash-next:vision`, then
+    `gemma4:31b`, then `dsv4-flash:q4kxl` alone, 38 tasks, 3 repeats, every figure per model. Small-fixes reports
+    Shane unpaused it in its session; flaky-ci reviews its PRs behind the write PRs.
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like

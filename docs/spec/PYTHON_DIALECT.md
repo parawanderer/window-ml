@@ -126,17 +126,19 @@ is not what bounds a cell. Recursion to depth d with two self-calls is a tree of
 and never in practice, so the budget is already the only bound that binds, and it is a proof of its own. The counter
 is a natural number, it falls on every backward jump and every call, and no cell code can read or reset it, so every
 run ends within the budget by well-founded induction, whatever the program. That argument needs no restriction on loop
-forms; its one premise is that no single step does unbounded work, which is the obligation the cost rows already carry
-(a C leaf's cost over its input, the regex bound). So `while` joins the dialect, with these points ruled beside it.
-(1) A budget trip is an ERROR THE MODEL READS, with the steps spent, never an approval card: asking a person about a
-loop that does not end is the wrong question, and so is running it unbounded outside. (2) A static refusal that costs
-nothing stays: `while True` (or any constant true test) with no `break`, `return` or `raise` in its body is refused
-before the run. (3) A trip is not a kill: it lands at the eval breaker, the cell's attempt is discarded whole as any
-refused try is, and the same cell trips at the same step on every run. (4) Generators and `yield` stay out, for a
-different reason: a suspended frame is code that outlives its cell. (5) Before it is built, packages states what a
-lifted leaf is charged, since a loop multiplies an undercharged step by its trip count exactly as a `for` over a large
-`range` does today. `class` is excluded for no halting reason either: its methods are cell code a library calls, which
-"Code from elsewhere runs under the same gate" covers; that is noted, not ruled.
+forms; its one premise is that no single step does unbounded work, which is the obligation the cost rows are meant to
+carry (a C leaf's cost over its input, the regex bound; see point 5). So `while` joins the dialect, with these points
+ruled beside it. (1) A budget trip is an ERROR THE MODEL READS, with the steps spent, never an approval card: asking a
+person about a loop that does not end is the wrong question, and so is running it unbounded outside. (2) A static
+refusal that costs nothing stays: `while True` (or any constant true test) with no `break`, `return` or `raise` in its
+body is refused before the run. (3) A trip is not a kill: it lands at the eval breaker, the cell's attempt is
+discarded whole as any refused try is, and the same cell trips at the same step on every run. (4) Generators and
+`yield` stay out, for a different reason: a suspended frame is code that outlives its cell. (5) The premise does NOT
+hold as built: a C leaf spends one step whatever its input (packages, read from the fork), so `while` is not built
+before ruling 105's charge is ([`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md), "Cost: three tiers");
+the gap is there today with a `for` over a large `range`, with or without `while`. `class` is excluded for no halting
+reason either: its methods are cell code a library calls, which "Code from elsewhere runs under the same gate" covers;
+that is noted, not ruled.
 
 **What the corpus count changed (2026-10-15, lane 3 of the plan: 1,714 unique cells from 18 models).** The Starlark set
 admits 89.4% of cells whole; no cell uses `while` or `class`, which confirms their static refusal. Three rulings on
