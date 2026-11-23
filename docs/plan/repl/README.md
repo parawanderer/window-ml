@@ -1991,6 +1991,32 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     `senderOwnsRun` trusting an absent `sender.tab`), and the "No tab" PR may not merge with any of them still todo
     (the coordinator's call: each is reachable only by a run with no tab). #2106 lands before #2107. `filesQuotaMB` at
     1024 MiB is confirmed by Shane for now.
+  - **Decisions of 2026-11-23, after ruling 106 (Shane's words are in the coordinator's session unless marked).**
+    `while` is built now, in both dialects. Python: packages, after the cost charge. JS: small-fixes, with unlabelled
+    `break` and `continue` and the classic `for (init; test; update)` in a following PR (Shane: yes to each); labels,
+    `throw` and `switch` stay out. EVERY resource trip is an error the model reads and never a card (Shane: yes for
+    size and memory; the coordinator's reading of rulings 104 and 106 for the rest): the step budget, memory, depth,
+    the JS size caps, call depth and a pipe's output size. Still asking, the coordinator's call: the `ml.embed` caps
+    (another machine's work, a spending question) and the risky-regex refusal (a judgement from the pattern's form). A
+    constant-true loop with no exit of its own is "Not run", an error, in both dialects. The trip texts are accepted
+    (packages); their `ml.sh` clause follows the run's `shell` flag, and that flag now requires the process host to
+    answer at run start (Shane asked; async builds it; before, it read settings only). "Deterministic" in ruling 104
+    point 3 is "for a given worker state" (packages: a finalizer inside the breaker, a library's cold path). Bench's
+    first corpus (its account; `qwen3.8-flash-next:vision`, 25 runs, 86 Python cells): 39 never ran (`tables` given an
+    `@file:` form), 44 ran outside, 3 inside; of the 44, 39 were getting the data and none was structural. The cause
+    found behind it (session-store's trace): every run a person starts reads the page-hosted `python_exec` description
+    ("STATELESS", "No network or filesystem"), new and resumed; session-store fixes it first. So the order is: that
+    fix; `read_csv` of a `/files/` path inside the dialect on today's core (packages; Shane: ahead of `while`); the
+    refusal text for an `@file:` table source (session-store); then fork (2a) and (2b), the pin bump, `while`, `try`.
+    Packages corrected its ruling 105 finding: the charge-before call (`_restricted.charge`, refusing a negative
+    count, tripping before anything runs) is ALREADY in the pinned core 35bd1d69, so the charge for module functions
+    and lifted methods is built in window-ml on today's core, `read_csv` is charged by its file's bytes from its first
+    PR, and fork (2b) shrinks to the descriptor mapping, without which a bound C method (`a.astype`) still reaches no
+    charge. Bench finishes the baseline, holds the other two models (Shane: yes), and reruns after the fix alone and
+    after all three; the rewrite test's model calls run on the last. Ruling 107 (Shane: "it should, either directly or
+    by composition"): `ml.table` takes an `@file:` pointer (ML_TABLE.md). Open: a read-only subset of `os`, `os.path`,
+    `glob` and `pathlib` inside the dialect (Shane: scanning the virtual file system is fine; packages costs it); an
+    owner for the 633,699-character `exec` result that filled one run's context.
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like

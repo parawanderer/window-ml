@@ -88,6 +88,9 @@ export interface CommandDeps {
     /** one tab, or null when it is gone */
     getTab(tabId: number): Promise<TabInfo | null>;
     /** relay a session action to the page in a tab and wait for what it did; rejects when nothing listens there */
+    /** the tab a run the worker drives is on by the worker's own record: a tab, or the no-tab sentinel (sw/no-tab.ts) for
+     *  a run held with none; undefined when the worker drives no such run. Asked when the index names no tab. */
+    workerTab?(hash: string): number | undefined;
     toPage(tabId: number, action: "send" | "cancel" | "continue", body: { hash: string; text?: string; images?: string[]; files?: SentFile[]; elementContext?: unknown; maxSteps?: number; asIs?: string[] }, origin?: PromptOrigin): Promise<PageOutcome>;
     /** bring a tab and its window to the front; false when the tab is gone */
     focusTab(tabId: number, windowId?: number): Promise<boolean>;
@@ -273,7 +276,10 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
     /** The tab a session is bound to, or an error saying why there is none. */
     const tabOf = (hash: string): { tabId: number; error?: undefined } | { tabId?: undefined; error: CommandResult<any> } => {
         const b = deps.index.binding(hash);
-        return b?.tabId != null ? { tabId: b.tabId } : { error: fail("unavailable", "the tab this session ran on is closed") };
+        if (b?.tabId != null) return { tabId: b.tabId };
+        // The index names no tab for a run the worker holds with none, or one brought to a tab since: the worker's record says.
+        const held = deps.workerTab?.(hash);
+        return held != null ? { tabId: held } : { error: fail("unavailable", "the tab this session ran on is closed") };
     };
     /**
      * Is this session a chat with no page behind it, and therefore this worker's to answer?

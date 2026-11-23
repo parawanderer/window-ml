@@ -626,6 +626,12 @@ test("a resume is offered only where it would DO something, and refused where th
     assert.equal(resumableHere(rt, key, done({ page: { url: "https://a.example/", tabId: 7 } })), false);
     // A page recorded but no tab is a CLOSED tab — the index drops `tabId` and keeps the url.
     assert.equal(resumableHere(rt, key, done({ page: { url: "https://a.example/" } })), true);
+    // Unless the runtime still HOLDS the run with no tab (TABLESS_RUN.md): the composer's message is its next turn.
+    assert.equal(resumableHere(rt, key, done({ page: { url: "https://a.example/" }, background: { running: 0, waiting: 0, noTab: true } })), false);
+    // A run whose tasks are still going on a closed tab is held the same way.
+    assert.equal(resumableHere(rt, key, done({ page: { url: "https://a.example/" }, background: { running: 1, waiting: 0, noTab: true } })), false);
+    // A background field that does not say noTab changes nothing.
+    assert.equal(resumableHere(rt, key, done({ page: { url: "https://a.example/" }, background: { running: 1, waiting: 0 } })), true);
 
     // Still going: it does not need resuming.
     assert.equal(resumableHere(rt, key, done({ status: "running" })), false);
