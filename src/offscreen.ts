@@ -80,9 +80,8 @@ const store = (): ValueStore => values ??= new ValueStore({
 const filesHide = makeHideRule(async (session) => ((await chrome.runtime.sendMessage({ type: "FILES_HIDE_LIST", session })) as { entries?: HideEntry[] | null } | undefined)?.entries ?? null);   // state: plumbing — one rule for the one reader
 chrome.runtime.onMessage.addListener((msg: { type?: unknown } | undefined) => { if (msg?.type === "FILES_HIDE_CHANGED") filesHide.forget(); return false; });
 const agentFiles = new AgentFiles();   // state: plumbing — a handle to the ml-agent-files database, declared as session.files
-const filesReader = new RangedReader({   // state: plumbing — the one reader, a channel per worker
+const filesReader = new RangedReader({ hidden: filesHide.rule,   // state: plumbing — the one reader, a channel per worker
     source: createFilesSource({ store, send: (m) => chrome.runtime.sendMessage(m) }),
-    hidden: filesHide.rule,
     agent: agentFiles,
     quotaBytes: async (session) => {
         const bytes = (await chrome.runtime.sendMessage({ type: "FILES_QUOTA", session }) as { bytes?: unknown } | undefined)?.bytes;
