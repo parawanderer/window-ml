@@ -33,12 +33,13 @@ const RUNNING = "That session is starting: wait for its turn to begin or end, th
 
 /** The moves the person asked for while the run's turn ran, by run: the destination tab. Applied at the turn's next step
  *  boundary ({@link applyLiveMove}) or, when the turn ends first, after it ({@link moveAfterTurn}); a later ask replaces
- *  an earlier one. */
-const queuedMoves = new Map<string, number>();
+ *  an earlier one. `nav` marks the tab a run with no tab opened with `navigate` (no-tab-nav.ts), which the model is told
+ *  as its own navigation. */
+const queuedMoves = new Map<string, { tab: number; nav?: true }>();
 defineState({
     id: "run.queuedMove", scope: "run", realm: "worker", audience: "human", lostOn: ["worker-eviction"],
     describe: "The tab the person moved the run to while its turn ran, which it moves to when its current step ends.",
-    read: ({ runId }) => (runId ? queuedMoves.get(runId) : undefined),
+    read: ({ runId }) => (runId ? queuedMoves.get(runId)?.tab : undefined),
 });
 
 defineState({
@@ -63,6 +64,23 @@ export const movedNote = (from: { title?: string; url?: string }, to: { title: s
     `[the person moved this run from tab "${from.title || from.url || "unknown"}"${from.url ? ` (${from.url})` : ""} to tab "${to.title}" (${to.url}); the previous page's state is not carried]`;
 
 /**
+ * The note the model reads once the tab its `navigate` opened from no tab holds the run (TABLESS_RUN.md, "`navigate`
+ * from the detached state"). A system message, the worker's words.
+ * @param to the tab it opened: its title and URL as the browser reports them
+ * @returns the note
+ */
+export const navigatedNote = (to: { title: string; url: string }): string =>
+    `[this run had no tab; its navigate opened tab "${to.title}" (${to.url}), and the run is on it now]`;
+
+/**
+ * The note the model reads when the tab its `navigate` opened from no tab could not take the run.
+ * @param reason why, as the execution log records it
+ * @returns the note
+ */
+export const navDroppedNote = (reason: string): string =>
+    `[the tab your navigate opened could not take this run (${reason}); the run still has no tab, and its page tools still need one]`;
+
+/**
  * Take the note a move left for a run's next turn, once.
  * @param runId the run
  * @returns the note, or undefined when the run was not moved since its last turn
@@ -83,7 +101,7 @@ export function takeMovedNote(runId: string): string | undefined {
  * @param toTabId the tab the person chose
  * @returns moved, or why not
  */
-export async function moveRun(runId: string, toTabId: number): Promise<MoveOutcome> {
+export async function moveRun(runId: string, toTabId: number, opts: { nav?: true } = {}): Promise<MoveOutcome> {
     if (startingControllers.has(runId)) return { refused: RUNNING };
     if (runControllers.has(runId) || runInboxes.has(runId)) return queueLiveMove(runId, toTabId);
     const snap = bgRuns.get(runId);
@@ -105,7 +123,7 @@ export async function moveRun(runId: string, toTabId: number): Promise<MoveOutco
     snap.p = { ...snap.p, pageOrigin: origin, pageUrl: url, pageTitle: tab.title || undefined };
     // The person choosing the tab is the consent the cross-domain gate asks for (agent-tools.md, "Variant B").
     grantRunOrigin(runId, origin);
-    snap.moved = movedNote(left, { title: tab.title || url, url });
+    snap.moved = opts.nav ? navigatedNote({ title: tab.title || url, url }) : movedNote(left, { title: tab.title || url, url });
     // Brought back to a tab it left, that tab is its own again.
     // From no tab there is no tab it left (no-tab.ts).
     snap.leftTabs = [...(snap.leftTabs ?? []).filter((t) => t !== toTabId), ...(isNoTab(from) ? [] : [from])];
@@ -164,9 +182,21 @@ async function queueLiveMove(runId: string, toTabId: number): Promise<MoveOutcom
     if (!tab || !/^https?:/i.test(tab.url || "")) return { refused: "A session can only move to an ordinary web page (http or https)." };
     // The turn ended during the await: a move between turns, as the person asked.
     if (!runControllers.has(runId) && !runInboxes.has(runId)) return moveRun(runId, toTabId);
-    queuedMoves.set(runId, toTabId);
+    queuedMoves.set(runId, { tab: toTabId });
     recordRunLog(runId, { subsystem: "tab", kind: "move-queued", detail: { to: toTabId } });
     return { queued: MOVE_QUEUED };
+}
+
+/**
+ * Queue the move onto the tab a running turn with no tab opened with `navigate` (no-tab-nav.ts): applied, as a person's
+ * move is, at the turn's next step boundary, or after the turn when it ended first. A later move the person asks for
+ * replaces it.
+ * @param runId the run
+ * @param toTabId the tab the navigate opened
+ */
+export function queueNavMove(runId: string, toTabId: number): void {
+    queuedMoves.set(runId, { tab: toTabId, nav: true });
+    recordRunLog(runId, { subsystem: "tab", kind: "move-queued", reason: "navigate", detail: { to: toTabId } });
 }
 
 /** What a running turn lends {@link applyLiveMove}: the tab it is on, the page it shows, and how to re-point the turn's own
@@ -194,12 +224,17 @@ export interface LiveTurn {
  *   dropped
  */
 export async function applyLiveMove(runId: string, turn: LiveTurn): Promise<{ note: string; pageInfo?: string } | undefined> {
-    const to = queuedMoves.get(runId);
-    if (to == null) return undefined;
+    const queued = queuedMoves.get(runId);
+    if (!queued) return undefined;
     queuedMoves.delete(runId);
+    const { tab: to, nav } = queued;
     const from = turn.tabId();
     if (to === from) return undefined;
-    const drop = (reason: string): undefined => { recordRunLog(runId, { level: "warn", subsystem: "tab", kind: "move-dropped", reason, detail: { from, to } }); return undefined; };
+    // A person's move that cannot be made is the person's to see (the log); a navigate's is the model's, which was told it went.
+    const drop = (reason: string): { note: string } | undefined => {
+        recordRunLog(runId, { level: "warn", subsystem: "tab", kind: "move-dropped", reason, detail: { from, to, ...(nav ? { navigate: true } : {}) } });
+        return nav ? { note: navDroppedNote(reason) } : undefined;
+    };
     const tab = await Promise.resolve(chrome.tabs.get(to)).catch(() => undefined);
     const url = tab?.url || "";
     if (!tab || !/^https?:/i.test(url)) return drop("not-a-page");
@@ -226,7 +261,8 @@ export async function applyLiveMove(runId: string, turn: LiveTurn): Promise<{ no
     }
     // Brought back to a tab it left, that tab is its own again. A first turn has no `bgRuns` entry yet: its turn's end
     // takes them from `firstTurnLeftTabs` (`keptOnRebuild`).
-    const leftTabs = [...((snap?.leftTabs ?? firstTurnLeftTabs.get(runId)) ?? []).filter((t) => t !== to), from];
+    // From no tab there is no tab it left (no-tab.ts).
+    const leftTabs = [...((snap?.leftTabs ?? firstTurnLeftTabs.get(runId)) ?? []).filter((t) => t !== to), ...(isNoTab(from) ? [] : [from])];
     if (snap) snap.leftTabs = leftTabs;
     else firstTurnLeftTabs.set(runId, leftTabs);
     // The old page's registration of the run ends, as a turn's end ends it; nothing it answers is read.
@@ -235,8 +271,11 @@ export async function applyLiveMove(runId: string, turn: LiveTurn): Promise<{ no
     toPageUi(from, { type: "ML_DEBUG_TO_PAGE", event: leftNote });
     relayDebugEvent(from, leftNote);
     void cancelPageTasks(runId);
-    recordRunLog(runId, { subsystem: "tab", kind: "moved", detail: { from, to, live: true } });
-    return { note: movedNote(left, { title: tab.title || url, url }), ...(pageInfo ? { pageInfo } : {}) };
+    recordRunLog(runId, { subsystem: "tab", kind: "moved", ...(nav ? { reason: "navigate" } : {}), detail: { from, to, live: true } });
+    // A run that had no tab has one now: its session row stops saying so.
+    if (isNoTab(from)) void refreshTaskRow(runId);
+    const dest = { title: tab.title || url, url };
+    return { note: nav ? navigatedNote(dest) : movedNote(left, dest), ...(pageInfo ? { pageInfo } : {}) };
 }
 
 /**
@@ -245,10 +284,11 @@ export async function applyLiveMove(runId: string, turn: LiveTurn): Promise<{ no
  * @param runId the run
  */
 export function moveAfterTurn(runId: string): void {
-    const to = queuedMoves.get(runId);
-    if (to == null) return;
+    const queued = queuedMoves.get(runId);
+    if (!queued) return;
     queuedMoves.delete(runId);
-    void moveRun(runId, to).then((r) => {
+    const to = queued.tab;
+    void moveRun(runId, to, queued.nav ? { nav: true } : {}).then((r) => {
         if ("refused" in r) recordRunLog(runId, { level: "warn", subsystem: "tab", kind: "move-dropped", reason: "after-turn", detail: { to } });
     }, () => recordRunLog(runId, { level: "warn", subsystem: "tab", kind: "move-dropped", reason: "after-turn", detail: { to } }));
 }

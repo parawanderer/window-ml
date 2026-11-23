@@ -77,6 +77,7 @@ import { delegateSend, CHANNEL_GONE } from "./delegate-send";
 import { NAV_COMMIT_MS } from "./nav-barrier";
 import { GATED_BUILTINS } from "../tools/tool-registry";
 import { isNoTab, needsPage, noPageText } from "./no-tab";
+import { navigateFromNoTab, NO_TAB_RELATIVE, noTabNavRender, noTabNavTarget } from "./no-tab-nav";
 import { checkVerifyRequest, verifyAsked, verifyVerb, withoutPageVision, workerVerify, VERIFY_REFUSED, VERIFY_WITHHELD, type VerifyOutcome, type WorkerVerify } from "./worker-verify";
 import { topDocument } from "./worker-vision";
 import { capPageAnswer, capPageContext } from "./page-answer-caps";
@@ -695,6 +696,13 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             if (payload.renderOnly || payload.precheck || payload.readonlyTry) throw new Error("the run is held on this page");
             return { result: held.kind === "deny" ? arrivalDeniedText(held) : arrivalWaitingText(held) };
         }
+        // A navigate from NO tab is the worker's (no-tab-nav.ts): its card is drawn here, and the call opens the tab the run
+        // moves onto at its next step. It reached here approved: the gate asks for every one (`navNeedsConsent`).
+        if (isNoTab(tabId) && payload.name === "navigate") {
+            if (payload.renderOnly) return { renderIn: await noTabNavRender(String(payload.args?.url ?? "")) };
+            if (payload.precheck || payload.readonlyTry) throw new Error("the run has no page");
+            return navigateFromNoTab(runId, String(payload.args?.url ?? ""));
+        }
         // Nor anything at all for a run with NO tab (no-tab.ts): a page tool is answered with how the run gets a page, and
         // stays in the tool list so the model learns there is one (TABLESS_RUN.md). The worker's own tools run as ever.
         if (isNoTab(tabId) && needsPage(payload.name, payload.args, p.tools.some((t) => t.name === payload.name && !!t.remote))) {
@@ -856,6 +864,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         /** Whether a read of the start origin still counts as consented: the tab is on that origin, or the person granted it. */
         const startOriginRead = (url: string): boolean => fetchOnPageOrigin(url) || (byWorker() && runsInWorker(p, "fetch_url") && runOriginGranted(runId, url));
         const navNeedsConsent = (url: string): boolean => {
+            // From NO tab every destination is another site, whatever `crossOrigin` says: there is no site for it to be the
+            // same as, and no origin consented before counts (TABLESS_RUN.md). One it refuses (a relative URL) never gets here (`unrunnable`).
+            if (isNoTab(tabId)) return true;
             if (!p.crossOrigin) return false;   // can't cross origins → tool refuses cross-origin; same-site fine → no gate
             try {
                 // Judged on where the browser goes, never on the spelling: a backslash, a scheme with too few slashes and a
@@ -1885,7 +1896,10 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     return name === "click" ? clickLinkRefusal(env?.href) ?? null : null;
                 },
                 // A page tool of a run with no tab: answered before the gate, which would ask on a card no tab shows.
-                unrunnable: (name, args) => (isNoTab(tabId) && needsPage(name, args, p.tools.some((t) => t.name === name && !!t.remote)) ? noPageText(name) : null),
+                unrunnable: (name, args) => (!isNoTab(tabId) ? null
+                    : needsPage(name, args, p.tools.some((t) => t.name === name && !!t.remote)) ? noPageText(name)
+                    // A navigate from no tab to a URL it cannot go to (a relative one) is refused before any card (no-tab-nav.ts).
+                    : name === "navigate" && !noTabNavTarget(String(args.url ?? "")) ? NO_TAB_RELATIVE : null),
                 approve: async ({ tool, arguments: args, seq, step, askWhy: gateWhy }) => {
                     // A page the run is held on is answered first (nav-arrival.ts): this call's card follows only if the
                     // person lets the run act there.
