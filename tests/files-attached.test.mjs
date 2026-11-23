@@ -151,3 +151,45 @@ test("secretForms: asks the worker at every call, keeps a form's text and case r
         await assert.rejects(() => src.secretForms(), (e) => e.message === "the secrets could not be read", JSON.stringify(String(bad)));
     }
 });
+
+// --- the quota of run-made files, and a discarded write ---
+
+const askQuota = (bg, sender = OFFSCREEN) => bg.send({ type: "FILES_QUOTA", session: "s" }, { ...sender }).then(plain);
+const POPUP_SENDER = { url: "chrome-extension://test/popup.html" };
+
+test("FILES_QUOTA answers filesQuotaMB in bytes to the offscreen document (the default when unset), and null to anyone else", { timeout: 30000 }, async () => {
+    const { bg } = await wireRun(async () => {}, { calls: [{ name: "python_exec", args: { code: "print(1)" } }] });
+    assert.deepEqual(await askQuota(bg), { bytes: 1024 * 1024 * 1024 }, "a config from before the setting reads as the default");
+    const set = (await wireRun(async () => {}, { calls: [{ name: "python_exec", args: { code: "print(1)" } }], configExtra: { filesQuotaMB: 3 } })).bg;
+    assert.deepEqual(await askQuota(set), { bytes: 3 * 1024 * 1024 });
+    assert.deepEqual(await askQuota(bg, PAGE), { bytes: null }, "a page's tab sender");
+    assert.deepEqual(await askQuota(bg, POPUP_SENDER), { bytes: null }, "another extension page");
+    assert.deepEqual(await askQuota(bg, { url: "chrome-extension://test/offscreen.html", tab: { id: 1 } }), { bytes: null }, "the offscreen URL on a tab");
+    assert.deepEqual(await askQuota(bg, {}), { bytes: null }, "no sender facts");
+});
+
+test("FILES_LOST is recorded in the session's run log from the offscreen document only", { timeout: 30000 }, async () => {
+    let seen;
+    const { bg } = await wireRun(async (wire) => { seen = wire; }, { calls: [{ name: "python_exec", args: { code: "print(1)" } }] });
+    const lost = async () => (await bg.send({ type: "DUMP_RUN_LOG", payload: { run: seen.run } }, POPUP_SENDER)).data.events.filter((e) => e.subsystem === "files");
+    const rec = { type: "FILES_LOST", session: seen.run, path: "agent/w.npy", at: 1, reason: "channel-ended" };
+    // Fire-and-forget, as the offscreen document sends it: nothing answers.
+    const delivered = () => new Promise((r) => setTimeout(r, 10));
+    for (const sender of [PAGE, POPUP_SENDER, { url: "chrome-extension://test/offscreen.html", tab: { id: 1 } }, {}]) void bg.send(rec, { ...sender });
+    await delivered();
+    assert.deepEqual(await lost(), [], "a sender other than the offscreen document recorded a discard");
+    void bg.send(rec, { ...OFFSCREEN });
+    await delivered();
+    const got = await lost();
+    assert.equal(got.length, 1);
+    assert.equal(got[0].kind, "discarded");
+    assert.equal(got[0].reason, "channel-ended");
+    assert.equal(got[0].detail.path, "agent/w.npy");
+});
+
+test("FILES_QUOTA and FILES_LOST are not a page's messages: the relay has no entry for them", () => {
+    for (const t of ["FILES_QUOTA", "FILES_LOST"]) {
+        assert.equal(t in HANDLE_MAP, false, t);
+        assert.ok(!Object.values(HANDLE_MAP).some((e) => e.type === t || e.responseType === t), t);
+    }
+});

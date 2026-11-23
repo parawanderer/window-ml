@@ -782,8 +782,9 @@ disposes it when the worker dies, which aborts every write still open.
   it closed. A refused write (ENOSPC) fails its writer: later writes raise the same errno and the close aborts, so no
   file lands with part of what was written. A per-cell commit stays possible (the txn shape covers it) and is not built.
 - **Refusals are the reader's.** Where a run may write is the reader's to say, and the mount passes its errno through
-  unchanged: EROFS at the root and in `attached/`, free under `agent/` (ruling 86) once the reader's write side lands.
-  Until then the reader answers EROFS to every write, `agent/` included (`src/session/ranged-reader.ts`). The modes
+  unchanged: EROFS at the root and in `attached/`, free under `agent/` (ruling 86), where a closed file lands in the
+  session's store of run-made files (`src/session/agent-files.ts`) within `filesQuotaMB`, past which a write is ENOSPC
+  (`src/session/ranged-reader.ts`). A file still open when the worker goes is discarded and noted, never half-written. The modes
   carry write bits on purpose: Emscripten checks them before calling the mount and would say EACCES where the answer is
   EROFS. A symlink and a hard link are EPERM (this core's `os` has no `link`; the node op refuses anyway). A refused
   first `open` drops the directory's listing, so the next lookup asks the reader, which has no such file: no phantom is

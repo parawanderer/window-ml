@@ -5,8 +5,10 @@ verb, attaching a PDF to an agent run, and every attachment to a worker-built ru
 pointers, `ml.dereference` of `@file:`, `look` at a document and upload progress are built; Python's `files` and the
 files panel are next (Shane and the calm-chat-motion session). A session's files as a directory, `/files/`, is
 ruled and PARTLY BUILT (2026-11-22): the ranged reader's read side (#2048), its wiring in the offscreen document and its
-scrub (#2058), and Python's mount in a worker-hosted run (#2026). Not built: `ml.fs`, the write side (every write
-answers EROFS, `agent/` included), the quota, the file browser, and the folder on the person's disk (ruling 91).** The
+scrub (#2058), Python's mount in a worker-hosted run (#2026), `ml.fs`'s read members (#2083), and the write side
+under `agent/` with its quota, `filesQuotaMB`: Python's writes land ("Writes"). Not built: `ml.fs`'s write members,
+`cp("@tool:…")`, the turn-start line naming a file not written, a sweep of files no session holds, the file browser,
+and the folder on the person's disk (ruling 91).** The
 current design of `/files` is in "`/files`: the layout, `ml.fs`, Python's mounts and the backup" and "`/files/` read
 by range, and `ml.fs`"; the older sections below it name what they lost, and to which ruling. The order is
 three slices, each landing on its own: text files, then PDFs, then documents as `@file:` pointers in agent runs. Slice
@@ -913,8 +915,12 @@ preview, like any other exec value.
   value that is not a positive whole number reads as the default, and a larger number widens it. The model may propose
   a change to it (ruling 76, Shane, 2026-11-19) through `change_setting` (MODEL_SETTINGS.md, "The surface"), as for
   `taskTurnChainMax`: the key is guarded, so a change always asks the person. Over the quota, a write rejects with
-  `ENOSPC`, and the message names `ml.fs.rm`, the files panel, and proposing a larger `filesQuotaMB` with
-  `change_setting`. It is checked on every chunk written, not only at the commit.
+  `ENOSPC`, and the message names the quota in MiB, removing files under `/files/agent/` (`os.remove` in Python; it
+  names `ml.fs.rm` and the files panel once they are built), and asking the person to raise `filesQuotaMB` with
+  `change_setting`. It is checked on every chunk written and every truncate, and again at the commit, against what the
+  session has stored plus every pending file of the session on any channel. BUILT: the offscreen document cannot read
+  the settings, so it asks the service worker at each file opened for writing (`FILES_QUOTA`, answered to the offscreen
+  document only); an ask that fails refuses the open with `EIO`.
 - **The commit point, for now** (ruling 75, Shane, 2026-11-19, accepting the coordinator's call): a file commits when
   it is CLOSED, in both modes, as Python's and Node's own files do; each file is atomic on its own, and a cell that
   fails keeps the files it already closed. An `ml.fs` write member is a transaction of one (`writeFile` commits at its
@@ -922,7 +928,19 @@ preview, like any other exec value.
   its files, so committing every write of a cell together when it succeeds stays one switch away.
 - **A worker evicted mid-file.** A commit is atomic: an uncommitted file's pending part is discarded when its writer
   goes (a worker evicted, a kernel killed, a tab closed), the previous version stands, and the next turn's start
-  message says which file was not written. Nothing is half-written.
+  message says which file was not written (NOT BUILT). Nothing is half-written. BUILT: each discard is a run log record
+  (`files` `discarded`, its path) and a stored note of the path and the time, the newest 50 per session, which the state
+  inspector reads (`session.files`).
+- **Where they are kept.** BUILT: in their own IndexedDB database, `ml-agent-files`, not the value store: its budget
+  and eviction are not a session's files' lifetime, and its `sha256` would read a whole file into memory. A file's
+  version is minted at each commit. A transaction commits as ONE IndexedDB transaction over the files' nodes and bytes.
+  A session's files are deleted with the session (the person deletes it, or the store evicts it with nothing archived),
+  kept when it is archived, and never at a run's end.
+- **Two writers of one path: the last commit wins.** A commit applies its writes and name changes in order against
+  what is stored when it commits, not when its files were opened. So two channels writing one path each replace it in
+  turn, and the later commit's bytes stand; a pending write whose path another transaction renames or unlinks first
+  lands at that path when it commits, recreating it, while the renamed file keeps the bytes it had. A commit whose
+  folder another transaction removed first fails whole (`ENOENT`).
 
 #### `ml.files` is superseded
 
@@ -1002,16 +1020,19 @@ are what the model reads.
    slice 2's `ml.fs` reads get it too, text and binary alike (the coordinator, 2026-11-20 to 22, "The scrub"; the
    `[REDACTED:<NAME>]` window, `scrubRange` in `src/secret-scrub-range.ts`, is not used for them). The write verbs
    check the transaction and the path
-   and then answer `EROFS` everywhere, `agent/` included, until slice 3 lands the write side; `begin`, `commitTx` and
-   `abortTx` of an empty transaction succeed, so a front end that opens one per cell works read-only. The offscreen
+   and then answer `EROFS` at the root and in `attached/`; under `agent/` they write ("Writes"), and with no store of
+   run-made files (a reader built without one) they answer `EROFS` there too. `begin`, `commitTx` and `abortTx` of an
+   empty transaction succeed, so a front end that opens one per cell works read-only. The offscreen
    document's wiring has landed: `setFilesReader` over one `RangedReader` whose source (`src/python/files-source.ts`)
    asks the service worker for a session's files with `FILES_ATTACHED`, answered from the offscreen document only,
    and reads the bytes from the offscreen document's own value store, held rows of that session only.
 2. `ml.fs` read members in the isolated world, the routing, the red-team pass, and the Node parity corpus for the
    read members, landing with every exec that names `ml.fs` asking; the dialect entry with its tests follows the hide
-   rule (ruling 34, "The gate"). Must not break: `ml.current`'s and `ml.sh`'s routing rows. In flight
-   (session-store, 2026-11-22), not built.
-3. `ml.fs` write members, the quota setting, and the parity corpus extended to them.
+   rule (ruling 34, "The gate"). Must not break: `ml.current`'s and `ml.sh`'s routing rows. BUILT (#2083), but for
+   the dialect entry.
+3. `ml.fs` write members, the quota setting, and the parity corpus extended to them. BUILT: the reader's write side,
+   the store of run-made files and the quota setting, so Python's writes land. Not built: the `ml.fs` write members
+   and their parity rows, then `cp("@tool:…")`.
 4. The Python mount on route A's type over the reader, slice 3's `files` as paths, the restart's remount. Must not
    break: route A's Stop rows, rerun on this server. BUILT (#2026, the async lane): the mount, remounted at every
    cell; its design was fixed by ruling 75's one store, not by the packages measurement. Not built: slice 3's `files`
@@ -2025,8 +2046,8 @@ JavaScript gets Node's `fs`, as `ml.fs`.
 - **The quota is per session** ("Writes", `filesQuotaMB`). **No restorable rm:** a delete is final, except that a cited
   file keeps its frozen version ("Mutable, frozen when cited").
 - AS BUILT (#2026, #2048, #2058): the reader lists the root as `agent/` and `attached/`, and `attached/<handle>/<name>`
-  from the session's attachments; `agent/` is listed empty and every write, there too, answers EROFS until the write
-  side lands (slice 3 of "What it owes"). The Python mount enters `/files/agent/` at every cell.
+  from the session's attachments, and `agent/` from the session's run-made files (`ml-agent-files`, "Writes"). The
+  Python mount enters `/files/agent/` at every cell.
 
 ### `/files/notes/` and `/shared/notes/`: the agent's notes (IDEA, Shane, 2026-11-22; nothing assigned, nothing built)
 
@@ -2162,8 +2183,8 @@ value; dump then reload equals the stored table, its values and its declared dty
 ### Python's view: one mount type over the reader (ruling 36, as amended under ruling 75)
 
 BUILT, the mount only (#2026, docs/dev/python-sandbox.md, "`/files` in Python"): route A's type over the ranged
-reader for both folders, as below, switched on in the offscreen document by `setFilesReader` (#2058). Writes answer
-EROFS until the reader's write side lands. Ruling 36 named two mounts (WORKERFS for `attached/`, a custom mount over
+reader for both folders, as below, switched on in the offscreen document by `setFilesReader` (#2058). Writes under
+`agent/` land; elsewhere they answer EROFS. Ruling 36 named two mounts (WORKERFS for `attached/`, a custom mount over
 OPFS for `agent/`); the coordinator's call of 2026-11-19 under ruling 75 replaced them with this one type.
 
 Python sees `/files` through Emscripten mounts, never a mount that loads whole files. ONE store, the shelf, holds
