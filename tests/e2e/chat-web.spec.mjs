@@ -461,6 +461,37 @@ test("the start page picks a device before a model, and starts the run on the on
     await page.close();
 });
 
+test("No tab is offered where the runtime starts runs with no page, says what such a run cannot do, and starts one", async () => {
+    const { page, errors } = await open(DESKTOP);
+    await expect(page.locator(".chat-start-box")).toBeVisible();
+    const where = page.getByRole("button", { name: /^Where it runs:/ });
+    await where.click();
+    await page.getByRole("option", { name: /^No tab/ }).click();
+    await expect(where).toHaveAccessibleName("Where it runs: no tab");
+    // Said in the form, not only in a tip: what it cannot do, and that ml.sh asks on every call.
+    const note = page.locator('[data-field="no-tab"]');
+    await expect(note).toContainText("cannot read or act on a page");
+    await expect(note).toContainText("asks you on every call");
+    await page.locator(".chat-start-box textarea").fill("sum the logs");
+    await page.locator(".chat-start-box textarea").press("Enter");
+    await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({ type: "agent.start", runtime: "laptop", task: "sum the logs", target: { kind: "detached" } });
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("No tab is not offered by a runtime without capabilities.detached", async () => {
+    const { page, errors } = await open(DESKTOP);
+    await page.getByRole("button", { name: /^Device:/ }).click();
+    await page.getByRole("listbox", { name: "Device" }).getByRole("option", { name: /^Desk PC/ }).click();
+    const where = page.getByRole("button", { name: /^Where it runs:/ });
+    await where.click();
+    await expect(page.getByRole("option", { name: /^New tab/ })).toBeVisible();
+    await expect(page.getByRole("option", { name: /^No tab/ })).toHaveCount(0);
+    await expect(page.locator('[data-field="no-tab"]')).toHaveCount(0);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 // A choice of one is not a choice: asking which device to run on when only one can is a control that reads as
 // configurable and is not. The boundary is the whole rule, so it is tested by CROSSING it rather than by opening two
 // different worlds — the pill is on screen, a device goes away, and it goes with it.
