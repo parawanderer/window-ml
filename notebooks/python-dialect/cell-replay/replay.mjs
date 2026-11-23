@@ -359,10 +359,12 @@ function captured(ns, r, later, binds) {
 function mountFiles(list) {
     const FS = py.FS;
     const rm = (p) => { if (FS.isDir(FS.stat(p).mode)) { for (const n of FS.readdir(p)) if (n !== "." && n !== "..") rm(`${p}/${n}`); FS.rmdir(p); } else FS.unlink(p); };
+    // the last run's copy was left read-only: open it again before clearing it
+    const unlock = (p) => { const st = FS.stat(p); FS.chmod(p, FS.isDir(st.mode) ? 0o755 : 0o644); if (FS.isDir(st.mode)) for (const n of FS.readdir(p)) if (n !== "." && n !== "..") unlock(`${p}/${n}`); };
+    try { unlock("/files"); } catch { /* no /files yet */ }
     // in the worker's order, so a listing of / or /files reads as it did live (/share is Pyodide's own in the browser)
     for (const d of ["/files", "/files/agent", "/files/attached", "/share"]) { try { FS.mkdir(d); } catch { /* exists */ } }
     for (const d of ["/files/attached", "/files/agent"]) for (const n of FS.readdir(d)) if (n !== "." && n !== "..") rm(`${d}/${n}`);
-    for (const d of ["/files", "/files/agent", "/files/attached"]) FS.chmod(d, 0o755);
     for (const { name, id, path: from } of list) { FS.mkdir(`/files/attached/${id}`); FS.writeFile(`/files/attached/${id}/${name}`, fs.readFileSync(from)); }
     // read-only, as the worker's mount answers every write (EROFS there; a PermissionError here, the same "raised")
     const lock = (p) => { const st = FS.stat(p); if (FS.isDir(st.mode)) for (const n of FS.readdir(p)) if (n !== "." && n !== "..") lock(`${p}/${n}`); FS.chmod(p, FS.isDir(st.mode) ? 0o555 : 0o444); };
