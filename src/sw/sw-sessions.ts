@@ -50,7 +50,7 @@ import { shellCapabilities, refreshShell, onShellStatus, hostMissing, hostIsOutd
 import { keptEvent } from "./sw-asks";
 import { forRow, forRowText } from "./sw-scrub";
 import { onRegistryChanged } from "./sw-secret-registry";
-import { isNoTab } from "./no-tab";
+import { isNoTab, NO_TAB } from "./no-tab";
 
 /**
  * Ask a tab's page something, PUTTING THE CONTENT SCRIPT BACK if it is not there.
@@ -144,7 +144,7 @@ function localRuntime(): RuntimeInfo {
         // backend behind it); `pythonBench` is MEASURED, because a checkout without the wheels builds a bundle whose
         // bench would fail at run time. `localSettings`: this browser's pages may edit its settings, which only the
         // extension's own pages can (a phone over the hub reports the capability and holds nothing to edit with).
-        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: pythonBundled, localSettings: true, switchModel: true, attachFiles: true, attachPdf: true, ...archiveCapability(), ...blankStartCapability(), ...shellCapabilities(), ...(attentionCodes().length ? { attention: attentionCodes() } : {}) },
+        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: pythonBundled, localSettings: true, switchModel: true, detached: true, attachFiles: true, attachPdf: true, ...archiveCapability(), ...blankStartCapability(), ...shellCapabilities(), ...(attentionCodes().length ? { attention: attentionCodes() } : {}) },
         // This browser's own pages hold every scope.
         grants: [{ scope: "view" }, { scope: "drive" }, { scope: "approve" }, { scope: "screen" }],
     };
@@ -436,6 +436,13 @@ export function configureSessionCommands(run: RunDeps): void {
         startAgent: async (tabId, opts, origin) => {
             try {
                 const { hash } = await run.startUserRun(tabId, { ...opts, surface: "chat" }, origin ? { sender: origin } : {});
+                return { outcome: "started", hash };
+            } catch (e) { return { outcome: "none", error: (e as Error)?.message || String(e) }; }
+        },
+        // A run with no tab is a run on the no-tab sentinel (no-tab.ts): `startUserRun` opens and adopts nothing for it.
+        startDetached: async (opts, origin) => {
+            try {
+                const { hash } = await run.startUserRun(NO_TAB, { ...opts, surface: "chat" }, origin ? { sender: origin } : {});
                 return { outcome: "started", hash };
             } catch (e) { return { outcome: "none", error: (e as Error)?.message || String(e) }; }
         },

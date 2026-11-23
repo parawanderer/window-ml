@@ -157,6 +157,9 @@ export interface CommandDeps {
     /** start a run on a tab, assembled in the worker (`startUserRun`), never by the page it acts on; resolves with how it started */
     /** `error`: why nothing started, in words the person can act on */
     startAgent(tabId: number, opts: { task: string; images?: string[]; files?: SentFile[]; model?: string; maxSteps?: number; vision?: true; stream?: true; asIs?: string[] }, origin?: PromptOrigin): Promise<{ outcome: PageOutcome | "started"; hash?: string; error?: string }>;
+    /** start a run with NO tab (`AgentTarget` `detached`), as `startAgent` starts one on a tab; absent where the runtime
+     *  offers none (`capabilities.detached`) */
+    startDetached?(opts: Parameters<CommandDeps["startAgent"]>[1], origin?: PromptOrigin): ReturnType<CommandDeps["startAgent"]>;
     /** open a new tab at a URL and wait until the extension can talk to it; rejects when it never answers */
     openTab(url: string): Promise<number>;
     /** the page a blank agent target opens when the command names no URL ("" when unset) */
@@ -325,6 +328,8 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             catch (err) { return { error: fail("failed", `could not start on ${url} — ${(err as Error)?.message || err}`) }; }
         }
         if (target?.kind === "headless") return { error: fail("unsupported", "this browser has no headless runtime") };
+        // A resume with no tab is TABLESS_RUN.md's step 4, not built: said, never read as a malformed target.
+        if (target?.kind === "detached") return { error: fail("unsupported", "this browser cannot resume a session with no tab yet") };
         return { error: fail("invalid", "a run needs a target: a tab, or a blank tab") };
     };
 
@@ -463,18 +468,24 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             if (tooMany) return fail("invalid", tooMany);
             if (task.length > CHAT_TEXT_MAX) return fail("invalid", "that task is too long");
             if (c.maxSteps != null && (!Number.isInteger(c.maxSteps) || c.maxSteps <= 0)) return fail("invalid", "maxSteps must be a positive whole number");
-            const t = await resolveTarget(c.target as { kind?: unknown; tabId?: unknown; url?: unknown } | undefined);
-            if (t.error) return t.error;
-            const tabId = t.tabId;
-
-            const r = await deps.startAgent(tabId, {
+            const opts = {
                 task, ...(images.length ? { images } : {}), ...(att.files ? { files: att.files } : {}),
                 ...(c.model ? { model: c.model } : {}),
                 ...(c.maxSteps != null ? { maxSteps: c.maxSteps } : {}),
                 ...(c.vision === true ? { vision: true as const } : {}),
                 ...(c.stream === true ? { stream: true as const } : {}),
                 ...(commandAsIs(c.asIs, from) ? { asIs: commandAsIs(c.asIs, from) } : {}),
-            }, commandOrigin(from, c.ui));
+            };
+            let r: Awaited<ReturnType<CommandDeps["startAgent"]>>;
+            // No tab: nothing to resolve, and nothing opened (TABLESS_RUN.md).
+            if ((c.target as { kind?: unknown } | undefined)?.kind === "detached") {
+                if (!deps.startDetached) return fail("unsupported", "this runtime cannot start a run with no tab");
+                r = await deps.startDetached(opts, commandOrigin(from, c.ui));
+            } else {
+                const t = await resolveTarget(c.target as { kind?: unknown; tabId?: unknown; url?: unknown } | undefined);
+                if (t.error) return t.error;
+                r = await deps.startAgent(t.tabId, opts, commandOrigin(from, c.ui));
+            }
             if (r.outcome === "started" && r.hash) {
                 if (!c.ephemeral) deps.keepSession(r.hash);
                 return ok({ session: { runtime: deps.runtime, hash: r.hash } });
