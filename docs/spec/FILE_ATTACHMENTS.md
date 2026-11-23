@@ -6,9 +6,9 @@ pointers, `ml.dereference` of `@file:`, `look` at a document and upload progress
 files panel are next (Shane and the calm-chat-motion session). A session's files as a directory, `/files/`, is
 ruled and PARTLY BUILT (2026-11-22): the ranged reader's read side (#2048), its wiring in the offscreen document and its
 scrub (#2058), Python's mount in a worker-hosted run (#2026), `ml.fs`'s read members (#2083), and the write side
-under `agent/` with its quota, `filesQuotaMB`: Python's writes land ("Writes"). Not built: `ml.fs`'s write members,
-`cp("@tool:…")`, the turn-start line naming a file not written, a sweep of files no session holds, the file browser,
-and the folder on the person's disk (ruling 91).** The
+under `agent/` with its quota, `filesQuotaMB`: Python's writes land ("Writes"). DEFERRED (the coordinator, 2026-11-23,
+"Writes", "Deferred"): `ml.fs`'s write members, `cp("@tool:…")`, the turn-start line naming a file not written and a
+sweep of files no session holds. Not built: the file browser, and the folder on the person's disk (ruling 91).** The
 current design of `/files` is in "`/files`: the layout, `ml.fs`, Python's mounts and the backup" and "`/files/` read
 by range, and `ml.fs`"; the older sections below it name what they lost, and to which ruling. The order is
 three slices, each landing on its own: text files, then PDFs, then documents as `@file:` pointers in agent runs. Slice
@@ -911,7 +911,8 @@ preview, like any other exec value.
 - **The quota** (this spec's open question): with nothing loaded at start, the quota is no longer a start-time budget.
   It bounds what a session's runs keep on disk: the person's attachments do not count, run-made files do, at their
   stored size (not three times). Its value is the DevTools Settings flag `filesQuotaMB` (the coordinator's call,
-  2026-11-19; owned by the session-store lane), default 1024 MiB per session, below the value store's budget; a stored
+  2026-11-19; owned by the session-store lane), default 1024 MiB per session (a default awaiting Shane's word; it is
+  the one `filesQuotaMB` line of `DEFAULT_CONFIG` in `contract-config.ts`), below the value store's budget; a stored
   value that is not a positive whole number reads as the default, and a larger number widens it. The model may propose
   a change to it (ruling 76, Shane, 2026-11-19) through `change_setting` (MODEL_SETTINGS.md, "The surface"), as for
   `taskTurnChainMax`: the key is guarded, so a change always asks the person. Over the quota, a write rejects with
@@ -941,6 +942,13 @@ preview, like any other exec value.
   turn, and the later commit's bytes stand; a pending write whose path another transaction renames or unlinks first
   lands at that path when it commits, recreating it, while the renamed file keeps the bytes it had. A commit whose
   folder another transaction removed first fails whole (`ENOENT`).
+- **Deferred** (the coordinator's call, 2026-11-23, to free reviewers for the `ml.fs` dialect entry; not built and not
+  scheduled until Shane asks). (1) `ml.fs`'s write members and their parity rows; until they land, `ml.fs` only reads.
+  (2) `cp("@tool:…")`, a `@tool:` value written to a file. (3) The turn-start line naming a file not written: the
+  discard is recorded (above) but no message tells the model. (4) A sweep of files no session holds. It is not built
+  on `liveHeldSessions`, because that counts an archived session as ended, so a sweep built on it would delete the
+  files an archived session keeps; it needs a check against the archive first. Until then a session's files go only
+  when the session is deleted or evicted with nothing archived (`forgetAgentFiles`).
 
 #### `ml.files` is superseded
 
@@ -1032,7 +1040,7 @@ are what the model reads.
    the dialect entry.
 3. `ml.fs` write members, the quota setting, and the parity corpus extended to them. BUILT: the reader's write side,
    the store of run-made files and the quota setting, so Python's writes land. Not built: the `ml.fs` write members
-   and their parity rows, then `cp("@tool:…")`.
+   and their parity rows, then `cp("@tool:…")`, both DEFERRED ("Writes", "Deferred").
 4. The Python mount on route A's type over the reader, slice 3's `files` as paths, the restart's remount. Must not
    break: route A's Stop rows, rerun on this server. BUILT (#2026, the async lane): the mount, remounted at every
    cell; its design was fixed by ruling 75's one store, not by the packages measurement. Not built: slice 3's `files`
