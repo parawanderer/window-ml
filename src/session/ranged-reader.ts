@@ -33,8 +33,9 @@ export interface FilesSource {
 }
 
 /** Whether a path of a session's files is hidden (POLICIES.md, "Hiding files", ruling 34): asked at every open and
- *  every read, so a mark made mid-session stops reads through a descriptor already open. */
-export type HideRule = (session: string, path: string) => boolean;
+ *  every read, so a mark made mid-session stops reads through a descriptor already open. A rule that rejects hides the
+ *  path: a list that cannot be read never lets a read past it. */
+export type HideRule = (session: string, path: string) => boolean | Promise<boolean>;
 
 /** The volumes a channel may be opened on: `files` now; `history` (SESSION_HISTORY_STORE.md §6b) once it has one. */
 export type VolumeName = "files";
@@ -295,17 +296,19 @@ export class RangedReader {
         const resolve = async (s: string, p: string, syscall: string): Promise<VNode | null> => {
             try { return await vol.node(s, p); } catch (e) { if (isFsError(e) && e.code === "ENOTDIR") throw fsError("ENOTDIR", syscall, p); throw e; }
         };
-        const statOf = (s: string, p: string, n: VNode): FileStat =>
-            ({ kind: n.kind, size: n.size, mtimeMs: n.mtimeMs, birthtimeMs: n.birthtimeMs, hidden: reader.hidden(s, p), readonly: n.readonly });
+        /** The rule's answer for one path, hidden when the rule throws or rejects. */
+        const isHidden = async (s: string, p: string): Promise<boolean> => { try { return await reader.hidden(s, p); } catch { return true; } };
+        const statOf = async (s: string, p: string, n: VNode): Promise<FileStat> =>
+            ({ kind: n.kind, size: n.size, mtimeMs: n.mtimeMs, birthtimeMs: n.birthtimeMs, hidden: await isHidden(s, p), readonly: n.readonly });
         const hiddenRefusal = (syscall: string, p: string): FsError => fsError("EACCES", syscall, p, `EACCES: '${p}' is hidden`);
         const wfds = new Map<number, Writer>(); // state: plumbing — the channel's write descriptors, discarded at its end
         const txs = new Map<Txn, TxnState>(); // state: plumbing — what each open transaction will commit
         const agent = reader.deps.agent;
         /** A path a write may name: under `agent/`, with a store to keep it; else EROFS (the root, `attached/`). Hidden is EACCES. */
-        const writable = (s: string, path: unknown, syscall: string): string => {
+        const writable = async (s: string, path: unknown, syscall: string): Promise<string> => {
             const p = canonical(path, syscall);
             if (!agent || !p.startsWith("agent/")) throw fsError("EROFS", syscall, p, "read-only file system");
-            if (reader.hidden(s, p)) throw hiddenRefusal(syscall, p);
+            if (await isHidden(s, p)) throw hiddenRefusal(syscall, p);
             return p;
         };
         const stateOf = (s: string, t: unknown, syscall: string): TxnState => {
@@ -334,9 +337,12 @@ export class RangedReader {
             return st;
         };
         /** A change of names: checked as a write is, then kept for the commit, which checks it against what is stored. */
-        const change = (syscall: string, t: unknown, op: (s: string) => AgentOp) => call(syscall, (s) => {
-            const st = stateOf(s, t, syscall);
-            st.items.push(op(s));
+        const change = (syscall: string, t: unknown, op: (s: string) => Promise<AgentOp>) => call(syscall, async (s) => {
+            txnOf(s, t, syscall);
+            const o = await op(s);
+            // The rule was asked meanwhile: the transaction, or the channel's session, may have gone.
+            live(syscall);
+            stateOf(s, t, syscall).items.push(o);
         });
         const rel = (p: string) => p.slice("agent/".length);
 
@@ -355,7 +361,7 @@ export class RangedReader {
                 const p = canonical(path, "stat");
                 const n = await resolve(s, p, "stat");
                 if (!n) throw fsError("ENOENT", "stat", p);
-                return statOf(s, p, n);
+                return await statOf(s, p, n);
             }),
             opendir: (path, opts) => call("opendir", async (s): Promise<DirPage> => {
                 if (opts?.txn != null) txnOf(s, opts.txn, "opendir");
@@ -375,7 +381,7 @@ export class RangedReader {
                 for (const name of page) {
                     const q = p === "" ? name : `${p}/${name}`;
                     const c = await resolve(s, q, "opendir");
-                    if (c) entries.push({ name, ...statOf(s, q, c) });
+                    if (c) entries.push({ name, ...await statOf(s, q, c) });
                 }
                 return { entries, ...(names.length > page.length ? { next: CURSOR + page[page.length - 1] } : {}) };
             }),
@@ -385,7 +391,7 @@ export class RangedReader {
                 const n = await resolve(s, p, "open");
                 if (!n) throw fsError("ENOENT", "open", p);
                 if (n.kind === "dir") throw fsError("EISDIR", "open", p);
-                if (reader.hidden(s, p)) throw hiddenRefusal("open", p);
+                if (await isHidden(s, p)) throw hiddenRefusal("open", p);
                 const blob = await n.blob!();
                 // The channel may have ended, or its session changed, while the Blob was found.
                 live("open");
@@ -398,7 +404,7 @@ export class RangedReader {
                 const w = wfds.get(fd);
                 const f: { path: string; blob: Blob } = w && w.session === s ? { path: w.path, get blob() { return w.data; } } : fdOf(s, fd, "read");
                 if (!Number.isInteger(position) || position < 0 || !Number.isInteger(length) || length < 0 || length > FILES_CHUNK || !(dest instanceof Uint8Array)) throw fsError("EINVAL", "read");
-                if (reader.hidden(s, f.path)) throw hiddenRefusal("read", f.path);
+                if (await isHidden(s, f.path)) throw hiddenRefusal("read", f.path);
                 const n = Math.min(length, f.blob.size - position, dest.length);
                 if (n <= 0) return 0;
                 // The scrub inside the mount's read (FILE_ATTACHMENTS.md, "Python's view: two mounts"): the range is
@@ -418,9 +424,9 @@ export class RangedReader {
                 dest.set(bytes.subarray(0, n));
                 return n;
             }),
-            fstat: (fd) => call("fstat", (s) => {
+            fstat: (fd) => call("fstat", async (s) => {
                 const w = wfds.get(fd);
-                if (w && w.session === s) return { kind: "file", size: w.data.size, mtimeMs: (reader.deps.now ?? Date.now)(), birthtimeMs: 0, hidden: reader.hidden(s, w.path), readonly: false };
+                if (w && w.session === s) return { kind: "file" as const, size: w.data.size, mtimeMs: (reader.deps.now ?? Date.now)(), birthtimeMs: 0, hidden: await isHidden(s, w.path), readonly: false };
                 const f = fdOf(s, fd, "fstat");
                 return statOf(s, f.path, f.node);
             }),
@@ -428,7 +434,7 @@ export class RangedReader {
             begin: () => call("begin", (s) => { const t = reader.nextId++; txns.set(t, s); return t; }),
             openWrite: (path, flags: WriteFlags, txn) => call("open", async (s) => {
                 const st = stateOf(s, txn, "open");
-                const p = writable(s, path, "open");
+                const p = await writable(s, path, "open");
                 if (!["w", "a", "r+", "x"].includes(flags)) throw fsError("EINVAL", "open", p);
                 const n = await resolve(s, p, "open");
                 if (n?.kind === "dir") throw fsError("EISDIR", "open", p);
@@ -475,17 +481,17 @@ export class RangedReader {
                 w.sealed = true;
                 wfds.delete(wfd as number);
             }),
-            rename: (from, to, txn) => change("rename", txn, (s) => {
-                const a = writable(s, from, "rename"), b = writable(s, to, "rename");
+            rename: (from, to, txn) => change("rename", txn, async (s) => {
+                const a = await writable(s, from, "rename"), b = await writable(s, to, "rename");
                 return { op: "rename", from: rel(a), to: rel(b) };
             }),
-            unlink: (path, txn) => change("unlink", txn, (s) => ({ op: "unlink", path: rel(writable(s, path, "unlink")) })),
-            mkdir: (path, txn) => change("mkdir", txn, (s) => {
+            unlink: (path, txn) => change("unlink", txn, async (s) => ({ op: "unlink", path: rel(await writable(s, path, "unlink")) })),
+            mkdir: (path, txn) => change("mkdir", txn, async (s) => {
                 const p = canonical(path, "mkdir");
                 if (p === "agent") throw fsError("EEXIST", "mkdir", p);
-                return { op: "mkdir", path: rel(writable(s, p, "mkdir")) };
+                return { op: "mkdir", path: rel(await writable(s, p, "mkdir")) };
             }),
-            rmdir: (path, txn) => change("rmdir", txn, (s) => ({ op: "rmdir", path: rel(writable(s, path, "rmdir")) })),
+            rmdir: (path, txn) => change("rmdir", txn, async (s) => ({ op: "rmdir", path: rel(await writable(s, path, "rmdir")) })),
             commitTx: (txn) => call("commit", async (s) => {
                 const id = txnOf(s, txn, "commit");
                 const st = txs.get(id);
