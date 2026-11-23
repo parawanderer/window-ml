@@ -6,14 +6,19 @@ import type { PolicyConsumer, StoredPolicy } from "./sw-policies";
 export const GLOBAL_POLICIES_KEY = "ml_policies_global";
 
 /** Every consumer, for checking what storage held. */
-export const CONSUMERS: ReadonlySet<string> = new Set<PolicyConsumer>(["fetch", "sh", "act", "setting"]);
+export const CONSUMERS: ReadonlySet<string> = new Set<PolicyConsumer>(["fetch", "sh", "act", "setting", "files"]);
 
 /** Keep only well-formed policies of a scope from what storage held; anything else is dropped, never guessed at. */
 export function validList(v: unknown, scope: StoredPolicy["scope"]): StoredPolicy[] {
     if (!Array.isArray(v)) return [];
     return v.filter((p): p is StoredPolicy => !!p && typeof p === "object"
         && typeof p.id === "string" && typeof p.source === "string" && typeof p.label === "string"
-        && (p.effect === "allow" || p.effect === "deny" || p.effect === "ask") && CONSUMERS.has(p.consumer) && p.scope === scope);
+        && effectFits(p.consumer, p.effect) && CONSUMERS.has(p.consumer) && p.scope === scope);
+}
+
+/** Whether an effect belongs to a consumer: `hide` and `show` to a `files` rule only, `allow`, `deny` and `ask` to the rest. */
+export function effectFits(consumer: unknown, effect: unknown): boolean {
+    return consumer === "files" ? effect === "hide" || effect === "show" : effect === "allow" || effect === "deny" || effect === "ask";
 }
 
 /** The longest policy source and label the policy page may store: a policy is a predicate, not a program. */

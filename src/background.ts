@@ -45,7 +45,7 @@ import { costCalls } from "./sw/sw-prices";
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, externalApprovals, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants } from "./sw/sw-consent";
 import { syncPresence, isVisible, presence, injectRunTools, injectPageScripts, SITE_REQUESTS_KEY } from "./sw/sw-presence";
 import { isExtensionSender, senderFacts, editSiteAccess, pageRefusal, agentRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, upgradeNotice, dismissUpgradeNotice } from "./sw/sw-site-access";
-import { policiesReady, forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView, sessionPolicies, removeFromSession } from "./sw/sw-policies";
+import { policiesReady, forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView, sessionPolicies, removeFromSession, isFilesRule } from "./sw/sw-policies";
 import { POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "./sw/policy-valid";
 import { addManifest, manifestView, removeManifest } from "./sw/sw-manifests";
 import { librariesReady, removeLibrary, storedLibraries } from "./sw/sw-libraries";
@@ -73,6 +73,7 @@ import { runControlPayloadError } from "./sw/run-payload-check";
 import { asIsTokens, forBackendFromPage, forPage, forTurn, scanTurn } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets; a page's model request, without a registered secret
 import { TurnUnreadable } from "./secret-registry";
 import { secretRegistryOp } from "./sw/sw-secret-registry";
+import { filesHideList, signalFilesHideChanges } from "./sw/sw-files-hide";
 import { pythonPrewarm, pythonExec, pythonInterrupt, relayPyStdout, deletePythonRun, dropPythonLibraries, pythonReaped, filesAttached, filesSecretForms, pythonStarted, pythonDone } from "./sw/sw-python";
 import { focusLineFor } from "./sw/sw-focus";
 import { chatHashFor, openChatPage } from "./sw/sw-open-chat";
@@ -516,7 +517,8 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         const runId = (message.payload as { runId?: unknown } | undefined)?.runId;
         const toTabId = sender.tab?.id;
         if (!isExtensionSender(sender) || toTabId == null || typeof runId !== "string") { sendResponse({ error: "Refused: a session is moved only from the extension's own surface in the tab it moves to." }); return; }
-        void bringHere(runId, toTabId).then((r) => sendResponse("refused" in r ? { error: r.refused } : { data: true }), (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
+        // A run with a turn running is not moved yet: the answer says it moves when its current step ends (move-run.ts).
+        void bringHere(runId, toTabId).then((r) => sendResponse("refused" in r ? { error: r.refused } : "queued" in r ? { data: { queued: r.queued } } : { data: true }), (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
         return true;
     }
     // The sessions "bring a session here" offers in the HUD on this tab: the same sender rule as MOVE_RUN.
@@ -782,9 +784,12 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
                 addGlobalPolicy({ consumer, effect, source, label });
             } else if (p.op === "edit") {
                 const id = str(p.id, 100);
+                if (id && isFilesRule(id)) { sendResponse({ error: "a hiding rule is not edited: remove it from its session's view and add another" }); return; }
                 if (!id || !editPolicy(id, { source: str(p.source, POLICY_SOURCE_MAX), label: str(p.label, POLICY_LABEL_MAX), effect })) { sendResponse({ error: "no such policy" }); return; }
             } else if (p.op === "remove") {
                 const id = str(p.id, 100);
+                // Removing a hide widens: only a session's view removes one, and it shows what that exposes first.
+                if (id && isFilesRule(id)) { sendResponse({ error: "a hiding rule is removed from its session's view, which shows what it exposes first" }); return; }
                 if (!id || !removePolicy(id)) { sendResponse({ error: "no such policy" }); return; }
             } else if (p.op === "session") {
                 // One session's effective view (docs/spec/POLICIES.md, "The effective view"): a read, so no change to answer with.
@@ -1046,6 +1051,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     if (message.type === "PY_REAPED") { pythonReaped(message, sender, noteRunLine); return false; }
     if (message.type === "FILES_ATTACHED") { sendResponse(filesAttached(message, sender)); return false; }
     if (message.type === "FILES_SECRET_FORMS") { void filesSecretForms(sender).then(sendResponse); return true; }
+    if (message.type === "FILES_HIDE_LIST") { void filesHideList(message, sender).then(sendResponse); return true; }
     if (message.type === "SERVER_TOOL_EXEC") {
         // Run ONE OpenWebUI-configured tool. CHOKE POINT, and a real one: the fetch spends the user's API
         // key, and the tool it runs is caller-chosen — a hostile page reaching this handler directly could
@@ -1647,6 +1653,8 @@ function rightClickedContext(tabId: number): Promise<unknown> {
 // A redirect hop's target, read for the worker's judged fetches (sw-redirects.ts); registered at the top level, so a
 // fetch in a worker that just woke still sees its hop.
 watchRedirects();
+// The `/files` reader's hiding rules: a policy change makes the offscreen reader ask for its lists again (sw-files-hide.ts).
+signalFilesHideChanges();
 
 chrome.runtime.onInstalled?.addListener((details) => {
     // A deliberate reload or an update (NOT an idle SW respawn — that never fires onInstalled): invalidate any

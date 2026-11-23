@@ -350,6 +350,16 @@ loop.
   terminates — while `a.push(x)` on the same loop is still `Denied`, because the hold is on the value. And a counter
   cannot buy call depth, which is fixed by the source.
 
+**RULED 2026-11-23 (Shane, ruling 104), not built: `while` is admitted under the step budget, here as in the Python
+dialect.** Property A as written is true and does not bind: recursion to `MAX_CALL_DEPTH` with two self-calls is a
+tree of 2^256 calls. Property B is the bound, and it is a proof for every program: the step count is a natural number
+that every evaluated node and iterated element spends and no script can reset. With `while` admitted, the argument
+above that a mutable binding buys nothing is no longer needed, and A is restated as "halts within the budget". The
+cost rows below become the whole obligation: no step may do unbounded work. A trip is an error the model reads, not a
+refusal that goes to approval. `while (true)` with no `break`, `return` or `throw` in its body is still refused before
+it runs. On the page realm a replaced built-in can still loop outside the count (`docs/plan/repl/README.md`, ruling
+102); that is unchanged. No lane owns this build yet.
+
 **B. Every script's cost is bounded.** This is a resource policy, not a language property. A script that halts can
 still take hours: loops nested over large collections, an array doubled forty times.
 

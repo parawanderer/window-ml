@@ -1871,6 +1871,103 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     `ml.table` owner, unassigned. CHAT_PAGE.md's slice 7 delegation: Chat Page. EXEC_STRICT_CSP.md's slices 3 and 4
     are unchecked: no owner. Nine specs keep body text that later rulings superseded: the coordinator recommends a
     second pass and Shane has not answered.
+- **Shane's rulings 102 and 103 (2026-11-23, each given in the coordinator's session).**
+  - **102. Cells are classed, and the general mechanism is the fallback, never the replacement.** Shane's objection to
+    the outside mark (#2115, open at this writing) is the approval ritual: a person approving Python they cannot
+    review is no control. A second model, given the problem in isolation, proposed deleting both dialects and relying
+    on the browser's process boundary with a watchdog. Shane rejects that: the evaluators' speed is not a problem, and
+    a watchdog leaves a broken state where the dialect gives termination by construction for the class it covers. The
+    ladder: class A, a cell inside the dialect in a worker no cell has run outside in, runs unasked with its proof, as
+    today; class B, a cell outside the dialect or any cell in a marked worker, whose work stays in the worker, is
+    PROPOSED to run unasked behind the lockdown alone; class C, a message leaving the worker, is judged by its effect
+    under policies. The mark then means "this worker left class A", not "ask", and a model-callable restart returns a
+    run to class A. Restart resets integrity only: what the model has read stays in its context, so nothing that
+    tracks reads may be reset by it. Class B changes NOTHING until two reports are in: redteam-e4's audit of the
+    Python worker's boundary (every outward message and whether its receiver judges it by effect, what result text and
+    files can cause unjudged, what an escape into the worker's JavaScript reaches, whether an inside-only sequence can
+    run code under a lift through a finalizer, resource exhaustion outside the worker), and packages' probe of the
+    Pyodide core in an opaque-origin sandboxed page (boot, SharedArrayBuffer and what breaks without it, what is
+    reachable, process isolation, cost) with its figures for a restart. The coordinator owes the restart command's
+    spec. Dropped: a precise mark that tracks an approved cell's writes (packages: it needs a record mode through
+    lifted code and nearly every outside cell would mark anyway). Parked: a label for "read private data" and "read
+    untrusted text" that tightens outward effects when both are set.
+  - JavaScript under ruling 102, from `docs/dev/readonly-exec.md` (the coordinator's reading, no lane's check yet). In
+    the service worker no approved code ever runs and the dialect writes nothing it did not build, so class A holds
+    unconditionally and needs no mark. In the page's main world the page, or an earlier approved exec, can replace
+    every built-in the evaluator calls (`forEach` made non-terminating is Shane's example); that was accepted because
+    the page leg holds nothing of the run's, and it means termination by construction never held for a script that
+    reads a page. It is no escalation, since the planter could already hang the tab. Unchecked and unassigned: whether
+    the worker gives up on a page leg that never answers; whether the isolated world of approved execs persists
+    between them; whether the page-side evaluator could run in the content script's isolated world, which would
+    restore the construction argument for page reads.
+  - **103. Code from elsewhere runs under the same gate; the dynamic case is the intended design, not built, not
+    assigned.** A wrapper a cell installs on an admitted library function (Shane's example: log a value, then call the
+    original) is admitted inside the dialect when its body is dialect code, on the same ground as a `/files/lib/`
+    module and a tier 3 package: the gate judges code where it runs. Shane: it is the same problem, dynamic, and it is
+    recorded whether or not a use appears. The conditions and the two costs (halting by budget on that path; lifted
+    code under returns its vetting did not consider) are in PYTHON_DIALECT.md, "Code from elsewhere runs under the
+    same gate". Whoever builds it is packages' lane with redteam-e4's rows first.
+  - Coverage of the dialect (Shane's word, 2026-11-23: manifest entries and fixes in the evaluator, a topic apart from
+    ruling 102) is packages'. Its replay on main gives 70 of 129 cells outside, 34 with `read_csv` served (its
+    account). PR (1), data only: bare `dir()` (ruling 99's pin row flips; it answers `[]` as the full path does),
+    numpy scalar types as values, `Decimal.quantize` and the `ROUND_*` constants. PR (2), the fork: item access on a
+    type with no subscript slot, a generator as the first argument of `sum`, `min`, `max` and `sorted`, the
+    interpreter's own write onto an exception of exactly the builtin `NameError` or `AttributeError` type, the
+    generic-getattr fallback, a bound builtin mapped to its descriptor by its method definition (so `round` on a numpy
+    scalar and `ndarray.round` return), and the issue #2040 import change (so `Series.dtype` and `DataFrame.dtypes`
+    return). Held: `Series.str`. Outside by design: `globals()`, the decimal context's precision, `Decimal.as_tuple`.
+    Bench's wider corpus (32 tasks, 3 repeats, a local model, synthetic tables) is accepted as a design and waits for
+    Shane's word in bench's session.
+  - **104 (Shane, 2026-11-23, in the coordinator's session). `while` is admitted under the step budget, in both
+    dialects; not built.** Shane's argument: budgeted recursion is already in, and a loop can be rebuilt from it, so
+    refusing `while` buys nothing. The coordinator's reading, which Shane accepted with its refinements: the budget is
+    a fuel argument (a natural number spent by every backward jump and call, unreachable from the cell), which proves
+    termination for every program and needs only that no step does unbounded work. A budget trip becomes an error the
+    model reads, never a card; a constant-true `while` with no exit is still refused statically; a trip discards the
+    cell's attempt whole and is deterministic, which is what separates it from a watchdog; generators stay out because
+    a suspended frame outlives its cell. Text: PYTHON_DIALECT.md under "Halting is still the Starlark set" and
+    `docs/dev/readonly-exec.md` under Halting. The Python build is packages', after its coverage PRs, once it has
+    stated what a lifted leaf is charged; the JavaScript build has no owner. Noted, not ruled: `class` is excluded for
+    no halting reason and falls under ruling 103's rule. The 2026-10-15 count found no `while` and no `class` in 1,714
+    cells from 18 models, so the ruling is about consistency and harder work, not about that corpus.
+  - Bench's corpus after its pilot (bench's account, build 4562484d on main b514142c): 5 runs, 21 cells, 10 in class
+    A; the 11 outside are 6 list gaps (`read_csv` of an attached path 4, which the coordinator ruled a planned served
+    call; `try` 2) and 5 effects (`import os` 4, the model looking for its files, a prompt gap; `with open` 1); none
+    structural; no cell patches a library. `try` and `with` are excluded forms today (packages): a PR (3) for
+    `try`/`except` follows the fork PR, and `with` waits for the shapes the corpus shows. All 32 tasks load a table
+    and summarise or reshape it, so Shane agreed to six added tasks that invite a loop, recursion, a class or a
+    generator, as a stratum reported apart and never pooled. The run's start is Shane's word in bench's session.
+  - Glue first (Shane, 2026-11-23): move-run and `/files` are to be finished so the work can move to the dialect. The
+    coordinator lifted the pause on session-store's write PRs on that word, with flaky-ci resumed as their code
+    reviewer and redteam-e4 on their rows; small-fixes stays paused. The host half of the hide rule is
+    window-ml-host#58 (files-host): `spawn.hideList` is one ordered list in ascending precedence, an entry the host
+    cannot read fails the spawn, and two limits are accepted and go in the extension's view row: on Linux a file that
+    appears after a call starts is readable to that call, and on both platforms a hard link made earlier under another
+    name still opens a hidden file.
+  - **105 (Shane, 2026-11-23, in the coordinator's session). A lifted leaf is charged by a cost function, before it
+    runs.** Packages read from the fork that a C leaf spends one step whatever its input and that a manifest's `cost`
+    is documentation, so ruling 104's premise fails as built and a cell inside the 15,000,000-step budget can run for
+    hours. Shane: charge the cost, and build the planned form in which a cost is a function of the arguments
+    (READONLY_LIBRARY_MANIFEST.md, "Cost: three tiers", tier 1, specified since the manifest spec and never built).
+    Packages builds it, folded into its fork PR (2) or the PR after; `while` waits for it. The coordinator's defaults
+    until packages proposes better: steps proportional to the work in size measures, a constant the host measures, and
+    a leaf with no function charged by its largest argument.
+  - Packages' probe of an opaque-origin sandbox page (its account; the build of #2117, core 35bd1d69). The core boots
+    in a framed sandbox page only from a `blob:` worker, with numpy and pandas, at today's start-up cost. From inside:
+    no extension API, no storage, no parent access, and no network while the page's CSP forbids it (the CSP is the
+    only network wall there). Chrome reports the frame out of process. A framed page gets no SharedArrayBuffer, so the
+    interrupt buffer and the `/files` mount's shared buffers do not work there; JSPI does, so step 1's sync `ml` wire
+    is unaffected. The sandbox CSP is one string for every sandbox page, mermaid's included. Open with packages: the
+    same probe framed in the offscreen document, an in-place interrupt through JSPI, and keeping mermaid's page as
+    tight as today. A restart of a run's worker costs a cold start of about 2.5 to 3 seconds; what can be carried is
+    the inert list the dialect already enforces, by value, with functions dropped. No decision on the second wall
+    before redteam-e4's audit.
+  - Merged since: #2088 (the hide rule's part A, 0f0c6edc), #2087 (move-run slice 2, 2531d296). Move-run's remaining
+    scope, the coordinator's call: #2106, then `navigate` from the no-tab state, then resuming with no page; deferred
+    are the shell bench step, the kernel line and the "No tab" start-form choice with its hub change. Bench's corpus
+    is three models on Shane's word in bench's session (bench's account): `qwen3.8-flash-next:vision`, then
+    `gemma4:31b`, then `dsv4-flash:q4kxl` alone, 38 tasks, 3 repeats, every figure per model. Small-fixes reports
+    Shane unpaused it in its session; flaky-ci reviews its PRs behind the write PRs.
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like

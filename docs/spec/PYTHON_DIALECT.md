@@ -121,6 +121,25 @@ comprehensions over the same, no `while`, recursion to a bounded depth, no gener
 `lambda` and `def` are in. The budget catches what the static rules cannot see; the static rules keep a refusal
 BEFORE the run wherever the form is decidable from the source, so nothing has to be rolled back.
 
+**RULED 2026-11-23 (Shane, ruling 104), not built: `while` is admitted under the step budget.** The static set above
+is not what bounds a cell. Recursion to depth d with two self-calls is a tree of 2^d calls: it halts by construction
+and never in practice, so the budget is already the only bound that binds, and it is a proof of its own. The counter
+is a natural number, it falls on every backward jump and every call, and no cell code can read or reset it, so every
+run ends within the budget by well-founded induction, whatever the program. That argument needs no restriction on loop
+forms; its one premise is that no single step does unbounded work, which is the obligation the cost rows are meant to
+carry (a C leaf's cost over its input, the regex bound; see point 5). So `while` joins the dialect, with these points
+ruled beside it. (1) A budget trip is an ERROR THE MODEL READS, with the steps spent, never an approval card: asking a
+person about a loop that does not end is the wrong question, and so is running it unbounded outside. (2) A static
+refusal that costs nothing stays: `while True` (or any constant true test) with no `break`, `return` or `raise` in its
+body is refused before the run. (3) A trip is not a kill: it lands at the eval breaker, the cell's attempt is
+discarded whole as any refused try is, and the same cell trips at the same step on every run. (4) Generators and
+`yield` stay out, for a different reason: a suspended frame is code that outlives its cell. (5) The premise does NOT
+hold as built: a C leaf spends one step whatever its input (packages, read from the fork), so `while` is not built
+before ruling 105's charge is ([`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md), "Cost: three tiers");
+the gap is there today with a `for` over a large `range`, with or without `while`. `class` is excluded for no halting
+reason either: its methods are cell code a library calls, which "Code from elsewhere runs under the same gate" covers;
+that is noted, not ruled.
+
 **What the corpus count changed (2026-10-15, lane 3 of the plan: 1,714 unique cells from 18 models).** The Starlark set
 admits 89.4% of cells whole; no cell uses `while` or `class`, which confirms their static refusal. Three rulings on
 what the count surfaced:
@@ -340,6 +359,55 @@ inferred. Each part is mutation-checked alone: revert it and the red team's test
 A cell inside the dialect that makes a gated `ml` call (`ml.fetch` on a new URL, `ml.sh`) does not fall out of it: the
 call SUSPENDS on an `ask` and continues when answered ([`ML_WIRE.md`](ML_WIRE.md), "Per-call asking"), which the JS
 survey could not do and which answers the manifest spec's "granularity of a refusal".
+
+### Code from elsewhere runs under the same gate (intended design; Shane, 2026-11-23; the dynamic case is not built)
+
+One principle covers a cell's own `def`, a module the model wrote under `/files/lib/`
+([`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md), "`lib/`"), a pure-Python package with no manifest (tier 3 above) and a
+wrapper a cell installs on a library function: **code is judged where it RUNS, by the gate, never by where it came
+from or where it sits.** A `CO_RESTRICTED` frame is gated wherever it is entered, under a lifted leaf included (the
+callbacks row of the table above), so such code stays inside the dialect or raises `NotInDialect`, and its steps count
+against the cell's budget. Every frame is then one of two kinds: gated, which needs no trust, or vetted library code
+running lifted, which is trusted only while no UNGATED code has changed it. An approved cell is ungated code that can
+change it, which is why the outside mark exists. Gated code that changes it breaks neither half.
+
+The static cases are imports: the module's code comes through the same evaluator as the cell's. The DYNAMIC case is
+the same problem with the code arriving by assignment at run time, and it is what the gate refuses today:
+
+```python
+orig = pd.DataFrame.head
+def extended(self, n=5):
+    print(f"head of {self.shape}")
+    return orig(self, n)
+pd.DataFrame.head = extended
+```
+
+The last line writes to an object the cell does not own, so the cell goes outside; approved, it is compiled as full
+Python, `extended` loses `CO_RESTRICTED`, and it is the plant the mark is for. The intended design admits that write
+INSIDE the dialect, where `extended` keeps its flag and runs gated on every later call, from this cell, a later one,
+or pandas' own internals. The conditions:
+
+- **The value is a plain function whose code is `CO_RESTRICTED`.** Not a builtin, not a bound method, not a partial,
+  not an instance with `__call__`: `pd.DataFrame.head = open` would give lifted code an ungated capability under a
+  vetted name.
+- **The slot holds a function the manifest already admits.** The wrapper calls the original from a restricted frame,
+  which only a listed function allows; wrapping an unlisted internal would need the list widened to every patchable
+  callee, and is not admitted.
+- **No write to an existing function's `__code__`, defaults, closure or `__dict__`.** Those change vetted code in
+  place.
+- **The worker is not marked by it**, since no ungated code was introduced, and the write is rolled back with the cell
+  when the cell is refused.
+
+What it costs, stated so nobody reads more into it. (1) On a path through an installed wrapper, halting is by the step
+budget and no longer by construction: library code that loops until its callee returns some value now depends on what
+the wrapper returns. (2) Lifted code sees return values its vetting never considered. The wrapper itself can do
+nothing the dialect refuses, and what leaves the worker is still judged at the boundary, but the argument that a
+lifted leaf is harmless on any ARGUMENT a cell can pass has to be made again for any RETURN its admitted callees can
+give. Both need adversarial rows before this is built: a wrapper that never returns the awaited value, one that
+returns a cell-owned object where an internal expects its own, one installed and then reached by an internal caller,
+the three refused value kinds, and a wrapper surviving into a later cell. No use for this has been measured; it is
+recorded because it is the dynamic form of the `lib/` and tier 3 rule, and the design should not depend on which form
+a model happens to write.
 
 ## The namespace
 
