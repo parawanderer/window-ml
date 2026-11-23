@@ -52,8 +52,9 @@
 // - `--capture <out.jsonl>` writes, per replayed cell, what it left: its stdout, its result, its error's type, and
 //   hashes of the values of the names any LATER cell of the run reads and of the names it binds (floats to 9 significant
 //   digits). It is derived from what cells print, so it goes only to the path the caller names, never to `<out.json>`.
-// - `--replace <run hash>:<cell>=<file>` (repeatable) replays that run once more with cell <cell>'s source read from
-//   <file>, so the source never goes on a command line; the variant's rows carry `variant: "<run hash>:<cell>"`.
+// - `--replace <run hash>:<cell>=<file>` (repeatable, with `--all-cells`, whose index <cell> is) replays that run once
+//   more with cell <cell>'s source read from <file>, so the source never goes on a command line; the variant's rows
+//   carry `variant: "<run hash>:<cell>"`.
 // - `--count-steps` adds, per cell, `steps` (`_restricted.steps()`, the fork's own count, after a cell that finished
 //   inside) and `loops`/`calls`/`depth` for a cell run on the full path: a `sys.monitoring` counter of LINE events on
 //   the cell's `while` headers (one per test of the condition) and of starts of the cell's functions that call
@@ -86,6 +87,9 @@ const filesManifest = take("--files")[0] ?? null;
 const captureFile = take("--capture")[0] ?? null;
 const replaces = take("--replace").map((r) => { const m = /^([0-9a-f]+):(\d+)=(.+)$/.exec(r); if (!m) { console.error(`--replace ${r}: want <run hash>:<cell>=<file>`); process.exit(2); } return { run: m[1], cell: Number(m[2]), code: fs.readFileSync(m[3], "utf8") }; });
 const admit = take("--admit");
+// a replaced cell is named by its index over ALL the run's cells, which only --all-cells gives: without it the variant
+// would replay unchanged under a `variant` tag
+if (replaces.length && !args.includes("--all-cells")) { console.error("--replace needs --all-cells: <cell> is the cell's index over every python_exec cell of the run"); process.exit(2); }
 const capMs = Number(take("--cap-ms")[0] ?? (admit.length ? 30000 : 0));
 const allCells = args.includes("--all-cells");
 const countSteps = args.includes("--count-steps");
