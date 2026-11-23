@@ -39,8 +39,33 @@
 //
 // Writes features only, never cell text (the repo is public): per cell the run's hash, model, sweep, the cell's index,
 // whether it finished inside, the fork's refusal text, and whether its full-path run raised (the exception's type only).
+//
+// For the bench's rewrite test (tests/e2e/bench/corpus-replay.mjs), six options, each off by default, and with all of
+// them off the rows are what they were:
+// - `--all-cells` replays every python_exec cell of the run, not only the ones that asked, and indexes `cell` over all
+//   of them as the run took them (corpus-extract.mjs's index). A call refused before any of its code ran (the tool's own
+//   `Error: ml.pythonExec` reply) keeps its index and is not run.
+// - `--files <manifest.json>` gives each run its attached files: `{ "<run hash>": [{ "name", "id", "path" }] }`, each
+//   written to /files/attached/<id>/<name> from the local `path` before the run's first cell, with /files/agent empty as
+//   the working directory. It is a COPY in Pyodide's in-memory file system, not the worker's ranged mount (#2026), as
+//   the /sales.csv shim is a copy of the fetch cache: the inside and full paths read the same bytes.
+// - `--capture <out.jsonl>` writes, per replayed cell, what it left: its stdout, its result, its error's type, and
+//   hashes of the values of the names any LATER cell of the run reads and of the names it binds (floats to 9 significant
+//   digits). It is derived from what cells print, so it goes only to the path the caller names, never to `<out.json>`.
+// - `--replace <run hash>:<cell>=<file>` (repeatable) replays that run once more with cell <cell>'s source read from
+//   <file>, so the source never goes on a command line; the variant's rows carry `variant: "<run hash>:<cell>"`.
+// - `--count-steps` adds, per cell, `steps` (`_restricted.steps()`, the fork's own count, after a cell that finished
+//   inside) and `loops`/`calls`/`depth` for a cell run on the full path: a `sys.monitoring` counter of LINE events on
+//   the cell's `while` headers (one per test of the condition) and of starts of the cell's functions that call
+//   themselves. It only counts: a callback that raises escapes the frame's try/finally on this core, so none stops a cell.
+// - `--admit <Node>` (repeatable) adds an AST node type to the inside whitelist, a counterfactual: `--admit While`
+//   judges a cell as if `while` were admitted. Only membership changes: the loop then runs under today's step budget,
+//   one step per C leaf call (ruling 105's charge is not built), so each inside cell is capped (`--cap-ms`, 30 s by
+//   default with --admit) and one that hits it is `capped`, neither inside nor refused. The list goes in `meta`, so an
+//   extract made with it is never read as the as-recorded one; a name that is no ast node, or is admitted already, is refused.
 import fs from "node:fs";
 import path from "node:path";
+import { Worker } from "node:worker_threads";
 import { wrapUserSetup, wrapUserScript, injectInputs } from "../../../src/python/python-runtime.ts";
 import { dialectSetup } from "../../../src/python/python-dialect-run.js";
 import { tableSpecs } from "../../../src/ml/ml-python.ts";
@@ -55,17 +80,55 @@ const FILES = Object.fromEntries(["whitelist.json", "manifest-stdlib.json", "man
 const NODES = JSON.parse(FILES["whitelist.json"]).nodes;
 
 const args = process.argv.slice(2);
+/** Remove every `<name> <value>` pair from `args` and return the values. */
+const take = (name) => { const vals = []; for (let i = args.indexOf(name); i >= 0; i = args.indexOf(name)) vals.push(args.splice(i, 2)[1]); return vals; };
+const filesManifest = take("--files")[0] ?? null;
+const captureFile = take("--capture")[0] ?? null;
+const replaces = take("--replace").map((r) => { const m = /^([0-9a-f]+):(\d+)=(.+)$/.exec(r); if (!m) { console.error(`--replace ${r}: want <run hash>:<cell>=<file>`); process.exit(2); } return { run: m[1], cell: Number(m[2]), code: fs.readFileSync(m[3], "utf8") }; });
+const admit = take("--admit");
+const capMs = Number(take("--cap-ms")[0] ?? (admit.length ? 30000 : 0));
+const allCells = args.includes("--all-cells");
+const countSteps = args.includes("--count-steps");
+const INSIDE_NODES = admit.length ? [...NODES, ...admit] : NODES;
+for (const n of admit) {
+    // a typo must not equal the default run: only an ast node class the whitelist does not already admit
+    if (!/^[A-Z][A-Za-z]*$/.test(n)) { console.error(`--admit ${n}: not an ast node class name`); process.exit(2); }
+    if (NODES.includes(n) || admit.indexOf(n) !== admit.lastIndexOf(n)) { console.error(`--admit ${n}: already admitted`); process.exit(2); }
+}
 const ownedPlain = args.includes("--owned-plain");
 const csvServed = args.includes("--read-csv-served");
 if (ownedPlain && csvServed) { console.error("--owned-plain and --read-csv-served are separate counterfactuals"); process.exit(2); }
 const [out, ...runs] = args.filter((a) => !a.startsWith("--"));
-if (!out || !runs.length) { console.error("usage: node --import tsx replay.mjs [--owned-plain|--read-csv-served] <out.json> <run.json>..."); process.exit(2); }
+if (!out || !runs.length) { console.error("usage: node --import tsx replay.mjs [--owned-plain|--read-csv-served] [--all-cells] [--files <manifest.json>] [--capture <out.jsonl>] [--replace <run>:<cell>=<file>]... [--count-steps] [--admit <Node>]... <out.json> <run.json>..."); process.exit(2); }
 
 const { loadPyodide } = await import(path.join(PYODIDE_DIR, "pyodide.mjs"));
 const py = await loadPyodide({ indexURL: PYODIDE_DIR });
 if (py.runPython(`import importlib.util; importlib.util.find_spec("_restricted") is None`)) throw new Error("dist/pyodide is the stock core, not the restricted-mode fork");
 await py.loadPackage(["numpy", "pandas", "pillow"]);
 const ready = String(await py.runPythonAsync(dialectSetup(FILES)));
+for (const n of admit) if (!py.runPython(`import ast; isinstance(getattr(ast, ${JSON.stringify(n)}, None), type) and issubclass(ast.${n}, ast.AST)`)) { console.error(`--admit ${n}: not an ast node class`); process.exit(2); }
+// --cap-ms: a timer thread sets Pyodide's interrupt buffer once an inside cell has run that long. It fires at the next
+// eval-breaker check, so it cannot cut a C leaf mid-call: a cell past the cap by more than a leaf's time counts as capped too.
+const LEAF_MS = 1000;
+const cap = capMs ? (() => {
+    // byte 0 is Pyodide's interrupt flag, which it clears when it takes the interrupt; byte 1 says the timer fired
+    const sab = new SharedArrayBuffer(8), flag = new Int8Array(sab, 0, 1), fired = new Int8Array(sab, 1, 1), gen = new Int32Array(sab, 4, 1);
+    py.setInterruptBuffer(flag);
+    // the interrupt can land in the event loop's own callback rather than the cell, where it rejects nothing the wrapper
+    // awaits: that rejection is the cap firing, nothing else
+    process.on("unhandledRejection", (e) => { if (/KeyboardInterrupt/.test(String(e?.message ?? e))) return; throw e; });
+    const timer = new Worker(`const { workerData: { sab, ms } } = require("node:worker_threads");
+const flag = new Int8Array(sab, 0, 1), fired = new Int8Array(sab, 1, 1), gen = new Int32Array(sab, 4, 1);
+for (;;) {
+    const g = Atomics.load(gen, 0);
+    if (g < 0) break;
+    if (g % 2 === 1 && Atomics.wait(gen, 0, g, ms) === "timed-out") { Atomics.store(fired, 0, 1); Atomics.store(flag, 0, 2); while (Atomics.load(gen, 0) === g) Atomics.wait(gen, 0, g); }
+    else if (g % 2 === 0) Atomics.wait(gen, 0, g);
+}`, { eval: true, workerData: { sab, ms: capMs } });
+    timer.unref();
+    const bump = () => { Atomics.add(gen, 0, 1); Atomics.notify(gen, 0); };
+    return { arm: () => { Atomics.store(flag, 0, 0); Atomics.store(fired, 0, 0); bump(); }, disarm: () => { bump(); const hit = Atomics.load(fired, 0) !== 0; Atomics.store(flag, 0, 0); Atomics.store(fired, 0, 0); return hit; }, stop: () => { Atomics.store(gen, 0, -1); Atomics.notify(gen, 0); } };
+})() : null;
 if (ready) throw new Error(`the core is not ready for inside runs: ${ready}`);
 
 const SALES = salesCsv();
@@ -155,6 +218,82 @@ def _replay_serve(ns, code, page, fetched):
     return json.dumps({"code": raw.decode(), "csv": csv})
 `);
 
+if (captureFile || countSteps) py.runPython(`
+import ast as _rp_ast, hashlib as _rp_hl, json as _rp_json, re as _rp_re, sys as _rp_sys
+def _replay_names(code):
+    """The names a cell reads (any Name loaded) and the names it binds at its top level."""
+    try: t = _rp_ast.parse(code)
+    except SyntaxError: return _rp_json.dumps([[], []])
+    loads = sorted({n.id for n in _rp_ast.walk(t) if isinstance(n, _rp_ast.Name) and isinstance(n.ctx, _rp_ast.Load)})
+    binds = set()
+    def visit(n):
+        if isinstance(n, _rp_ast.Name) and isinstance(n.ctx, _rp_ast.Store): binds.add(n.id)
+        elif isinstance(n, (_rp_ast.FunctionDef, _rp_ast.AsyncFunctionDef, _rp_ast.ClassDef)): binds.add(n.name); return
+        elif isinstance(n, _rp_ast.Lambda): return
+        elif isinstance(n, (_rp_ast.Import, _rp_ast.ImportFrom)): binds.update(a.asname or a.name.split(".")[0] for a in n.names)
+        for c in _rp_ast.iter_child_nodes(n): visit(c)
+    for n in t.body: visit(n)
+    return _rp_json.dumps([loads, sorted(binds)])
+def _replay_h(v, depth=0):
+    import numpy as _np, pandas as _pd
+    if depth > 4: return "deep"
+    if isinstance(v, (_pd.DataFrame, _pd.Series)): return type(v).__name__ + ":" + v.to_csv(float_format="%.9g")
+    if isinstance(v, _np.ndarray): return "nd:" + str(v.dtype) + str(v.shape) + (_np.array2string(v, precision=9, threshold=10**9) if v.dtype.kind in "fc" else repr(v.tolist()))
+    if isinstance(v, (float, _np.floating)): return format(float(v), ".9g")
+    if isinstance(v, dict): return "{" + ",".join(_replay_h(k, depth + 1) + ":" + _replay_h(x, depth + 1) for k, x in v.items()) + "}"
+    if isinstance(v, (list, tuple)): return type(v).__name__ + "[" + ",".join(_replay_h(x, depth + 1) for x in v) + "]"
+    if callable(v) or isinstance(v, type(_rp_sys)): return "obj:" + type(v).__name__
+    return _rp_re.sub(r"0x[0-9a-f]+", "0x", repr(v))
+def _replay_values(ns, names):
+    out = {}
+    for k in names:
+        if k in ns:
+            try: out[k] = _rp_hl.sha256(_replay_h(ns[k]).encode()).hexdigest()[:16]
+            except BaseException as e: out[k] = "unhashable:" + type(e).__name__
+    return _rp_json.dumps(out)
+_replay_c = None
+def _replay_count_on(code):
+    """Count, on the full path, tests of the cell's while headers and starts of its self-calling functions. Count only:
+    a callback that raises escapes the frame's try/finally on this core."""
+    global _replay_c
+    try: t = _rp_ast.parse(code)
+    except SyntaxError: return False
+    lines = {n.lineno for n in _rp_ast.walk(t) if isinstance(n, _rp_ast.While)}
+    funcs = {f.name for f in _rp_ast.walk(t) if isinstance(f, (_rp_ast.FunctionDef, _rp_ast.AsyncFunctionDef))
+             and any(isinstance(c, _rp_ast.Call) and isinstance(c.func, _rp_ast.Name) and c.func.id == f.name for c in _rp_ast.walk(f))}
+    if not lines and not funcs: return False
+    M = _rp_sys.monitoring
+    tool = next(i for i in (3, 4) if M.get_tool(i) is None)
+    c = {"loops": 0, "calls": 0, "depth": 0, "max": 0, "tool": tool}
+    def line(code, ln):
+        try:
+            if ln in lines and code.co_filename == "<python_exec>": c["loops"] += 1
+        except BaseException: pass
+    def start(code, off):
+        try:
+            if code.co_name in funcs and code.co_filename == "<python_exec>":
+                c["calls"] += 1; c["depth"] += 1; c["max"] = max(c["max"], c["depth"])
+        except BaseException: pass
+    def leave(code, off, val):
+        try:
+            if code.co_name in funcs and code.co_filename == "<python_exec>": c["depth"] -= 1
+        except BaseException: pass
+    M.use_tool_id(tool, "replay-count")
+    E = M.events
+    M.register_callback(tool, E.LINE, line); M.register_callback(tool, E.PY_START, start)
+    M.register_callback(tool, E.PY_RETURN, leave); M.register_callback(tool, E.PY_UNWIND, leave)
+    M.set_events(tool, E.LINE | E.PY_START | E.PY_RETURN | E.PY_UNWIND)
+    _replay_c = c
+    return True
+def _replay_count_off():
+    M = _rp_sys.monitoring
+    c = _replay_c
+    M.set_events(c["tool"], 0)
+    for e in (M.events.LINE, M.events.PY_START, M.events.PY_RETURN, M.events.PY_UNWIND): M.register_callback(c["tool"], e, None)
+    M.free_tool_id(c["tool"])
+    return _rp_json.dumps({"loops": c["loops"], "calls": c["calls"], "depth": c["max"]})
+`);
+
 /** Does `src` name the task's table: its /sales.csv URL or a `@tool:` token (the fetch's pointer to it)? */
 const isSales = (src) => typeof src === "string" && (/sales\.csv\/?$/.test(src.trim()) || /^\s*@tool:/.test(src));
 
@@ -179,16 +318,47 @@ async function run(ns, code, tablesJson, inside) {
     return script(ns, code, tablesJson, inside);
 }
 
-/** A cell's script alone, in a namespace its setup already ran in. */
+/** A cell's script alone, in a namespace its setup already ran in. With `--count-steps`, the cell's own counts too:
+ *  `steps` inside, `count` (loops, calls, depth) on the full path. */
 async function script(ns, code, tablesJson, inside) {
     injectInputs(ns, null, tablesJson);
     const real = inside ? null : py.globals.get("_replay_shim_on")(ns);
-    try { await py.runPythonAsync(wrapUserScript(code, "run", inside ? { nodes: NODES } : null), { globals: ns }); }
-    finally { if (real) py.globals.get("_replay_shim_off")(real); }
+    const counting = countSteps && !inside && py.globals.get("_replay_count_on")(code);
+    let count = null, capped = false;
+    const t0 = Date.now();
+    // both paths: a cell admitted inside may be refused for something else and then loop on the full path, which has no budget
+    if (cap) cap.arm();
+    try { await py.runPythonAsync(wrapUserScript(code, "run", inside ? { nodes: INSIDE_NODES } : null), { globals: ns }); }
+    finally {
+        if (cap) capped = cap.disarm() || Date.now() - t0 > capMs + LEAF_MS;
+        if (real) py.globals.get("_replay_shim_off")(real);
+        if (counting) count = JSON.parse(py.globals.get("_replay_count_off")());
+    }
+    if (capped) { ns.set("_ml_not_in_dialect", undefined); return inside ? { capped: true } : { capped: true, error: "KeyboardInterrupt: --cap-ms" }; }
     const refused = inside ? ns.get("_ml_not_in_dialect") : undefined;
     if (refused) { ns.set("_ml_not_in_dialect", undefined); return { refused: String(refused) }; }
     const err = ns.get("_err");
-    return err ? { error: String(err) } : {};
+    const out = err ? { error: String(err) } : {};
+    if (countSteps && inside) out.steps = py.runPython("import _restricted; _restricted.steps()");
+    if (count) out.count = count;
+    return out;
+}
+
+/** What a cell left, for `--capture`: its stdout, result and error type, and hashes of the values `later` and `binds` name. */
+function captured(ns, r, later, binds) {
+    const values = (names) => JSON.parse(py.globals.get("_replay_values")(ns, py.toPy(names)));
+    return { stdout: String(ns.get("_stdout") ?? ""), result: ns.get("_json_result") ?? null, error: r.error ? errType(r.error) : null, later: values(later), binds: values(binds) };
+}
+
+/** Write a run's attached files (`--files`) to /files/attached/<id>/<name>, and empty /files/agent, its working directory. */
+function mountFiles(list) {
+    const FS = py.FS;
+    const rm = (p) => { if (FS.isDir(FS.stat(p).mode)) { for (const n of FS.readdir(p)) if (n !== "." && n !== "..") rm(`${p}/${n}`); FS.rmdir(p); } else FS.unlink(p); };
+    // in the worker's order, so a listing of / or /files reads as it did live (/share is Pyodide's own in the browser)
+    for (const d of ["/files", "/files/agent", "/files/attached", "/share"]) { try { FS.mkdir(d); } catch { /* exists */ } }
+    for (const d of ["/files/attached", "/files/agent"]) for (const n of FS.readdir(d)) if (n !== "." && n !== "..") rm(`${d}/${n}`);
+    for (const { name, id, path: from } of list) { FS.mkdir(`/files/attached/${id}`); FS.writeFile(`/files/attached/${id}/${name}`, fs.readFileSync(from)); }
+    FS.chdir("/files/agent");
 }
 
 /** The exception type an error's text ends on (`NameError`, `KeyError`), never its message, which can quote the cell. */
@@ -225,17 +395,32 @@ async function checkRebuilds() {
 if (ownedPlain) await checkRebuilds();
 
 const rows = [];
-for (const file of runs) {
-    const s = JSON.parse(fs.readFileSync(file, "utf8")).session;
+const captures = [];
+const manifest = filesManifest ? JSON.parse(fs.readFileSync(filesManifest, "utf8")) : null;
+/** A call refused before any of its code ran: the tool's own error, though the step is recorded `sandbox`. */
+const ranOf = (st) => !/^Error: (ml\.)?pythonExec\b/.test(String(st.result ?? ""));
+
+/** Replay one run's cells in a fresh namespace; `replace` swaps one cell's source (`--replace`) and tags the rows. */
+async function replayRun(s, sweep, replace = null) {
     const ns = py.globals.get("dict")();
-    const sweep = file.split("/artifacts/")[1]?.split("/").slice(0, 3).join("/") ?? "";
+    if (manifest) mountFiles(manifest[s.hash] ?? []);
     let i = 0;
     const fetched = [];
+    const picked = [];
+    let k = 0;
+    for (const st of s.steps ?? []) {
+        if (st.tool !== "python_exec") continue;
+        if (allCells) { const at = k++; if (String(st.arguments?.code ?? "") && ranOf(st)) picked.push({ st, at }); }
+        else if (st.approval === "user" && String(st.arguments?.code ?? "")) picked.push({ st, at: null });
+    }
+    const codeAt = (p) => (replace && p.at === replace.cell ? replace.code : String(p.st.arguments.code));
+    const names = captureFile ? picked.map((p) => JSON.parse(py.globals.get("_replay_names")(codeAt(p)))) : null;
+    let n = 0;
     for (const st of s.steps ?? []) {
         if (st.tool === "fetch_url" && st.arguments?.url) fetched.push(String(st.arguments.url));
-        if (st.tool !== "python_exec" || st.approval !== "user") continue;
-        const recorded = String(st.arguments?.code ?? "");
-        if (!recorded) continue;
+        const p = picked[n];
+        if (!p || p.st !== st) continue;
+        const recorded = codeAt(p);
         const served = csvServed ? JSON.parse(py.globals.get("_replay_serve")(ns, recorded, s.page?.url ?? "", py.toPy(fetched))) : null;
         const code = served ? served.code : recorded;
         const { json, tableError } = injected(st.arguments?.tables);
@@ -243,19 +428,42 @@ for (const file of runs) {
         if (ownedPlain) { await setup(ns, json); rebuilt = await ownPlain(ns, json); }
         const t0 = Date.now();
         const inside = ownedPlain ? await script(ns, code, json, true) : await run(ns, code, json, true);
-        const row = { run: s.hash, model: s.model, sweep, cell: i++, inside: !inside.refused, refused: inside.refused ?? null, ms: Date.now() - t0 };
+        const row = { run: s.hash, model: s.model, sweep, cell: allCells ? p.at : i++, inside: !inside.refused && !inside.capped, refused: inside.refused ?? null, ms: Date.now() - t0 };
+        // past --cap-ms: neither inside nor refused, and not rerun on the full path (it may not end there either)
+        if (inside.capped) row.capped = true;
+        if (replace) row.variant = `${replace.run}:${replace.cell}`;
         if (ownedPlain) row.rebuilt = rebuilt;
         if (served?.csv.length) row.csv = served.csv;
         if (tableError) row.tableError = tableError;
         if (inside.error) row.insideError = errType(inside.error);
+        if (countSteps && inside.steps != null) row.steps = inside.steps;
+        let last = inside;
         if (inside.refused) {
             const full = await run(ns, recorded, json, false);
             if (full.error) row.fullError = errType(full.error);
+            if (full.capped) row.fullCapped = true;
+            if (full.count) Object.assign(row, full.count);
+            last = full;
+        }
+        if (captureFile) {
+            const later = [...new Set(names.slice(n + 1).flatMap(([loads]) => loads))];
+            captures.push({ run: s.hash, cell: row.cell, ...(replace ? { variant: row.variant } : {}), inside: row.inside, ...captured(ns, last, later, names[n][1]) });
         }
         rows.push(row);
+        n++;
     }
+    return n;
+}
+
+for (const file of runs) {
+    const s = JSON.parse(fs.readFileSync(file, "utf8")).session;
+    const sweep = file.split("/artifacts/")[1]?.split("/").slice(0, 3).join("/") ?? "";
+    const i = await replayRun(s, sweep);
     process.stderr.write(`${s.hash.slice(0, 8)} ${s.model} ${i} cells\n`);
+    for (const r of replaces.filter((x) => x.run === s.hash)) await replayRun(s, sweep, r);
 }
 const rebuilt = rows.reduce((n, r) => n + (r.rebuilt ?? 0), 0);
 if (ownedPlain && !rebuilt) throw new Error("--owned-plain rebuilt no value in any run: the counterfactual would equal the plain replay by construction");
-fs.writeFileSync(out, JSON.stringify({ meta: { ownedPlain, csvServed, rebuilt, runs: runs.length, core: fs.readFileSync(path.join(ROOT, "pyodide-core/.pin"), "utf8").trim(), at: new Date().toISOString() }, rows }, null, 1) + "\n");
+if (captureFile) fs.writeFileSync(captureFile, captures.map((c) => JSON.stringify(c)).join("\n") + (captures.length ? "\n" : ""));
+cap?.stop();
+fs.writeFileSync(out, JSON.stringify({ meta: { ownedPlain, csvServed, rebuilt, ...(admit.length ? { admitted: admit, capMs } : {}), runs: runs.length, core: fs.readFileSync(path.join(ROOT, "pyodide-core/.pin"), "utf8").trim(), at: new Date().toISOString() }, rows }, null, 1) + "\n");
