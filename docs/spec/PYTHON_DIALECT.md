@@ -314,6 +314,55 @@ A cell inside the dialect that makes a gated `ml` call (`ml.fetch` on a new URL,
 call SUSPENDS on an `ask` and continues when answered ([`ML_WIRE.md`](ML_WIRE.md), "Per-call asking"), which the JS
 survey could not do and which answers the manifest spec's "granularity of a refusal".
 
+### Code from elsewhere runs under the same gate (intended design; Shane, 2026-11-23; the dynamic case is not built)
+
+One principle covers a cell's own `def`, a module the model wrote under `/files/lib/`
+([`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md), "`lib/`"), a pure-Python package with no manifest (tier 3 above) and a
+wrapper a cell installs on a library function: **code is judged where it RUNS, by the gate, never by where it came
+from or where it sits.** A `CO_RESTRICTED` frame is gated wherever it is entered, under a lifted leaf included (the
+callbacks row of the table above), so such code stays inside the dialect or raises `NotInDialect`, and its steps count
+against the cell's budget. Every frame is then one of two kinds: gated, which needs no trust, or vetted library code
+running lifted, which is trusted only while no UNGATED code has changed it. An approved cell is ungated code that can
+change it, which is why the outside mark exists. Gated code that changes it breaks neither half.
+
+The static cases are imports: the module's code comes through the same evaluator as the cell's. The DYNAMIC case is
+the same problem with the code arriving by assignment at run time, and it is what the gate refuses today:
+
+```python
+orig = pd.DataFrame.head
+def extended(self, n=5):
+    print(f"head of {self.shape}")
+    return orig(self, n)
+pd.DataFrame.head = extended
+```
+
+The last line writes to an object the cell does not own, so the cell goes outside; approved, it is compiled as full
+Python, `extended` loses `CO_RESTRICTED`, and it is the plant the mark is for. The intended design admits that write
+INSIDE the dialect, where `extended` keeps its flag and runs gated on every later call, from this cell, a later one,
+or pandas' own internals. The conditions:
+
+- **The value is a plain function whose code is `CO_RESTRICTED`.** Not a builtin, not a bound method, not a partial,
+  not an instance with `__call__`: `pd.DataFrame.head = open` would give lifted code an ungated capability under a
+  vetted name.
+- **The slot holds a function the manifest already admits.** The wrapper calls the original from a restricted frame,
+  which only a listed function allows; wrapping an unlisted internal would need the list widened to every patchable
+  callee, and is not admitted.
+- **No write to an existing function's `__code__`, defaults, closure or `__dict__`.** Those change vetted code in
+  place.
+- **The worker is not marked by it**, since no ungated code was introduced, and the write is rolled back with the cell
+  when the cell is refused.
+
+What it costs, stated so nobody reads more into it. (1) On a path through an installed wrapper, halting is by the step
+budget and no longer by construction: library code that loops until its callee returns some value now depends on what
+the wrapper returns. (2) Lifted code sees return values its vetting never considered. The wrapper itself can do
+nothing the dialect refuses, and what leaves the worker is still judged at the boundary, but the argument that a
+lifted leaf is harmless on any ARGUMENT a cell can pass has to be made again for any RETURN its admitted callees can
+give. Both need adversarial rows before this is built: a wrapper that never returns the awaited value, one that
+returns a cell-owned object where an internal expects its own, one installed and then reached by an internal caller,
+the three refused value kinds, and a wrapper surviving into a later cell. No use for this has been measured; it is
+recorded because it is the dynamic form of the `lib/` and tier 3 rule, and the design should not depend on which form
+a model happens to write.
+
 ## The namespace
 
 **One namespace per run, persistent**, as decided on 2026-10-08. The five questions the state inspector spec left open:

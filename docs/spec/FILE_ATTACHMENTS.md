@@ -2088,8 +2088,10 @@ the code the cell runs.**
   decided by running the cell under the fork's gate, never by its source ([`PYTHON_DIALECT.md`](PYTHON_DIALECT.md),
   "Membership replaces `mode`"). An imported module is more code through the same evaluator: inside the dialect the
   cell stays free, outside it the cell asks, as if the code were inline. The module's steps count against the cell's
-  halting bound. A planted module in `/shared/lib/` runs in every later cell that imports it, within what the
-  dialect allows; it cannot do what the dialect does not.
+  halting bound. A planted module in `/shared/lib/` runs in every later cell that imports it, within what the dialect
+  allows; it cannot do what the dialect does not. The same rule covers code that arrives by assignment and not by
+  import (a dialect-checked wrapper installed on a library function): [`PYTHON_DIALECT.md`](PYTHON_DIALECT.md), "Code
+  from elsewhere runs under the same gate".
 - **A cell that asks is approved with its imports.** The card shows each imported module beside the cell, with its
   path and a content hash: EXPANDED when the person has not approved that hash before, collapsed only when they have,
   so no code is approved unseen. The approval is pinned to those hashes: a module that changed between the card and
