@@ -2,6 +2,7 @@
 // served over the `ml-sessions` port to extension pages (session-server.ts). background.ts feeds it from the same
 // places that feed the DevTools panel, so the index holds what a panel would show for every tab at once
 // (docs/dev/chat-page.md §The local index).
+import { addFilesRule, removeFilesRule } from "./sw-files-hide";
 import { restoreChatRecord } from "../session/chat-record";
 import { forgetRunPolicies, runPolicies, archivedPolicyLoss } from "./sw-policies";
 import { hintSession, type SentFile } from "../contract/contract-run";
@@ -409,6 +410,8 @@ export function configureSessionCommands(run: RunDeps): void {
         },
         keepSession,
         pinSession,
+        addFilesRule,
+        removeFilesRule,
         renameSession,
         ...(sessionStore ? { storageReport } : {}),
         listModels: async () => {
