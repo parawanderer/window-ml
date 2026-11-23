@@ -133,6 +133,10 @@ export interface CommandDeps {
     listModels(): Promise<ModelChoice[] | { models: ModelChoice[]; filtered?: { hidden: number } }>;
     /** pin or unpin a session this runtime holds: saved first when pinning, then the row changed and written */
     pinSession(hash: string, pinned: boolean): void;
+    /** add a hiding rule for a session's files: its id, or why the pattern is refused (sw-files-hide.ts) */
+    addFilesRule?(hash: string, r: { effect: "hide" | "show"; source: string; scope: "session" | "global" }): { id: string } | { refused: string };
+    /** remove a hiding rule seen from a session; a widening removal waits for `confirmed` */
+    removeFilesRule?(hash: string, id: string, confirmed: boolean): { removed: true } | { removed: false; why: "unknown" | "confirm"; exposes?: string[] };
     /** name a session (a capped, non-empty title), or with null return it to a generated title */
     renameSession(hash: string, title: string | null): void;
     /** every event this runtime still holds for a session, oldest first; empty when it holds none */
@@ -527,6 +531,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             catch { return fail("unavailable", "that page is not reachable; the extension may not run there"); }
             if (outcome !== "adopted") {
                 if (outcome === "no-answer") return fail("unavailable", "that page did not answer; it may still be loading");
+                if (outcome === "busy") return fail("conflict", "the session is running: wait for its turn to end, or stop it, then resume it");
                 return fail("failed", "that page did not take the session");
             }
             // Only once the page holds it: a note about a resume that did not happen would be a lie in the place a
@@ -773,6 +778,26 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
 
         // What a person at the machine is LOOKING AT, so `drive` rather than `view`. Only a tab `tabs.list` would
         // have shown: a client can only have guessed any other id, and `forbidden` would confirm the tab exists.
+        "policy.files": async (c) => {
+            const s = session(c);
+            if (s.error) return s.error;
+            if (!deps.addFilesRule || !deps.removeFilesRule) return fail("unsupported", "this runtime keeps no hiding rules");
+            if (c.op === "add") {
+                if (c.effect !== "hide" && c.effect !== "show") return fail("invalid", "effect is hide or show");
+                if (c.scope !== "session" && c.scope !== "global") return fail("invalid", "scope is session or global");
+                if (typeof c.source !== "string") return fail("invalid", "source is a path or a glob");
+                const r = deps.addFilesRule(s.id.hash, { effect: c.effect, source: c.source, scope: c.scope });
+                return "refused" in r ? fail("invalid", r.refused) : ok(r);
+            }
+            if (c.op === "remove") {
+                if (typeof c.id !== "string" || !c.id) return fail("invalid", "id names a rule");
+                const r = deps.removeFilesRule(s.id.hash, c.id, c.confirm === true);
+                if (r.removed) return ok({ removed: true });
+                return r.why === "confirm" ? ok({ removed: false, confirm: { exposes: r.exposes ?? [] } }) : fail("not-found", "no such hiding rule in this session's view");
+            }
+            return fail("invalid", "op is add or remove");
+        },
+
         "tab.focus": async (c) => {
             const bad = ownRuntime(c);
             if (bad) return bad;

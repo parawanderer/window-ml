@@ -88,7 +88,7 @@ export const extensionServices: SidebarServices = {
         catch { resolve([]); }
     }),
     bringHere: (hash) => new Promise((resolve) => {
-        try { chrome.runtime.sendMessage({ type: "MOVE_RUN", payload: { runId: hash } }, (resp: { data?: unknown; error?: string } | undefined) => resolve(resp?.data ? { ok: true } : { error: resp?.error || "The session was not brought here." })); }
+        try { chrome.runtime.sendMessage({ type: "MOVE_RUN", payload: { runId: hash } }, (resp: { data?: unknown; error?: string } | undefined) => resolve(resp?.data ? { ok: true, ...(typeof (resp.data as { queued?: unknown }).queued === "string" ? { queued: (resp.data as { queued: string }).queued } : {}) } : { error: resp?.error || "The session was not brought here." })); }
         catch (e) { resolve({ error: (e as Error)?.message || String(e) }); }
     }),
     stillLive: () => true,   // this panel is attached to the tab that holds the run; its reduction IS the runtime's

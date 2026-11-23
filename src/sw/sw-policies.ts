@@ -14,13 +14,17 @@ import { fromFetch, free, boundFor, EffectsData } from "../effects";
 import { defineState } from "../state-registry";
 import type { AskWhy, PersistGrant } from "../contract";
 import { effectiveRows, type PolicyRow, type PolicyInput } from "./sw-policy-view";
+import { filesViewRows } from "./files-hide-view";
+import type { HideEffect, HideEntry } from "../files-hide";
 import { validList, CONSUMERS, GLOBAL_POLICIES_KEY, POLICY_LABEL_MAX } from "./policy-valid";
 import { REVEALS_CAUSE, revealsText } from "../shell/sh-call";
 
 /** Which kind of call a policy is about; a policy is only ever evaluated over calls of its own consumer. `sh` is
  *  `ml.sh` (docs/spec/SHELL.md), whose facts its own consumer builds. `setting` is `change_setting`
- *  (docs/spec/MODEL_SETTINGS.md): an `allow` frees only an ordinary key's change, never a guarded one. */
-export type PolicyConsumer = "fetch" | "sh" | "act" | "setting";
+ *  (docs/spec/MODEL_SETTINGS.md): an `allow` frees only an ordinary key's change, never a guarded one. `files` is a
+ *  hiding rule (POLICIES.md, "Hiding files", ruling 34): its effect is `hide` or `show` and its source a path or a glob,
+ *  never a script, so `judgeCall` never evaluates it; `filesHideEntries` reads it. */
+export type PolicyConsumer = "fetch" | "sh" | "act" | "setting" | "files";
 
 /** Where a policy came from: written by the person, added by answering an approval card, or proposed by the model and
  *  approved by the person on its own card (`propose_policy`). */
@@ -31,7 +35,8 @@ export interface StoredPolicy {
     id: string;
     scope: "global" | "run";
     consumer: PolicyConsumer;
-    effect: PolicyEffect;
+    /** `hide` or `show` for a `files` rule, and only for one; `allow`, `deny` or `ask` for every other consumer. */
+    effect: PolicyEffect | HideEffect;
     source: string;
     label: string;
     origin: PolicyOrigin;
@@ -266,6 +271,13 @@ export function addGlobalPolicy(p: Pick<StoredPolicy, "consumer" | "effect" | "s
     return { ...made };
 }
 
+/** Whether `id` names a stored `files` rule, which only its session's view removes (it widens, so it asks first) and
+ *  nothing edits. */
+export function isFilesRule(id: string): boolean {
+    return globals.some((p) => p.id === id && p.consumer === "files")
+        || [...byRun.values()].some((list) => list.some((p) => p.id === id && p.consumer === "files"));
+}
+
 /** Remove one policy by id, from whichever scope holds it; true when it existed. */
 export function removePolicy(id: string): boolean {
     brokenWhy.delete(id);
@@ -320,6 +332,9 @@ export function takeArchiveNotice(runId: string): string | undefined {
 /** Change a policy's source, effect or label in place (the policy page); returns it, or undefined when there is none. */
 export function editPolicy(id: string, patch: Partial<Pick<StoredPolicy, "source" | "effect" | "label">>): StoredPolicy | undefined {
     const at = (list: StoredPolicy[]): number => list.findIndex((p) => p.id === id);
+    // A hiding rule has no edit: an allow/ask/deny over it would hold nothing, and its source skips `patternRefusal`.
+    // It is removed and added again through `policy.files`.
+    if (isFilesRule(id)) return undefined;
     const apply = (p: StoredPolicy): StoredPolicy => ({
         ...p,
         ...(typeof patch.source === "string" ? { source: patch.source } : {}),
@@ -360,7 +375,29 @@ export function policyView(): { global: StoredPolicy[]; runs: { hash: string; po
 /** One session's effective policies as rows (sw-policy-view.ts), computed here beside {@link judgeCall} from the same lists. */
 export function sessionPolicies(hash: string): { rows: PolicyRow[]; builtin: typeof BUILTIN_POLICY } {
     const input = (l: StoredPolicy[]): PolicyInput[] => l.map((p) => ({ id: p.id, consumer: p.consumer, label: p.label, source: p.source, effect: p.effect, origin: p.origin, created: p.created, ...(brokenWhy.has(p.id) ? { broken: brokenWhy.get(p.id) } : {}) }));
-    return { rows: effectiveRows(input(globals), input(byRun.get(hash) ?? []), BUILTIN_POLICY), builtin: BUILTIN_POLICY };
+    const scripts = (l: StoredPolicy[]): StoredPolicy[] => l.filter((p) => p.consumer !== "files");
+    const session = byRun.get(hash) ?? [];
+    const viewed = (l: StoredPolicy[], layer: HideEntry["layer"]) => hideEntries(l, layer).map((e) => { const p = l.find((q) => q.id === e.id)!; return { ...e, label: p.label, origin: p.origin, created: p.created }; });
+    // As for every consumer, a `files` default row is shown only once the consumer has a rule (`effectiveRows`'s convention).
+    const g = viewed(globals, "global"), s = viewed(session, "session");
+    return { rows: [...effectiveRows(input(scripts(globals)), input(scripts(session)), BUILTIN_POLICY), ...(g.length || s.length ? filesViewRows(g, s) : [])], builtin: BUILTIN_POLICY };
+}
+
+/** A list's `files` rules as the hide rule reads them, tagged with their layer. */
+function hideEntries(l: readonly StoredPolicy[], layer: HideEntry["layer"]): HideEntry[] {
+    return l.filter((p) => p.consumer === "files" && (p.effect === "hide" || p.effect === "show"))
+        .map((p) => ({ id: p.id, effect: p.effect as HideEffect, source: p.source, layer }));
+}
+
+/**
+ * The hiding rules that bind one session's files, session layer first (POLICIES.md, "Hiding files"): what a reader the host
+ * does not sandbox applies itself. Undefined until every saved policy is known, and for good after a read that failed, so a
+ * reader refuses rather than reads past a `hide` it has not seen.
+ * @param hash the session's hash
+ */
+export function filesHideEntries(hash: string): HideEntry[] | undefined {
+    if (!loaded || readState === "failed") return undefined;
+    return [...hideEntries(byRun.get(hash) ?? [], "session"), ...hideEntries(globals, "global")];
 }
 
 /**
@@ -401,7 +438,7 @@ export function removeFromSession(hash: string, id: string, confirmed: boolean):
 export function judgeCall(runId: string | undefined, consumer: PolicyConsumer, facts: Record<string, unknown> & { effects: EffectsData },
     placement: Parameters<typeof boundFor>[0] = "worker-survey"): PolicyJudgement {
     if (!loaded) return { decision: "ask", broken: [] };
-    const all = [...globals, ...(runId ? byRun.get(runId) ?? [] : [])].filter((p) => p.consumer === consumer);
+    const all = [...globals, ...(runId ? byRun.get(runId) ?? [] : [])].filter((p): p is StoredPolicy & { effect: PolicyEffect } => p.consumer === consumer && p.consumer !== "files");
     const broken: PolicyJudgement["broken"] = [];
     let allow: StoredPolicy | undefined, ask: StoredPolicy | undefined;
     for (const p of all) {
@@ -650,7 +687,8 @@ export function withPolicies<T extends object>(current: T, runId: string): T & {
     };
 }
 
-/** A run's policies as the model reads them (`ml.current.policies`): what each allows or refuses, as written. */
-export function policiesForModel(runId: string): { scope: StoredPolicy["scope"]; effect: PolicyEffect; label: string; source: string }[] {
-    return [...globals, ...(byRun.get(runId) ?? [])].map((p) => ({ scope: p.scope, effect: p.effect, label: p.label, source: p.source }));
+/** A run's policies as the model reads them (`ml.current.policies`): what each allows or refuses, as written. A
+ *  `files` rule is left out: a hidden file reads as absent, and its path in this list would say it exists. */
+export function policiesForModel(runId: string): { scope: StoredPolicy["scope"]; effect: StoredPolicy["effect"]; label: string; source: string }[] {
+    return [...globals, ...(byRun.get(runId) ?? [])].filter((p) => p.consumer !== "files").map((p) => ({ scope: p.scope, effect: p.effect, label: p.label, source: p.source }));
 }

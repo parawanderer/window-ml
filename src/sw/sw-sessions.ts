@@ -2,6 +2,7 @@
 // served over the `ml-sessions` port to extension pages (session-server.ts). background.ts feeds it from the same
 // places that feed the DevTools panel, so the index holds what a panel would show for every tab at once
 // (docs/dev/chat-page.md §The local index).
+import { addFilesRule, removeFilesRule } from "./sw-files-hide";
 import { restoreChatRecord } from "../session/chat-record";
 import { forgetRunPolicies, runPolicies, archivedPolicyLoss } from "./sw-policies";
 import { hintSession, type SentFile } from "../contract/contract-run";
@@ -411,6 +412,8 @@ export function configureSessionCommands(run: RunDeps): void {
         },
         keepSession,
         pinSession,
+        addFilesRule,
+        removeFilesRule,
         renameSession,
         ...(sessionStore ? { storageReport } : {}),
         listModels: async () => {
@@ -444,6 +447,8 @@ export function configureSessionCommands(run: RunDeps): void {
             // move, never hosted a second time: its memory is fresher than the saved history, so that is not read back.
             // On its own tab it is resumed as before.
             const held = bgRuns.get(hash);
+            // A turn running is not resumed: it is moved, from a surface that says it waits for the step (`moveRun`).
+            if (runControllers.has(hash) || runInboxes.has(hash)) return "busy";
             if (held && held.tabId !== tabId) {
                 const rebuild = held.p.rebuild;
                 if (!rebuild) return "none";
