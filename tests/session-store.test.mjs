@@ -2,7 +2,7 @@
 // full. The IndexedDB backend is replaced by a map, so the policy is tested without a database.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { SessionStore, planEviction, planExpiry, sizeOf, storedBytes, STORE_BUDGET_BYTES } from "../src/session/session-store.ts";
+import { SessionStore, carryNsDropped, planEviction, planExpiry, sizeOf, storedBytes, STORE_BUDGET_BYTES } from "../src/session/session-store.ts";
 
 const T = { timeout: 5000 };
 
@@ -28,7 +28,7 @@ function backend() {
                 if (hw.cut != null) hist.length = Math.min(hist.length, hw.cut);
                 for (const [pos, m] of hw.puts) { hist[pos] = m; calls.puts++; }
                 history.set(row.hash, hist);
-                if (hw.meta) meta.set(row.hash, hw.meta);
+                if (hw.meta) meta.set(row.hash, carryNsDropped(meta.get(row.hash), hw.meta));
             }
             const have = events.get(row.hash) ?? [];
             list.forEach((e, i) => { have[from + i] = e; });
@@ -37,6 +37,7 @@ function backend() {
         events: async (hash) => [...(events.get(hash) ?? [])],
         historyRange: async (hash, from, to) => (history.get(hash) ?? []).slice(from, to),
         runMeta: async (hash) => meta.get(hash) ?? null,
+        noteNsDropped: async (hash, record) => { const old = meta.get(hash); if (old?.kind !== "chat") meta.set(hash, { ...(old ?? { kind: "agent" }), nsDropped: record }); },
         remove: async (hashes) => { calls.remove++; for (const h of hashes) { rows.delete(h); events.delete(h); history.delete(h); meta.delete(h); } },
         _rows: rows, _events: events, _history: history, _meta: meta, calls,
     };

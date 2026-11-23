@@ -195,3 +195,77 @@ test("a message the database cannot store fails the whole write: no row claims p
     const r = row(disk, AGENT);
     assert.equal(r === undefined || (r.historyCount ?? 0) === disk.keys.filter((k) => k[0] === AGENT).length, true, "row and records agree");
 });
+
+// --- the namespace-drop record in `runmeta` (ASYNC_CALLS.md, rulings of 2026-11-22, ruling 2) ---
+
+const runmetaOf = async (idb, hash) => {
+    const db = await done(idb.open("ml-saved-sessions"));
+    try { return await done(db.transaction("runmeta", "readonly").objectStore("runmeta").get(hash)); } finally { db.close(); }
+};
+const DROP = { at: 5000, reason: "timeout", names: ["df", "x"], total: 2 };
+
+test("nsDropped: a form-2 runmeta written before the record existed reads back with none", T, async () => {
+    const idb = new IDBFactory();
+    await writeVersion1(idb);
+    const old = new SessionStore(indexedDbBackend(idb), { flushMs: 60_000 });
+    await old.open();
+    assert.equal(await old.migrate(), 2);
+    const meta = await runmetaOf(idb, AGENT);
+    assert.deepEqual(Object.keys(meta).sort(), ["kind", "payload", "sub"], "what the old code wrote: no nsDropped key");
+    const fresh = new SessionStore(indexedDbBackend(idb), { flushMs: 60_000 });
+    await fresh.open();
+    assert.equal((await fresh.history(AGENT)).nsDropped, undefined);
+    assert.deepEqual(await fresh.history(AGENT), agentHistory);
+});
+
+test("nsDropped: a row still in the old form is migrated by noteNsDropped, and keeps the record through migrate()", T, async () => {
+    const idb = new IDBFactory();
+    await writeVersion1(idb);
+    const store = new SessionStore(indexedDbBackend(idb), { flushMs: 60_000 });
+    await store.open();
+    await store.noteNsDropped(AGENT, DROP);
+    const disk = await onDisk(idb);
+    assert.equal(row(disk, AGENT).form, 2);
+    assert.equal(row(disk, AGENT).history, undefined, "its history moved first");
+    assert.ok(row(disk, CHAT).history, "the other row is untouched");
+    assert.deepEqual(await store.history(AGENT), { ...agentHistory, nsDropped: DROP });
+    assert.equal(await store.migrate(), 1, "only the chat is left");
+    const fresh = new SessionStore(indexedDbBackend(idb), { flushMs: 60_000 });
+    await fresh.open();
+    assert.deepEqual(await fresh.history(AGENT), { ...agentHistory, nsDropped: DROP }, "still there after the migration and a restart");
+    assert.deepEqual(await fresh.history(CHAT), chatHistory);
+});
+
+test("nsDropped: a later history save keeps the record, and a second record replaces the first", T, async () => {
+    const idb = new IDBFactory();
+    const store = new SessionStore(indexedDbBackend(idb), { flushMs: 60_000 });
+    store.put(summary(AGENT, { status: "running" }), ev(AGENT, 0));
+    store.putHistory(AGENT, { kind: "agent", messages: agentHistory.messages.slice(0, 2), payload: agentHistory.payload });
+    await store.flush();
+    await store.noteNsDropped(AGENT, DROP);
+    store.putHistory(AGENT, { kind: "agent", messages: agentHistory.messages, payload: agentHistory.payload, sub: agentHistory.sub });
+    await store.flush();
+    const meta = await runmetaOf(idb, AGENT);
+    assert.deepEqual(meta.nsDropped, DROP, "the fresh save rewrote runmeta and carried the record");
+    assert.deepEqual(meta.sub, agentHistory.sub, "and the new sub");
+    const second = { at: 9000, reason: "person" };
+    await store.noteNsDropped(AGENT, second);
+    assert.deepEqual((await runmetaOf(idb, AGENT)).nsDropped, second, "replaced, not merged");
+    assert.deepEqual((await store.history(AGENT)).nsDropped, second);
+    await store.noteNsDropped(AGENT, { at: 1, reason: "x", names: Array.from({ length: 80 }, (_, i) => `n${i}`), total: 80 });
+    assert.equal((await runmetaOf(idb, AGENT)).nsDropped.names.length, 50, "names capped at 50, total kept");
+});
+
+test("nsDropped: a hash the store does not hold creates nothing and does not throw", T, async () => {
+    const idb = new IDBFactory();
+    await writeVersion1(idb);
+    const errors = [];
+    const store = new SessionStore(indexedDbBackend(idb), { flushMs: 60_000, onError: (e) => errors.push(e) });
+    await store.open();
+    await store.noteNsDropped("ffff9999", DROP);
+    const disk = await onDisk(idb);
+    assert.deepEqual(disk.metaKeys, [], "no runmeta");
+    assert.equal(disk.rows.length, 2, "no row");
+    assert.deepEqual(errors, []);
+    assert.equal(await store.history("ffff9999"), null);
+});

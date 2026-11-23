@@ -126,17 +126,40 @@ is not what bounds a cell. Recursion to depth d with two self-calls is a tree of
 and never in practice, so the budget is already the only bound that binds, and it is a proof of its own. The counter
 is a natural number, it falls on every backward jump and every call, and no cell code can read or reset it, so every
 run ends within the budget by well-founded induction, whatever the program. That argument needs no restriction on loop
-forms; its one premise is that no single step does unbounded work, which is the obligation the cost rows already carry
-(a C leaf's cost over its input, the regex bound). So `while` joins the dialect, with these points ruled beside it.
-(1) A budget trip is an ERROR THE MODEL READS, with the steps spent, never an approval card: asking a person about a
-loop that does not end is the wrong question, and so is running it unbounded outside. (2) A static refusal that costs
-nothing stays: `while True` (or any constant true test) with no `break`, `return` or `raise` in its body is refused
-before the run. (3) A trip is not a kill: it lands at the eval breaker, the cell's attempt is discarded whole as any
-refused try is, and the same cell trips at the same step on every run. (4) Generators and `yield` stay out, for a
-different reason: a suspended frame is code that outlives its cell. (5) Before it is built, packages states what a
-lifted leaf is charged, since a loop multiplies an undercharged step by its trip count exactly as a `for` over a large
-`range` does today. `class` is excluded for no halting reason either: its methods are cell code a library calls, which
-"Code from elsewhere runs under the same gate" covers; that is noted, not ruled.
+forms; its one premise is that no single step does unbounded work, which is the obligation the cost rows are meant to
+carry (a C leaf's cost over its input, the regex bound; see point 5). So `while` joins the dialect, with these points
+ruled beside it. (1) A budget trip is an ERROR THE MODEL READS, with the steps spent, never an approval card: asking a
+person about a loop that does not end is the wrong question, and so is running it unbounded outside. (2) A static
+refusal that costs nothing stays: `while True` (or any constant true test) with no `break`, `return` or `raise` in its
+body is refused before the run. (3) A trip is not a kill: it lands at the eval breaker, the cell's attempt is
+discarded whole as any refused try is, and the same cell trips at the same step on every run. (4) Generators and
+`yield` stay out, for a different reason: a suspended frame is code that outlives its cell. (5) The premise does NOT
+hold as built: a C leaf spends one step whatever its input (packages, read from the fork), so `while` is not built
+before ruling 105's charge is ([`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md), "Cost: three tiers");
+the gap is there today with a `for` over a large `range`, with or without `while`. `class` is excluded for no halting
+reason either: its methods are cell code a library calls, which "Code from elsewhere runs under the same gate" covers;
+that is noted, not ruled.
+
+**RULED 2026-11-23 (Shane, ruling 106): the property is BOUNDED COST PER SYNCHRONOUS STEP, not totality.** The agent
+loop is a program whose steps are tool calls. The loop need not end; what it needs is that every step returns, so that
+it always makes progress (productivity, as in a synchronous reactive language where each reaction is bounded and the
+system runs for ever, or a stream whose every element arrives in finite time). Three things follow, and each differs
+from what a total language asks. (1) WEAKER than totality: a cell does not have to return its answer, only SOMETHING.
+A budget trip is a result the model reads, so every cell is a partial function made total by an error value, and
+nothing has to be proven before the run. (2) STRONGER than totality: halting with no bound on when is worth nothing
+here (a total cell can run for days), so the property is a bound on cost, which the step budget gives only once every
+step's cost is charged (ruling 105). (3) The usual price is not paid: work with no bound known in advance (a
+simulation, a search, a script meant to run until it is killed) is not refused, it leaves the loop. The model writes a
+script and starts it detached through `ml.sh`; starting it is a step that returns at once, the process is a concurrent
+thing the run observes, and it is judged as any message leaving the worker is, by its effect under policies. So the
+dialect has to be complete for the synchronous steps only. The tiers are named by where the bound comes from: an
+EXPLICIT bound in the source (a `for` over data or a range; no `while`, no recursion), the IMPLICIT bound of the
+budget (`while`, recursion; ruling 104), and NO bound, detached. Between the first two the difference is not safety,
+since the budget bounds both: the explicit tier is refused before it runs instead of after the budget is spent,
+discards no attempt, and shows the model its bound in its own source. Intended beside it, not built: the budget trip's
+text names the two ways on (bound the loop, or run a script detached); that text is prompt-budget work. Being
+measured, not assumed (bench's rewrite test): how many cells outside the dialect have a rewrite inside it, how many
+budget-tier cells have a rewrite with an explicit bound, and whether that bound is derived from the data or guessed.
 
 **What the corpus count changed (2026-10-15, lane 3 of the plan: 1,714 unique cells from 18 models).** The Starlark set
 admits 89.4% of cells whole; no cell uses `while` or `class`, which confirms their static refusal. Three rulings on

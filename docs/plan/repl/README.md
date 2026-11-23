@@ -1944,6 +1944,79 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     cannot read fails the spawn, and two limits are accepted and go in the extension's view row: on Linux a file that
     appears after a call starts is readable to that call, and on both platforms a hard link made earlier under another
     name still opens a hidden file.
+  - **105 (Shane, 2026-11-23, in the coordinator's session). A lifted leaf is charged by a cost function, before it
+    runs.** Packages read from the fork that a C leaf spends one step whatever its input and that a manifest's `cost`
+    is documentation, so ruling 104's premise fails as built and a cell inside the 15,000,000-step budget can run for
+    hours. Shane: charge the cost, and build the planned form in which a cost is a function of the arguments
+    (READONLY_LIBRARY_MANIFEST.md, "Cost: three tiers", tier 1, specified since the manifest spec and never built).
+    Packages builds it, folded into its fork PR (2) or the PR after; `while` waits for it. The coordinator's defaults
+    until packages proposes better: steps proportional to the work in size measures, a constant the host measures, and
+    a leaf with no function charged by its largest argument.
+  - Packages' probe of an opaque-origin sandbox page (its account; the build of #2117, core 35bd1d69). The core boots
+    in a framed sandbox page only from a `blob:` worker, with numpy and pandas, at today's start-up cost. From inside:
+    no extension API, no storage, no parent access, and no network while the page's CSP forbids it (the CSP is the
+    only network wall there). Chrome reports the frame out of process. A framed page gets no SharedArrayBuffer, so the
+    interrupt buffer and the `/files` mount's shared buffers do not work there; JSPI does, so step 1's sync `ml` wire
+    is unaffected. The sandbox CSP is one string for every sandbox page, mermaid's included. Open with packages: the
+    same probe framed in the offscreen document, an in-place interrupt through JSPI, and keeping mermaid's page as
+    tight as today. A restart of a run's worker costs a cold start of about 2.5 to 3 seconds; what can be carried is
+    the inert list the dialect already enforces, by value, with functions dropped. No decision on the second wall
+    before redteam-e4's audit.
+  - Merged since: #2088 (the hide rule's part A, 0f0c6edc), #2087 (move-run slice 2, 2531d296). Move-run's remaining
+    scope, the coordinator's call: #2106, then `navigate` from the no-tab state, then resuming with no page; deferred
+    are the shell bench step and the kernel line (the "No tab" start-form choice was listed here as deferred and is
+    IN scope; see the next bullet). Bench's corpus
+    is three models on Shane's word in bench's session (bench's account): `qwen3.8-flash-next:vision`, then
+    `gemma4:31b`, then `dsv4-flash:q4kxl` alone, 38 tasks, 3 repeats, every figure per model. Small-fixes reports
+    Shane unpaused it in its session; flaky-ci reviews its PRs behind the write PRs.
+  - **Ruling 106 (Shane, 2026-11-23): the property is bounded cost per synchronous step, not totality.** The spec text
+    is PYTHON_DIALECT.md, under ruling 104. In short: the loop must be productive, so each step returns something in
+    bounded cost and a budget trip is a result the model reads; unbounded work (a simulation, a script run until
+    killed) is started detached through `ml.sh` and judged as an effect; the explicit-bound tier and the budget tier
+    differ in predictability, not safety. It holds for both dialects. Intended, not built, no owner: the trip's text
+    names the two ways on. NOT ruled, waiting for numbers: whether a cell outside the dialect that is no effect is
+    refused with a reason the model reads instead of raising a card. Bench measures the premise with a rewrite test
+    (the coordinator's conditions): each recorded cell above the lowest tier is rewritten one tier lower by a model
+    that sees only the live tool description, replayed, and compared (stdout plus the names later cells read); per
+    bin, per model, the six added tasks apart; one fixed instruction for budget-tier cells; the real iteration count
+    beside the rewrite's bound; cells that fail the fidelity replay excluded and counted. No build admits `while`, so
+    a budget-tier cell's own result comes from the unrestricted path (accepted). Bench's estimate: about 1,500 calls,
+    5 to 10 GPU-hours. The runs start on Shane's word in bench's session. Bench's account: the first full sweep
+    (`qwen3.8-flash-next:vision`, 114 runs) is running.
+  - **Corrections, 2026-11-23.** "No tab" on the start form is IN scope on Shane's word ("I really want "No Tab" for
+    my own work"): move-run builds the runtime and the form in one PR after #2106, with no hub PR. On day one such a
+    run has `python_exec`, `fetch_url`, `/files` read-only until the write PR lands, `ml.sh` only from a cell outside
+    the dialect, and no `exec` or page tools. #2106 may merge with redteam-e3's three todo rows open (`chat_metadata`
+    answered "needs a page"; two page commands passing the no-tab sentinel to `chrome.tabs.sendMessage`;
+    `senderOwnsRun` trusting an absent `sender.tab`), and the "No tab" PR may not merge with any of them still todo
+    (the coordinator's call: each is reachable only by a run with no tab). #2106 lands before #2107. `filesQuotaMB` at
+    1024 MiB is confirmed by Shane for now.
+  - **Decisions of 2026-11-23, after ruling 106 (Shane's words are in the coordinator's session unless marked).**
+    `while` is built now, in both dialects. Python: packages, after the cost charge. JS: small-fixes, with unlabelled
+    `break` and `continue` and the classic `for (init; test; update)` in a following PR (Shane: yes to each); labels,
+    `throw` and `switch` stay out. EVERY resource trip is an error the model reads and never a card (Shane: yes for
+    size and memory; the coordinator's reading of rulings 104 and 106 for the rest): the step budget, memory, depth,
+    the JS size caps, call depth and a pipe's output size. Still asking, the coordinator's call: the `ml.embed` caps
+    (another machine's work, a spending question) and the risky-regex refusal (a judgement from the pattern's form). A
+    constant-true loop with no exit of its own is "Not run", an error, in both dialects. The trip texts are accepted
+    (packages); their `ml.sh` clause follows the run's `shell` flag, and that flag now requires the process host to
+    answer at run start (Shane asked; async builds it; before, it read settings only). "Deterministic" in ruling 104
+    point 3 is "for a given worker state" (packages: a finalizer inside the breaker, a library's cold path). Bench's
+    first corpus (its account; `qwen3.8-flash-next:vision`, 25 runs, 86 Python cells): 39 never ran (`tables` given an
+    `@file:` form), 44 ran outside, 3 inside; of the 44, 39 were getting the data and none was structural. The cause
+    found behind it (session-store's trace): every run a person starts reads the page-hosted `python_exec` description
+    ("STATELESS", "No network or filesystem"), new and resumed; session-store fixes it first. So the order is: that
+    fix; `read_csv` of a `/files/` path inside the dialect on today's core (packages; Shane: ahead of `while`); the
+    refusal text for an `@file:` table source (session-store); then fork (2a) and (2b), the pin bump, `while`, `try`.
+    Packages corrected its ruling 105 finding: the charge-before call (`_restricted.charge`, refusing a negative
+    count, tripping before anything runs) is ALREADY in the pinned core 35bd1d69, so the charge for module functions
+    and lifted methods is built in window-ml on today's core, `read_csv` is charged by its file's bytes from its first
+    PR, and fork (2b) shrinks to the descriptor mapping, without which a bound C method (`a.astype`) still reaches no
+    charge. Bench finishes the baseline, holds the other two models (Shane: yes), and reruns after the fix alone and
+    after all three; the rewrite test's model calls run on the last. Ruling 107 (Shane: "it should, either directly or
+    by composition"): `ml.table` takes an `@file:` pointer (ML_TABLE.md). Open: a read-only subset of `os`, `os.path`,
+    `glob` and `pathlib` inside the dialect (Shane: scanning the virtual file system is fine; packages costs it); an
+    owner for the 633,699-character `exec` result that filled one run's context.
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
