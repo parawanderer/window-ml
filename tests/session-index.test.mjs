@@ -310,6 +310,34 @@ test("restore never overwrites a session this worker already holds, or an unpars
     assert.equal(ix.list().length, 1, "and the malformed row was refused");
 });
 
+test("UPGRADE: a restored row's page.tabId is dropped when no open tab has that id, and kept when one does", () => {
+    // What the code before this wrote: the summary with the tab the run worked on, saved as it was when the worker
+    // died. That tab closed while no worker was there to see it, and the row kept offering a peek, a focus and a
+    // resume on it after the restart.
+    const ix = index();
+    const row = (hash, tabId) => ({ summary: { id: { runtime: "local", hash }, kind: "agent", status: "done", createdTs: 1, lastTs: 2, pendingApprovals: 0, saved: true, page: { url: "https://example.com/a", title: "A", tabId } }, count: 1 });
+    const rows = ix.restore([row("aaaa0001", 41), row("aaaa0002", 42)], new Set([42]));
+    assert.deepEqual(rows[0].page, { url: "https://example.com/a", title: "A" }, "the closed tab's id is gone, the page it was on is not");
+    assert.equal(ix.get("aaaa0002").page.tabId, 42, "an open tab with that id: kept");
+    // Not told which tabs are open: every id is kept, since "unknown" is not "none".
+    const other = index();
+    assert.equal(other.restore([row("aaaa0003", 41)])[0].page.tabId, 41);
+    // Told that none are (a browser restart): every id goes.
+    assert.equal(index().restore([row("aaaa0004", 42)], new Set())[0].page.tabId, undefined);
+});
+
+test("a restored row's tab closing drops its page.tabId, and the row is sent again", () => {
+    // A restored row has no owner, so closing the tab it names changed nothing: the id stayed for the browser's life.
+    const ix = index();
+    ix.restore([{ summary: { id: { runtime: "local", hash: "aaaa0001" }, kind: "agent", status: "done", createdTs: 1, lastTs: 2, pendingApprovals: 0, saved: true, page: { url: "https://example.com/a", tabId: 41 } }, count: 1 }]);
+    assert.deepEqual(ix.pageGone(40, { closed: true }), [], "another tab: nothing");
+    assert.deepEqual(ix.pageGone(41, { closed: false }), [], "a navigation is not a close");
+    const [changed] = ix.pageGone(41, { closed: true });
+    assert.equal(changed.id.hash, "aaaa0001");
+    assert.equal(changed.page.tabId, undefined);
+    assert.equal(changed.status, "done", "and nothing else about the row changed");
+});
+
 test("needsStored is false when the ring still covers what the client asks for", () => {
     const ix = index();
     ix.ingest(start("aaaa0001"), bg());

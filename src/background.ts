@@ -33,7 +33,7 @@ import { fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw/sw-f
 import { executeServerTool, serverToolResult } from "./sw/sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw/sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw/sw-events";
-import { configureSessionCommands, handleSessionTitle, ingestSessionEvent, sessionPageMoved, keepSession, liveHeldSessions, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw/sw-sessions";   // the cross-tab session index the chat page reads
+import { configureSessionCommands, handleSessionTitle, ingestSessionEvent, sessionPageMoved, sessionPageGone, keepSession, liveHeldSessions, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw/sw-sessions";   // the cross-tab session index the chat page reads
 import { backupAction, backupFailure } from "./sw/sw-backup";   // backup and restore, for Settings
 import { folderAction } from "./sw/sw-archive";   // the session archive's folder, for Settings
 import { ensureHubRuntime, hubDevices, hubLog, hubState, revokeHubDevice, stopHubRuntime } from "./sw/sw-hub";   // this browser as a runtime on a hub
@@ -264,7 +264,7 @@ if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
         // not marked interrupted and the list says it is held with no tab.
         const noTab = detachTabRuns(tabId);
         for (const hash of noTab) void refreshTaskRow(hash);
-        tabPageUrl.delete(tabId); forgetHandOverTab(tabId); forgetArrivalTab(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); replayedTo.delete(tabId); forgetTab(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseSessionValues(pageValueSession(tabId)); releaseDebugger(tabId); sessionServer.pageGone(tabId, { closed: true, noTab }); void forgetPageBuiltTab(tabId); });
+        tabPageUrl.delete(tabId); forgetHandOverTab(tabId); forgetArrivalTab(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); replayedTo.delete(tabId); forgetTab(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseSessionValues(pageValueSession(tabId)); releaseDebugger(tabId); sessionPageGone(tabId, { closed: true, noTab }); void forgetPageBuiltTab(tabId); });
 }
 // THE THIRD THING A TAB CAN DO, besides navigate and close: come back under a new id. A discard the browser
 // restores, or a prerender swapped in, fires only this — so without it a run's tab state is left filed under an
@@ -275,7 +275,7 @@ if (typeof chrome !== "undefined" && chrome.tabs?.onReplaced) {
         retabRuns(removedTabId, addedTabId);
         moveTabKey([fetchConsent, credFetchGrants, debugBuffer] as Array<Map<number, unknown>>, removedTabId, addedTabId);
         void movePageBuiltTab(removedTabId, addedTabId);
-        sessionServer.pageGone(removedTabId, { closed: true });
+        sessionPageGone(removedTabId, { closed: true });
     });
 }
 
@@ -406,7 +406,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         if (tid != null) {
             // A new document in the tab: the runs the old one hosted cannot finish. Synchronous, so the new document's
             // first events (which follow this message) are not caught by it.
-            sessionServer.pageGone(tid, { closed: false });
+            sessionPageGone(tid, { closed: false });
             void hydrationDone.then(() => resetDebug(tid));
         }
         return;
@@ -703,7 +703,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // CHOKE-POINT: this is privileged (attaches the debugger) so it must NOT be page-forgeable. An
         // UNTRUSTED page is refused; a `surface` (internal extension page — the approval UI) or a
         // `whitelisted` origin (the user trusts it to self-gate) may initiate it, and the per-click approval
-        // still governs upstream. Gated behind the off-by-default `cdpClick` flag. A page targets only its
+        // still governs upstream. Gated behind the `cdp` flag (on by default). A page targets only its
         // OWN tab (sender.tab.id); a surface passes the inspected tabId in the payload.
         (async () => {
             const cfg = await getConfig();
@@ -719,7 +719,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     if (message.type === "CDP_SHADOW_RESOLVE") {
         // READ-ONLY resolve of a `>>>` selector across sealed (closed/declarative) shadow roots via CDP — the
         // discovery half of the sealed-shadow reach (describeElement inside a host the JS path can't enter).
-        // Gated on the off-by-default `cdp` flag (the debugger banner is the visible signal); a page targets
+        // Gated on the `cdp` flag (on by default; the debugger banner is the visible signal); a page targets
         // only its OWN tab. NOT senderTrust-gated: it only READS same-document, same-origin content the page's
         // own server authored (no cross-origin gain; the shell's own closed roots are skipped, sw-cdp.ts), and
         // its output (describe lines + coordinates) is not actionable on its own — CDP_CLICK stays
@@ -1058,7 +1058,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // key, and the tool it runs is caller-chosen — a hostile page reaching this handler directly could
         // invoke any tool the user has configured, which is a different capability from spending tokens on
         // a chat call. So an untrusted page may only run a call it holds a per-call grant for, minted when
-        // its agent run APPROVED that exact call. Same shape as full-mode Python and FETCH_SHEET.
+        // its agent run APPROVED that exact call. Same shape as out-of-dialect Python and FETCH_SHEET.
         (async () => {
             const toolId = String(message.payload?.toolId ?? "");
             const name = String(message.payload?.name ?? "");

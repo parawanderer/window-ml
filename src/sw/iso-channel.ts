@@ -12,6 +12,7 @@ import type { PreRead } from "../pointers/named-reads";
 import type { DerefRead, DerefMeta } from "../contract/contract-pointers";
 import type { TableLike } from "../contract/contract-fetch";
 import { pipeStages } from "../pointers/token-pipe";
+import { FS_READ_OPS, type FsReadOp } from "../ml/ml-fs";
 import { checkReadPlan, type StoredReadPlan } from "../table/table-plan";
 
 /** How many requests one isolated exec may send. Past it every request is refused without any work. */
@@ -22,8 +23,16 @@ export const ISO_ASK_MAX = 256;
 export const ISO_MAX_STAGES = 256, ISO_MAX_STAGE_CHARS = 16384;
 const MAX_NAMES = 4096;
 
-/** What a request is answered with: the data, or the error the world throws. */
-export type IsoAnswer = { ok: unknown } | { error: string };
+/** How many `ml.fs` reads one isolated exec may send, counted apart from the pointer reads: 4 GiB of 512 KiB chunks. */
+export const ISO_FS_ASK_MAX = 8192;
+
+/** The reader ops an `ml.fs` request may name: its reads. A write op is never forwarded. */
+export const ISO_FS_OPS = FS_READ_OPS;
+/** The read op an isolated exec's `ml.fs` request names, as the call's server checks it. */
+export type IsoFsOp = FsReadOp;
+
+/** What a request is answered with: the data, or the error the world throws (with the reader's errno code, for `ml.fs`). */
+export type IsoAnswer = { ok: unknown } | { error: string; code?: string };
 
 /** What the server reads through: the run's pointer resolver, and the value store. */
 export interface IsoDeps {
@@ -37,6 +46,9 @@ export interface IsoDeps {
     /** `ml.sh`'s calls, bound by the worker to the run and the step the exec runs in (sw-shell-call.ts); absent for a
      *  script that does not name `ml.sh`, which then has no `ml.sh` to call. */
     sh?: (call: "run" | "read" | "put", args: unknown[]) => Promise<IsoAnswer>;
+    /** `ml.fs`'s reads, bound by the worker to the run's session (sw-fs-call.ts); absent for a script that does not name
+     *  `ml.fs`. The op and its arguments are checked here first (`fsArgsOk`). */
+    fs?: (op: IsoFsOp, args: unknown[]) => Promise<IsoAnswer>;
 }
 
 /** The sentence a refused request throws in the world. */
@@ -49,7 +61,33 @@ export const ISO_REFUSED = {
     held: "That stored table is not held by this run.",
     ended: "The run's pointers are gone (the turn ended), so this read was not answered.",
     noSh: "ml.sh is not available in this exec: the approved script did not name it.",
+    noFs: "ml.fs is not available in this exec: the approved script did not name it.",
+    fsBudget: `This exec read the session's files more than ${ISO_FS_ASK_MAX} times through ml.fs, so the rest are refused. Read larger ranges, or fewer files in one exec.`,
 } as const;
+
+/** The reader's chunk: the most one `read` request may ask for (files-reader.ts `FILES_CHUNK`). */
+const FS_READ_MAX = 512 * 1024;
+
+/** A descriptor, a position or a length: a whole number the reader can take. */
+const whole = (n: unknown): n is number => Number.isSafeInteger(n) && (n as number) >= 0;
+
+/**
+ * Whether an `ml.fs` request's arguments are the shape its op takes: paths are strings (the reader canonicalises them),
+ * a descriptor a whole number, a read at most one chunk. Anything else is never sent to the reader.
+ * @param op the op
+ * @param a its arguments
+ */
+export function fsArgsOk(op: IsoFsOp, a: unknown[]): boolean {
+    switch (op) {
+        case "stat": case "open": return a.length === 1 && typeof a[0] === "string";
+        case "opendir": {
+            const o = a[1] as { limit?: unknown; cursor?: unknown } | null;
+            return a.length === 2 && typeof a[0] === "string" && !!o && typeof o === "object" && whole(o.limit) && (o.cursor === undefined || typeof o.cursor === "string") && Object.keys(o).every((k) => k === "limit" || k === "cursor");
+        }
+        case "read": return a.length === 3 && whole(a[0]) && whole(a[1]) && whole(a[2]) && (a[2] as number) <= FS_READ_MAX;
+        case "fstat": case "close": return a.length === 1 && whole(a[0]);
+    }
+}
 
 /**
  * The server for one isolated exec: answers only requests about the reads sent with that call.
@@ -59,7 +97,7 @@ export const ISO_REFUSED = {
  * @returns one function per request; the caller has already checked who sent it
  */
 export function isoServer(runId: string, reads: readonly PreRead[], deps: IsoDeps): (req: unknown) => Promise<IsoAnswer> {
-    let left = ISO_ASK_MAX;
+    let left = ISO_ASK_MAX, fsLeft = ISO_FS_ASK_MAX;
     // The stored tables this call may read: those sent with it, and those its own re-pipes were answered with (the worker
     // handed them to this world itself). A key with the table it belongs to, whose delimiter is the worker's, never the world's.
     const tables = new Map<string, TableLike>();
@@ -68,9 +106,18 @@ export function isoServer(runId: string, reads: readonly PreRead[], deps: IsoDep
     const strings = (a: unknown, max: number, chars: number): a is string[] =>
         Array.isArray(a) && a.length <= max && a.every((s) => typeof s === "string" && s.length <= chars);
     return async (req) => {
+        const q = req as { op?: unknown; i?: unknown; stages?: unknown; key?: unknown; names?: unknown } | null;
+        // ml.fs reads by chunk, so its requests have their own count; every other op spends the pointer reads' count.
+        if (q && typeof q === "object" && q.op === "fs") {
+            if (fsLeft <= 0) return { error: ISO_REFUSED.fsBudget };
+            fsLeft--;
+            const c = (q as { call?: unknown }).call, a = (q as { args?: unknown }).args;
+            if (!deps.fs) return { error: ISO_REFUSED.noFs };
+            if (!(ISO_FS_OPS as readonly unknown[]).includes(c) || !Array.isArray(a) || !fsArgsOk(c as IsoFsOp, a)) return { error: ISO_REFUSED.malformed };
+            try { return await deps.fs(c as IsoFsOp, a); } catch (e) { return { error: (e as Error)?.message || String(e) }; }
+        }
         if (left <= 0) return { error: ISO_REFUSED.budget };
         left--;
-        const q = req as { op?: unknown; i?: unknown; stages?: unknown; key?: unknown; names?: unknown } | null;
         if (!q || typeof q !== "object") return { error: ISO_REFUSED.malformed };
         if (q.op === "pipe") {
             // The world sends what the script passed (a string, or an array of strings); anything else is not a pipe.

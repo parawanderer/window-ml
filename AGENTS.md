@@ -297,9 +297,9 @@ assuming a resource-panel field is broken.** Hints go through `wireHint`; **an a
   (`page-gate.ts`), never on anything the page can post. → site-access.md, "Presence"
 - **An error's text never carries the server URL, the API key or the model filter to a page or the model**: it goes
   through `sw-scrub.ts`; only extension pages and the run log's `key` keep the raw text. → site-access.md
-- **An approved exec of a run the worker built runs in an isolated world** when it names a pointer or `ml.current`,
-  or the page is not approved (`exec-routing.ts`). With no isolated world, `ml.current`, `ml.sh` and an unapproved
-  page are REFUSED; a pointer script on an approved page falls back to the main world with a note. → site-access.md
+- **An approved exec of a run the worker built runs in an isolated world** when it names a pointer, `ml.current`,
+  `ml.sh` or `ml.fs`, or the page is not approved (`exec-routing.ts`). With no isolated world, `ml.current`, `ml.sh`,
+  `ml.fs` and an unapproved page are REFUSED; a pointer script on an approved page falls back to the main world with a note. → site-access.md
 - **Config overrides (URL/key) are accepted only from the popup**: page-relayed messages have `sender.tab` set and
   the background strips overrides then, so a hostile page can't repoint the saved API key at another host.
 - **Pages can change only the model**, and `setModel` validates it against the server list.

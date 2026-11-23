@@ -260,7 +260,7 @@ Every reader goes through it, so none can disagree with the gate:
 | Reader | What it decides |
 | --- | --- |
 | `levelsFor` (`siteDecision`: `pageRefusal`, `SITE_ACCESS`'s `implied`, `sw-run-start.ts` resume, `sw-isolated-exec.ts` `pageApproved`) | the list implies approval for window.ml |
-| `senderTrust` (`sw-consent.ts`) via `senderSelfApproves(selfApprovalFacts(sender))` | `whitelisted`: `CDP_CLICK`, `SERVER_TOOL_EXEC`, `FETCH_SHEET`, full-mode `PYTHON_EXEC`, `FETCH_URL` without a per-call grant; a worker-built run's `fetch_url`, sheet tables and Python, judged by its tab's URL |
+| `senderTrust` (`sw-consent.ts`) via `senderSelfApproves(selfApprovalFacts(sender))` | `whitelisted`: `CDP_CLICK`, `SERVER_TOOL_EXEC`, `FETCH_SHEET`, `PYTHON_EXEC` outside the dialect, `FETCH_URL` without a per-call grant; a worker-built run's `fetch_url`, sheet tables and Python, judged by its tab's URL |
 | `pageApprovalAllowed` (`publicConfig`, which takes the decision as an argument) | `GET_CONFIG`, `workerMl`, a worker run's `agent_api_docs` config: whether a page-hosted `ml.agent` honours the page's own `approve()` |
 
 One of the extension's own frames inside a tab (the overlay sidebar's bench) is judged by its tab's top-frame URL
@@ -545,9 +545,9 @@ sheet, read by the worker like an external one. The page is asked for the source
 code, not its other tables), and a call mixing an image, a sheet and a page table runs whole in the worker, where it
 used to be refused with a two-call steer because its page part ran on the page. Its other tables load without a DOM (a
 table by value, a URL the run's fetch_url read, an external sheet), and the call goes through `runPython`
-(`sw-python.ts`) with the run as the caller. Its approval is the run's CALL grant (`grantRunPython`: the external sheet ids, the full-mode code), set
+(`sw-python.ts`) with the run as the caller. Its approval is the run's CALL grant (`grantRunPython`: the external sheet ids, the code outside the Python read-only dialect), set
 around the one call and never on the tab, so a page cannot read the sheet with the person's cookies or run the approved
-full-mode code itself while it runs. Live stdout goes straight to the call's output.
+out-of-dialect code itself while it runs. Live stdout goes straight to the call's output.
 
 `describeElement` stays a page tool, but its one privileged step does not: a `>>>` path into a SEALED shadow root of a
 run the worker drives comes back as `cdpShadowResolve` instead of the page sending `CDP_SHADOW_RESOLVE`, and the
@@ -582,12 +582,12 @@ sent no answer content at `finish`, and answers none.
 rule is pure, and its tests enumerate every input (`tests/isolated-exec.test.mjs`, `tests/exec-world.test.mjs`):
 
 - A plain script on an approved page: the page's main world, full parity.
-- A script naming `ml.current`, `ml.sh` or a pointer (read lexically by `execNames`; a miss fails closed, since an
-  unnamed read is not sent and the main world has neither `ml.current` nor `ml.sh`), or any script on a page that is
+- A script naming `ml.current`, `ml.sh`, `ml.fs` or a pointer (read lexically by `execNames`; a miss fails closed, since an
+  unnamed read is not sent and the main world has none of `ml.current`, `ml.sh` and `ml.fs`), or any script on a page that is
   not approved: an
   isolated world (`runIsolatedExec`, `src/sw/sw-isolated-exec.ts`). That is `chrome.userScripts.execute` in the run's
   world `wml-<runId>` when the person has allowed user scripts, else a CDP isolated world when the CDP setting is on.
-- Neither available: refused on an unapproved page and for `ml.current` and `ml.sh`; a pointer script on an approved
+- Neither available: refused on an unapproved page and for `ml.current`, `ml.sh` and `ml.fs`; a pointer script on an approved
   page runs in the main world with a note (owner's decision), unless it also names `ml.sh`, which outranks the pointer
   (reason `sh`), so a script reaching the process host never runs where the page's scripts could read its output or
   make its calls (docs/spec/SHELL.md, "The routing rule this adds").
@@ -607,9 +607,9 @@ rule is pure, and its tests enumerate every input (`tests/isolated-exec.test.mjs
   the tab (`withoutWorld`), exec's In is drawn in the worker, and its precheck runs there too (it used to be sent to the
   page, script and all; a `js` that is no string is refused there). A read-only survey whose exec would run isolated
   (asked, or by the default) skips the page's leg: it is answered in the worker or goes to the gate. So does one whose
-  SCRIPT names `ml.sh`, `ml.current` or a pointer, on any setting (`surveyMayEnterPage`): the page leg is decided on
+  SCRIPT names `ml.sh`, `ml.fs`, `ml.current` or a pointer, on any setting (`surveyMayEnterPage`): the page leg is decided on
   the script alone, and only a `plain` reason keeps it. Each reason in `EXEC_REASONS` is either read off the script
-  (`sh`, `current`, `pointer`: no page leg) or derived from the page or the call (`unapproved-page`, `requested`,
+  (`sh`, `fs`, `current`, `pointer`: no page leg) or derived from the page or the call (`unapproved-page`, `requested`,
   `default`: never the script's, so the person's own run on an unapproved page keeps its survey); a new reason fails
   the classification row in `tests/exec-world.test.mjs` until it is placed. A page-built run
   refuses `"isolated"` in the worker's precheck, at the call, and on the page (`pageWorldRefusal`), and its survey is

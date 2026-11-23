@@ -54,6 +54,7 @@ import { importTestCode } from "./python/pkg-install-test";
 import { attachFiles, detachFiles, filesMessage, setFilesReader } from "./python/files-host";
 import { createFilesSource } from "./python/files-source";
 import { RangedReader } from "./session/ranged-reader";
+import { fsServer } from "./session/fs-serve";
 import { scanCode } from "./python/pkg-scan";
 import { readScan, type ScanResult } from "./python/pkg-scan-note";
 import { holdResult, takeResult } from "./python/py-held-results";
@@ -72,6 +73,14 @@ const store = (): ValueStore => values ??= new ValueStore({
 // `/files` in Python (files-host.ts): the reader over this document's value store and the shelf the worker holds. No hide rule yet (POLICIES.md, ruling 34).
 const filesReader = new RangedReader({ source: createFilesSource({ store, send: (m) => chrome.runtime.sendMessage(m) }) });   // state: plumbing — the one reader, a channel per worker
 setFilesReader(() => filesReader.openChannel("files"));
+// ml.fs (fs-serve.ts): a channel per isolated exec on the same reader, read ops only, its session the worker's word.
+const fsChannels = fsServer(() => filesReader.openChannel("files"));   // state: plumbing — an exec's channel, closed with it
+chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
+    if (sender.id !== chrome.runtime.id || sender.tab) return undefined;   // the service worker's word only, like every message here
+    if (msg?.type === "FS_CALL") { void fsChannels.call(msg.key, msg.session, msg.op, msg.args).then(sendResponse); return true; }
+    if (msg?.type === "FS_END") fsChannels.end(msg.key);
+    return undefined;
+});
 
 /**
  * A returned DataFrame larger than its preview → the value store, named on the result as `valueKey` (POINTER_VALUES
@@ -131,7 +140,7 @@ const workers = new Map<string, PyWorkerEntry>();   // state: plumbing — one P
 const respawned = new Set<string>();   // state: plumbing — principals awaiting a respawn housekeeping record
 // ROOT C (docs/spec/PYTHON_DIALECT.md, "The namespace"): a run's kept namespace and what it holds, from the
 // last cell's scope manifest (`bench.vars`, PERSISTENT_RUNTIME_SPEC.md). The live dict is the worker's; this is
-// the copy the state inspector and `ml.current.env` read. Dropped with the run's session (`PY_DELETE_RUN`), its worker, or the idle reap; a turn's end (`PY_END_TURN`) leaves it.
+// the copy the state inspector reads (no `ml.current` path reaches it). Dropped with the run's session (`PY_DELETE_RUN`), its worker, or the idle reap; a turn's end (`PY_END_TURN`) leaves it.
 const runNsVars = new Map<string, { id: string; vars: { name: string; type: string }[] }>();   // state: python.run-namespace
 // Which workers hold a dict for a run: `run:<id>` for its readonly cells, and the SHARED `full` worker for its full
 // ones. A delete must reach every one of them, and a kill of one (the `full` worker included) is a loss for every run it
@@ -230,8 +239,8 @@ function reportHousekeeping(report: { subsystem: string; kind: string; reason?: 
 // loss message reads (docs/dev/housekeeping.md): the kept bench namespace died with the worker.
 function killWorker(principal: string, reason: string): void {
     const entry = workers.get(principal);
-    // ROOT C: a kill wipes every run dict this worker held: its own run's for `run:<id>`, every full-mode run's for the
-    // shared `full` one. Each such run's next cell opens with the loss line (PYTHON_DIALECT.md, "Lifetime and loss").
+    // ROOT C: a kill wipes every run dict this worker held: its own run's for `run:<id>`, every run's for the
+    // legacy shared `full` one (unreachable since `mode` went). Each such run's next cell opens with the loss line (PYTHON_DIALECT.md, "Lifetime and loss").
     const killedRuns = [...runPrincipals].filter(([, ps]) => ps.has(principal)).map(([runId]) => runId);
     const named = reason === "timeout" || reason === "start-timeout" || reason === "library-removed" || reason === "stopped" || reason === "install-deadline" || reason === "kernel-death";
     const lossReason = named ? reason : "crashed";
@@ -910,8 +919,8 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
 
 // ROOT C: drop a run's kept namespace when the run closes or is archived. The service worker sends this
 // from the run-end path; it is forwarded as `deleteRun` to EVERY worker holding a dict for the run (`runPrincipals`):
-// the run's own `run:<id>` and, for its full-mode cells, the shared `full` worker, where a dict left behind is readable
-// from another full-mode run's cell. The principal the message names is asked too.
+// the run's own `run:<id>` and, for cells once routed to the shared `full` worker (unreachable since `mode` went), where a dict left behind is readable
+// from another run's cell. The principal the message names is asked too.
 chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
     if (msg?.type !== "PY_DELETE_RUN" || typeof msg.run !== "string" || !msg.run) return undefined;
     if (sender.id !== chrome.runtime.id || sender.tab) return undefined;   // the service worker's word only, like every message here
@@ -949,7 +958,7 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
 // A TURN ended; the run did not. The namespace belongs to the run, so its own `run:<id>` worker keeps its dict and
 // the names in it (and `runNsVars`, `nsLoss`) for the next turn. Everything else is the turn's: its keep ends
 // (py-reap.ts), a keep arriving later arms nothing (`endedRuns`), and the SHARED `full` worker's dict for the run is
-// dropped, since one left there is readable from another full-mode run's cell. The own worker's idle clock restarts
+// dropped, since one left there is readable from another run's cell. The own worker's idle clock restarts
 // with the between-turns delay the service worker read from the settings (`ms`).
 chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
     if (msg?.type !== "PY_END_TURN" || typeof msg.run !== "string" || !msg.run) return undefined;

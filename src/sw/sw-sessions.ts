@@ -717,8 +717,13 @@ if (sessionStore) {
         // The upgrade's pass, in the background: a row not yet moved is resumed from the row meanwhile.
         .then((r) => { void store.migrate().catch(() => 0); return r; })
         .then(() => store.open())
-        .then((rows) => {
-            sessionServer.restored(sessionServer.index.restore(rows.map((r) => ({ summary: r.summary, count: r.count }))));
+        .then(async (rows) => {
+            const openTabs = await tabsOfThisBrowser().catch(() => undefined);
+            const restored = sessionServer.index.restore(rows.map((r) => ({ summary: r.summary, count: r.count })), openTabs);
+            sessionServer.restored(restored);
+            // A dropped id is written back, or the next start in this browser restores it again, onto whatever tab holds it then.
+            const stale = new Set(rows.filter((r) => r.summary.page?.tabId != null).map((r) => r.summary.id?.hash));
+            for (const row of restored) if (stale.has(row.id.hash) && row.page?.tabId == null) store.putSummary(row);
             // A run held with no tab and no tasks has no table for that pass to find (sw-task-rows.ts): its row is set here.
             void syncTaskRows().catch(() => undefined).then(() => hydrationDone).then(() => Promise.all([...bgRuns.keys()].filter(runHasNoTab).map(refreshTaskRow))).catch(() => undefined);
             void recordStorageSnapshot().catch(() => { /* storage unavailable */ });
@@ -726,6 +731,21 @@ if (sessionStore) {
             imageCompaction?.kick();
         })
         .catch(() => { /* no storage: the list is whatever this worker sees from now on */ });
+}
+
+/** The storage.session key a worker sets once it has started in this browser: it outlives an eviction, never a restart. */
+const BROWSER_SEEN_KEY = "ml_sessions_browser_seen";
+
+/**
+ * The ids of every tab open now, for `SessionIndex.restore`; EMPTY when the browser restarted since the rows were
+ * saved, because tab ids start over then and an open tab may hold a closed one's id. A worker that was only evicted
+ * finds its own mark in storage.session and checks the ids against the open tabs instead.
+ */
+async function tabsOfThisBrowser(): Promise<ReadonlySet<number>> {
+    const seen = (await chrome.storage.session.get(BROWSER_SEEN_KEY))[BROWSER_SEEN_KEY] === true;
+    const open = new Set((await chrome.tabs.query({})).flatMap((t) => (typeof t.id === "number" ? [t.id] : [])));
+    await chrome.storage.session.set({ [BROWSER_SEEN_KEY]: true });
+    return seen ? open : new Set();
 }
 
 /** Read the session settings once (retention, budget, titles); never rejects, since a worker without storage keeps
@@ -993,7 +1013,8 @@ export async function unarchiveSession(hash: string): Promise<boolean> {
         get: async (k) => (await chrome.storage.local.get(k))[k],
         set: (k, v) => chrome.storage.local.set({ [k]: v }),
     }).catch(() => { /* storage unavailable: the chat reads, it just does not resume */ });
-    sessionServer.restored(sessionServer.index.restore([{ summary: got.summary, count: got.events.length }]));
+    // An archived session has no live tab behind it: whatever id its row kept names another tab now, or none.
+    sessionServer.restored(sessionServer.index.restore([{ summary: got.summary, count: got.events.length }], new Set()));
     await archiveCall("remove", { hash }).catch(() => { /* in both until the next archive: harmless */ });
     scheduleFolderSync();
     return true;
@@ -1057,6 +1078,17 @@ export function saveRunHistory(hash: string, history: Omit<Extract<SessionHistor
  */
 export function sessionPageMoved(tabId: number, url: string): void {
     for (const row of sessionServer.pageMoved(tabId, url)) if (row.saved) sessionStore?.putSummary(row);
+}
+
+/**
+ * A tab's document went away (`tabs.onRemoved`, `onReplaced`, a navigation that ends a page's run): the rows it changed
+ * are sent, and a saved one is written, so the next worker does not restore a `page.tabId` the browser may hand to
+ * another tab.
+ * @param tabId the tab
+ * @param opts whether the tab closed, or only its document went
+ */
+export function sessionPageGone(tabId: number, opts: { closed: boolean; noTab?: readonly string[] }): void {
+    for (const row of sessionServer.pageGone(tabId, opts)) if (row.saved) sessionStore?.putSummary(row);
 }
 
 /** Fold one debug event into the index, and save it when the session is one we keep. Never throws: a malformed event

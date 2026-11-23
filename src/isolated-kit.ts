@@ -12,6 +12,7 @@ import { accessibleName, roleOf, ariaState } from "./dom/a11y";
 import { mlPipe } from "./pointers/text-pipe";
 import { mlSchema } from "./ml/ml-schema";
 import { mlRange } from "./util";
+export { mlFs } from "./ml/ml-fs";
 import type { DerefMeta, DerefValue } from "./contract/contract-pointers";
 
 /** One request an isolated exec sends the worker: re-read named read `i` through `stages`, or read named columns of the
