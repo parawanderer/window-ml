@@ -174,7 +174,8 @@ test("RED TEAM: every page-realm tool the run offers is answered with how the ru
     const offered = (r.bodies()[0].tools ?? []).map((t) => t.function?.name ?? t.name);
     // Enumerate, never sample: every tool whose realm is the page. The loop's own tools (chat_metadata) are not a page
     // tool even though their realm says so, and are asserted on their own below.
-    const caps = (r.bodies()[0].tools ?? []).filter((t) => builtinTool(t.function?.name ?? t.name)?.realm === "page" && !t.function?.capabilities?.includes("meta")).map((t) => t.function?.name ?? t.name);
+    // The wire carries no `capabilities`, so the loop's own tool is named: chat_metadata (ml-tool-factories.ts, `meta`).
+    const caps = (r.bodies()[0].tools ?? []).filter((t) => builtinTool(t.function?.name ?? t.name)?.realm === "page" && (t.function?.name ?? t.name) !== "chat_metadata").map((t) => t.function?.name ?? t.name);
     assert.ok(caps.length > 8, `only ${caps.length} page tools offered (${caps.join(", ")}), too few to be the run's page set`);
     r.bg.closeTab(7);
     assert.ok(await until(() => r.rows().get(hash)?.background?.noTab === true));
@@ -207,7 +208,7 @@ test("RED TEAM: no session row names the no-tab sentinel as the run's page, and 
     assert.ok(!JSON.stringify([...r.rows().values()]).includes('"tabId":-1'), "a session row carries the sentinel");
 });
 
-test("RED TEAM: the sentinel is never handed to a tab-keyed browser call: a no-tab session's highlight and screenshot address no tab", { todo: "open: `tabOf` (session-commands.ts:272) now resolves a no-tab run to the sentinel, and `page.highlight` (:748) passes it to `deps.highlight` → `chrome.tabs.sendMessage(-1, ML_HL_REMOTE)` — measured: one tab message to -1. Chrome refuses an unknown tab id, so no page receives it, but the worker addresses a tab it knows does not exist and answers ok. Guard with isNoTab in `tabOf`/`highlight` (fail `unavailable` as for a closed tab), and give `tab.screenshot`'s session branch the same refusal" }, T, async () => {
+test("RED TEAM: the sentinel is never handed to a tab-keyed browser call: a no-tab session's highlight and screenshot address no tab", T, async () => {
     const r = await run();
     const { hash } = await r.bg.context.__mlStartUserRunForTest(7, { task: "probe", surface: "hud", maxSteps: 4 });
     await until(() => !r.live(hash));
@@ -222,7 +223,7 @@ test("RED TEAM: the sentinel is never handed to a tab-keyed browser call: a no-t
 
 // --- a sender with no tab is not the owner of a run with no tab ---
 
-test("RED TEAM: a sender with NO tab owns a no-tab run only when it is this extension's own surface", { todo: "open: `senderOwnsRun` (sw-runs.ts:730) trusts `!sender.tab` as an extension page, so a no-tab sender with a WEB url resolves the gate — measured: the python_exec ask closed and the turn ended. No web page can send a runtime message, so the shape is unreachable in Chrome today, but the check rests on the browser rather than on the message: it should be `!sender.tab && isExtensionSender(sender)`, as MOVE_RUN already is" }, T, async () => {
+test("RED TEAM: a sender with NO tab owns a no-tab run only when it is this extension's own surface", T, async () => {
     const r = await run();
     const { hash } = await r.bg.context.__mlStartUserRunForTest(7, { task: "probe", surface: "hud", maxSteps: 6 });
     await until(() => !r.live(hash));
@@ -304,7 +305,7 @@ test("RED TEAM: a fresh document on the closed tab's id does not inherit the no-
 
 // --- a tool that needs no page still works ---
 
-test("RED TEAM: a run with no tab keeps the tools that need no page, its own self-introspection included", { todo: "open: `needsPage` (no-tab.ts:30) judges by the tool's realm, and chat_metadata's realm is \"page\" although the LOOP answers it without a page (agent-loop.ts, the `meta` capability). A no-tab run is answered `\"chat_metadata\" needs a page` — measured — which is false to the model and contradicts noPageText's own sentence. Exempt the `meta` capability from `needsPage` (the loop answers it above the dispatch, so no page is involved)" }, T, async () => {
+test("RED TEAM: a run with no tab keeps the tools that need no page, its own self-introspection included", T, async () => {
     const r = await run();
     const { hash } = await r.bg.context.__mlStartUserRunForTest(7, { task: "probe", surface: "hud", maxSteps: 6 });
     await until(() => !r.live(hash));
@@ -312,9 +313,10 @@ test("RED TEAM: a run with no tab keeps the tools that need no page, its own sel
     assert.ok(await until(() => r.rows().get(hash)?.background?.noTab === true));
     const offered = (r.bodies()[0].tools ?? []).map((t) => t.function?.name ?? t.name);
     assert.ok(offered.includes("chat_metadata"), "positive control: the run offers chat_metadata");
-    r.script.push({ name: "chat_metadata", args: {} }, { name: "fetch_url", args: { url: "http://host/x" } });
-    await send(r, hash, "count, then fetch", 4);
+    // agent_api_docs, not fetch_url: a worker tool that asks no approval, which nothing in this row would answer.
+    r.script.push({ name: "chat_metadata", args: {} }, { name: "agent_api_docs", args: {} });
+    await send(r, hash, "count, then read the docs", 4);
     const read = toolResults(r.bodies().at(-1));
     assert.ok(!read.some((t) => /"chat_metadata" needs a page/.test(t)), `the loop's own chat_metadata was answered as needing a page: ${read.find((t) => t.includes("chat_metadata"))}`);
-    assert.ok(!read.some((t) => /"fetch_url" needs a page/.test(t)), "a worker tool was answered as needing a page");
+    assert.ok(!read.some((t) => /"agent_api_docs" needs a page/.test(t)), "a worker tool was answered as needing a page");
 });

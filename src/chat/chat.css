@@ -1745,6 +1745,8 @@ html[data-calm]:not([data-theme="light"]), html[data-calm]:not([data-theme="ligh
    pill's text ellipsizes (`.tp-pill-text`) with the whole of it one tap away in its popover. */
 .chat-start-row { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
 /* Send must stay whole: it is an icon, and an icon that shrinks is a smudge. */
+/* What a run with no tab can and cannot do, under the row where "No tab" is chosen: quiet text, as wide as the row. */
+.chat-pick-note { margin: 2px 4px 0; font-size: .82em; line-height: 1.4; color: var(--fg-dim); }
 .chat-start-send { flex: 0 0 auto; }
 /* NARROW: the choices sit above the box — outside it, across the full width — and send below the text, on a line of
    its own at the end. The shape the phone app's own start screen has. */

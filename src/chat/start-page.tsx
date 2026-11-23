@@ -112,7 +112,7 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
     const [busy, setBusy] = useState(false);
     const [uploads, setUploads] = useState<FileProgress[]>([]);   // state: ui — the files of a start still uploading
     const [askingPage, setAskingPage] = useState(false);
-    const pick = useTargetPick(store, rt, kind === "agent", extras, true);
+    const pick = useTargetPick(store, rt, kind === "agent", extras, true, true);
     // The chosen runtime's models, asked once per runtime (the first answer costs it a capability probe per model,
     // cached after). "" is the runtime's own default, which sends no `model` at all, so its choice stands.
     // The last list each runtime gave is drawn at once and refreshed behind it, so only the first open of the page

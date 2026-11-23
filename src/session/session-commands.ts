@@ -276,6 +276,9 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
     const ours = (id: unknown): boolean => (deps.ownsRuntime ? deps.ownsRuntime(id) : id === deps.runtime);
     const ownRuntime = (c: { runtime?: unknown }): CommandResult<any> | null =>
         ours(c.runtime) ? null : fail("not-found", "no such runtime here");
+    /** A run held with NO tab is filed under a sentinel id no tab has (no-tab.ts): a command that addresses the tab
+     *  itself (a highlight, a screenshot) is refused before the send, as for a closed tab. A turn is the worker's to route. */
+    const noPage = (tabId: number): CommandResult<any> | null => (tabId < 0 ? fail("unavailable", "this session's run has no tab") : null);
     /** The tab a session is bound to, or an error saying why there is none. */
     const tabOf = (hash: string): { tabId: number; error?: undefined } | { tabId?: undefined; error: CommandResult<any> } => {
         const b = deps.index.binding(hash);
@@ -763,6 +766,8 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             if (!valid) return fail("invalid", "a highlight needs a selector, a token or null");
             const t = tabOf(s.id.hash);
             if (t.error) return t.error;
+            const none = noPage(t.tabId);
+            if (none) return none;
             deps.highlight(t.tabId, ref);
             return ok({});
         },
@@ -829,6 +834,8 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
                 if (s.error) return s.error;
                 const t = tabOf(s.id.hash);
                 if (t.error) return t.error;
+                const none = noPage(t.tabId);
+                if (none) return none;
                 tabId = t.tabId;
             } else return fail("invalid", "a screenshot needs a tab or a session");
             const tab = await deps.getTab(tabId);
