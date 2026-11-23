@@ -494,9 +494,11 @@ Without a manifest `effects` is `unknown` and the call asks.
 
 ## What the model sees
 
-- **The prompt names `ml.sh` when the person has turned it on and the run has `exec`** (`shellClause`, prompts.ts: that it may
-  exist, the call shape, that each call is decided by policy or asked, and where to read more); `agent_api_docs` carries the
-  detail, as it does for every `ml` member.
+- **The prompt names `ml.sh` when the person has turned it on, a process host answered at the run's start, and the run
+  has `exec`** (`shellClause`, prompts.ts: that it may exist, the call shape, that each call is decided by policy or
+  asked, and where to read more); `agent_api_docs` carries the detail, as it does for every `ml` member. The host's
+  presence is read once, at the start (`shellOffered`, sw-shell.ts, at most 3 s): one that appears later is offered to
+  the next run, and one that dies mid-run leaves the clause in place, each call answering `ShellUnavailable`.
 - **Whether it exists, and in which modes** (decided 2026-10-13): three boolean capabilities in `RuntimeCapabilities`,
   which the projection rule passes with no edit (`current-runtime.ts`): `shellContainer` (a container is available),
   `shellHost` (the real filesystem is), `shellSandboxed` (host mode runs under the OS sandbox). Booleans rather than one

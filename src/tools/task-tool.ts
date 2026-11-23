@@ -44,9 +44,9 @@ export function taskTool(define: typeof defineTool, deps?: TaskToolDeps): MlTool
 }
 
 /**
- * Whether a run is offered `task`: wherever one of its calls can detach, an `ml.sh` call (the shell turned on) or a
+ * Whether a run is offered `task`: wherever one of its calls can detach, an `ml.sh` call (the run offered it) or a
  * `python_exec` cell past its lease (sw-python-task.ts).
- * @param shellOn the settings turn `ml.sh` on
+ * @param shellOn the run is offered `ml.sh` (sw-shell.ts `shellOffered`)
  * @param toolNames the run's tools before `task` is added
  */
 export function offersTask(shellOn: boolean, toolNames: readonly string[]): boolean {

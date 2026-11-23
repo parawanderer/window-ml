@@ -145,8 +145,8 @@ function nativePort(port: chrome.runtime.Port): HostPort {
 const settingsRoots = (cfg: Pick<ShellSettings, "shellRoots">): string[] => (cfg.shellRoots ?? []).map((r) => String(r).trim()).filter(Boolean);
 
 /**
- * Whether the settings turn ml.sh on with a folder to run in: what a run's tools are decided by, so a run started while
- * the host is still connecting (a worker just woken) is offered the same tools. Whether the host answers is each call's.
+ * Whether the settings turn ml.sh on with a folder to run in. Half of what a run is offered: {@link shellOffered} adds
+ * that a host answers.
  * @param cfg the settings
  */
 export const shellTurnedOn = (cfg: Pick<ShellSettings, "shellEnabled" | "shellRoots">): boolean => cfg.shellEnabled === true && settingsRoots(cfg).length > 0;
@@ -287,6 +287,23 @@ export async function refreshShell(): Promise<ShellStatus> {
     await hostSeenRead;
     try { await shellHost(); } catch (e) { if (!(e instanceof ShellUnavailable) && !(e instanceof HostError)) setStatus({ ...status, ready: false, error: String((e as Error)?.message || e) }); }
     return shellStatus();
+}
+
+/** How long a run's start waits for the host's hello before it counts the host as absent. */
+const OFFER_WAIT_MS = 3000;
+
+/**
+ * Whether a run starting now is offered ml.sh: the settings turn it on with a folder to run in, AND a process host
+ * answered. Measured once, at the run's start; a host that appears or dies later changes nothing for that run, and a
+ * dead host's calls answer ShellUnavailable. A host that has not answered within {@link OFFER_WAIT_MS} counts as absent.
+ * @param cfg the settings
+ */
+export async function shellOffered(cfg: Pick<ShellSettings, "shellEnabled" | "shellRoots">): Promise<boolean> {
+    if (!shellTurnedOn(cfg)) return false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<void>((r) => { timer = setTimeout(r, OFFER_WAIT_MS); });
+    try { await Promise.race([refreshShell(), late]); } finally { clearTimeout(timer); }
+    return shellCapabilities().shellHost === true;
 }
 
 /**
