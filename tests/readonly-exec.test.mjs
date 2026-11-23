@@ -1142,8 +1142,8 @@ test("ADVERSARIAL: the pipe argument is data, not a second execution channel", a
 });
 
 test("ADVERSARIAL: dereference can't be looped unboundedly to burn the page down", async () => {
-    // The dialect has no unbounded loop construct; a while/for is out of dialect, so a deref storm isn't
-    // expressible (and each call is a pure read anyway).
+    // A `while` with no exit is stopped when parsed; one with an exit is bounded by the step budget like every loop,
+    // so a deref storm ends (and each call is a pure read anyway). `for(;;)` is not in the dialect.
     await assert.rejects(run(`while (true) { ml.dereference("@tool:a"); }`), (e) => e instanceof ResourceStop && e.kind === "loop", "a while with no exit is stopped when parsed");
     await assert.rejects(evalReadonly(`let i = 0; while (i >= 0) { i++; ml.dereference("@tool:a"); }`, world(), ML, undefined, { stepBudget: 20_000 }), (e) => e instanceof ResourceStop && e.kind === "steps", "and one with an exit is bounded by the budget");
     await assert.rejects(run(`for (;;) ml.dereference("@tool:a");`), outOfDialect);
