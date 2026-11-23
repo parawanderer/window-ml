@@ -1918,6 +1918,32 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     return). Held: `Series.str`. Outside by design: `globals()`, the decimal context's precision, `Decimal.as_tuple`.
     Bench's wider corpus (32 tasks, 3 repeats, a local model, synthetic tables) is accepted as a design and waits for
     Shane's word in bench's session.
+  - **104 (Shane, 2026-11-23, in the coordinator's session). `while` is admitted under the step budget, in both
+    dialects; not built.** Shane's argument: budgeted recursion is already in, and a loop can be rebuilt from it, so
+    refusing `while` buys nothing. The coordinator's reading, which Shane accepted with its refinements: the budget is
+    a fuel argument (a natural number spent by every backward jump and call, unreachable from the cell), which proves
+    termination for every program and needs only that no step does unbounded work. A budget trip becomes an error the
+    model reads, never a card; a constant-true `while` with no exit is still refused statically; a trip discards the
+    cell's attempt whole and is deterministic, which is what separates it from a watchdog; generators stay out because
+    a suspended frame outlives its cell. Text: PYTHON_DIALECT.md under "Halting is still the Starlark set" and
+    `docs/dev/readonly-exec.md` under Halting. The Python build is packages', after its coverage PRs, once it has
+    stated what a lifted leaf is charged; the JavaScript build has no owner. Noted, not ruled: `class` is excluded for
+    no halting reason and falls under ruling 103's rule. The 2026-10-15 count found no `while` and no `class` in 1,714
+    cells from 18 models, so the ruling is about consistency and harder work, not about that corpus.
+  - Bench's corpus after its pilot (bench's account, build 4562484d on main b514142c): 5 runs, 21 cells, 10 in class
+    A; the 11 outside are 6 list gaps (`read_csv` of an attached path 4, which the coordinator ruled a planned served
+    call; `try` 2) and 5 effects (`import os` 4, the model looking for its files, a prompt gap; `with open` 1); none
+    structural; no cell patches a library. `try` and `with` are excluded forms today (packages): a PR (3) for
+    `try`/`except` follows the fork PR, and `with` waits for the shapes the corpus shows. All 32 tasks load a table
+    and summarise or reshape it, so Shane agreed to six added tasks that invite a loop, recursion, a class or a
+    generator, as a stratum reported apart and never pooled. The run's start is Shane's word in bench's session.
+  - Glue first (Shane, 2026-11-23): move-run and `/files` are to be finished so the work can move to the dialect. The
+    coordinator lifted the pause on session-store's write PRs on that word, with flaky-ci resumed as their code
+    reviewer and redteam-e4 on their rows; small-fixes stays paused. The host half of the hide rule is
+    window-ml-host#58 (files-host): `spawn.hideList` is one ordered list in ascending precedence, an entry the host
+    cannot read fails the spawn, and two limits are accepted and go in the extension's view row: on Linux a file that
+    appears after a call starts is readable to that call, and on both platforms a hard link made earlier under another
+    name still opens a hidden file.
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
