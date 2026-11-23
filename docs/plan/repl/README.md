@@ -1964,10 +1964,33 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     before redteam-e4's audit.
   - Merged since: #2088 (the hide rule's part A, 0f0c6edc), #2087 (move-run slice 2, 2531d296). Move-run's remaining
     scope, the coordinator's call: #2106, then `navigate` from the no-tab state, then resuming with no page; deferred
-    are the shell bench step, the kernel line and the "No tab" start-form choice with its hub change. Bench's corpus
+    are the shell bench step and the kernel line (the "No tab" start-form choice was listed here as deferred and is
+    IN scope; see the next bullet). Bench's corpus
     is three models on Shane's word in bench's session (bench's account): `qwen3.8-flash-next:vision`, then
     `gemma4:31b`, then `dsv4-flash:q4kxl` alone, 38 tasks, 3 repeats, every figure per model. Small-fixes reports
     Shane unpaused it in its session; flaky-ci reviews its PRs behind the write PRs.
+  - **Ruling 106 (Shane, 2026-11-23): the property is bounded cost per synchronous step, not totality.** The spec text
+    is PYTHON_DIALECT.md, under ruling 104. In short: the loop must be productive, so each step returns something in
+    bounded cost and a budget trip is a result the model reads; unbounded work (a simulation, a script run until
+    killed) is started detached through `ml.sh` and judged as an effect; the explicit-bound tier and the budget tier
+    differ in predictability, not safety. It holds for both dialects. Intended, not built, no owner: the trip's text
+    names the two ways on. NOT ruled, waiting for numbers: whether a cell outside the dialect that is no effect is
+    refused with a reason the model reads instead of raising a card. Bench measures the premise with a rewrite test
+    (the coordinator's conditions): each recorded cell above the lowest tier is rewritten one tier lower by a model
+    that sees only the live tool description, replayed, and compared (stdout plus the names later cells read); per
+    bin, per model, the six added tasks apart; one fixed instruction for budget-tier cells; the real iteration count
+    beside the rewrite's bound; cells that fail the fidelity replay excluded and counted. No build admits `while`, so
+    a budget-tier cell's own result comes from the unrestricted path (accepted). Bench's estimate: about 1,500 calls,
+    5 to 10 GPU-hours. The runs start on Shane's word in bench's session. Bench's account: the first full sweep
+    (`qwen3.8-flash-next:vision`, 114 runs) is running.
+  - **Corrections, 2026-11-23.** "No tab" on the start form is IN scope on Shane's word ("I really want "No Tab" for
+    my own work"): move-run builds the runtime and the form in one PR after #2106, with no hub PR. On day one such a
+    run has `python_exec`, `fetch_url`, `/files` read-only until the write PR lands, `ml.sh` only from a cell outside
+    the dialect, and no `exec` or page tools. #2106 may merge with redteam-e3's three todo rows open (`chat_metadata`
+    answered "needs a page"; two page commands passing the no-tab sentinel to `chrome.tabs.sendMessage`;
+    `senderOwnsRun` trusting an absent `sender.tab`), and the "No tab" PR may not merge with any of them still todo
+    (the coordinator's call: each is reachable only by a run with no tab). #2106 lands before #2107. `filesQuotaMB` at
+    1024 MiB is confirmed by Shane for now.
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
