@@ -78,10 +78,12 @@ test("RED TEAM: a name that is not a string is refused or clipped, never stored 
     const rec = await droppedUnder(idb, AGENT);
     if (threw) { assert.deepEqual(rec, before, "a refused record still wrote"); return; }
     // A string is not a list, but `slice` accepts it: the shape that would reach runmeta as text and read back as
-    // one name per character.
-    await store.noteNsDropped(OTHER, { at: 1, reason: "r", names: "df", total: 2 });
+    // one name per character. A throw is a refusal, provided it wrote nothing.
+    let strThrew = false;
+    try { await store.noteNsDropped(OTHER, { at: 1, reason: "r", names: "df", total: 2 }); } catch { strThrew = true; }
     const asString = await droppedUnder(idb, OTHER);
-    assert.ok(asString === undefined || Array.isArray(asString.names), `a names STRING was stored as ${JSON.stringify(asString?.names)}`);
+    if (strThrew) assert.equal(asString, undefined, "a refused names string still wrote a record");
+    else assert.ok(Array.isArray(asString?.names), `a names STRING was stored as ${JSON.stringify(asString?.names)}`);
     assert.ok(Array.isArray(rec?.names), `names stored as ${typeof rec?.names}, not a list: ${JSON.stringify(rec?.names)}`);
     for (const n of rec.names) assert.equal(typeof n, "string", `a non-string name was stored: ${JSON.stringify(n)}`);
     assert.deepEqual(errors, [], `the store reported an error instead of refusing or clipping: ${errors.map(String)}`);
