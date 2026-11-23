@@ -325,6 +325,21 @@ system and user message:
   span, asked by three models. The words are shared with `ml.sh`'s detached text and the `task` tool, so that is the
   next prompt review's, not this text's.
 
+## `python_exec` reads as the worker-hosted tool in every run the worker drives (2026-11-23)
+
+A targeted fix, not a prompt review. Every run a person starts (the DevTools panel, the sidebar or HUD, the chat page,
+the harness's hook) was sent `python_exec`'s text for a page-hosted run: `startUserRun` built the texts from the `ml`
+the worker assembles with, which has no `_mintToken`, while the tool that ran was built on the worker's own `ml`, which
+has. So no model was told that its names persist across cells, offered `keep` or `expect_ms`, or told where the
+attached files are (#2084's sentence never reached one); bench's qwen3.8 runs (build 9be83ae0) searched for the files
+with `os`/`glob` and passed `@file:` forms as `tables` instead. Now the run host gives a run the worker built and drives
+each worker tool's text from the tool that runs it (`workerFacing`, sw-local-tools.ts, through the chain `assembleRun`
+uses), at every turn, so a session stored by the old code reads the new text when resumed. `python_exec` is 4,037
+characters as sent (name, description, parameters) before and 4,874 after (+837, about +210 tokens at four characters
+a token); the default kit's tools, 29,907 → 30,744. No other tool's text differed between the two builds (all nine
+registered worker tools compared, ml.sh and `answer` on). The `usage.prompt_tokens` delta is measured at the next prompt
+review, with bench's rerun on the merge.
+
 ## `change_setting` reaches every run the worker builds (2026-11-17)
 
 `change_setting` (MODEL_SETTINGS.md) is offered by `startUserRun` to every run the worker builds, beside
