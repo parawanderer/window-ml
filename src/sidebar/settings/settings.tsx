@@ -1873,7 +1873,7 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                     </div>
                 </div>
 
-                <div class="set-note">Auto-approve <code>python_exec</code> cells that the read-only Python dialect covers. The Python runs in a WASM sandbox with no DOM, no filesystem, no network and no JS/extension scope. A cell outside the dialect always asks, and until dialect membership ships that is every cell; code with hidden/bidi characters always asks.</div>
+                <div class="set-note">Auto-approve <code>python_exec</code> cells that the read-only Python dialect covers. The Python runs in a WASM sandbox with no DOM, no filesystem, no network and no JS/extension scope. A cell outside the dialect always asks; code with hidden/bidi characters always asks.</div>
                 <label data-setting="autoApprovePython" class="set-check">
                     <input type="checkbox" checked={c.autoApprovePython}
                         onChange={(e: any) => setField("autoApprovePython", e.target.checked)} />

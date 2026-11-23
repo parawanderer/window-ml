@@ -248,7 +248,7 @@ if not hasattr(_mlnet.OpenerDirector, "_ml_orig_open"):
     if (hardened) {
         policy += /* python */ `
 def _ml_blocked_open(self, *_a, **_k):
-    raise RuntimeError("network is disabled in readonly python_exec — the tool ALREADY loaded your table/sheet/image via the tables/image parameter, so reference it directly (e.g. df, df_remote, img). For a live fetch, re-run in mode:'full'.")
+    raise RuntimeError("network is disabled in python_exec — the tool ALREADY loaded your table/sheet/image via the tables/image parameter, so reference it directly (e.g. df, df_remote, img). For a live fetch, call fetch_url, then pass the same URL in tables.")
 _mlnet.OpenerDirector.open = _ml_blocked_open
 `;
 

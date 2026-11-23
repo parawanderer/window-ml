@@ -6,7 +6,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 
-const { describeCall, hardenArgv, validateManifest, inRange, CREDENTIAL_PROVIDERS, scriptLacksRunsCode, SCRIPT_RUNS_CODE_WARNING } = await import("../src/shell/program-manifest.ts");
+const { describeCall, describePre, resolvePre, hardenArgv, validateManifest, inRange, CREDENTIAL_PROVIDERS, scriptLacksRunsCode, SCRIPT_RUNS_CODE_WARNING } = await import("../src/shell/program-manifest.ts");
 const { effectKey, free, boundFor, fromProgramEffect } = await import("../src/effects.ts");
 
 const MANIFESTS = new URL("../src/shell/manifests/", import.meta.url);
@@ -419,16 +419,19 @@ test("upgrade: main's cat, head, tail, wc and ls described a flag after an opera
 
 /** The pin both repos hold: sha256 of the lines "<sha256 hex of the raw bytes>  <name>\n", over every .json of the fixtures
  *  ("calls/<p>.json"), the manifests ("manifests/<p>.json"), the flavoured calls ("flavoured/<p>.json") and the sed
- *  scanner vectors ("scanners/<f>.json"), names sorted bytewise. The host's copy under
+ *  scanner vectors ("scanners/<f>.json") and the resolved calls ("resolved/<p>.json"), names sorted bytewise. The host's copy under
  *  `vectors/program-manifests/` records it in `PIN`. */
 /** The calls described as one detected flavour (sed's two -i, awk's -safe), shared with the host like the other vectors. */
 const FLAVOURED_CALLS = new URL("./fixtures/program-calls-flavoured/", import.meta.url);
 
-const VECTOR_PIN = "597122c31a364b90cd17d6cc5f2b629ff19d9263ccbc0242b361b27af65d52c7";
+/** The described calls again, as the description before resolution plus a fixed fake resolver recorded per row. */
+const RESOLVED = new URL("./fixtures/program-calls-resolved/", import.meta.url);
+
+const VECTOR_PIN = "638c08748c5299f8b4a5b47bed8dd1d81a06826232a203fd4e7d47a7c90e712b";
 
 test("the manifests and call fixtures hash to the pin the host holds", () => {
     const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");
-    const named = [["calls", FIXTURES], ["manifests", MANIFESTS], ["flavoured", FLAVOURED_CALLS], ["scanners", new URL("./fixtures/sed-scanners/", import.meta.url)]].flatMap(([dir, url]) =>
+    const named = [["calls", FIXTURES], ["manifests", MANIFESTS], ["flavoured", FLAVOURED_CALLS], ["scanners", new URL("./fixtures/sed-scanners/", import.meta.url)], ["resolved", RESOLVED]].flatMap(([dir, url]) =>
         fs.readdirSync(url).filter((f) => f.endsWith(".json")).map((f) => [`${dir}/${f}`, fs.readFileSync(new URL(f, url))]));
     named.sort(([a], [b]) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
     const pin = sha(named.map(([n, bytes]) => `${sha(bytes)}  ${n}\n`).join(""));
@@ -448,6 +451,79 @@ test("every flavoured call describes as recorded under its flavour", () => {
             assert.deepEqual(got, want, `${c.argv.join(" ")} as ${c.flavour} (${c.note})`);
         }
     }
+});
+
+// --- resolved rows: the description before resolution, and resolution in TS ---
+
+const resolvedFiles = Object.fromEntries(fs.readdirSync(RESOLVED).filter((f) => f.endsWith(".json")).map((f) =>
+    [path.basename(f, ".json"), JSON.parse(fs.readFileSync(new URL(f, RESOLVED), "utf8"))]));
+/** The row's recorded resolver: the entry for the argument asked about, and a failure for one the row does not record. */
+const rowResolver = (c) => (p) => {
+    const r = c.resolve[String(p.arg)];
+    if (!r) throw new Error(`${c.argv.join(" ")}: no resolve entry for ${p.arg}`);
+    return r;
+};
+const sameArgv = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+/** Every resolved row with the manifest and version it is described by. */
+const resolvedRows = Object.entries(resolvedFiles).filter(([n]) => n !== "shapes").flatMap(([n, fx]) =>
+    fx.calls.map((c) => ({ c, m: manifests[n], version: fx.version, name: n })));
+const shapeRows = resolvedFiles.shapes.calls.map((c) => ({ c, m: c.manifest, version: c.version, name: "shapes" }));
+
+test("every described call of program-calls/ has a resolved row, and the resolved files hold no other program's", () => {
+    assert.deepEqual(Object.keys(resolvedFiles).sort(), [...Object.keys(fixtures), "shapes"].sort());
+    for (const [name, fx] of Object.entries(fixtures)) {
+        const rows = resolvedFiles[name];
+        assert.equal(rows.program, name);
+        assert.equal(rows.version, fx.version);
+        for (const c of fx.calls) if (c.described) assert.ok(rows.calls.some((r) => sameArgv(r.argv, c.argv)), `${name}: ${c.argv.join(" ")} has a resolved row`);
+    }
+});
+
+test("describePre gives the recorded terms of every resolved row", () => {
+    for (const { c, m, version } of [...resolvedRows, ...shapeRows]) {
+        const { description, terms } = describePre(c.argv, m, { version });
+        assert.deepEqual(terms, c.pre, c.argv.join(" "));
+        if ("described" in c) {
+            assert.equal(description.described, c.described, c.argv.join(" "));
+            assert.deepEqual(description.why, c.why, c.argv.join(" "));
+        } else assert.equal(description.described, true, c.argv.join(" "));
+        assert.deepEqual(description.effects, description.described ? [] : "unknown", "effects wait for resolvePre");
+    }
+});
+
+test("resolvePre of the recorded terms gives the recorded effects, and describeCall gives the same", () => {
+    for (const { c, m, version } of [...resolvedRows, ...shapeRows]) {
+        if (c.described !== false) assert.deepEqual(keys(resolvePre(c.pre, rowResolver(c))), c.effects, `resolvePre: ${c.argv.join(" ")}`);
+        assert.deepEqual(keys(describeCall(c.argv, m, { version, resolve: rowResolver(c) }).effects), c.effects, `describeCall: ${c.argv.join(" ")}`);
+    }
+});
+
+test("every resolve entry of a row is used by its terms, and every term target has one", () => {
+    for (const { c } of [...resolvedRows, ...shapeRows]) {
+        const used = new Set(c.pre.flatMap((t) => t.targets.map((p) => String(p.arg))));
+        assert.deepEqual([...used].sort(), Object.keys(c.resolve).sort(), c.argv.join(" "));
+    }
+});
+
+test("the resolved rows cover two arguments on one path, a path outside the roots, exists false, a secret, cwd and repo", () => {
+    const rows = resolvedRows.map((r) => r.c);
+    const numeric = (c) => Object.keys(c.resolve).filter((k) => !isNaN(k));
+    assert.ok(rows.some((c) => new Set(numeric(c).map((k) => c.resolve[k].path)).size < numeric(c).length), "two placeholders on one path");
+    assert.ok(rows.some((c) => Object.values(c.resolve).some((r) => r.inRoot === false)), "outside the roots");
+    assert.ok(rows.some((c) => Object.values(c.resolve).some((r) => r.exists === false)), "exists: false");
+    assert.ok(rows.some((c) => Object.values(c.resolve).some((r) => r.secret === true)), "secret: true");
+    assert.ok(rows.some((c) => "cwd" in c.resolve), "a cwd placeholder");
+    assert.ok(rows.some((c) => "repo" in c.resolve), "a repo placeholder");
+});
+
+test("the shapes rows: every manifest validates, and the entrypoint, reveals and $schema shapes each appear", () => {
+    for (const { c } of shapeRows) assert.deepEqual(validateManifest(c.manifest), [], c.shape);
+    const ms = shapeRows.map((r) => r.c.manifest);
+    assert.ok(ms.some((m) => m.entrypoint && m.version === undefined));
+    assert.ok(ms.some((m) => m.reveals === "processes"));
+    assert.ok(ms.some((m) => typeof m.$schema === "string"));
+    const ep = shapeRows.filter((r) => r.c.manifest.entrypoint).map((r) => r.c);
+    assert.ok(ep.some((c) => c.described) && ep.some((c) => !c.described && c.argv[1].startsWith("-") && !c.pre.length && c.effects === "unknown"));
 });
 
 // --- the editor's warning: a script whose manifest lacks runs-code (SHELL.md, the TRAP paragraph) ---
