@@ -93,6 +93,7 @@ export interface RunAgentHostDeps {
     // without running it, so a watched streaming step shows a pretty In, not raw JSON args.
     renderFor?: AgentLoopDeps["renderFor"];
     precheck?(name: string, args: Record<string, unknown>): Promise<string | null>;   // doomed-action skip (click/type)
+    unrunnable?(name: string, args: Record<string, unknown>): string | null;   // a call the host cannot run at all (a page tool with no tab): answered, never gated
     /** A tool's dispatch threw and the loop turned it into an error result (agent-loop.ts `toolThrew`): the host records it. */
     toolThrew?: AgentLoopDeps["toolThrew"];
     // The approval gate — the sidebar, in design A (origin-authed; the decision never crosses the page).
@@ -213,6 +214,7 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         scrubStored: deps.scrubStored,
         renderFor: deps.renderFor,
         precheck: deps.precheck,
+        unrunnable: deps.unrunnable,
         approve: deps.approve,
         askWhy: deps.askWhy,
         // Trusted auto-approve: only python_exec today; a tool not modelled here simply always asks
