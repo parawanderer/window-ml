@@ -48,7 +48,8 @@
 // - `--files <manifest.json>` gives each run its attached files: `{ "<run hash>": [{ "name", "id", "path" }] }`, each
 //   written to /files/attached/<id>/<name> from the local `path` before the run's first cell, with /files/agent empty as
 //   the working directory. It is a COPY in Pyodide's in-memory file system, not the worker's ranged mount (#2026), as
-//   the /sales.csv shim is a copy of the fetch cache: the inside and full paths read the same bytes.
+//   the /sales.csv shim is a copy of the fetch cache: the inside and full paths read the same bytes. It is read-only, as
+//   the mount is: a write raises there and here, though the error's type differs.
 // - `--capture <out.jsonl>` writes, per replayed cell, what it left: its stdout, its result, its error's type, and
 //   hashes of the values of the names any LATER cell of the run reads and of the names it binds (floats to 9 significant
 //   digits). It is derived from what cells print, so it goes only to the path the caller names, never to `<out.json>`.
@@ -361,7 +362,11 @@ function mountFiles(list) {
     // in the worker's order, so a listing of / or /files reads as it did live (/share is Pyodide's own in the browser)
     for (const d of ["/files", "/files/agent", "/files/attached", "/share"]) { try { FS.mkdir(d); } catch { /* exists */ } }
     for (const d of ["/files/attached", "/files/agent"]) for (const n of FS.readdir(d)) if (n !== "." && n !== "..") rm(`${d}/${n}`);
+    for (const d of ["/files", "/files/agent", "/files/attached"]) FS.chmod(d, 0o755);
     for (const { name, id, path: from } of list) { FS.mkdir(`/files/attached/${id}`); FS.writeFile(`/files/attached/${id}/${name}`, fs.readFileSync(from)); }
+    // read-only, as the worker's mount answers every write (EROFS there; a PermissionError here, the same "raised")
+    const lock = (p) => { const st = FS.stat(p); if (FS.isDir(st.mode)) for (const n of FS.readdir(p)) if (n !== "." && n !== "..") lock(`${p}/${n}`); FS.chmod(p, FS.isDir(st.mode) ? 0o555 : 0o444); };
+    lock("/files");
     FS.chdir("/files/agent");
 }
 
