@@ -1083,11 +1083,11 @@
       "why": "a fresh writable buffer; its contents are its own"
     },
     "pandas.read_csv": {
-      "effects": "read(buffer arg)",
+      "effects": "read(the path or buffer argument)",
       "returns": "fresh",
-      "cost": "input length",
-      "over": "an in-memory buffer the cell owns (a StringIO or BytesIO), never a path",
-      "why": "parses a buffer into a new frame"
+      "cost": "input bytes",
+      "over": "a file under /files/ (normalized, no link out of it, uncompressed, at most 64 MB) or a StringIO/BytesIO the cell owns; never a URL",
+      "why": "parses a /files file or the cell's buffer into a new frame; its bytes are charged to the budget before it runs (ruling 71, served)"
     },
     "pandas.read_html": {
       "effects": "read(buffer arg)",
