@@ -358,8 +358,10 @@ reset it, and the run ends when it is spent (ruling 104). It needs no restrictio
   callers that ask a person (`readonlyRefused`, the worker's `refused` outcome, the page leg's `null`) do not see it, so
   it is returned as the call's error result, with the line it stopped on. One class with a `kind`; each kind has its
   own text, naming the bound with its figure, saying what was kept (nothing the script computed, printed or added), and
-  the way on. A script's `try`/`catch`/`finally` cannot swallow it, and a `finally` does not get to run (its first node
-  spends a step the budget no longer has). The same script stops at the same step with the same words. Only the step
+  the way on. A script's `try`/`catch`/`finally` cannot swallow it. **A stop runs no `finally` body, whatever its
+  kind:** a stop discards the cell, so nothing of the cell runs after it (the Try case skips the finalizer on a
+  `ResourceStop`; before, only a `steps` stop kept it out, by its first node spending a step the budget no longer had,
+  and a finalizer after a size stop ran, and could loop on until the budget). The same script stops at the same step with the same words. Only the step
   kinds may name `ml.sh` (`opts.shell`; the worker's survey passes the run's shell flag). Texts and sizes:
   `docs/spec/PROMPT_BUDGET.md`. A stop leaves nothing behind: the answer set is restored by the same checkpoint any
   failed attempt gets, the lines it printed are not in the error (the worker drops them from the live view, the page

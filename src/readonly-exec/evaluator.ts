@@ -1141,7 +1141,9 @@ export class Evaluator {
                             catch (e2) { if (isGuard(e2)) guardErr = e2; else { otherErr = e2; hasOther = true; } }
                         } else { otherErr = e; hasOther = true; }
                     }
-                    if (node.finalizer) {
+                    // A resource stop runs no `finally`, whatever its kind: a stop discards the cell, so nothing of the cell
+                    // runs after it (a finalizer after a size stop could otherwise loop on until the budget).
+                    if (node.finalizer && !(guardErr instanceof ResourceStop)) {
                         // A throw from the finalizer is stamped where IT threw, not where the held throw did; the held
                         // position comes back only when the finalizer finishes.
                         const held = this.failAt;

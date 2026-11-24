@@ -125,6 +125,14 @@ test("a trip is DETERMINISTIC: the same script stops at the same step, line and 
     assert.ok(seen[0][1] >= 2, "the line it stopped on is reported");
 });
 
+test("a stop runs no `finally` body, whatever its kind: a finalizer that would loop leaves the stop's kind as it was", async () => {
+    const loops = "finally { let k = 0; while (k >= 0) { k++ } }";
+    for (const [kind, body] of [["steps", "let n = 0; while (n >= 0) { n++ }"], ["string", `const s = "x".repeat(${MAX_STRING} + 1)`]]) {
+        await assert.rejects(run(`try { ${body} } catch (e) { 1 } ${loops} 1`, {}, ml()),
+            (e) => e instanceof ResourceStop && e.kind === kind, `${kind}: the finalizer did not run`);
+    }
+});
+
 test("a trip cannot be swallowed: not by a try/catch, and not by a finally, which does not get to run", async () => {
     const host = ml();
     const set = new AnswerSet();
