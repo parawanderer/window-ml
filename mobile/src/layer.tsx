@@ -227,7 +227,16 @@ function Composer({ bottom }: { bottom: number }) {
     return (
         <View style={[s.composer, { paddingBottom: Math.max(bottom, 10) }]}>
             {/* The run's tab has closed: say so where a message would go, with the way to carry on. */}
-            {c.canResume ? (
+            {c.noTabText ? (
+                <View style={[s.resume, { borderColor: p.border, backgroundColor: p.panel }]} accessibilityRole="summary">
+                    <Text style={[s.resumeText, { color: p.fgDim }]} numberOfLines={3}>{c.noTabText}</Text>
+                    {c.canBringHere ? (
+                        <Pressable accessibilityRole="button" accessibilityLabel="Bring it here: pick this run up on a page" onPress={() => resumeSheet.current?.present()} style={({ pressed }) => pressed && { opacity: 0.8 }}>
+                            <Text style={[s.resumeGo, { color: p.accent, backgroundColor: p.scheme === "dark" ? "#1e1b4b" : "#eef2ff" }]}>Bring it here</Text>
+                        </Pressable>
+                    ) : null}
+                </View>
+            ) : c.canResume ? (
                 <Pressable accessibilityRole="button" accessibilityLabel="Resume on a page: the tab this run worked in has closed" onPress={() => resumeSheet.current?.present()} style={({ pressed }) => [s.resume, { borderColor: p.border, backgroundColor: p.panel }, pressed && { opacity: 0.8 }]}>
                     <Text style={[s.resumeText, { color: p.fgDim }]} numberOfLines={2}>The tab this run worked in has closed.</Text>
                     <Text style={[s.resumeGo, { color: p.accent, backgroundColor: p.scheme === "dark" ? "#1e1b4b" : "#eef2ff" }]}>Resume on a page</Text>

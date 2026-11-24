@@ -44,7 +44,7 @@ import { approveLibrary, checkLibraryProposal, isLibraryDraft, precheckLibrary, 
 import { isExtensionSender, senderSelfApproves } from "./sw-site-access";
 import { relayDebugEvent } from "./sw-debug";
 import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels, fetchOllamaInfo } from "./sw-llm";
-import { ensureLocalTools, noteLocalStep, runLocalTool, runsInWorker } from "./sw-local-tools";
+import { ensureLocalTools, noteLocalStep, runLocalTool, runsInWorker, workerFacing } from "./sw-local-tools";
 import { lookPreviewArgs, workerLook } from "./worker-look";
 import { workerLocate } from "./worker-locate";
 import { runVision, workerWroteVision, type RunVision } from "./run-vision";
@@ -819,7 +819,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // exec runs in its page's world and nowhere else. The start event below carries the same list, so the export holds
         // what the model was sent.
         const offerWorld = byWorker();
-        const modelTools = offerWorld ? withExecWorld(p.tools) : p.tools;
+        // A run the worker built and drives reads its worker tools' texts from the tools that run (workerFacing).
+        const shown = p.builtBy === "worker" && offerWorld ? workerFacing(runId, p) : p.tools;
+        const modelTools = offerWorld ? withExecWorld(shown) : shown;
         const toolDefs = modelTools.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
         const approvedSheets = new Set<string>();   // external sheets approved this run (isSheetApproved)
         // state: plumbing — why this run's python_exec cell was not run inside the dialect, by its exact source: written by the

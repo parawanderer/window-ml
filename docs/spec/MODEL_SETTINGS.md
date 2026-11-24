@@ -222,7 +222,7 @@ each value is validated as `setModel`'s is: it must be on the server's list and 
 **Not settings, never writable**: global and run policies (`propose_policy` is the model's route there); the site lists
 and the self-approval list; program manifests and Python libraries (each has its own proposal path or none); the backup
 passphrase and keys; the archive folder's grant; pairing and hub keys; the secret values the person types in Settings
-(`secretRegistry`, `chrome.storage.local`, files-host's registry), a secret by name: never readable through
+(`ml_secret_registry`, `chrome.storage.local`, files-host's registry), a secret by name: never readable through
 `ml.settings()`, never writable. None of them is a key of `DEFAULT_CONFIG`, so `change_setting` cannot name them: a key
 that is not a classified one is refused.
 
