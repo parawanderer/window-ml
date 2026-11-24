@@ -14,7 +14,10 @@
 //   * the page's `forEach` is handed our arrow's wrapper and keeps it; called after the survey it still runs the arrow
 //     body, and the page chooses the arguments. It cannot reach the run's context (`ml.current` throws), a coercing
 //     object argument still throws, and the STEP BUDGET survives: a 40-step survey left the page 16 more calls of
-//     `(x) => x`, then NotInDialect "over 40 steps". A page-driven re-entry INSIDE the survey stops the same way.
+//     `(x) => x`, then a ResourceStop (at 44523a2d a NotInDialect; re-measured at b735c6c5, where a resource bound is
+//     what the model reads, ruling 104). A page-driven re-entry INSIDE the survey stops the same way. The page's own
+//     `try` can catch that stop — it is the page's code, not the dialect's — and it buys nothing: the budget is the
+//     survey's and stays spent, so the arrow's body does not run again.
 //   * what the page does NOT get by holding it: nothing the arrow body does not already do in the page's own world —
 //     the wrapper's source is the evaluator's, not the script's, and an arrow returning `ml` hands the page a COPY of
 //     the read-only facade (its `queryAll`, nothing else; `current` is not on it).
@@ -107,11 +110,21 @@ test("a page's forEach keeps our callback: it still runs the arrow after the sur
     let refused = null;
     try { for (; calls < 10000; calls++) gotCheap(calls); } catch (e) { refused = e; }
     assert.ok(refused !== null, `the page ran ${calls} calls with no budget left: the survey's halt did not bind after it`);
-    assert.match(refused.message, /over 40 steps/);
+    // A ResourceStop of kind `steps`, not a NotInDialect: the page's own code CAN catch it (it is the page's try, not
+    // the dialect's), so the row that matters is what catching buys. Nothing: the counter is the survey's and stays
+    // spent, so every later call stops before the arrow's body runs.
+    assert.equal(refused.constructor.name, "ResourceStop", `the page's call threw ${refused.constructor.name}`);
+    assert.equal(refused.kind, "steps", "the kind the model reads for a spent budget");
+    assert.match(refused.message, /used its whole step budget \(40 steps\)/, refused.message);
     assert.ok(calls > 0, "the callback never ran at all, so the budget above was not what stopped it");
-    // And a page-driven re-entry INSIDE the survey stops at the same budget.
+    let ranAfter = 0;
+    for (let i = 0; i < 50; i++) { try { gotCheap(i); ranAfter++; } catch { /* the page swallowing the stop */ } }
+    assert.equal(ranAfter, 0, `the page swallowed the stop and ran the arrow ${ranAfter} more times`);
+    // And a page-driven re-entry INSIDE the survey stops at the same budget, with the same class.
     list.forEach = (cb) => { for (let i = 0; i < 10000; i++) cb(i); };
-    await assert.rejects(run(`ml.queryAll('x')[0].forEach((x) => x)`, { stepBudget: 40 }), /over 40 steps/);
+    const inside = await run(`ml.queryAll('x')[0].forEach((x) => x)`, { stepBudget: 40 }).catch((e) => e);
+    assert.equal(inside?.constructor?.name, "ResourceStop", `in-survey re-entry threw ${inside?.constructor?.name}: ${inside?.message}`);
+    assert.match(inside.message, /used its whole step budget \(40 steps\)/);
 });
 
 // --- C. the control: with a pristine brand the same object is COPIED on the read, so no page method runs ---
