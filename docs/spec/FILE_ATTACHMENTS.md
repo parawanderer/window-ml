@@ -2023,7 +2023,8 @@ Shane's rulings 22, 23, 35 and 36 (2026-11-17 and 2026-11-18, in the coordinator
 calls under 22 to 25 (docs/plan/repl/README.md). BUILT (2026-11-24): Python's mount (#2026), the reader's read side
 (#2048, #2058), `ml.fs`'s read members (#2083) and Python's writes under `agent/` (#2121). Not built: `ml.fs`'s
 write members (next, ruling 119), the dump (deferred, ruling 119), and backup and the archive carrying files.
-This section SUPERSEDES three things in "A session's files as a directory" above: its layout (`/files/` itself writable), its mount
+This section SUPERSEDES three things in "A session's files as a directory" above: its layout (`/files/` itself
+writable), its mount
 (an eager MEMFS that loads the whole directory into the worker) and its quota multiplier (the three times measured for
 that MEMFS). The rest of that section stands: the handle folders under `attached/`, provenance as a field, frozen when
 cited, the kernel-death message, and the host's disk never aliasing `/files` while no session folder is mounted. AMENDED
