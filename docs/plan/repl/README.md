@@ -2132,6 +2132,42 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     with a dropped count in the export (to async); #2129 needs no red-team pass, since it adds no tool, member or
     page-started message type, and merges under ruling 98 on its reviewer's comment; in the classifier's rules a JS
     read of `ml.current.files` or `ml.current.attachments` is `list` only, not also `probe` (#2138).
+  - **Ruling 113's host half, corrected (2026-11-24, the coordinator's calls on the files-host lane's review of the
+    merged section against window-ml-host main and window-ml-host#58).** The by-key splice is made at `commit` through
+    the held parent descriptor, not at `put`; a by-key `put` carries `mask: true`, accepted only under a `mask` entry;
+    the commit keeps the file's mode; an overwrite asks unless a policy allows it, which is RULING 115 (below); the restore test is "a well-formed fake
+    of this key at its own length", so a fake read before the person changed a value still restores it; `stdoutTo` is
+    not a mediated write; an allowed program writes in place only; `default:dotenv` as a mask is a basename pattern
+    found by ONE walk a root, cached by directory inode and change time, capped at 1,000,000 entries, with no directory
+    skipped by name; past the cap a Linux spawn fails and a macOS call runs with the files hidden; the output scrub
+    runs when output is written to the host's store, with a holdback, over every channel by enumeration, and the
+    `diff` withholds a masked path; the held values are kept out of core dumps. The files-host lane takes slices 1 and
+    3 when scheduled. The lane's walk measurements are its account (30 ms for 24,186 entries; 12.7 s for 1,927,407).
+  - **RULING 114 (Shane, 2026-11-24, in the coordinator's session): `ml.image` replaces `python_exec`'s `image` and
+    `cast` parameters.** "Yeah I agree with this image topic and cutting down the slop arguments from the two exec
+    tools." The packages lane's shape: `img = ml.image(src, margin=0)` returns an image that carries its page
+    transform; `img.pt(x, y)` and `img.box(...)` return a point or box in image pixels, and the worker mints
+    `@pt`/`@box` from any found in the cell's return value, inside a list or dict too; a derived image has no `.pt`;
+    the `cast` parameter, its hints and `CAST_NO_TRANSFORM` go. One PR after the `tables` removal. The coordinator's
+    conditions, sent to packages: a spec section first; only the exact point and box types mint, at a bounded depth
+    and count, and the transform is worker-side state a cell cannot set; a capture is charged by pixel count before it
+    is taken (ruling 105), with a hard bound; it is inside the dialect only if the capture has no page-visible effect
+    and crosses `look`'s masks (ruling 30); file sources go through the readers and their hide rule; a stored session
+    replays as stored and an old-style call gets one sentence naming `ml.image`; the description text comes to the
+    coordinator, and its bench run needs Shane's yes in bench's own session. The ruling's second half, fewer arguments
+    on BOTH exec tools, has no list yet: packages (Python) and small-fixes (JS) each propose which arguments go. NOT
+    ruled, recorded as Shane's thought of the same message: "really tempted to delete a lot of the top-level tools we
+    have in general and move them to functions so that they can be arbitrarily composed". Nothing is scheduled on it.
+  - **RULING 115 (Shane, 2026-11-24, in the coordinator's session): a policy may allow the model's edits to a masked
+    file.** "This call is fine", on the coordinator's recommendation. Today an existing file always asks before it is
+    overwritten, whatever a policy allows (`decidePut`). For a by-key write to a path a `mask` entry decides, and for
+    nothing else, an `allow` policy may answer that ask; the splice only adds, changes or removes keys and exposes no
+    value, and a card on every edit would be a click-through. Every other overwrite keeps asking. Also Shane, the same
+    day, on ruling 114's second half: `verify` stays a `python_exec` argument "until you can queue image reads using a
+    function in a script", and goes then; the `ml.image` PR removes `image`, `cast` and `margin` only; JS `exec` keeps
+    its eight arguments; `keep` as `ml.keep()` is not answered and stays an argument. Moving top-level tools to
+    functions is NOT taken up now ("refactoring busywork, more of a question for later"); `answer` and the
+    consent-shaped tools stay tools in any case.
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
   `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks
