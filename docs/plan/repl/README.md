@@ -2266,6 +2266,74 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   - **Merged since ruling 117, verified with `gh`:** #2129 (2829c59b), #2130 (d1301709), #2111 (018fdad6), and
     #2146 (aee3e8cc), which repaired both rows that were red on main (#2129 meeting #2130, and #2111 merged on a
     head that predated #2106); #2140 was closed unmerged, its change carried by #2146.
+  - **Ruling 119 (Shane, 2026-11-24): what goes first for `/files`, and the dump is deferred.** Shane took the
+    coordinator's order on condition that each item stays tracked here. (1) session-store builds `ml.fs`'s write
+    members after its PR that masks secret values in file names; this ends the coordinator's deferral of
+    2026-11-23 for those members. The write rules are decided once, in that PR; its spec sentences come to the
+    coordinator before push, and it needs a red-team pass (new `ml.*` members). (2) files-host builds `/files` on
+    the person's disk (ruling 91) after #2155 and its PR C, AHEAD of ruling 113's slices 1 and 3, which stay
+    tracked behind it: H16 to H18 in window-ml-host, then the extension calling mount at session start, then
+    Python's mount backed by the folder (red-team pass). The lane sends a slice list first. (3) Dumping a `@tool:`
+    value into `agent/` (ruling 36, `ml.fs.cp` of a pointer) is DEFERRED. Shane's reason: the direction is two
+    REPLs and few traditional tools, and then a cell writes a tool's result to disk itself. Not built and not
+    scheduled after this ruling: backup and the archive carrying the files, the file browser, the sweep of files
+    no session holds, and the check that the session's folder stays usable (Shane's idea of 2026-11-21).
+  - **Move-run's order (Shane, 2026-11-24, the coordinator's recommendation kept):** #2154 (the `os` subset), then
+    #2125 ("No tab"), then `navigate` from no tab, then resuming with no page. The coordinator's call under it:
+    attach from no tab (`moveRun` with a detached source) ships with the `navigate` step and needs e3's pass;
+    MOVE_RUN.md's third open item is marked built there. The shell bench step and the kernel line stay deferred.
+    #2125's repair (192c87a9): `senderOwnsRun` takes a sender with no tab only when it carries the extension's own
+    URL and id, which enables the red-team row that was `todo`; the old harness sender `{}` no longer answers a
+    gate, and that was the hang.
+  - **Hand-listing a builtin kind's method (the coordinator, 2026-11-24, on #2162).** A method is listed by hand
+    in `BUILTIN_LISTED`, whatever its corpus count, only when it is read-only, takes the arguments a listed method
+    takes, and a replay found cells refused for it alone. `str.endswith` is the first: no counted cell, and
+    refused alone in 7 replayed bench cells (the lane's account; the replay and the cells are named above
+    `BUILTIN_LISTED`, with no pinned extract). No red-team pass. If more follow, the threshold goes to Shane.
+  - **The routes back from a stripped worker (e4's account, 2026-11-24, under ruling 118; no new probe yet).**
+    Closed: `eval` and `Function` (CSP, measured in a full worker) and the `ml` wire (`postMessage` stripped; the
+    host judges by the pending entry's wire stamp). Unknown: references Pyodide or Emscripten keeps in closures, a
+    kept `postMessage` or `MessagePort` closure behind the files mount, and wasm imports (IDBFS, sockets). e4
+    probes them in that order; each shape ends as a committed row or a one-line reason, and a working route goes
+    to Shane at once. #2157's sentence that its figure is an upper bound is accepted (7736798a).
+  - **Merged since the last list, verified with `gh`:** #2160 (71a2ef1a), #2148 (b83e26fc, the page-payload
+    strip), #2121 (2747ad2a, Python's writes under `/files/agent/`), and in window-ml-host #57 (b5cadac7, the
+    describer) and #58 (e5fb12c3, `hide` and `show` in both sandboxes). SECRET_HANDLES.md's row saying a `hide`
+    binds no shell program is corrected when #2155, the extension's half, merges.
+  - **Ruling 120 (Shane, 2026-11-24): the direction is two layers, and `@tool:` pointers are not legacy.** The
+    direction is two REPLs and few traditional tools. A REPL is how values are COMPUTED and combined: tools become
+    functions, and joining two of them is function composition inside one cell, where tool calling needed a round
+    trip through the context for each join. A pointer is what a cell's output IS: typed (a table, text, an image,
+    a file), addressed, and persisted with the session in the value store. Shane's statement of why the REPL does
+    not replace it: a pointer gives pass by reference, in the model's own output, on typed objects, and those
+    objects are what is stored, so the context can be worked on later; they are the output of the cell. A
+    namespace variable does none of that: it lives in worker memory and dies with the worker, only a later cell's
+    code can name it, the host does not know its type, and the context holds only what was printed. So the context
+    holds the reference and the store holds the whole, which is what lets a view be cut, held back, compacted and
+    read again. The join between the layers is two operations: a cell's result becomes a pointer, and a cell takes
+    a pointer as input. With fewer tools, more values are born in a cell, so pointers carry more, not less. No
+    lane removes or bypasses a pointer path on the ground that a REPL covers it. To check under ruling 119: the
+    dump's deferral assumes a cell can read any pointer's whole value; Python reads a table pointer (`ml.table`),
+    and whether it reads a text or image pointer whole is asked of packages. A gap there is repaired by a general
+    read of a pointer in Python, not by the dump.
+  - **The file browser is scheduled (Shane, 2026-11-24: it is needed to understand what is going on; Chat Page
+    hands the build to a Sonnet subagent).** This amends ruling 119, which left it unscheduled. Slice 1, the
+    coordinator's cut: a read-only tree over `/files/` (name, size, kind, hidden state), listed one directory at a
+    time, in the panel FILE_ATTACHMENTS.md describes; out of it are the menu commands, shell roots, `/history/`,
+    the phone's view and previews. The contract, accepted: `files.list` is a command whose ANSWER carries the page
+    (as `session.backfill`'s does), at most 500 entries and 256 KiB, and the stream carries only `files-changed`,
+    at most once per commit or attach, naming at most 16 changed directories and no entry. This amends item 5 of
+    "The file browser shows the mounts", which made the listing an event: an event is kept in history and
+    replayed, so each opened folder would have written a directory into it. It is a new message type, so e3's rows
+    land on the branch: a page-started sender, or one that does not own the session, gets no listing.
+  - **Names under `/files` (the coordinator, 2026-11-24; session-store's branch at 0c2cc780, no PR yet).** A name
+    is masked with every form the bytes are masked with, each with its marker. A folder sorts by its shown names,
+    ties by creation time and then a salted hash of the stored name. A create of a name that is a marker is
+    refused. The person's listing gets the SHOWN names too: one listing for every caller, since a panel listing
+    reaches a paired device over the hub; the human-only state inspector on the extension's own pages is the one
+    exception. Cost, stated: two files sharing a shown name look alike in the panel. Surfaced to Shane, who may
+    want the real names locally.
+  - **Merged, verified with `gh`:** #2164 (337b8cd3), this plan's ruling 119.
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
   `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks

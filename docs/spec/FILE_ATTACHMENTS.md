@@ -6,9 +6,10 @@ pointers, `ml.dereference` of `@file:`, `look` at a document and upload progress
 files panel are next (Shane and the calm-chat-motion session). A session's files as a directory, `/files/`, is
 ruled and PARTLY BUILT (2026-11-22): the ranged reader's read side (#2048), its wiring in the offscreen document and its
 scrub (#2058), Python's mount in a worker-hosted run (#2026), `ml.fs`'s read members (#2083), and the write side
-under `agent/` with its quota, `filesQuotaMB`: Python's writes land ("Writes"). DEFERRED (the coordinator, 2026-11-23,
-"Writes", "Deferred"): `ml.fs`'s write members, `cp("@tool:…")`, the turn-start line naming a file not written and a
-sweep of files no session holds. Not built: the file browser, and the folder on the person's disk (ruling 91).** The
+under `agent/` with its quota, `filesQuotaMB`: Python's writes land ("Writes", #2121). NEXT (ruling 119, Shane,
+2026-11-24): `ml.fs`'s write members (session-store), then the folder on the person's disk (ruling 91, files-host).
+DEFERRED: `cp("@tool:…")` (ruling 119), the turn-start line naming a file not written and a sweep of files no
+session holds (the coordinator, 2026-11-23, "Writes", "Deferred"). Not built: the file browser.** The
 current design of `/files` is in "`/files`: the layout, `ml.fs`, Python's mounts and the backup" and "`/files/` read
 by range, and `ml.fs`"; the older sections below it name what they lost, and to which ruling. The order is
 three slices, each landing on its own: text files, then PDFs, then documents as `@file:` pointers in agent runs. Slice
@@ -2019,9 +2020,11 @@ Fetched values stay out.
 ## `/files`: the layout, `ml.fs`, Python's mounts and the backup (rulings 22, 23, 35, 36; proposed 2026-11-18)
 
 Shane's rulings 22, 23, 35 and 36 (2026-11-17 and 2026-11-18, in the coordinator's session), with the coordinator's
-calls under 22 to 25 (docs/plan/repl/README.md). BUILT (2026-11-22): Python's mount (#2026) and the reader's read side
-(#2048, #2058). Not built: `ml.fs`, every write, the dump, and backup and the archive carrying files. This section
-SUPERSEDES three things in "A session's files as a directory" above: its layout (`/files/` itself writable), its mount
+calls under 22 to 25 (docs/plan/repl/README.md). BUILT (2026-11-24): Python's mount (#2026), the reader's read side
+(#2048, #2058), `ml.fs`'s read members (#2083) and Python's writes under `agent/` (#2121). Not built: `ml.fs`'s
+write members (next, ruling 119), the dump (deferred, ruling 119), and backup and the archive carrying files.
+This section SUPERSEDES three things in "A session's files as a directory" above: its layout (`/files/` itself
+writable), its mount
 (an eager MEMFS that loads the whole directory into the worker) and its quota multiplier (the three times measured for
 that MEMFS). The rest of that section stands: the handle folders under `attached/`, provenance as a field, frozen when
 cited, the kernel-death message, and the host's disk never aliasing `/files` while no session folder is mounted. AMENDED
@@ -2145,7 +2148,7 @@ The surface (its members with `opendir` and `createReadStream`, its paths, the g
 home: "`ml.fs`: Node's `fs/promises`, with a session's files as its disk" above, over the one ranged reader, offered to
 worker-built runs only, in the isolated world, never page-started; the `python_install` candidate worker gets neither
 it nor the mount. AMENDED 2026-11-22: this section restated it, with reading, listing and writing rules that the home
-now carries. Not built; session-store's read members are in flight. What this section keeps:
+now carries. The read members are built (#2083); the write members are next (ruling 119). What this section keeps:
 
 - **A hidden file.** "Hidden" is the effective list of [POLICIES.md](POLICIES.md), "Hiding files", which binds every
   reader of `/files`, the mounts and `ml.fs` included: a path is hidden when a default holds it (a dotenv name, a
@@ -2155,6 +2158,9 @@ now carries. Not built; session-store's read members are in flight. What this se
   a global `hide`, by that section's layers) releases it for that session's reads, and only those.
 
 ### Dumping a `@tool:` value into `agent/` (ruling 36)
+
+DEFERRED 2026-11-24 (Shane, ruling 119): not built and not scheduled. As tools move into the two REPLs, a cell
+writes a tool's result to disk itself. The design below is kept for when it is taken up.
 
 The model may write a pointer's value in full: `ml.fs.cp("@tool:a1b2c3f", "/files/agent/sales.csv")`. It is a copy
 through `ml.fs`, streamed from the STORED WHOLE behind the pointer (the value store), never from the truncated view
