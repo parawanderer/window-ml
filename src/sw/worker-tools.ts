@@ -582,6 +582,25 @@ export function buildWorkerTools(runId: string, tabId: number, tabUrl: () => str
     ctx.tabId = tabId; ctx.tabUrl = tabUrl; ctx.python = names.includes("python_exec");
     if (media) ctx.media = media;
     runs.set(runId, ctx);
+    return makeWorkerTools(runId, ctx, wanted);
+}
+
+/**
+ * The descriptions and parameters of the worker tools a run offers, built by the factories {@link buildWorkerTools}
+ * runs, on the same `ml`: what a run the worker drives must read of them (sw-run-host.ts, `workerFacing`). Builds the
+ * tools only for their texts: no run state is made or changed.
+ * @param runId the run
+ * @param names the run's tool names; only those in {@link WORKER_TOOL_NAMES} are built
+ * @returns the tools, as built, to read their texts from
+ */
+export function workerToolTexts(runId: string, names: readonly string[]): MlTool[] {
+    const wanted = names.filter((n) => WORKER_TOOL_NAMES.has(n));
+    if (!wanted.length) return [];
+    return makeWorkerTools(runId, newRunCtx(runId, -1, () => "", names.includes("python_exec")), wanted);
+}
+
+/** {@link buildWorkerTools}' factories over `ctx`'s `ml`, one tool per wanted name. */
+function makeWorkerTools(runId: string, ctx: RunCtx, wanted: readonly string[]): MlTool[] {
     const ml = runMl(ctx);
     // agent_api_docs reads the shortcut and the config here, where the page would have asked for them by message.
     const docs = { invocation: invocationInfo, config: async () => publicConfig(await getConfig(), await senderSelfApproves({ url: ctx.tabUrl() })), freeSettings: () => isWorkerRun(runId) };

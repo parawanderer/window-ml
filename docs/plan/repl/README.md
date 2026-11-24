@@ -104,8 +104,9 @@ secrets, placement, the hub desktop runtime.
 "Generating and importing a manifest into the runtime"): the sandbox profile derived from a program manifest's claims
 (the description as the envelope: no separate sandbox profile file is introduced — the host's per-call sandbox `Plan` is
 compiled directly from the call's approved `EffectsData` set $E(c)$, the workspace roots, and the fixed credential/hook
-safety floor, with workspace secret files denied at the kernel level unless present in `allow_read`, see
-[`EFFECTS.md`](../../spec/EFFECTS.md)), `(program, entrypoint)` prefix matching so interpreted CLI scripts
+safety floor, with dotenv and credential files denied at the kernel level unless present in `allow_read`, see
+[`EFFECTS.md`](../../spec/EFFECTS.md); which files and at what depth on each platform is the table in
+[`SECRET_HANDLES.md`](../../spec/SECRET_HANDLES.md)), `(program, entrypoint)` prefix matching so interpreted CLI scripts
 (`["node", "scripts/<name>.mjs", ...]`, `["python3", "<script>.py", ...]`) with no preceding interpreter flags get their
 own manifests keyed on `argv[0..1]`, `sha256` pinning of a resolved binary, script closure, or library module, a
 manifests store with workspace and global scope, `propose_manifest` (drafting a program manifest from `--help`/script
@@ -611,7 +612,8 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   window plus a stub that points at the older range the first compaction design item.
 - **Ruling 20, secret files.** `.env` stays blocked in sandbox mode; naming it in a call asks, and approval opens
   it for that call. Users get a hide list of paths or globs for their own secret files, treated exactly like a
-  dotenv file; the list is a gate key, outside `change_setting`. Scrubbing values out of such files is deferred to
+  dotenv file; the list became `hide` and `show` rows of the policy store (ruling 34), outside `change_setting`.
+  Scrubbing values out of such files is deferred to
   the handles work, by a generic rule over JSON, YAML, TOML and dotenv string leaves of 8 to 512 characters; a
   user-supplied parser is refused. Optional: at root approval, offer gitignored files that look like credentials;
   never hide everything gitignored. Tasked to files-host after window-ml-host#46 merges, spec diff first. The
@@ -954,8 +956,10 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   surface exists.
 - **Hidden-file values in the scrub (#1961): open design, not ruled.** The idea is that the host parses a hidden
   file and registers its string values. Against it: it turns an unreadable file into one a script can confirm
-  guesses about through the redaction. The coordinator recommends against registering them; if ever, the host
-  sends hash-only entries, decided with handles.
+  guesses about through the redaction. The coordinator recommended against registering them; if ever, the host
+  sends hash-only entries, decided with handles. STATE 2026-11-24: Shane's position in discussion reverses that
+  recommendation (registering a dotenv file's values is a convenience the person can switch off per file); not
+  ruled, decided with the masked-file design (SECRET_HANDLES.md, "Open questions").
 - **The `/files` spec (#1964).** Coordinator's calls in it: a backup with files is a SET of version-1 backup files,
   each under the format's 1 GiB limit and authenticated on its own, the first naming the rest with their hashes,
   a restore committing only when all of them authenticate; a hidden file's bytes are never in a backup and a
@@ -2089,6 +2093,81 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     them scattered over about fifteen files with nineteen contradictions, to be consolidated before that design is
     written.
 
+  - **The secrets documents have one owner, and calls made since ruling 112 (2026-11-24).** SECRET_HANDLES.md now
+    opens with one table of what the model can see of a secret, by surface and platform, and the other specs point at
+    it. An audit found 19 stale or contradicting statements across twelve files; they are repaired in the same PR. The
+    ones that changed a claim: `*.pem` and `id_*` inside a root are NOT held by the sandbox (three files said they
+    were); on Linux a dotenv file below a root's top is readable; a hidden file's name is listed and its read is
+    refused, never asked about; a `hide` binds no shell program until window-ml-host#58's two halves land; the `spawn`
+    field is one ordered `hideList`. A found defect, the session-store lane's account: the `/files` listing shows a
+    registered value in a file NAME raw; its repair is a reader PR with e4's rows. The masked-file design (a state
+    between hidden and shown) is still in discussion with Shane and is not ruled. The coordinator's calls since ruling
+    112, each for Shane to override: (a) the JS evaluator turns the host's stack overflow into a stop of kind `depth`
+    that the model reads as an error, and a stop of any kind runs no `finally` body (#2136 carries the second); (b)
+    ruling 109's policy language gets `new URL` in the policy realm only, with nine string getters; (c) under ruling
+    110, a page caller's literal `ml.table("<literal>")` sources are read by the page's own receiver and shipped with
+    the run, and a computed source is an error naming the literal form; (d) cell facts (#2135): `class` is Python
+    only, a JS cell carries `realm`, and a page-realm cell keeps only what the worker decides; (e) ruling 108's model
+    sentence is `Asked the person because the policy "<label>" is broken (<phrase>) and could not be checked. Nothing
+    is wrong with the call.`; (f) a file block of a worker-built run carries `path` only when it opens the file as
+    written. Shane approved the bench's forms proposal (2026-11-24): read rerun B first, replace the two closed-form
+    tasks with ones whose stopping depends on state, and score by whether the invited form ran.
+  - **RULING 113 (Shane, 2026-11-24, in the coordinator's session): a masked file.** "Your 6 point list is fine", and
+    "Your writes has to handle python `open` etc". A file has a third state between hidden and shown, the default for
+    dotenv files: the model's own reads get the keys with each value replaced by a same-length fake derived from the
+    key's name; a program the person allowed reads the real bytes and its output is scrubbed, with no card at each
+    run; writes land only through the extension's or the host's own code (`ml.fs`, `ml.sh.put`, `stdoutTo`, Python's
+    `open` through the mount), a written fake restoring the real value, and every other program sees the file
+    read-only; reading a masked file registers its values of 8 or more characters but for a common-settings list,
+    which the person can switch off per file; a policy can pin an allowed program by hash, moved only by the person's
+    approval; the host keeps no backup. The spec is SECRET_HANDLES.md, "A masked file", with the coordinator's calls
+    under it, each for Shane to override: `mask` as a third effect of the `files` consumer and `default:dotenv`
+    switched to it, the credential files and key files staying hidden; one dotenv grammar in one Rust masker built
+    native and to WebAssembly, an unreadable line masked whole; values under 8 bytes read as `*`; the write-back by
+    key, made by the holder; the output scrub made by the HOST for every call, so no value crosses to the worker in
+    the first build, and the crossing that would also scrub web content left to a later slice on Shane's word; a
+    256-value bound a session; four slices (masker, reader, host, scoped `show` and pin), owners assigned when queues
+    reach it, the red team given the section as its target first. Also since the last entry, the coordinator's calls:
+    `cell`/`facts` records get their own per-run cap of 200 in the run log, apart from the mechanics records' cap,
+    with a dropped count in the export (to async); #2129 needs no red-team pass, since it adds no tool, member or
+    page-started message type, and merges under ruling 98 on its reviewer's comment; in the classifier's rules a JS
+    read of `ml.current.files` or `ml.current.attachments` is `list` only, not also `probe` (#2138).
+  - **Ruling 113's host half, corrected (2026-11-24, the coordinator's calls on the files-host lane's review of the
+    merged section against window-ml-host main and window-ml-host#58).** The by-key splice is made at `commit` through
+    the held parent descriptor, not at `put`; a by-key `put` carries `mask: true`, accepted only under a `mask` entry;
+    the commit keeps the file's mode; an overwrite asks unless a policy allows it, which is RULING 115 (below); the restore test is "a well-formed fake
+    of this key at its own length", so a fake read before the person changed a value still restores it; `stdoutTo` is
+    not a mediated write; an allowed program writes in place only; `default:dotenv` as a mask is a basename pattern
+    found by ONE walk a root, cached by directory inode and change time, capped at 1,000,000 entries, with no directory
+    skipped by name; past the cap a Linux spawn fails and a macOS call runs with the files hidden; the output scrub
+    runs when output is written to the host's store, with a holdback, over every channel by enumeration, and the
+    `diff` withholds a masked path; the held values are kept out of core dumps. The files-host lane takes slices 1 and
+    3 when scheduled. The lane's walk measurements are its account (30 ms for 24,186 entries; 12.7 s for 1,927,407).
+  - **RULING 114 (Shane, 2026-11-24, in the coordinator's session): `ml.image` replaces `python_exec`'s `image` and
+    `cast` parameters.** "Yeah I agree with this image topic and cutting down the slop arguments from the two exec
+    tools." The packages lane's shape: `img = ml.image(src, margin=0)` returns an image that carries its page
+    transform; `img.pt(x, y)` and `img.box(...)` return a point or box in image pixels, and the worker mints
+    `@pt`/`@box` from any found in the cell's return value, inside a list or dict too; a derived image has no `.pt`;
+    the `cast` parameter, its hints and `CAST_NO_TRANSFORM` go. One PR after the `tables` removal. The coordinator's
+    conditions, sent to packages: a spec section first; only the exact point and box types mint, at a bounded depth
+    and count, and the transform is worker-side state a cell cannot set; a capture is charged by pixel count before it
+    is taken (ruling 105), with a hard bound; it is inside the dialect only if the capture has no page-visible effect
+    and crosses `look`'s masks (ruling 30); file sources go through the readers and their hide rule; a stored session
+    replays as stored and an old-style call gets one sentence naming `ml.image`; the description text comes to the
+    coordinator, and its bench run needs Shane's yes in bench's own session. The ruling's second half, fewer arguments
+    on BOTH exec tools, has no list yet: packages (Python) and small-fixes (JS) each propose which arguments go. NOT
+    ruled, recorded as Shane's thought of the same message: "really tempted to delete a lot of the top-level tools we
+    have in general and move them to functions so that they can be arbitrarily composed". Nothing is scheduled on it.
+  - **RULING 115 (Shane, 2026-11-24, in the coordinator's session): a policy may allow the model's edits to a masked
+    file.** "This call is fine", on the coordinator's recommendation. Today an existing file always asks before it is
+    overwritten, whatever a policy allows (`decidePut`). For a by-key write to a path a `mask` entry decides, and for
+    nothing else, an `allow` policy may answer that ask; the splice only adds, changes or removes keys and exposes no
+    value, and a card on every edit would be a click-through. Every other overwrite keeps asking. Also Shane, the same
+    day, on ruling 114's second half: `verify` stays a `python_exec` argument "until you can queue image reads using a
+    function in a script", and goes then; the `ml.image` PR removes `image`, `cast` and `margin` only; JS `exec` keeps
+    its eight arguments; `keep` as `ml.keep()` is not answered and stays an argument. Moving top-level tools to
+    functions is NOT taken up now ("refactoring busywork, more of a question for later"); `answer` and the
+    consent-shaped tools stay tools in any case.
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
   `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks
