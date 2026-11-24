@@ -189,6 +189,78 @@ test("the HUD streams a half-written ```mermaid fence as code, never as a diagra
     assert.ok(!/class="mmd"/.test(markdown("```mermaid_open\ngraph TD\n```")), "a mermaid_open fence stays code");
 });
 
+// --- a fence in text that reaches markdown(): it draws, and what it draws is inert ---
+
+test("a ```mermaid fence reaching markdown() draws only an inert <img>: no script element and no event-handler attribute", async () => {
+    // The frame, the client and the cache are pinned above. This pins the page's end: whatever a drawing holds, what
+    // lands in the panel is an <img> whose source is a percent-encoded data: URL. A cell's stdout does NOT come
+    // through markdown() (the row below measures that). The text that does is the model's or the page's — a reply,
+    // an answer, prose between steps, a live call, the look output — so `hostile` is written as a frame answer that
+    // got past the client's gate, which checks the opening tag and the size and not the body.
+    const { done, keyOf, mermaidBlock, pageIsDark } = await import("../src/mermaid/mermaid-block.ts");
+    const { markdown } = await import("../src/sidebar/format.ts");
+    const { JSDOM } = await import("jsdom");
+    // Attributes are read from a PARSED document, not by regex: the fence's text is allowed to contain the characters
+    // `onclick=` — it is code on screen — and only an attribute is a handler.
+    const scan = (out) => {
+        const body = new JSDOM(`<body>${out}</body>`).window.document.body;
+        const attrs = [...body.querySelectorAll("*")].flatMap((el) => [...el.attributes].map((a) => [el.tagName, a.name]));
+        return {
+            attrs,
+            handlers: attrs.filter(([, name]) => /^on/i.test(name)),
+            scripts: body.querySelectorAll("script").length,
+        };
+    };
+    const src = "graph TD\n  A-->B";
+    const hostile = '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(2)</script></svg>';
+    done.set(keyOf(src, pageIsDark()), { svg: hostile, w: 10, h: 10 });
+    const html = markdown("```mermaid\n" + src + "\n```");
+    assert.ok(html.includes('class="mmd-img"'), `positive control: the fence was drawn: ${html.slice(0, 200)}`);
+    assert.ok(html.includes('src="data:image/svg+xml;charset=utf-8,'), "the drawing is a data: URL's payload");
+    const drawn = scan(html);
+    assert.equal(drawn.scripts, 0, `a script element reached the page from a cached drawing: ${drawn.scripts}`);
+    assert.deepEqual(drawn.handlers, [], "an event-handler attribute reached the page from a cached drawing");
+
+    // The fence's own source is printed too (the hidden source block), and it is escaped, not markup.
+    const esc = markdown("```mermaid\n<script>alert(3)</script> onerror=alert(4)\n```");
+    assert.ok(esc.includes("&lt;script&gt;"), `the fence's source is escaped code: ${esc.slice(0, 200)}`);
+    const source = scan(esc);
+    assert.equal(source.scripts, 0, "the fence's source became a script element");
+    assert.deepEqual(source.handlers, [], "the fence's source became an event-handler attribute");
+});
+
+// --- a cell's stdout is text, not Markdown: a fence there is never drawn at all ---
+
+test("a ```mermaid fence in a cell's stdout is drawn as the code it is: no diagram, no script element, no event-handler attribute", async () => {
+    // The premise this row corrects: the output cell is render-panel's PlainOutput/TimedOutput, a code block with the
+    // text escaped, NOT markdown() — docs/dev/sidebar.md's "a fence in anything markdown() renders" does not include a
+    // cell's Out. A fence printed by Python is therefore never sent to the drawer; the one surface it reaches is the
+    // escaped code block. Rendered on the real component, with markdown() as the positive control that a fence CAN
+    // draw, so this is not a test of a renderer that never draws.
+    const { JSDOM } = await import("jsdom");
+    const { createRequire } = await import("node:module");
+    const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", { pretendToBeVisual: true });
+    globalThis.window = dom.window;
+    globalThis.document = dom.window.document;
+    globalThis.Node = dom.window.Node;
+    const { h, render } = createRequire(import.meta.url)("preact");
+    const { PlainOutput, TimedOutput } = await import("../src/sidebar/transcript/render-panel.tsx");
+    const host = dom.window.document.getElementById("root");
+    const text = "```mermaid\ngraph TD\n  A-->B\n```\n<script>alert(1)</script> onclick=alert(2)";
+    for (const [name, comp, props] of [["PlainOutput", PlainOutput, { text }], ["TimedOutput", TimedOutput, { text, marks: [[0, 1700000000000]] }]]) {
+        render(null, host);
+        render(h(comp, props), host);
+        const html = host.innerHTML;
+        assert.ok(html.includes("mermaid"), `${name} positive control: the output's text is on screen`);
+        assert.ok(!html.includes('class="mmd"') && !html.includes("<img"), `${name} drew a diagram from a cell's stdout: ${html.slice(0, 300)}`);
+        const attrs = [...host.querySelectorAll("*")].flatMap((el) => [...el.attributes].map((a) => [el.tagName, a.name]));
+        assert.equal(host.querySelectorAll("script").length, 0, `${name} created a script element`);
+        assert.deepEqual(attrs.filter(([, n]) => /^on/i.test(n)), [], `${name} created an event-handler attribute`);
+    }
+    const { markdown } = await import("../src/sidebar/format.ts");
+    assert.ok(markdown("```mermaid\ngraph TD\n  A-->B\n```").includes('class="mmd"'), "positive control: markdown() draws a fence");
+});
+
 // --- fingerprint of the new web-accessible paths (docs/dev/detection-surface.md row 5) ---
 
 test("detection-surface.md row 5 matches what the manifest actually does about the diagram frame", () => {
