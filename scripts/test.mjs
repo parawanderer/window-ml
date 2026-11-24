@@ -82,8 +82,8 @@ const GENRES = {
     // `/files` (FILE_ATTACHMENTS.md, "`/files/` read by range, and `ml.fs`"): the ranged reader over the shelf, the
     // offscreen document's source for it, the synchronous channel Python's mount is served over, and the mount itself.
     files: {
-        about: "/files: the ranged reader, its source over the shelf, the channel and the Python mount",
-        files: ["ranged-reader.test.mjs", "files-attached.test.mjs", "files-channel-fake.test.mjs", "files-host.test.mjs", "files-mount-py.test.mjs", "ml-fs.test.mjs", "ml-fs-parity.test.mjs"],
+        about: "/files: the ranged reader and its write side, the store of run-made files, its source over the shelf, the channel and the Python mount",
+        files: ["ranged-reader.test.mjs", "files-attached.test.mjs", "files-channel-fake.test.mjs", "files-host.test.mjs", "files-mount-py.test.mjs", "files-mount-real.test.mjs", "ranged-reader-write.test.mjs", "agent-files.test.mjs", "sw-agent-files.test.mjs", "ml-fs.test.mjs", "ml-fs-parity.test.mjs"],
     },
     // Backup and restore (docs/dev/backup.md): the file format and the keys, the storage-key inventory held to the sources,
     // the settings collect/preview/apply, the backup file over the archive's SQLite, and the sequence that drives them.
