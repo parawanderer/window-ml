@@ -2246,7 +2246,8 @@ is the one place every front end lists and opens through, so the rule is there.
    shares; otherwise the one child whose shown name the segment is, as a whole value (no prefix, no part, no length).
 4. Two children sharing a shown name are both listed under it. A segment naming that shown name, with no exact match,
    is `EACCES: '<path>' is ambiguous, <N> files`. The cost, accepted: neither opens by the shown name, a cell reaches
-   them only by their stored names, which it is never shown, and the person sees both in the panel.
+   them only by their stored names, which it is never shown, and the person sees both in the panel, each under the
+   one shown name with its real name beside it on this device (rule 9).
 5. An error names the path as the caller wrote it, never a stored name: open, stat, the write side, a commit's
    refusal and a discarded file's report alike.
 6. One lookup serves open, stat, opendir, unlink, rename (both ends), mkdir, rmdir and a create. A create on a shown
@@ -2257,6 +2258,14 @@ is the one place every front end lists and opens through, so the rule is there.
    there is `EACCES: '<path>' is reserved`: it would make a second file under a shown name. The markers are
    `[REDACTED` (both `[REDACTED:<NAME>]` and the bare `[REDACTED]`), the GitHub token's `[a GitHub token]`, and every
    `put` the forms carry at that call (`[server]`, `[price service]`, `[model filter]`).
+9. An entry's `name` is always the shown name, for every caller (the coordinator's ruling, amended by Shane,
+   2026-11-24). The person's panel shows the REAL name on this device, with a tip saying how the model sees it: the
+   reader has one extra output, `realName`, present only when the stored name differs from the shown one, and only for
+   a listing the extension's own pages ask for on this device (the offscreen caller the files panel adds). It never
+   rides the hub, an event (`files-changed`), an export, the run log, `ml.fs` or the Python mount; over the hub the
+   panel shows the shown name. The human-only state inspector (`session.files`) lists stored names, on the
+   extension's own pages only. NOT BUILT yet: the reader's `realName` option, off by default, lands in the PR after
+   this one; until then the panel has the shown name only.
 
 The exact match keeps two cases working: an attached name that holds the marker text itself, and a file written
 before the value in its name was registered, both open by the name the cell wrote. Python's mount lists both entries
