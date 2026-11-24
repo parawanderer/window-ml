@@ -93,11 +93,11 @@ lifted calls are computed or thrown and then dropped; no wire-call count exists.
   mechanics' 2,000 because a record may be up to 4 KB, at most about 4 MB of `storage.session`'s 10 MB. The exports
   read `cell` from the session's steps, never from the log, so a trimmed log truncates no export.
 
-- **Tests.** One row per `why.kind` for each language that can produce it (`denied` is JS only, `marked` is
-  Python only, `routing` is both languages: for Python only when the run executes its Python on the page); the upgrade row above; the row that the recorder changes no outcome; a row that the
-  `charged` figures and the cell's own steps sum to `steps.used`; two red-team rows: a worker-realm cell cannot write
-  or forge its own `cell` object (the recorder runs outside the cell's realm), and a page forging the page leg's
-  answer changes no recorded field.
+- **Tests.** One row per `why.kind` for each language that can produce it (`denied` is JS only, `marked` is Python
+  only, `routing` is both languages: for Python only when the run executes its Python on the page); the upgrade row
+  above; the row that the recorder changes no outcome; a row that the `charged` figures and the cell's own steps sum
+  to `steps.used`; two red-team rows: a worker-realm cell cannot write or forge its own `cell` object (the recorder
+  runs outside the cell's realm), and a page forging the page leg's answer changes no recorded field.
 
 ## Half 2: the offline classifier
 
