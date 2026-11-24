@@ -7,7 +7,10 @@
 //   person is the server's per-call suspension on the running step: the transport waits through it, so the facade has no
 //   ask path of its own.
 // - `codec` carries `loads`, `dumps`, `b64encode` and `b64decode`: the harness's own references, captured before any cell
-//   ran, never the importable `json`/`base64`, which a cell may have patched.
+//   ran, never the importable `json`/`base64`, which a cell may have patched. For the synchronous members (`ml.table`) it
+//   also carries `run_sync` (Pyodide's, over JSPI; None where there is none), `charge(chars)`, which bills the dialect's
+//   budget inside and does nothing outside, `frame(value)`, the DataFrame builder, and `asks`, the exception an inside
+//   call raises when its source needs the person (None outside).
 // The request is `{ seq, call, args }` only. Which client and run it is for is stamped outside, by the offscreen document,
 // so the facade sends nothing it did not get from the harness. It holds no JsProxy, and no function the cell can reach
 // gets to the transport except through a member call.
@@ -77,12 +80,15 @@ def _ml_make(_send, _codec):
         return x
 
     _seq = [0]
+    _run_sync, _charge, _frame, _asks = (getattr(_codec, _k, None) for _k in ("run_sync", "charge", "frame", "asks"))
 
-    async def _call(name, args, kwargs):
+    async def _call(name, args, kwargs, meter=None):
         _seq[0] += 1
         seq = _seq[0]
         wire_args = [_out(a) for a in args] + ([_out(kwargs)] if kwargs else [])
         raw = await _send(_dumps({"seq": seq, "call": name, "args": wire_args}))
+        # A synchronous call's answer is decoded by the harness, so its size is charged before it is read.
+        if meter is not None: meter(len(raw))
         try:
             ans = _loads(raw)
         except Exception:
@@ -91,6 +97,7 @@ def _ml_make(_send, _codec):
             raise MlError("Failed", "the answer was for another call")
         if "error" in ans:
             e = ans["error"] if isinstance(ans["error"], dict) else {}
+            if e.get("code") == "Asks" and _asks is not None: raise _asks("not in dialect: ml." + name + ": " + str(e.get("message", "")))
             raise MlError(str(e.get("code", "Failed")), str(e.get("message", "")), e.get("task") if isinstance(e.get("task"), str) else None)
         if "pointer" in ans:
             p = ans["pointer"] if isinstance(ans["pointer"], dict) else {}
@@ -101,6 +108,28 @@ def _ml_make(_send, _codec):
                 print(f"[ml.{name}: this is a preview{f' of {size:,} chars' if isinstance(size, int) else ''}, not the whole value]")
             return _in(ans["value"])
         raise MlError("Failed", "the answer carried no value, pointer or error")
+
+    def _call_sync(name, args, kwargs):
+        # One call, waited on in place over JSPI: the cell's stack suspends until the answer, and nothing else runs
+        # Python on its namespace meanwhile (docs/plan/repl/ML_TABLE.md, "The requirement of the JSPI route").
+        if _run_sync is None: raise MlError("Absent", "ml." + name + " needs a sandbox that can wait in place, which this one cannot")
+        return _run_sync(_call(name, args, kwargs, _charge))
+
+    def _table(src, raw=False, delimiter=None, header=None):
+        """A table as a pandas DataFrame you own: \`df = ml.table("current")\`. \`src\` is a CSS selector, "current", a URL
+        this run fetched, a Google Sheets URL, "@tool:<id>", "@file:<id>" or a /files/ path. \`raw\` keeps every cell a
+        string; \`delimiter\` and \`header\` override discovery for delimited text. Where it came from is in \`df.attrs\`."""
+        if type(src) is not str: raise TypeError("ml.table takes a source string (a CSS selector, 'current', a URL, '@tool:<id>', '@file:<id>' or a /files/ path), got " + type(src).__name__)
+        if type(raw) is not bool: raise TypeError("ml.table: raw is True or False")
+        if delimiter is not None and type(delimiter) is not str: raise TypeError("ml.table: delimiter is a string")
+        if header is not None and type(header) is not bool: raise TypeError("ml.table: header is True, False or None")
+        if _frame is None: raise MlError("Absent", "ml.table needs pandas, which this sandbox has not loaded")
+        opts = {}
+        if raw: opts["raw"] = True
+        if delimiter is not None: opts["delimiter"] = delimiter
+        if header is not None: opts["header"] = header
+        return _frame(_call_sync("table", (src,), opts))
+    _table.__name__ = _table.__qualname__ = "table"
 
     class _Member:
         __slots__ = ("_name",)
@@ -114,8 +143,12 @@ def _ml_make(_send, _codec):
         def __repr__(self): return f"<ml.{self._name}: await it>"
 
     class _Ml:
-        """window.ml, over the wire. Every member is awaited: \`rows = await ml.dereference("@tool:…", pipe=".rows")\`."""
+        """window.ml, over the wire. Every member is awaited (\`rows = await ml.dereference("@tool:…", pipe=".rows")\`) but
+        \`ml.table\`, which returns its DataFrame in place: \`df = ml.table("current")\`."""
         __slots__ = ()
+        # \`_table\`, not \`table\`: a class body that assigns a name looks it up in the class and the module only, never in
+        # this enclosing function, so \`table = staticmethod(table)\` is a NameError.
+        table = staticmethod(_table)
         def __getattr__(self, name):
             if name.startswith("_"): raise AttributeError(name)
             return _Member(name)

@@ -23,19 +23,19 @@ test("hidden/bidi characters in the code → null (the suspicious-char guard)", 
 });
 
 test("an UN-approved external sheet → null (privileged read → asks)", () => {
-    const args = { code: "return df", tables: "https://docs.google.com/spreadsheets/d/ABC/edit" };
+    const args = { code: 'return ml.table("https://docs.google.com/spreadsheets/d/ABC/edit")' };
     assert.equal(autoApprovePython(args, ON, no, inside), null, "external sheet not yet consented → ask");
     assert.equal(autoApprovePython(args, ON, yes, inside), "sandbox", "once the spreadsheet is approved → auto");
 });
 
-test("an external sheet inside a `tables` MAP is caught too (not just a bare string)", () => {
-    const args = { code: "x", tables: { df: "#local", targets: "https://docs.google.com/spreadsheets/d/MAP/edit" } };
+test("an external sheet beside a page table is caught too (every literal, not just the first)", () => {
+    const args = { code: 'a = ml.table("#local")\nb = ml.table("https://docs.google.com/spreadsheets/d/MAP/edit")' };
     assert.equal(autoApprovePython(args, ON, no, inside), null);
 });
 
 test("'current' and plain DOM selectors are NOT external — auto-approvable", () => {
-    assert.equal(autoApprovePython({ code: "x", tables: "current" }, ON, no, inside), "sandbox");
-    assert.equal(autoApprovePython({ code: "x", tables: { a: "#t", b: "current" } }, ON, no, inside), "sandbox");
+    assert.equal(autoApprovePython({ code: "ml.table('current')" }, ON, no, inside), "sandbox");
+    assert.equal(autoApprovePython({ code: "a = ml.table('#t')\nb = ml.table('current')" }, ON, no, inside), "sandbox");
 });
 
 test("a RAISED output cap (maxChars > default) → null: it costs the agent's own context, so it asks", () => {

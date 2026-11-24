@@ -22,8 +22,12 @@ import type { MintToken } from "../python/python-tool";
 import { spendOf } from "../contract/contract-chat";
 import { fetchTool, defineTool, pythonTool, type KeepText } from "../ml/ml-tool-factories";
 import { storeText } from "./sw-values";
-import { _loadTable, isTableValue, sitePathUrl, tableSpecs } from "../ml/ml-python";
-import { googleSheetCsvUrl, googleSheetId } from "../dom/dom";
+import { sitePathUrl } from "../ml/ml-python";
+import type { TableAnswer, TableReadOpts } from "../python/table-answer";
+import type { RunDeref } from "./worker-readonly-ml";
+import type { FileResolution } from "../pointers/file-pointer";
+import { FILE_PREFIX } from "../pointers/token-prefixes";
+import { googleSheetCsvUrl, googleSheetId, isCurrentPage, typeFromExtension } from "../dom/dom";
 import { runPython } from "./sw-python";
 import { leaseCell, pyKernelBusy, type PyDetached } from "./sw-python-task";
 import type { TaskOutcome } from "./sw-tasks";
@@ -32,7 +36,6 @@ import { fetchSheetCsv } from "./sw-fetch";
 import { tableFromDelimited } from "../table/table-data";
 import { derivedFetchFields, cacheCopy, fetchIsCacheable } from "../ml/fetch-result";
 import { hintSession } from "../contract/contract-run";
-import { isCurrentPage } from "../dom/dom";
 import { fetchTarget, fetchUrlFor } from "./sw-fetch-url";
 import { apiDocsTool } from "../tools/api-docs-tool";
 import { WORKER_BUILTINS } from "../tools/tool-registry";
@@ -46,7 +49,6 @@ import { htmlToMarkdownOffscreen } from "./sw-offscreen";
 import { fetchLLM, getConfig } from "./sw-llm";
 import { isWorkerRun } from "./sw-runs";
 import { forModelMessages } from "./sw-scrub";
-import { typeFromExtension } from "../dom/dom";
 import type { PageTableData } from "./worker-page-read";
 
 /** The builtin tools a worker-built run executes in the worker rather than the page. `look` and `locate` are built per
@@ -81,12 +83,25 @@ interface RunCtx {
     /** What the python_exec call now running was approved for: external sheet ids, and the code of a cell outside the dialect. Set around the
      *  one call (`grantRunPython`), never on the tab. `inside`: the call is the host's try of the cell INSIDE the dialect,
      *  before its gate, and `refused` is where the fork refused it (`takePyRefusal`). */
-    pyCall?: { sheets: Set<string>; code: string | null; step?: { seq: number; local: { step: number; seq: number } }; inside?: boolean; refused?: string; bridges?: boolean };
+    pyCall?: { sheets: Set<string>; code: string | null; step?: { seq: number; local: { step: number; seq: number } }; inside?: boolean; refused?: string; bridges?: boolean;
+        /** The tables the cell read with `ml.table`, in order, for the run's log (`inputTables`). */
+        read?: { src: string; answer: TableAnswer }[];
+        /** Remember a Sheet the person approved on a nested ask for the rest of the run (the store the card's sheets go to). */
+        approveSheet?: (id: string) => void };
     /** Its python_exec's image and cast (none: a call with an `image` is refused). */
     media?: WorkerPyMedia;
 }
 
 const runs = new Map<string, RunCtx>();   // state: plumbing — per run, dropped with its local tools
+
+/**
+ * What `ml.table` reads for a run: its tab, fetch cache, page reader and the python_exec call now running, or undefined
+ * for a run with no worker tools (one the worker did not build, or one whose tools were dropped).
+ * @param runId the run
+ */
+export function tableCtxOf(runId: string): Pick<RunCtx, "tabId" | "tabUrl" | "cache" | "pyCall" | "media"> | undefined {
+    return runs.get(runId);
+}
 
 /** The sub-call spend of a run's worker tools so far, for the delta a tool call reports (`subUsage`). */
 export function workerSpend(runId: string): SubcallUsage | undefined {
@@ -180,9 +195,9 @@ function originCovers(ctx: RunCtx, url: string, mode: { credentials: boolean; re
 /** Grant the python_exec call about to run in the worker what its approval covers, and the step it runs in (its `ml`
  *  calls' asks are shown there); `null` ends the call's grant. `bridges`: a person approved the cell with the card's
  *  JavaScript-bridge line showing (bridge-names.ts), so it runs with that refusal lifted. */
-export function grantRunPython(runId: string, grant: { sheets: string[]; code: string | null; step?: { seq: number; local: { step: number; seq: number } }; inside?: boolean; bridges?: boolean } | null): void {
+export function grantRunPython(runId: string, grant: { sheets: string[]; code: string | null; step?: { seq: number; local: { step: number; seq: number } }; inside?: boolean; bridges?: boolean; approveSheet?: (id: string) => void } | null): void {
     const ctx = runs.get(runId);
-    if (ctx) ctx.pyCall = grant ? { sheets: new Set(grant.sheets), code: grant.code, ...(grant.step ? { step: grant.step } : {}), ...(grant.inside ? { inside: true } : {}), ...(grant.bridges && grant.code !== null ? { bridges: true } : {}) } : undefined;
+    if (ctx) ctx.pyCall = grant ? { sheets: new Set(grant.sheets), code: grant.code, ...(grant.step ? { step: grant.step } : {}), ...(grant.inside ? { inside: true } : {}), ...(grant.bridges && grant.code !== null ? { bridges: true } : {}), ...(grant.approveSheet ? { approveSheet: grant.approveSheet } : {}) } : undefined;
 }
 
 // state: cache — "" once this worker's Python sandbox runs cells inside the dialect, else why it cannot; asked once
@@ -336,7 +351,7 @@ function runMl(ctx: RunCtx): MlApi {
         _queryAll: () => [],
         // fetch_url's whole body past its preview, kept in the value store for the pointer the step mints.
         _keepText: storeText satisfies KeepText,
-        pythonExec: (code: string, opts: { image?: unknown; margin?: number; tableRaw?: boolean; tables?: unknown; keep?: boolean; onStdout?: (chunk: string, ts?: number) => void; expectMs?: number; late?: (r: Record<string, unknown>) => Promise<TaskOutcome> } = {}) => workerPython(ctx, code, opts),
+        pythonExec: (code: string, opts: { image?: unknown; margin?: number; keep?: boolean; onStdout?: (chunk: string, ts?: number) => void; expectMs?: number; late?: (r: Record<string, unknown>) => Promise<TaskOutcome> } = {}) => workerPython(ctx, code, opts),
         // A cast's token goes into the page's registry, where a click resolves it (python-tool.ts `MintToken`).
         _mintToken: ((q, documentId) => {
             if (!ctx.media) return Promise.reject(new Error("no page to mint the token in."));
@@ -352,50 +367,140 @@ function runMl(ctx: RunCtx): MlApi {
     } as unknown as MlApi;
 }
 
-/** One `tables` source, loaded in the worker: a table by value (the page's own loader, which needs no DOM), a URL this
- *  run's fetch_url read (its cache; a path on the tab's site, `sitePathUrl`, is that URL), a Google Sheet (an external
- *  one, or `"current"` on a sheet's page), read with the person's cookies only when this call was approved for it, or a
- *  page table (a CSS selector, or `"current"` on any other page), which the page reads from its DOM and the worker checks
- *  (worker-page-read.ts). Exported for its tests. */
-export async function workerTable(ctx: Pick<RunCtx, "tabId" | "tabUrl" | "cache" | "pyCall" | "media">, name: string, src: unknown, raw: boolean): Promise<Awaited<ReturnType<typeof _loadTable>>> {
-    if (isTableValue(src)) return _loadTable.call({} as MlApi, name, src, raw);   // the by-value branch reads no DOM
-    // A source is a URL string or nothing: a wrapped one (`[url]`, `{s:[url]}`) is NOT coerced back with
-    // String(src). The gate's scan finds a sheet at any depth now (externalSheetIds), so the person sees it
-    // before this runs; this refusal is the second line — a shape no loader was written for must not become a
-    // credentialed read through a coercion nobody approved (red-team T2 on #442).
-    if (typeof src !== "string") throw new Error(`pythonExec tables — "${name}" is not a loadable source: pass a URL string or a table value, not a ${Array.isArray(src) ? "list" : typeof src}.`);
-    // `current` on a Google Sheet's page is that sheet, as the page's loader reads it (ml-python.ts `_loadTable`).
-    const sheetPage = src === "current" && googleSheetCsvUrl(ctx.tabUrl()) ? ctx.tabUrl() : null;
+/** What a run's `ml.table` reader needs beyond the run's own tools: its pointers, its attached files, and how a Sheet the
+ *  person has not approved is put to them (or refused). */
+export interface TableReadDeps {
+    /** The run's pointer resolver; absent before the loop has handed it over. */
+    deref?: RunDeref;
+    /** Resolve an `@file:` reference against the run's attached files. */
+    file(ref: string): FileResolution;
+    /** Whether a stored value is held by this run. */
+    holds(key: string): Promise<boolean>;
+    /** A Sheet this call was not approved for: resolves when the person allows it, throws why when not. */
+    sheet(id: string, url: string): Promise<void>;
+}
+
+type Cell = string | number | boolean | null;
+
+/** The longest source string `ml.table` reads: a CSS selector or a URL, never a document. */
+const TABLE_SRC_MAX = 4096;
+
+/**
+ * One `ml.table(src)` read for a run the worker built, judged exactly as a `tables` source was (ML_TABLE.md, ruling 70):
+ * a selector or `"current"` is the page's table, read by the page from its DOM and checked here (worker-page-read.ts); a
+ * URL (or a path on the tab's site, `sitePathUrl`) is read from the run's fetch cache and never fetched; a Google Sheet,
+ * an external one or `"current"` on a Sheet's page, is read with the person's cookies only on a site that approves its
+ * own actions or once this call or the person approved it; an `@tool:` pointer is its table, the stored whole when the
+ * pointer holds a preview; an `@file:` pointer is its `/files/attached/` path (ruling 107); and a `/files/` path is read
+ * by the offscreen document through the run's own reader (table-answer.ts), so a hidden file is refused there.
+ * @param ctx the run's tab, fetch cache, python_exec grant and page reader
+ * @param src the source
+ * @param opts `raw`, `delimiter`, `header`
+ * @param deps the run's pointers, files and Sheet approval
+ * @returns the answer the sandbox builds its DataFrame from
+ * @throws a sentence naming what is wrong and what to pass instead
+ */
+export async function workerTableRead(ctx: Pick<RunCtx, "tabId" | "tabUrl" | "cache" | "pyCall" | "media">, src: unknown, opts: TableReadOpts, deps: TableReadDeps): Promise<TableAnswer> {
+    if (typeof src !== "string" || !src.trim()) throw new Error(`ml.table takes a source string (a CSS selector, "current", a URL, "@tool:<id>", "@file:<id>" or a /files/ path), got ${src === "" ? "an empty string" : typeof src}.`);
+    if (src.length > TABLE_SRC_MAX) throw new Error(`ml.table: a source is a selector, a URL or a pointer, at most ${TABLE_SRC_MAX} characters; this one is ${src.length}.`);
+    const s = src.trim();
+    const raw = !!opts.raw;
+    const delimited = { ...(opts.delimiter !== undefined ? { delimiter: opts.delimiter } : {}), ...(opts.header !== undefined ? { header: opts.header } : {}) };
+    const notDelimited = (what: string): void => {
+        if (opts.delimiter !== undefined || opts.header !== undefined) throw new Error(`ml.table: ${what} names its own columns, so delimiter and header do not apply. Drop them, or read a CSV.`);
+    };
+    // An attached file is its path, so one file has one judgement and one set of bytes (ruling 107).
+    if (s.startsWith(FILE_PREFIX)) {
+        const r = deps.file(s);
+        if (!r.file) throw new Error(r.error);
+        // The name is the person's; normalized like any /files path, so a name with `..` in it cannot point the read elsewhere.
+        const path = filesTablePath(`/files/attached/${r.file.id}/${r.file.name}`);
+        if (!path.startsWith(`/files/attached/${r.file.id}/`)) throw new Error(`ml.table(${JSON.stringify(s)}): that file's name is not one it can be read under; read it at its /files/ path.`);
+        return { source: { kind: "file", label: `${FILE_PREFIX}${r.file.id}` }, data: { kind: "file", path, ...(raw ? { raw } : {}), ...delimited } };
+    }
+    if (/^\/files(\/|$)/.test(s)) {
+        const path = filesTablePath(s);
+        return { source: { kind: "file", label: path }, data: { kind: "file", path, ...(raw ? { raw } : {}), ...delimited } };
+    }
+    if (s.startsWith("@tool:")) {
+        notDelimited(`a pointer's table`);
+        if (!deps.deref) throw new Error(`ml.table(${JSON.stringify(s)}): a pointer is read only once the run's loop holds its pointers, which it does not yet.`);
+        const read = deps.deref(s);
+        const t = read.meta?.table;
+        if (!t) throw new Error(read.meta ? `ml.table(${JSON.stringify(s)}): that pointer is ${read.meta.kind}, not a table. Read it with ml.dereference.` : read.value);
+        const label = `@tool:${read.meta!.id}${read.meta!.label ? ` (${JSON.stringify(read.meta!.label)})` : ""}`;
+        const total = t.shape?.[0];
+        const preview = t.truncated || (typeof total === "number" && total > t.rows.length);
+        const key = read.meta!.value;
+        if (preview && key) {
+            if (!(await deps.holds(key))) throw new Error(`ml.table(${JSON.stringify(s)}): that stored table is not held by this run.`);
+            return { source: { kind: "pointer", label }, preview: t.rows as Cell[][], ...(typeof total === "number" ? { rowCount: total } : {}),
+                data: { kind: "value", key, label, columns: [...t.columns], ...(t.delimiter ? { delimiter: t.delimiter } : {}), ...(t.headerless ? { headerless: true } : {}) } };
+        }
+        if (preview) throw new Error(`ml.table(${JSON.stringify(s)}): that pointer holds ${t.rows.length.toLocaleString("en-US")} of ${typeof total === "number" ? total.toLocaleString("en-US") : "more"} rows, a preview rather than the whole table. Read the URL fetch_url read, ml.table("<the url>"), for the whole parsed table.`);
+        return { source: { kind: "pointer", label }, data: { kind: "rows", columns: [...t.columns], rows: t.rows as Cell[][] } };
+    }
+    // `current` on a Google Sheet's page is that sheet, as the page's reader reads it (ml-python.ts `hoistTable`).
+    const sheetPage = s === "current" && googleSheetCsvUrl(ctx.tabUrl()) ? ctx.tabUrl() : null;
     // A path on the tab's site is that URL, by the page's own rule (`sitePathUrl`), and is then read from the run's
     // fetches only, as a full URL is: never fetched here, never sent to the DOM reader as a selector.
-    const url = sheetPage ?? sitePathUrl(src, ctx.tabUrl()) ?? src;
+    const url = sheetPage ?? sitePathUrl(s, ctx.tabUrl()) ?? s;
     const csvUrl = /^https?:\/\//i.test(url) ? googleSheetCsvUrl(url) : null;
     if (csvUrl) {
         const id = googleSheetId(url);
         const tabUrl = ctx.tabUrl();
         const trusted = (await senderTrust({ tab: { id: ctx.tabId, url: tabUrl } as chrome.tabs.Tab, url: tabUrl })) !== "untrusted";
-        if (!trusted && !(id && ctx.pyCall?.sheets.has(id))) throw new Error("Refused: this sheet hasn't been approved for this run's python_exec.");
+        if (!trusted && !(id && ctx.pyCall?.sheets.has(id))) {
+            await deps.sheet(id ?? url, url);
+            if (id) { ctx.pyCall?.sheets.add(id); ctx.pyCall?.approveSheet?.(id); }
+        }
         const { csv, name: sheetName } = await fetchSheetCsv(csvUrl);
-        const sheet = tableFromDelimited(csv, { delimiter: ",", raw });
-        return { name, source: sheetPage ? { kind: "sheet-current", label: "current sheet" } : { kind: "sheet-external", label: id || url, name: sheetName }, data: { kind: "rows", columns: sheet.columns, rows: sheet.rows } };
+        const sheet = tableFromDelimited(csv, { delimiter: opts.delimiter ?? ",", raw, ...(opts.header !== undefined ? { header: opts.header } : {}) });
+        return { source: sheetPage ? { kind: "sheet-current", label: "current sheet" } : { kind: "sheet-external", label: id || url, name: sheetName }, data: { kind: "rows", columns: sheet.columns, rows: sheet.rows } };
     }
     // A page table: read by the page from its own DOM, the one thing about this call it is asked.
     if (!/^https?:\/\//i.test(url)) {
-        if (/^\s*@tool:/.test(url)) throw new Error(`pythonExec tables — "${url}" is a pointer that was not resolved to a table. Pass it as tables: {df: "@tool:<id>"} for a table a tool returned.`);
-        if (!ctx.media?.table) throw new Error(`pythonExec tables — "${url}" is a page table, and this run cannot read the page here.`);
+        notDelimited("a page table");
+        if (!ctx.media?.table) throw new Error(`ml.table(${JSON.stringify(url)}) is a page table, and this run cannot read the page here.`);
         const t = await ctx.media.table(url, raw);
-        return { name, source: { kind: "dom", label: t.label }, data: t.data };
+        return { source: { kind: "dom", label: t.label }, data: t.data };
     }
     const cached = ctx.cache.get(url);
-    if (cached?.table) return { name, source: { kind: "fetch", label: cached.url }, data: { kind: "rows", columns: cached.table.columns, rows: cached.table.rows } };
+    if (cached?.table) {
+        // The cache's parse is the table; a caller's own delimiter, header or raw parses its text again for this call.
+        if ((opts.delimiter !== undefined || opts.header !== undefined || raw) && typeof cached.text === "string" && !cached.truncated) {
+            const t = tableFromDelimited(cached.text, { raw, ...delimited });
+            return { source: { kind: "fetch", label: cached.url }, data: { kind: "rows", columns: t.columns, rows: t.rows } };
+        }
+        return { source: { kind: "fetch", label: cached.url }, data: { kind: "rows", columns: cached.table.columns, rows: cached.table.rows } };
+    }
     throw new Error(cached
-        ? `pythonExec tables — "${url}" was fetched but isn't a table (type: ${cached.type}). Only a CSV/TSV parses into a DataFrame this way.`
-        : `pythonExec tables — "${url}" is not among this run's fetches. Call fetch_url on it, then pass the URL here.`);
+        ? `ml.table(${JSON.stringify(url)}): it was fetched but is not a table (type: ${cached.type}). Only a CSV/TSV reads as a table.`
+        : `ml.table(${JSON.stringify(url)}): it is not among this run's fetches. Call fetch_url on it, then read it here.`);
 }
 
-/** `ml.pythonExec` for a run's python_exec in the worker: its tables loaded here, then `runPython` with the run as the
- *  caller (a cell outside the dialect only for the code this call was approved for), live stdout straight to the call's output. */
-async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; margin?: number; tableRaw?: boolean; tables?: unknown; keep?: boolean; onStdout?: (chunk: string, ts?: number) => void; expectMs?: number; late?: (r: Record<string, unknown>) => Promise<TaskOutcome> }) {
+/**
+ * A `/files/` source as the one path the reader is asked for: `.` and `..` resolved, and refused when it climbs out of
+ * `/files/` or names the folder itself. Whether it exists, is hidden or is a directory is the reader's to say.
+ * @param src the source, starting `/files`
+ * @returns the normalized path
+ * @throws when it does not stay under `/files/`
+ */
+export function filesTablePath(src: string): string {
+    const out: string[] = [];
+    for (const part of src.split("/").slice(2)) {
+        if (part === "" || part === ".") continue;
+        if (part === "..") { if (!out.length) throw new Error(`ml.table(${JSON.stringify(src)}): that path climbs out of /files/.`); out.pop(); continue; }
+        out.push(part);
+    }
+    if (!out.length) throw new Error(`ml.table(${JSON.stringify(src)}): that is the /files/ folder, not a file. List it with os.listdir("/files").`);
+    return `/files/${out.join("/")}`;
+}
+
+/** `ml.pythonExec` for a run's python_exec in the worker: `runPython` with the run as the caller (a cell outside the
+ *  dialect only for the code this call was approved for), live stdout straight to the call's output. The cell reads its
+ *  tables itself, with `ml.table` (sw-ml-table.ts), and each one it read is listed with the result. */
+async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; margin?: number; keep?: boolean; onStdout?: (chunk: string, ts?: number) => void; expectMs?: number; late?: (r: Record<string, unknown>) => Promise<TaskOutcome> }) {
     // The kernel is locked while the run's detached cell runs (sw-python-task.ts): refused, never queued behind it,
     // which would put the next cell's start bound on the detached one. Cells inside the dialect included.
     const busy = pyKernelBusy(ctx.runId);
@@ -407,10 +512,8 @@ async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; 
         if (!ctx.media) throw new Error("python_exec image — no screenshot can be taken for this run here.");
         shot = await ctx.media.image(opts.image, typeof opts.margin === "number" && Number.isFinite(opts.margin) ? opts.margin : 0);
     }
-    // The page's shape rule, so `[[url]]` (a list once unwrapped, its key "0" no variable name) is refused as it is there.
-    const specs: [string, unknown, string?][] = tableSpecs(opts.tables ?? null).map(({ name, src, alias }) => [name, src, alias]);
-    const loaded: Awaited<ReturnType<typeof workerTable>>[] = [];
-    for (const [name, src] of specs) loaded.push(await workerTable(ctx, name, src, !!opts.tableRaw));
+    // Filled by the cell's own `ml.table` calls as it runs (`runTable`); a late result reads the same list.
+    const loaded: { src: string; answer: TableAnswer }[] = ctx.pyCall ? (ctx.pyCall.read = []) : [];
     // Not derived from anything the page knows (the run id reaches it): a stream id it cannot name.
     const requestId = `wpy-${crypto.randomUUID()}`;
     // A LEASED cell: the tool handed its own formatter (`late`) for a result that arrives after the call detached. Its id
@@ -422,12 +525,10 @@ async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; 
     const onStdout = opts.onStdout && ((chunk: string, ts?: number) => { if (attached) opts.onStdout!(chunk, ts); });
     const call = runPython({
         code, image: shot?.image ?? null, stream: !!opts.onStdout, ...(opts.keep === true ? { keep: true } : {}),
-        tables: loaded.map((l, i) => ({ name: l.name, data: l.data, alias: specs[i][2] ?? (typeof specs[i][1] === "string" ? specs[i][1] : null) })),
     }, requestId, {
         ownSurface: false, tabId: ctx.tabId, disclose: false,
         untrusted: async () => (await senderTrust({ tab: { id: ctx.tabId, url: ctx.tabUrl() } as chrome.tabs.Tab, url: ctx.tabUrl() })) === "untrusted",
         pyCodeOk: (c) => ctx.pyCall?.code === c, runGated: true,
-        valueOk: (holders) => holders.includes(ctx.runId),
         wireRun: ctx.runId, tabUrl: ctx.tabUrl, ...(ctx.pyCall?.step ? { wireStep: ctx.pyCall.step } : {}),
         ...(onStdout ? { stream: onStdout } : {}),
         ...(ctx.pyCall?.inside ? { inside: true } : {}),
@@ -447,7 +548,7 @@ async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; 
 }
 
 /** A sandbox answer as python_exec reads it: a refusal or failure thrown, the cell's inputs and its stored table added. */
-function pythonShape(r: { data?: unknown; error?: string }, pyCall: RunCtx["pyCall"], shot: { image: string; imageBox: ShotBox | null; documentId: string } | null, loaded: Awaited<ReturnType<typeof workerTable>>[]): Record<string, unknown> {
+function pythonShape(r: { data?: unknown; error?: string }, pyCall: RunCtx["pyCall"], shot: { image: string; imageBox: ShotBox | null; documentId: string } | null, loaded: { src: string; answer: TableAnswer }[]): Record<string, unknown> {
     if (r.error !== undefined) throw new Error(r.error);
     // Outside the dialect: nothing of the try reaches the model (its output is discarded); the host reads the refusal.
     const outside = (r.data as { notInDialect?: unknown } | undefined)?.notInDialect;
@@ -457,9 +558,9 @@ function pythonShape(r: { data?: unknown; error?: string }, pyCall: RunCtx["pyCa
     // What the sandbox saw, the crop transform a cast projects through, and the document a cast mints its token in.
     if (shot) { extra.inputImage = shot.image; extra.imageDocument = shot.documentId; if (shot.imageBox) extra.imageBox = shot.imageBox; }
     if (res?.table) extra.resultTable = { ...res.table, ...(res.valueKey ? { value: res.valueKey } : {}) };
-    if (loaded.length) extra.inputTables = loaded.map((l) => ({
-        name: l.name, source: l.source,
-        ...(l.data.kind === "rows" ? { columns: l.data.columns, rows: l.data.rows } : l.data.kind === "value" ? { columns: l.data.columns, rows: l.preview ?? [], ...(l.rowCount != null ? { rowCount: l.rowCount } : {}) } : { html: true }),
+    if (loaded.length) extra.inputTables = loaded.map(({ src, answer: l }) => ({
+        name: src, source: l.source,
+        ...(l.data.kind === "rows" ? { columns: l.data.columns, rows: l.data.rows } : l.data.kind === "value" ? { columns: l.data.columns, rows: l.preview ?? [], ...(l.rowCount != null ? { rowCount: l.rowCount } : {}) } : l.data.kind === "file" ? { path: l.data.path } : { html: true }),
     }));
     return { ...res, ...extra };
 }

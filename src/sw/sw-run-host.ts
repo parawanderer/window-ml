@@ -1208,7 +1208,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             // A sandbox that cannot judge membership (the stock core) refuses every cell, so none of the call's inputs is read.
             const unready = await pythonDialectReady(runId);
             if (unready) return declined(unready);
-            grantRunPython(runId, { sheets: externalSheetIds(args), code: null, inside: true });
+            grantRunPython(runId, { sheets: [...approvedSheets, ...externalSheetIds(args)], approveSheet: (id) => approvedSheets.add(id), code: null, inside: true });
             let env: Partial<import("../contract").PageToolEnvelope> | null;
             let refused: string | undefined;
             try { env = await sendTool({ runId, name: "python_exec", args }) as Partial<import("../contract").PageToolEnvelope> | null; }
@@ -1402,7 +1402,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         // The JavaScript bridges only for a cell a PERSON approved with the card's line showing (bridge-names.ts).
                         const bridges = outsideCode !== null && call?.person === true && namesJsBridge(outsideCode);
                         if (bridges) await markPythonBridged(runId);
-                        grantRunPython(runId, { sheets: externalSheetIds(args), code: outsideCode, ...(call ? { step: { seq: seqBase + call.seq, local: { seq: call.seq, step: call.step } } } : {}), ...(bridges ? { bridges: true } : {}) });
+                        grantRunPython(runId, { sheets: [...approvedSheets, ...externalSheetIds(args)], approveSheet: (id) => approvedSheets.add(id), code: outsideCode, ...(call ? { step: { seq: seqBase + call.seq, local: { seq: call.seq, step: call.step } } } : {}), ...(bridges ? { bridges: true } : {}) });
                     }
                     // What this call puts on the TAB for its own sub-ops (tabGrantsForCall, grant-extract.ts): an exec's literal
                     // fetch URLs, a server tool's exact call, and a page-built run's python_exec's outside-the-dialect code and sheets.

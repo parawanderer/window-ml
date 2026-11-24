@@ -39,7 +39,7 @@ before(async () => {
 
 /** The candidate's answer for `modules`: null when every import passed, else what failed. */
 async function importTest(modules) {
-    injectInputs(py.globals, null, null, harness);
+    injectInputs(py.globals, null, harness);
     await py.runPythonAsync(wrapUserCode(importTestCode(modules), true));
     const err = py.globals.get("_err");
     assert.equal(err ? String(err) : null, null, "the cell itself ran");
@@ -87,7 +87,7 @@ test("RED TEAM: .data/purelib and .data/scripts names that shadow json and six a
     assert.equal(c.ok, true, JSON.stringify(c));
     assert.deepEqual(c.modules, ["shadow"]);
     py.unpackArchive(bytes, "wheel", { extractDir: site });
-    injectInputs(py.globals, null, null, harness);
+    injectInputs(py.globals, null, harness);
     await py.runPythonAsync(wrapUserCode(`import json, six, sys, os
 assert not hasattr(json, "HIJACKED") and not hasattr(six, "HIJACKED")
 on_path = [p for p in sys.path if ".data" in p]

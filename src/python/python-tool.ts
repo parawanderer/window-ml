@@ -8,7 +8,8 @@ import { UI_OUT_CAP } from "../contract/contract-chat";
 import { clipHeadTail, panelHead, ceilingNote } from "../agent/output-clip";
 import { type MlTool, type ToolResult } from "../contract/contract-agent";
 import { type RenderDescriptor, READER_MAX_TOKENS, VISION_NUM_CTX } from "../contract/contract-render";
-import { googleSheetCsvUrl, nonEmptyTables, clipOut, clipValue, tablesMapFromJson } from "../dom/dom";
+import { googleSheetCsvUrl, nonEmptyTables, clipOut, clipValue } from "../dom/dom";
+import { tableLiterals, staleTableArgs } from "./table-literals";
 import type { Box } from "../dom/locate";
 import { pyValueParts } from "./py-render";
 import { PY_PACKAGE_LABELS } from "./python-env";
@@ -83,11 +84,13 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
     const onSheet = typeof location !== "undefined" && !!googleSheetCsvUrl(location.href);
     const singleTable = !onSheet && typeof document !== "undefined" && nonEmptyTables(document).length === 1;
     const currentHint = onSheet
-        ? " YOU ARE CURRENTLY ON A GOOGLE SHEET — pass `tables:'current'` to load it as `df`."
-        : singleTable ? " THIS PAGE HAS ONE TABLE — pass `tables:'current'` to load it as `df`." : "";
-    const currentClause = onSheet ? " Or `'current'` for THIS Google Sheet."
-        : singleTable ? " Or `'current'` for the one table on this page." : "";
-    const tablesDesc = "Spreadsheet/table data → pandas DataFrame(s). " + PYTHON.tables + currentClause;
+        ? " YOU ARE CURRENTLY ON A GOOGLE SHEET: `df = ml.table('current')` reads it."
+        : singleTable ? " THIS PAGE HAS ONE TABLE: `df = ml.table('current')` reads it." : "";
+    // What `ml.table` reads here: a worker-hosted run's cell reads at the call, and has /files; a page-hosted run's cell
+    // has only the literals its page read before it (ML_TABLE.md, "Page callers").
+    // `'current'` is named only where it resolves (currentHint), as above.
+    const tableClause = `Read a table with \`df = ml.table(src)\`, a pandas DataFrame you own: src is a CSS selector${currentHint ? " or 'current'" : ""} (a page table), ` +
+        "a URL fetch_url read, a Google Sheets URL, an @tool: table pointer" + (mintVia ? ", an @file: pointer or a /files/ path. " : ". Write src as a quoted literal: it is read before the cell runs. ");
     // A worker-hosted run's worker mounts the session's files at /files (files-mount.ts), read-only until the reader's write
     // side lands; every other principal has no /files. Writes are not promised: the reader answers EROFS to each.
     const filesClause = mintVia
@@ -96,8 +99,8 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
     // Only a worker-hosted run keeps a namespace across its cells (root C), and only the worker's `ml` has `_mintToken`;
     // a page-hosted agent's cells have no run, so they stay stateless.
     const stateClause = mintVia
-        ? "Names you define persist across your python_exec calls in this run (`df`/`tables`/`img` are re-bound when a " +
-          "call passes them); across turns too, until a sandbox restart or a long idle gap between turns, after which the output opens with `namespace reset at <time>: <reason>` and they are gone."
+        ? "Names you define persist across your python_exec calls in this run (`img` is re-bound when a call passes " +
+          "an image); across turns too, until a sandbox restart or a long idle gap between turns, after which the output opens with `namespace reset at <time>: <reason>` and they are gone."
         : "Each call is STATELESS — a fresh namespace, nothing persists.";
     return ml.defineTool({
         name: "python_exec",
@@ -105,9 +108,8 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
         requiresApproval: true,
         description: "Run SANDBOXED Python (numpy/Pillow/pandas, WASM) for array/pixel/spatial/table work better " +
             "done in Python than JS — pixel-mask & centroid a target, count regions, BFS a maze, or SUM/AVG/GROUP a " +
-            "table. Your inputs are ALREADY loaded as variables — `image`→`img`/`img_np` " +
-            "(PIL + H×W×3 uint8), `tables`→DataFrame(s) — so reference them directly, never re-open/parse/read_csv " +
-            "them. `return` a value → comes back as TEXT (or set `cast` to mint a clickable @pt/@box). RETURN TYPE " +
+            "table. `image` is ALREADY loaded as `img`/`img_np` (PIL + H×W×3 uint8). " + tableClause +
+            "`return` a value → comes back as TEXT (or set `cast` to mint a clickable @pt/@box). RETURN TYPE " +
             "auto-renders: a sympy expression → typeset LaTeX, a PIL Image (or to_base64()) or a matplotlib figure " +
             "(returned, or just left open) → an image, a DataFrame " +
             "→ a table — so just `return sympy.diff(...)` / `return img` and cite `![…](@tool:…:out)` (no cast; add " +
@@ -118,19 +120,11 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
         parameters: {
             type: "object",
             properties: {
-                code: { type: "string", description: "Python. Reference img/img_np/your DataFrame(s); end with a `return` OR a bare trailing expression (Jupyter-style: a last line `df` is the result). print() is captured as stdout." },
+                code: { type: "string", description: "Python. Reference img/img_np and the tables you read with ml.table; end with a `return` OR a bare trailing expression (Jupyter-style: a last line `df` is the result). print() is captured as stdout." },
                 image: { type: "string", description: "Optional CSS selector or @pt:/@box: token to load as img/img_np. An @box loads the exact container content; an @pt loads a square neighbourhood around the point." },
                 cast: { type: "string", enum: ["pt", "box"], description: PYTHON.cast },
                 verify: { type: "boolean", description: PYTHON.verify },
                 margin: { type: "number", description: "For an @pt image only: the crop RADIUS in px around the point (a bigger margin = more context). Omit for the default. Ignored for @box / CSS selectors." },
-                tables: {
-                    oneOf: [
-                        { type: "string" },   // a single source → loaded as `df`
-                        { type: "object", additionalProperties: { type: "string" }, propertyNames: { pattern: "^[A-Za-z_][A-Za-z0-9_]*$" } },   // { python_identifier: source }
-                    ],
-                    description: tablesDesc,
-                },
-                tableRaw: { type: "boolean", description: "Load table cells as raw STRINGS (skip the default numeric/currency auto-cast). Use only for ZIP/SKU/leading-zero IDs that casting would corrupt." },
                 // Only where names persist (a worker-hosted run): the sandbox is shut after 30 min idle in a turn (py-reap.ts); a keep lasts the turn.
                 ...(mintVia ? { keep: { type: "boolean", description: "Keep your names through idle gaps over 30 min (a run that waits hours between calls) until your turn ends or its sandbox is killed (a timeout, a crash, a cancel), which the next cell is told as loss. Otherwise an idle sandbox is shut and its names lost." } } : {}),
                 // Only where a cell can detach (a worker-hosted run, sw-python-task.ts): the lease it replaces.
@@ -142,9 +136,9 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
         },
         // A maxChars raise with no justification is DOOMED (it will just ask for one) — skip the gate and
         // steer the model to supply `maxCharsReason` first (then the human sees it on the approval card).
-        precheck: (args) => outputCapPrecheck("python_exec", args as Record<string, unknown>),
+        precheck: (args) => staleTableArgs(args as Record<string, unknown>) ?? outputCapPrecheck("python_exec", args as Record<string, unknown>),
         // Pre-run In render — shown during the approval WAIT, when run() hasn't produced its full
-        // python-in yet (the input image + DataFrame previews need the tables loaded). Show the
+        // python-in yet (the input image + the previews of the tables the cell read). Show the
         // highlighted code as a notebook cell now; post-run, run()'s renderIn wins in descriptorFor.
         render: (_input, args) => {
             const code = typeof args.code === "string" ? args.code : "";
@@ -152,24 +146,19 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             const mode = args.cast === "pt" ? "pt" as const : args.cast === "box" ? "box" as const : "script" as const;
             return { type: "python-in", mode, code };
         },
-        run: async ({ code, image, cast, verify = false, margin, tableRaw, tables, keep, expect_ms, maxChars, maxCharsReason }: { code: string; image?: string; cast?: "pt" | "box"; verify?: boolean; margin?: number; tableRaw?: boolean; tables?: string | Record<string, string>; keep?: boolean; expect_ms?: number; maxChars?: number; maxCharsReason?: string }, ctx?: import("../contract").ToolContext): Promise<string | ToolResult> => {
+        run: async ({ code, image, cast, verify = false, margin, keep, expect_ms, maxChars, maxCharsReason, _tablePointers, ...rest }: { code: string; image?: string; cast?: "pt" | "box"; verify?: boolean; margin?: number; keep?: boolean; expect_ms?: number; maxChars?: number; maxCharsReason?: string; _tablePointers?: Record<string, import("../contract").TableValue | { error: string }>; [stale: string]: unknown }, ctx?: import("../contract").ToolContext): Promise<string | ToolResult> => {
+            const stale = staleTableArgs(rest);
+            if (stale) return stale;
             // Effective per-slot output cap (default: OUTPUT_CAP.python_exec). A raise past it is only reachable AFTER the human
             // gate (autoApprovePython refuses to sandbox-approve an escalated call), clamped to the ceiling.
             const { cap: PY_OUT_MAX, clamped: capClamped } = resolveOutputCap("python_exec", maxChars, maxCharsReason);
-            // A DOM-table selector loads the FIRST match — warn if it's ambiguous (loading the wrong
-            // table and computing on it would silently give wrong numbers). Covers a single-source
-            // `tables` string AND every DOM-selector value in a `tables` map (skipping 'current' /
-            // Sheets-URL entries, which aren't selectors).
-            const domSelectors: [string, string][] = [];
-            const addIfSelector = (name: string, src: unknown) => {
-                if (typeof src === "string" && src !== "current" && !googleSheetCsvUrl(src)) domSelectors.push([name, src]);
-            };
-            const tablesArg = tablesMapFromJson(tables) ?? tables;
-            if (typeof tablesArg === "string") addIfSelector("df", tablesArg);
-            else if (tablesArg) for (const [name, src] of Object.entries(tablesArg)) addIfSelector(name, src);
+            // A DOM-table selector reads the FIRST match — warn if it's ambiguous (reading the wrong table and computing
+            // on it would silently give wrong numbers). Covers every `ml.table("…")` literal that is a selector (not
+            // 'current', a URL, a pointer or a /files/ path).
+            const domSelectors = tableLiterals(code).map((l) => l.src.trim()).filter((s) => s !== "current" && !/^(?:https?:|@tool:|@file:|\/files(?:\/|$)|\.{0,2}\/)/i.test(s));
             let tableNote = "";
-            for (const [name, sel] of domSelectors) {
-                try { const n = ml._queryAll(sel).length; if (n > 1) tableNote += `⚠ selector "${sel}" matched ${n} elements — loaded the FIRST as \`${name}\`. If the numbers look off, narrow it (an id, or :nth-of-type(N)).\n`; } catch { /* invalid selector → pythonExec/_resolveTable errors below */ }
+            for (const sel of domSelectors) {
+                try { const n = ml._queryAll(sel).length; if (n > 1) tableNote += `⚠ selector "${sel}" matched ${n} elements — ml.table read the FIRST. If the numbers look off, narrow it (an id, or :nth-of-type(N)).\n`; } catch { /* invalid selector → the cell's ml.table raises */ }
             }
             if (tableNote) tableNote += "\n";
             // How a cell's answer becomes what the model reads: the call's own return, and a detached cell's late result.
@@ -179,14 +168,12 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                 // Past the ceiling the model is told AFTER its clip, and the panel's last line says the same (output-clip.ts).
                 const overNote = r.stdoutDropped ? ceilingNote(r.stdoutDropped) : "";
                 const stdoutClipped = clipOut(r.stdout || "", PY_OUT_MAX) + (overNote ? `\n${overNote}` : "");
-                // Synthetic "already loaded" log — models get confused about HOW their tables/image arrive
-                // (do they read_csv? what variable?). State it plainly at the top so they infer the setup:
-                // `img`/`df`/named DataFrames are PRE-loaded, reference them directly.
-                const loaded: string[] = [];
+                // What the cell was handed and what it read, stated at the top: the image is PRE-loaded as `img`, and each
+                // table the cell read with `ml.table` is listed with its size.
                 // `rowCount` is the WHOLE table's when the render holds only its preview (a stored table): the model is told the size it has.
-                for (const t of r.inputTables || []) loaded.push(t.rows ? `a ${t.rowCount ?? t.rows.length}×${(t.columns?.length || t.rows[0]?.length || 0)} DataFrame → \`${t.name}\`` : `a DataFrame → \`${t.name}\``);
-                if (r.inputImage) loaded.push("the screenshot → `img` (PIL) / `img_np` (numpy)");
-                const loadedNote = loaded.length ? `[loaded, reference directly] ${loaded.join(", ")}.\n\n` : "";
+                const read = (r.inputTables || []).map((t) => t.rows ? `${JSON.stringify(t.name)} (${t.rowCount ?? t.rows.length}×${(t.columns?.length || t.rows[0]?.length || 0)})` : JSON.stringify(t.name));
+                const loadedNote = (r.inputImage ? "[loaded, reference directly] the screenshot → `img` (PIL) / `img_np` (numpy).\n" : "") +
+                    (read.length ? `[ml.table read] ${read.join(", ")}.\n` : "") + (r.inputImage || read.length ? "\n" : "");
                 const capNote = capClamped ? `(output limit clamped to ${PY_OUT_MAX} chars — the hard ceiling.)\n\n` : "";
                 const pre = capNote + tableNote + loadedNote + (stdoutClipped ? `stdout:\n${stdoutClipped}\n\n` : "");
                 const stringify = (x: unknown) => clipOut(typeof x === "string" ? x : JSON.stringify(x), PY_OUT_MAX);
@@ -330,7 +317,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                 return { status: r0.ok === false ? "failed" as const : "done" as const, result: null, text,
                     ...(whole ? { whole } : {}), ...(image ? { image } : {}) };
             } : undefined;
-            const r = await ml.pythonExec(code, { image: image || null, margin: typeof margin === "number" ? margin : 0, tableRaw: !!tableRaw, tables: tables || null, ...(keep === true ? { keep: true } : {}), onStdout: ctx?.stream,
+            const r = await ml.pythonExec(code, { image: image || null, margin: typeof margin === "number" ? margin : 0, ...(_tablePointers ? { _pointers: _tablePointers } : {}), ...(keep === true ? { keep: true } : {}), onStdout: ctx?.stream,
                 ...(late ? { late, ...(typeof expect_ms === "number" ? { expectMs: expect_ms } : {}) } : {}) } as Parameters<MlApi["pythonExec"]>[1]);
             const detached = (r as { detached?: { text: string } }).detached;
             if (detached) return detached.text;

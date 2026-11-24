@@ -97,6 +97,12 @@ const GENRES = {
         about: "detached tasks: the result the run reads, a finished task starting a turn, the counts on a session's row",
         files: ["task-say.test.mjs", "task-turn.test.mjs", "task-starts-turn.test.mjs", "task-row.test.mjs"],
     },
+    // Tables (docs/dev/wire-and-fetch.md, docs/plan/repl/ML_TABLE.md): the one table type and its parsers, a table's
+    // summary, the `ml.table("…")` literals a cell names, and an `ml.table` answer made ready for the sandbox.
+    table: {
+        about: "tables: the parsers and the one table type, summaries, ml.table's literal scan and its answer's bytes",
+        files: ["table-data.test.mjs", "table-summary.test.mjs", "table-literals.test.mjs", "table-answer.test.mjs"],
+    },
     // The read-only exec dialect: the parser and mediated evaluator, and each member a survey may call for free
     // (`ml.pipe`, `ml.jsonPath`, `ml.current`). Four files, so a change to the dialect has its own suite; its rule
     // (adversarial + halting + failure tests on every extension) is in AGENTS.md.
