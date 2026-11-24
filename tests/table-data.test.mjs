@@ -214,8 +214,8 @@ test("a table cut at the row cap says so — a prefix must not read as the whole
     // used to report the kept rows, one short of the cap, as the table's size.
     assert.equal(t.rows.length, MAX_TABLE_ROWS);
     assert.deepEqual(t.shape, [MAX_TABLE_ROWS + 10, 1]);
-    assert.match(tablePreview(t, { source: '"u"' }), /for the first 200,000 rows as a DataFrame \(a prefix of the 200,010;/, "python_exec gets the kept rows, and the hint says so");
-    assert.doesNotMatch(tablePreview(t, { source: '"u"' }), /for all/);
+    assert.match(tablePreview(t, { source: '"u"' }), /Cached: in python_exec, `df = ml\.table\("u"\)` reads the first 200,000 rows as a DataFrame \(a prefix of the 200,010;/, "python_exec gets the kept rows, and the hint says so");
+    assert.doesNotMatch(tablePreview(t, { source: '"u"' }), /reads all/);
     assert.match(tablePreview(t), new RegExp(`\\[${(MAX_TABLE_ROWS + 10).toLocaleString("en-US")} rows x 1 columns\\]`));
     assert.match(tablePreview(t), /only the first [\d,]+ rows were parsed/);
 });
@@ -309,7 +309,7 @@ test("a pandas reach THROWS and names the nearest real spelling", () => {
 test("the python_exec hint appears ONLY when python_exec is actually available", () => {
     const withPy = asTable(tableFromDelimited("a,b\n1,2"), { python: true });
     const without = asTable(tableFromDelimited("a,b\n1,2"), { python: false });
-    assert.throws(() => withPy.groupby, /pass the table's source to python_exec/);
+    assert.throws(() => withPy.groupby, /read the table's source in python_exec with `df = ml\.table\(src\)`/);
     assert.throws(() => without.groupby, (e) => !/python_exec/.test(e.message), "advice for a tool the run does not have is worse than none");
 });
 

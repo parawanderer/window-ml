@@ -127,7 +127,7 @@ test("python_exec reads a stored table WHOLE by pointer; once a later fetch evic
     let sum = 0;
     for (let i = 0; i < ROWS; i++) sum += (i % 97) + 0.5;
     expect(seen[1]).toContain(`[250000,${sum},"int64"]`);
-    expect(seen[1], "and the note says the size that was loaded, not the preview's").toMatch(/\[ml\.table read\] "@tool:[^"]*" \(250000×3\)\./);
+    expect(seen[1], "and the note says the size that was loaded, not the preview's").toContain('[ml.table read] "@tool:\\"the orders\\"" (250000×3).');
     expect(seen[3], "the evicted value fails loudly, never the preview").toMatch(/ml\.table could not read the stored table: the stored value v[0-9a-f]{16} \(http[^)]*copy=3\) was evicted to keep the value store within its storage budget/);
 });
 
@@ -139,7 +139,7 @@ test("a DataFrame python_exec returns is stored whole, and a later python_exec r
         { tool: "python_exec", args: { mode: "readonly", code: "df = ml.table('@tool:\"the frame\"')\nreturn [len(df), int(df['x'].sum()), float(df['y'].max())]" } },
     ]);
     expect(seen[0], "setup: python produced a frame").toMatch(/1000 rows/);
-    expect(seen[1]).toMatch(/\[ml\.table read\] "@tool:[^"]*" \(1000×2\)\./);
+    expect(seen[1]).toContain('[ml.table read] "@tool:\\"the frame\\"" (1000×2).');
     expect(seen[1]).toContain("[1000,499500,499.5]");
     const stored = (await rows()).filter((r) => r.source === "python_exec");
     expect(stored).toHaveLength(1);
