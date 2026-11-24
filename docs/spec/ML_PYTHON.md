@@ -57,16 +57,20 @@ and may have kept something), which is keyed by the run, survives a new Worker, 
 own step in the service worker. Without that, later cards would still say what the run "may have kept" in a kernel
 that no longer exists. The run is then in class A.
 
-- *One mechanism, a message from the service worker.* The member lives in the service worker, beside the other wire
-  members, and the service worker has no channel to a Python worker. It sends the offscreen document a new message,
-  `PY_RESTART { principal }`, and the document replaces that principal's Worker. The document checks that the
-  principal is `run:<the calling client's run>` and refuses any other.
+- *One mechanism, a message from the service worker, and two entry points.* A Python cell reaches the member over the
+  `ml` wire. A JS cell does not use the wire: a read-only survey's `ml` is the service worker's survey host, so the
+  member is on that host too, admitted by name. Both end in the same place: the service worker sends the offscreen
+  document a new message, `PY_RESTART { principal }`, and the document replaces that principal's Worker. The service
+  worker has no channel to a Python worker itself. The document checks that the principal is `run:<the calling run>`
+  and refuses any other.
 - *Callable from a JS cell*, because a wedged or out-of-memory kernel cannot run the Python cell that would call it.
   The message is sent at once. In the read-only JS dialect the member is admitted by NAME as the one member that is
   not a read; the read category is not widened for it.
 - *From a Python cell* it takes effect after that cell returns, never mid-cell: the service worker notes the call and
-  sends `PY_RESTART` once the cell's own run has answered. Nothing today kills a worker after a result but the
-  kernel-death path, which is the precedent. A cell that calls it and then loops is bounded by the cell's own clock.
+  sends `PY_RESTART` after the cell's FINAL result. A cell that outran its lease answers twice, first the detach and
+  later its result as a task; the restart waits for the second, since the task is the calling cell still running.
+  Nothing today kills a worker after a result but the kernel-death path, which is the precedent. A cell that calls it
+  and then loops is bounded by the cell's own clock.
 - *It reaches the run's own principal only*: never the person's bench kernel, another run's, or another session's. A
   page-started cell has no kernel of its own, and the member is absent there.
 - *A detached cell on that kernel* (one that outran its lease and became a task) is ended with a named reason. The
@@ -74,9 +78,10 @@ that no longer exists. The run is then in class A.
   the task's end and the next cell's loss line all say "the sandbox was restarted by this run's ml.python.restart". No
   other run's task is touched.
 - *At most one restart a step, counted in the service worker.* A restart is a full boot, seconds and hundreds of
-  megabytes. The offscreen document knows no step, so the count is the service worker's, by run and step sequence. A
-  second call in the same step is refused with one sentence. A client with no step open (one no running step opened)
-  is refused.
+  megabytes. The offscreen document knows no step, so the count is the service worker's, by run and step sequence, and
+  it is ONE count across both entry points: for a Python cell the step of its wire client, for a JS cell the step
+  running the survey. A second call in the same step is refused with one sentence. A caller with no step open is
+  refused.
 - *What the model reads.* The call answers one line saying the kernel is new, every name is gone and cells are tried
   inside the dialect again. The next cell carries the existing "namespace reset" line with the reason `restart`.
 - *Recorded*: the housekeeping record the kill already writes (`pyodide` / `kill`), with reason `restart`; no second
@@ -87,12 +92,13 @@ that no longer exists. The run is then in class A.
 The `keep` argument's meaning, unchanged, said in the cell: the kernel is not shut after 30 idle minutes, until the
 turn ends or the kernel is killed. Today `keep` is armed BEFORE the cell, from the call's payload, and re-checked
 against the live turn at each send. A call from inside the cell needs a new path: `ml.python.keep()` is a wire member,
-the service worker notes it for the run, and the keep is armed when that cell's result arrives, under the same
-live-turn check. The worker's own result carries no keep flag, so a cell cannot arm it but through the wire. A cell
-that fails before reaching the line is not kept; that is the one difference from the argument. Worker-hosted runs
-only, as now. The `keep` argument is removed in the same PR, the loss line that names "python_exec keep: true" is
-reworded with it, and a call that still passes the argument is answered with one sentence naming `ml.python.keep()`,
-not a schema error; a stored session replays as stored.
+the service worker notes it for the run, and the keep is armed at that cell's FIRST answer, the detach of a cell that
+outran its lease or else its result, under the same live-turn check: a detached cell is the long-running case a keep
+exists for, and the reaper may look before its final result. The worker's own result carries no keep flag, so a cell
+cannot arm it but through the wire. A cell that fails before reaching the line is not kept; that is the one difference
+from the argument. Worker-hosted runs only, as now. The `keep` argument is removed in the same PR, the loss line that
+names "python_exec keep: true" is reworded with it, and a call that still passes the argument is answered with one
+sentence naming `ml.python.keep()`, not a schema error; a stored session replays as stored.
 
 ## `ml.python.packages()`
 
@@ -147,17 +153,18 @@ One table is the source, and everything a model can ask reads it.
 3. Restart from a JS cell with the kernel wedged in a loop, and with it out of memory: a new kernel, an unmarked
    Worker, the run's bridged mark forgotten, the next cell tried inside and its card naming nothing kept. `PY_RESTART`
    naming another run's principal, the bench's, and a malformed one is refused by the offscreen document.
-4. Restart from a Python cell: the cell's result arrives, then the names are gone; a second call in the same step is
-   refused with its sentence, and so is a call from a client with no step.
+4. Restart from a Python cell: the cell's result arrives, then the names are gone; from a cell that detached, the task
+   runs to its own result first; a second call in the same step is refused with its sentence, whichever entry point
+   made the first, and so is a call with no step.
 5. Restart ends a detached cell of that kernel with the named reason in the pending cell's message, the task's end and
    the next cell's loss line, writes `pyodide`/`kill` with reason `restart` once, and leaves another run's task, the
    bench's kernel and another session's kernel untouched.
 6. Restart resets no record of what the run read: a remembered read, a session registry entry and the ledger are as
    before.
 7. A page-started cell: `ml.python` is absent, in both languages.
-8. `ml.python.keep()`: the kernel outlives the idle bound; a cell that throws before the line is reaped; a call
-   passing the old `keep` argument gets the sentence; a worker result that carries a forged keep flag arms nothing; a
-   keep called after the turn ended arms nothing.
+8. `ml.python.keep()`: the kernel outlives the idle bound; a cell that detaches is kept from its detach; a cell that
+   throws before the line is reaped; a call passing the old `keep` argument gets the sentence; a worker result that
+   carries a forged keep flag arms nothing; a keep called after the turn ended arms nothing.
 9. `ml.python.packages()` with the kernel dead, never started, and running: the same rows; from a JS cell and a Python
    cell the same answer; no message is posted to a Python worker to answer it; after the installs record is gone the
    shipped set alone.
