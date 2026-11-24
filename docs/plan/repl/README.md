@@ -2266,6 +2266,40 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   - **Merged since ruling 117, verified with `gh`:** #2129 (2829c59b), #2130 (d1301709), #2111 (018fdad6), and
     #2146 (aee3e8cc), which repaired both rows that were red on main (#2129 meeting #2130, and #2111 merged on a
     head that predated #2106); #2140 was closed unmerged, its change carried by #2146.
+  - **Ruling 119 (Shane, 2026-11-24): what goes first for `/files`, and the dump is deferred.** Shane took the
+    coordinator's order on condition that each item stays tracked here. (1) session-store builds `ml.fs`'s write
+    members after its PR that masks secret values in file names; this ends the coordinator's deferral of
+    2026-11-23 for those members. The write rules are decided once, in that PR; its spec sentences come to the
+    coordinator before push, and it needs a red-team pass (new `ml.*` members). (2) files-host builds `/files` on
+    the person's disk (ruling 91) after #2155 and its PR C, AHEAD of ruling 113's slices 1 and 3, which stay
+    tracked behind it: H16 to H18 in window-ml-host, then the extension calling mount at session start, then
+    Python's mount backed by the folder (red-team pass). The lane sends a slice list first. (3) Dumping a `@tool:`
+    value into `agent/` (ruling 36, `ml.fs.cp` of a pointer) is DEFERRED. Shane's reason: the direction is two
+    REPLs and few traditional tools, and then a cell writes a tool's result to disk itself. Not built and not
+    scheduled after this ruling: backup and the archive carrying the files, the file browser, the sweep of files
+    no session holds, and the check that the session's folder stays usable (Shane's idea of 2026-11-21).
+  - **Move-run's order (Shane, 2026-11-24, the coordinator's recommendation kept):** #2154 (the `os` subset), then
+    #2125 ("No tab"), then `navigate` from no tab, then resuming with no page. The coordinator's call under it:
+    attach from no tab (`moveRun` with a detached source) ships with the `navigate` step and needs e3's pass;
+    MOVE_RUN.md's third open item is marked built there. The shell bench step and the kernel line stay deferred.
+    #2125's repair (192c87a9): `senderOwnsRun` takes a sender with no tab only when it carries the extension's own
+    URL and id, which enables the red-team row that was `todo`; the old harness sender `{}` no longer answers a
+    gate, and that was the hang.
+  - **Hand-listing a builtin kind's method (the coordinator, 2026-11-24, on #2162).** A method is listed by hand
+    in `BUILTIN_LISTED`, whatever its corpus count, only when it is read-only, takes the arguments a listed method
+    takes, and a replay found cells refused for it alone. `str.endswith` is the first: no counted cell, and
+    refused alone in 7 replayed bench cells (the lane's account; the replay and the cells are named above
+    `BUILTIN_LISTED`, with no pinned extract). No red-team pass. If more follow, the threshold goes to Shane.
+  - **The routes back from a stripped worker (e4's account, 2026-11-24, under ruling 118; no new probe yet).**
+    Closed: `eval` and `Function` (CSP, measured in a full worker) and the `ml` wire (`postMessage` stripped; the
+    host judges by the pending entry's wire stamp). Unknown: references Pyodide or Emscripten keeps in closures, a
+    kept `postMessage` or `MessagePort` closure behind the files mount, and wasm imports (IDBFS, sockets). e4
+    probes them in that order; each shape ends as a committed row or a one-line reason, and a working route goes
+    to Shane at once. #2157's sentence that its figure is an upper bound is accepted (7736798a).
+  - **Merged since the last list, verified with `gh`:** #2160 (71a2ef1a), #2148 (b83e26fc, the page-payload
+    strip), #2121 (2747ad2a, Python's writes under `/files/agent/`), and in window-ml-host #57 (b5cadac7, the
+    describer) and #58 (e5fb12c3, `hide` and `show` in both sandboxes). SECRET_HANDLES.md's row saying a `hide`
+    binds no shell program is corrected when #2155, the extension's half, merges.
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
   `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks
