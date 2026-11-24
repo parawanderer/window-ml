@@ -2069,6 +2069,26 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     is writable. `os.listdir` is not inside the dialect, so the cell that lists them asks and sets the outside mark
     until the `os` subset is ruled.
 
+  - **Rulings 111 and 112, 2026-11-24 (Shane, in the coordinator's session).** 111: cells are classified, for our
+    reference and never shown to the model, in two halves: what a cell did is recorded when it runs and exported; what
+    a cell is for is computed offline from its source by one syntactic, multi-label classifier shared by both
+    languages (docs/spec/CELL_FACTS.md; the async lane builds the first, the bench lane the second). 112: reads and
+    scans in `os`, `os.path`, `glob` and `pathlib` run unasked, and so do `os.chdir` and writes to `os.environ` ("I
+    don't think we should ban os.chdir when we allow ml.sh.cd()"; "The issue is being an approval monkey"); a hidden
+    file's name stays listed. Shane also agreed that the async and move-run lanes take topic items when their queues
+    run dry, and move-run builds the `os` subset. The coordinator's calls on its charge under rulings 105 and 106: a
+    listing in the `/files` mount is charged a full page before each page request, because a directory there has no
+    cap on its entries (the fork's charge takes no credit, so a short directory is overcharged; move-run reports the
+    effect); a listing in the fixed Pyodide tree (largest directory 147 entries, move-run's measurement) may be
+    charged after the call; a recursive walk goes one directory per step. Packages' resume: the coordinator's message
+    to it was refused twice by the coordinator's own permission check and was not retried, so packages resumes on
+    Shane's word in its own session. A secrets design is under discussion with Shane and not ruled: a state between
+    hidden and shown for dotenv files (name listed, keys readable, each value a per-key placeholder, typed writes
+    only), a program the person allowed reading the real values with its output scrubbed, values registered from the
+    file as a convenience the person can switch off, and a hash pin on a policy; an audit of the secrets docs found
+    them scattered over about fifteen files with nineteen contradictions, to be consolidated before that design is
+    written.
+
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
   `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks
