@@ -115,6 +115,15 @@ test("(c) the chat page (agent.start): python_exec reads as the worker-hosted to
     assertSentIsRun(w.bg, r.data.session.hash, w.sent(0), FACTS, "chat page");
 });
 
+test("(c2) the chat page's \"No tab\" (agent.start, detached): python_exec reads as the worker-hosted tool that runs it", T, async () => {
+    const w = world();
+    const r = await w.cmd({ type: "agent.start", runtime: "local", task: "t", target: { kind: "detached" } });
+    assert.equal(r.ok, true, `agent.start: ${JSON.stringify(r)}`);
+    assert.ok(await until(() => w.bodies().length >= 1));
+    assertWorkerPy(w.sent(0), "no tab");
+    assertSentIsRun(w.bg, r.data.session.hash, w.sent(0), FACTS, "no tab");
+});
+
 test("(d) the harness's start hook: python_exec reads as the worker-hosted tool that runs it", T, async () => {
     const w = world();
     const { hash } = await w.bg.context.__mlStartUserRunForTest(7, { task: "t", surface: "hud" });
