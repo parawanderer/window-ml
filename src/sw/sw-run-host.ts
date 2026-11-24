@@ -44,7 +44,7 @@ import { approveLibrary, checkLibraryProposal, isLibraryDraft, precheckLibrary, 
 import { isExtensionSender, senderSelfApproves } from "./sw-site-access";
 import { relayDebugEvent } from "./sw-debug";
 import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels, fetchOllamaInfo } from "./sw-llm";
-import { ensureLocalTools, noteLocalStep, runLocalTool, runsInWorker } from "./sw-local-tools";
+import { ensureLocalTools, noteLocalStep, runLocalTool, runsInWorker, workerFacing } from "./sw-local-tools";
 import { lookPreviewArgs, workerLook } from "./worker-look";
 import { workerLocate } from "./worker-locate";
 import { runVision, workerWroteVision, type RunVision } from "./run-vision";
@@ -64,8 +64,8 @@ import { fetchTarget } from "./sw-fetch-url";
 import { grantRunFetch, grantRunOrigin, runOriginGranted, runOrigins, runFetchConsented, grantRunPython, takePyRefusal, pythonDialectReady, retabWorkerRun } from "./worker-tools";
 import { autoApprovePython } from "../agent/auto-approve";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
-import { takeMovedNote } from "./move-run";
-import { WORKER_ONLY_TOOLS, withoutWorkerOnly, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, keptOnRebuild, turnTabCells, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
+import { applyLiveMove, moveAfterTurn, takeMovedNote, type LiveTurn } from "./move-run";
+import { WORKER_ONLY_TOOLS, withoutWorkerOnly, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, firstTurnLeftTabs, runControllers, runInboxes, trackRun, persistRun, keptOnRebuild, turnTabCells, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { drawStoredPages } from "./sw-attach";
 import { claimValue, runMayClaim, valueHolders, readStoredBytes, readStoredColumns, readStoredText, withHeldValuesOnly } from "./sw-values";
@@ -76,6 +76,7 @@ import { focusLineFor } from "./sw-focus";
 import { delegateSend, CHANNEL_GONE } from "./delegate-send";
 import { NAV_COMMIT_MS } from "./nav-barrier";
 import { GATED_BUILTINS } from "../tools/tool-registry";
+import { isNoTab, needsPage, noPageText } from "./no-tab";
 import { checkVerifyRequest, verifyAsked, verifyVerb, withoutPageVision, workerVerify, VERIFY_REFUSED, VERIFY_WITHHELD, type VerifyOutcome, type WorkerVerify } from "./worker-verify";
 import { topDocument } from "./worker-vision";
 import { capPageAnswer, capPageContext } from "./page-answer-caps";
@@ -694,6 +695,12 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             if (payload.renderOnly || payload.precheck || payload.readonlyTry) throw new Error("the run is held on this page");
             return { result: held.kind === "deny" ? arrivalDeniedText(held) : arrivalWaitingText(held) };
         }
+        // Nor anything at all for a run with NO tab (no-tab.ts): a page tool is answered with how the run gets a page, and
+        // stays in the tool list so the model learns there is one (TABLESS_RUN.md). The worker's own tools run as ever.
+        if (isNoTab(tabId) && needsPage(payload.name, payload.args, p.tools.some((t) => t.name === payload.name && !!t.remote))) {
+            if (payload.renderOnly || payload.precheck || payload.readonlyTry) throw new Error("the run has no page");
+            return { result: noPageText(payload.name) };
+        }
         // A call built for the page-built run, whose run is the worker's now: built again (`againIfHandedOver`).
         const handedSince = (): void => { if (pageRouted && byWorker()) throw new HandedOverMidCall(); };
         handedSince();
@@ -772,7 +779,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     let unhostAsks: (() => void) | undefined;   // set once the run's steps may raise nested asks (sw-asks.ts)
     let unwatchArrivals: (() => void) | undefined;   // set once the run judges its tab's arrivals (nav-arrival.ts)
     let rewatchArrivals: (() => void) | undefined;   // the same judge, moved to the turn's tab now
-    const settle = (): void => { turnTabCells.delete(runId); unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); closeTurnTasks(runId); untrackRun(tabId, runId); deleteRun(runId); endPythonTurn(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); the turn's end: the run's Python namespace stays, the shared full worker's dict goes
+    const settle = (): void => { turnTabCells.delete(runId); unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); closeTurnTasks(runId); untrackRun(tabId, runId); deleteRun(runId); endPythonTurn(runId); releaseDebugger(tabId); moveAfterTurn(runId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); the turn's end: the run's Python namespace stays, the shared full worker's dict goes
     /** Ends the run's session on every surface when the setup throws after its start event went out; set once the fan exists. */
     let endSession: ((error: string) => void) | undefined;
     try {
@@ -809,7 +816,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // exec runs in its page's world and nowhere else. The start event below carries the same list, so the export holds
         // what the model was sent.
         const offerWorld = byWorker();
-        const modelTools = offerWorld ? withExecWorld(p.tools) : p.tools;
+        // A run the worker built and drives reads its worker tools' texts from the tools that run (workerFacing).
+        const shown = p.builtBy === "worker" && offerWorld ? workerFacing(runId, p) : p.tools;
+        const modelTools = offerWorld ? withExecWorld(shown) : shown;
         const toolDefs = modelTools.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
         const approvedSheets = new Set<string>();   // external sheets approved this run (isSheetApproved)
         // state: plumbing — why this run's python_exec cell was not run inside the dialect, by its exact source: written by the
@@ -822,6 +831,14 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // "One consent, scoped by the origin"): the worker's grant outlives the turn, so the turn starts from it.
         const consentedOrigins = new Set<string>(runOrigins(runId));
         if (p.pageOrigin) consentedOrigins.add(p.pageOrigin);
+        // What a move the person makes while this turn runs re-points (move-run.ts `applyLiveMove`): the destination becomes
+        // the turn's start page, as a move between turns makes it the run's (MOVE_RUN.md, step 4).
+        const liveTurn: LiveTurn = {
+            tabId: () => tabId,
+            page: () => ({ title: p.pageTitle, url: tabUrlNow() }),
+            rebuild: () => (p.crossPage === false ? undefined : runRebuilds.get(runId) ?? p.rebuild),
+            onPage: ({ origin, url, title }) => { p = { ...p, pageOrigin: origin, pageUrl: url, pageTitle: title }; consentedOrigins.add(origin); },
+        };
         // Origins an `allow` row let an arrival reach: consented for NAVIGATION only (POLICIES.md, ruling (b) as built). The
         // FETCH_URL choke point does not count them, so the gate does not either: a read there goes to its card.
         const navOnlyOrigins = new Set<string>();
@@ -1226,6 +1243,14 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         // A run the person moved to another tab since its last turn is told so, the same way (move-run.ts).
                         const moved = resumeMessages?.length && p.builtBy === "worker" ? takeMovedNote(runId) : undefined;
                         if (moved) (messages as { role: string; content: string }[]).push({ role: "system", content: moved });
+                    }
+                    // A move the person asked for while this turn ran lands HERE (MOVE_RUN.md, shape (b), slice 2): every call
+                    // of the previous step has answered and this request has not gone out, so nothing in flight points at the
+                    // old tab. The model is told as a move between turns tells it, with the new page's context as an arrival's.
+                    const liveMove = await applyLiveMove(runId, liveTurn);
+                    if (liveMove) {
+                        const info = liveMove.pageInfo ? `\n\nYou are now on the new page:\n${capPageContext(liveMove.pageInfo, byWorker())}` : "";
+                        (messages as { role: string; content: string }[]).push({ role: "system", content: liveMove.note + info });
                     }
                     // WHAT THIS REQUEST IS FOR: an agent step, in this run's session (see RequestHint).
                     const hint: RequestHint = { use: "agent", session: hintSession(runId), ...(opts?.after ? { after: opts.after } : {}) };
@@ -1861,6 +1886,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // A click on a link a policy denies is refused before the click: the describe layer of the arrival rule.
                     return name === "click" ? clickLinkRefusal(env?.href) ?? null : null;
                 },
+                // A page tool of a run with no tab: answered before the gate, which would ask on a card no tab shows.
+                unrunnable: (name, args) => (isNoTab(tabId) && needsPage(name, args, p.tools.some((t) => t.name === name && !!t.remote)) ? noPageText(name) : null),
                 approve: async ({ tool, arguments: args, seq, step, askWhy: gateWhy }) => {
                     // A page the run is held on is answered first (nav-arrival.ts): this call's card follows only if the
                     // person lets the run act there.
@@ -2251,6 +2278,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 // A run handed to the worker while this turn ran stays the worker's (`storedP`).
                 const resumeP = { ...storedP(), stepBase: stepBase + runMaxStep, seqBase: seqBase + runMaxSeq };
                 bgRuns.set(runId, { p: resumeP, tabId, messages, sub: snapSub(), ...keptOnRebuild(runId) });
+                firstTurnLeftTabs.delete(runId);
                 // The same snapshot `bgRuns` holds, where it outlives the run: `resumeP` so a later turn continues
                 // AFTER this one's steps rather than colliding with them.
                 saveRunHistory(runId, { messages, payload: resumeP, sub: snapSub() });

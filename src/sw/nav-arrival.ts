@@ -14,6 +14,7 @@
 // is judged again on the page it wakes on (sw-run-host.ts).
 
 import { judgeCall, navigateFacts, policiesReady, speakable, type PolicyJudgement } from "./sw-policies";
+import { isNoTab } from "./no-tab";
 
 /** Why a run may not act on the page its tab holds: a policy denies it, or asks about it and the person has not answered. */
 export type ArrivalHold =
@@ -41,6 +42,7 @@ const spoke = new Map<string, string>();   // state: plumbing — the URL each r
  * @returns stops watching; the run's hold stays, for its next turn
  */
 export function watchArrivals(tabId: number, runId: string, judge: Judge): () => void {
+    if (isNoTab(tabId)) return () => { /* nothing was watched */ };
     let m = judges.get(tabId);
     if (!m) { m = new Map(); judges.set(tabId, m); }
     m.set(runId, judge);
@@ -132,6 +134,7 @@ function judgeQuietly(runId: string, url: string): void {
  * @param runId the run
  */
 export function watchBetweenTurns(tabId: number, runId: string): void {
+    if (isNoTab(tabId)) return;   // no tab, so no arrivals to judge
     quiet.get(runId)?.();
     quiet.set(runId, watchArrivals(tabId, runId, (url) => judgeQuietly(runId, url)));
 }

@@ -121,6 +121,46 @@ comprehensions over the same, no `while`, recursion to a bounded depth, no gener
 `lambda` and `def` are in. The budget catches what the static rules cannot see; the static rules keep a refusal
 BEFORE the run wherever the form is decidable from the source, so nothing has to be rolled back.
 
+**RULED 2026-11-23 (Shane, ruling 104), not built: `while` is admitted under the step budget.** The static set above
+is not what bounds a cell. Recursion to depth d with two self-calls is a tree of 2^d calls: it halts by construction
+and never in practice, so the budget is already the only bound that binds, and it is a proof of its own. The counter
+is a natural number, it falls on every backward jump and every call, and no cell code can read or reset it, so every
+run ends within the budget by well-founded induction, whatever the program. That argument needs no restriction on loop
+forms; its one premise is that no single step does unbounded work, which is the obligation the cost rows are meant to
+carry (a C leaf's cost over its input, the regex bound; see point 5). So `while` joins the dialect, with these points
+ruled beside it. (1) A budget trip is an ERROR THE MODEL READS, with the steps spent, never an approval card: asking a
+person about a loop that does not end is the wrong question, and so is running it unbounded outside. (2) A static
+refusal that costs nothing stays: `while True` (or any constant true test) with no `break`, `return` or `raise` in its
+body is refused before the run. (3) A trip is not a kill: it lands at the eval breaker, the cell's attempt is
+discarded whole as any refused try is, and the same cell trips at the same step on every run. (4) Generators and
+`yield` stay out, for a different reason: a suspended frame is code that outlives its cell. (5) The premise does NOT
+hold as built: a C leaf spends one step whatever its input (packages, read from the fork), so `while` is not built
+before ruling 105's charge is ([`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md), "Cost: three tiers");
+the gap is there today with a `for` over a large `range`, with or without `while`. `class` is excluded for no halting
+reason either: its methods are cell code a library calls, which "Code from elsewhere runs under the same gate" covers;
+that is noted, not ruled.
+
+**RULED 2026-11-23 (Shane, ruling 106): the property is BOUNDED COST PER SYNCHRONOUS STEP, not totality.** The agent
+loop is a program whose steps are tool calls. The loop need not end; what it needs is that every step returns, so that
+it always makes progress (productivity, as in a synchronous reactive language where each reaction is bounded and the
+system runs for ever, or a stream whose every element arrives in finite time). Three things follow, and each differs
+from what a total language asks. (1) WEAKER than totality: a cell does not have to return its answer, only SOMETHING.
+A budget trip is a result the model reads, so every cell is a partial function made total by an error value, and
+nothing has to be proven before the run. (2) STRONGER than totality: halting with no bound on when is worth nothing
+here (a total cell can run for days), so the property is a bound on cost, which the step budget gives only once every
+step's cost is charged (ruling 105). (3) The usual price is not paid: work with no bound known in advance (a
+simulation, a search, a script meant to run until it is killed) is not refused, it leaves the loop. The model writes a
+script and starts it detached through `ml.sh`; starting it is a step that returns at once, the process is a concurrent
+thing the run observes, and it is judged as any message leaving the worker is, by its effect under policies. So the
+dialect has to be complete for the synchronous steps only. The tiers are named by where the bound comes from: an
+EXPLICIT bound in the source (a `for` over data or a range; no `while`, no recursion), the IMPLICIT bound of the
+budget (`while`, recursion; ruling 104), and NO bound, detached. Between the first two the difference is not safety,
+since the budget bounds both: the explicit tier is refused before it runs instead of after the budget is spent,
+discards no attempt, and shows the model its bound in its own source. Intended beside it, not built: the budget trip's
+text names the two ways on (bound the loop, or run a script detached); that text is prompt-budget work. Being
+measured, not assumed (bench's rewrite test): how many cells outside the dialect have a rewrite inside it, how many
+budget-tier cells have a rewrite with an explicit bound, and whether that bound is derived from the data or guessed.
+
 **What the corpus count changed (2026-10-15, lane 3 of the plan: 1,714 unique cells from 18 models).** The Starlark set
 admits 89.4% of cells whole; no cell uses `while` or `class`, which confirms their static refusal. Three rulings on
 what the count surfaced:
@@ -251,7 +291,7 @@ generator or coroutine defined inside had its body CHECKED for membership but ne
 back hands a later cell unjudged code, and a builtin the gate never allowed (`f = open`) is a capability under a plain
 name. The red team showed both: `def f(): import os; return os.listdir('/')` admitted unasked, then an approved cell's
 `f()` listed the filesystem; `def f(): return ml.config()` the same way sent a wire call, a write reaching `ml` from an
-inside run. The rule has two layers, and one is not the other's substitute:
+inside run. The rule has three layers, and none is another's substitute:
 
 1. **The fork honours `CO_RESTRICTED` wherever the code runs**, not only under `_restricted.run`: a `CO_RESTRICTED`
    frame entered while no run is active is REFUSED with `NotInDialect` ("restricted code runs only inside the
@@ -305,6 +345,34 @@ inside run. The rule has two layers, and one is not the other's substitute:
    The RETURN value is a third channel with no name and no import, so it admits data only: `return ml` and `return
    [ml]` make the cell outside (the red team's reading question, 2026-10-20; its P2-alias pins eight shapes). Once layer 1 holds, a cell-defined function may cross back, since outside a run it refuses; a captured builtin
    never does, because it is not cell code and layer 1 never sees it.
+3. **No cell is tried inside in a worker that ran a cell outside** (the outside mark, ruled 2026-11-22; `py-mark.ts`).
+   Layer 1's stated residual covers the approved cell itself. It does not cover the cells AFTER it, which nobody is
+   asked about. An approved cell is full Python in the interpreter a later inside cell runs in. The gate admits a lifted
+   function by its identity, and a lifted call runs its Python callees ungated, so an approved cell can plant code that
+   a later inside cell runs with no gate at all (the packages lane, 2026-11-22, on the pinned core; both shapes are
+   `tests/python-outside-plant.test.mjs`):
+   - **The admitted function's own code.** `pd.DataFrame.head.__code__ = _p.__code__` keeps the function's identity, so
+     it stays admitted, and a later inside `df.head(1)` runs `_p`, which ran `import os` and `os.listdir('/')`.
+   - **A callee, with no admitted function touched.** `_iLocIndexer.__getitem__` replaced by a wrapper that imports
+     `os`. A later inside `df.head(2)` answers 2 as before, and the wrapper ran ungated under it. This is why a fork
+     change that snapshots each registered function's `__code__`, defaults and closure is not enough: the plant can be
+     anywhere in the lifted call's graph (class attributes, module globals, a callable kept in library state).
+   - **The rule.** Once a cell of a run has STARTED outside the dialect in a worker, no later cell in that worker is
+     tried inside it, and each asks exactly as an outside cell asks. The mark lives in the offscreen document, keyed by
+     the Worker object, and is set before the outside cell is posted. A fresh worker (reap, kill, restart) is unmarked.
+     An inside post to a marked worker is answered by the document and never sent, the readiness probe included. A cell
+     the person refused never ran and marks nothing. Which posts mark is an enumeration with "marks" as the default for
+     an unlisted kind (`docs/dev/python-sandbox.md`, "The outside mark").
+   - **What a person and the model see.** The card says "Asks because an earlier approved cell could have changed what
+     this one runs". The model reads, once per worker, "An earlier cell ran outside the read-only Python dialect in
+     this sandbox, so every later cell asks until it restarts."
+   - **What it costs.** In the cell-replay corpus (`notebooks/python-dialect/data/cell-replay`), 21 of 58 runs have an
+     outside cell before an inside one, and 27 of their 44 inside cells would ask (`replay.json`, 8d910442). With
+     `read_csv` served (`replay-read-csv-served.json`, 1fda7dec) it is 11 runs and 16 of 80 inside cells. These are
+     UPPER bounds: the replay's outside cells were never approved and run, and only an approved, started cell marks.
+   - **Not in this layer.** Clearing the mark by restarting the worker is ruled and specified, not built:
+     `ml.python.restart()` ([ML_PYTHON.md](ML_PYTHON.md), ruling 116). Carrying a namespace's data into a fresh
+     worker is later work and Shane's to want.
 
 A refused try leaves no output either: its captured stdout is discarded with its env, and whether text the tee already
 wrote to the real stdout reaches the model in a streamed call is measured before it is called closed (rule 8), not
@@ -313,6 +381,55 @@ inferred. Each part is mutation-checked alone: revert it and the red team's test
 A cell inside the dialect that makes a gated `ml` call (`ml.fetch` on a new URL, `ml.sh`) does not fall out of it: the
 call SUSPENDS on an `ask` and continues when answered ([`ML_WIRE.md`](ML_WIRE.md), "Per-call asking"), which the JS
 survey could not do and which answers the manifest spec's "granularity of a refusal".
+
+### Code from elsewhere runs under the same gate (intended design; Shane, 2026-11-23; the dynamic case is not built)
+
+One principle covers a cell's own `def`, a module the model wrote under `/files/lib/`
+([`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md), "`lib/`"), a pure-Python package with no manifest (tier 3 above) and a
+wrapper a cell installs on a library function: **code is judged where it RUNS, by the gate, never by where it came
+from or where it sits.** A `CO_RESTRICTED` frame is gated wherever it is entered, under a lifted leaf included (the
+callbacks row of the table above), so such code stays inside the dialect or raises `NotInDialect`, and its steps count
+against the cell's budget. Every frame is then one of two kinds: gated, which needs no trust, or vetted library code
+running lifted, which is trusted only while no UNGATED code has changed it. An approved cell is ungated code that can
+change it, which is why the outside mark exists. Gated code that changes it breaks neither half.
+
+The static cases are imports: the module's code comes through the same evaluator as the cell's. The DYNAMIC case is
+the same problem with the code arriving by assignment at run time, and it is what the gate refuses today:
+
+```python
+orig = pd.DataFrame.head
+def extended(self, n=5):
+    print(f"head of {self.shape}")
+    return orig(self, n)
+pd.DataFrame.head = extended
+```
+
+The last line writes to an object the cell does not own, so the cell goes outside; approved, it is compiled as full
+Python, `extended` loses `CO_RESTRICTED`, and it is the plant the mark is for. The intended design admits that write
+INSIDE the dialect, where `extended` keeps its flag and runs gated on every later call, from this cell, a later one,
+or pandas' own internals. The conditions:
+
+- **The value is a plain function whose code is `CO_RESTRICTED`.** Not a builtin, not a bound method, not a partial,
+  not an instance with `__call__`: `pd.DataFrame.head = open` would give lifted code an ungated capability under a
+  vetted name.
+- **The slot holds a function the manifest already admits.** The wrapper calls the original from a restricted frame,
+  which only a listed function allows; wrapping an unlisted internal would need the list widened to every patchable
+  callee, and is not admitted.
+- **No write to an existing function's `__code__`, defaults, closure or `__dict__`.** Those change vetted code in
+  place.
+- **The worker is not marked by it**, since no ungated code was introduced, and the write is rolled back with the cell
+  when the cell is refused.
+
+What it costs, stated so nobody reads more into it. (1) On a path through an installed wrapper, halting is by the step
+budget and no longer by construction: library code that loops until its callee returns some value now depends on what
+the wrapper returns. (2) Lifted code sees return values its vetting never considered. The wrapper itself can do
+nothing the dialect refuses, and what leaves the worker is still judged at the boundary, but the argument that a
+lifted leaf is harmless on any ARGUMENT a cell can pass has to be made again for any RETURN its admitted callees can
+give. Both need adversarial rows before this is built: a wrapper that never returns the awaited value, one that
+returns a cell-owned object where an internal expects its own, one installed and then reached by an internal caller,
+the three refused value kinds, and a wrapper surviving into a later cell. No use for this has been measured; it is
+recorded because it is the dynamic form of the `lib/` and tier 3 rule, and the design should not depend on which form
+a model happens to write.
 
 ## The namespace
 

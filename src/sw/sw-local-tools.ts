@@ -16,7 +16,8 @@ import { listServerTools } from "./sw-llm";
 import { workerMl } from "./worker-ml";
 import { dropAnswer } from "./worker-answer";
 import { dropVisionMemory } from "./worker-vision";
-import { buildWorkerTools, dropWorkerTools, spendDelta, workerSpend, WORKER_TOOL_NAMES, type WorkerPyMedia } from "./worker-tools";
+import { buildWorkerTools, dropWorkerTools, spendDelta, workerSpend, workerToolTexts, WORKER_TOOL_NAMES, type WorkerPyMedia } from "./worker-tools";
+import { modelFacing } from "../agent/run-assembly";
 
 /** What a run's local tools need to run: the tools by name, and the vision facts their ToolContext carries. */
 interface LocalToolset { byName: Record<string, MlTool>; model: string | null; driverSees: boolean; visionModel: string | null; }
@@ -33,6 +34,11 @@ const localToolsets = new Map<string, LocalToolset>();
 export function registerLocalTools(runId: string, tools: MlTool[], facts: { model: string | null; driverSees: boolean; visionModel: string | null }): void {
     if (!tools.length) return;
     localToolsets.set(runId, { byName: Object.fromEntries(tools.map((t) => [t.name, t])), ...facts });
+}
+
+/** The texts of the tools registered to run here for `runId` (the test hook's view of what executes). */
+export function localToolTexts(runId: string): { name: string; description: string; parameters: unknown }[] {
+    return Object.values(localToolsets.get(runId)?.byName ?? {}).map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
 }
 
 /** Forget a run's local tools, when the run is deleted. */
@@ -66,6 +72,30 @@ export async function ensureLocalTools(runId: string, p: StartRunPayload, tabId:
 /** Whether a worker-built run's send of `name` belongs here: a remote tool, or a builtin that never reads the page. */
 export function runsInWorker(p: StartRunPayload, name: string | undefined): boolean {
     return !!name && p.tools.some((t) => t.name === name && (!!t.remote || WORKER_TOOL_NAMES.has(name)));
+}
+
+/**
+ * The tools a run the worker built and drives is shown: each tool the worker runs (`runsInWorker`) with the text of the
+ * tool that runs, built by the same factory on the worker's `ml` and passed through the same chain `assembleRun` uses,
+ * in place of the text its payload stored. The payload's text was written at the start from the `ml` the worker
+ * assembles with, which is not the one its tools run on (python_exec read as a page-hosted run's: stateless, no
+ * `/files`), and a stored session keeps it; read here at every turn, an old session reads the right text too.
+ * @param runId the run
+ * @param p its payload
+ * @returns its descriptors, the worker's tools' texts in place
+ */
+export function workerFacing(runId: string, p: StartRunPayload): StartRunPayload["tools"] {
+    const built = workerToolTexts(runId, p.tools.filter((t) => !t.remote).map((t) => t.name));
+    if (!built.length) return p.tools;
+    const ours = new Set(built.map((t) => t.name));
+    // The stored descriptors stand in for the rest: the chain reads which tools the set holds (agent_api_docs, exec).
+    const rest = p.tools.filter((t) => !ours.has(t.name)) as unknown as MlTool[];
+    const shown = modelFacing([...built, ...rest], { unattended: !!p.unattended, autoRO: !!p.autoApproveReadonly, autoPy: !!p.autoApprovePython, toolTokens: !!p.toolTokens });
+    const byName = new Map(shown.filter((t) => ours.has(t.name)).map((t) => [t.name, t]));
+    return p.tools.map((t) => {
+        const w = byName.get(t.name);
+        return w ? { ...t, description: w.description, parameters: w.parameters } : t;
+    });
 }
 
 /** Count a call the worker runs outside the run's local tools (`look`, worker-look.ts) towards agent_api_docs's

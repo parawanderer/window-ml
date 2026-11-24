@@ -204,8 +204,7 @@ same scrub.
   so a secret split across a range boundary would pass. The rule: **scrub the unit, then slice; never scrub a slice.**
   A range is made of whole messages; each is scrubbed whole (as `forModelHistory` does) before the range is cut to its
   cap. A message is bounded by what the model saw when it was written, so scrubbing it whole is bounded too. (The
-  brief cites a section "The scrub as built" in SECRET_HANDLES.md; there is none. Its scrub section is "Scrubbing is
-  by VALUE, in the harness", which ends "Not built". The built scrub is `src/secret-scrub.ts` and `sw-scrub.ts`.)
+  built scrub is SECRET_HANDLES.md, "The scrub as built": `src/secret-scrub.ts` and `sw-scrub.ts`.)
 - **The scrub cache.** Scrubbed chunks, where they are cached (§6b.2), are cached under a fingerprint of the secrets.
   The cache and the fingerprint follow the secret registry's rule: in no backup, export or archive file, deleted with
   the session, and the fingerprint is a KEYED value (an HMAC under a per-install key), never a bare hash of the

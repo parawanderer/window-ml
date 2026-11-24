@@ -413,22 +413,47 @@ answers taught, for anyone writing a policy or a lifter rewrite:
 - A reason for a CREDENTIALED `fetch_url` ask: an `allow` never covered one, so none is said. `expired` is a cause the
   type carries for a policy with a lifetime; no policy has one.
 - A page-built run's card is not judged again when a policy changes: its descriptor carries no facts, because its
-  fetch runs in the page and an `allow` cannot answer it (see Traps). A `deny` would; it is left for the run's next call.
+  fetch runs in the page and an `allow` cannot answer it (see Traps). A `deny` would; it is left for the run's next
+  call.
+
+## The `files` consumer: hiding rules
+
+`POLICIES.md`, "Hiding files". A `files` row is not a script: its `effect` is `hide` or `show` and its `source` a path
+or a glob, so `judgeCall` skips the consumer and `validList` (`policy-valid.ts`, `effectFits`) keeps a row only when its
+effect fits its consumer, both ways. The rule itself is pure (`src/files-hide.ts`): the segment glob, the refusals, the
+four defaults, and `resolveHidden` (session, then global, then the defaults; the most specific entry wins, a tie hides).
+
+- **The view builds its own rows** (`files-hide-view.ts`, called from `sessionPolicies`). The generic `effectiveRows`
+  assumes every row of a consumer judges the same call and has one default row; two hiding rules compete only where
+  their patterns can match one path (`patternsOverlap`, `overlapsDefault`), and there are four defaults. So
+  `registerPrecedence` and `registerRemovalClass` are not used for `files`.
+- **The reader asks the worker.** The offscreen document's one `RangedReader` takes `makeHideRule`, which asks
+  `FILES_HIDE_LIST` (answered to the offscreen document only, after the store is read) and keeps each session's list for
+  a second, or until the worker's `FILES_HIDE_CHANGED`. Any failure hides the path: a list that cannot be had never
+  lets a read past a `hide`.
+- **The reader's paths are relative** (`attached/h1/.env`); the rules are written as `/files/...`, and the rule adds the
+  prefix.
+- **A new reader** of a session's files must be built with `hidden:`; `tests/files-hide-policies.test.mjs` pins the list
+  of `RangedReader`s in `src/` and fails on one built without it.
 
 ## The act consumer
 
-A click or a type is judged as `act` (`actFacts`: `url`, `host`, `action`, `element: { tag, href, name }`, effects unknown).
+A click or a type is judged as `act` (`actFacts`: `url`, `host`, `action`, `element: { tag, href, name }`, effects
+unknown).
 
-- **The element is the page's resolution at the call.** `actPolicy` (`sw-run-host.ts`) sends a precheck to the page, which returns the
-  element its selector resolves to (`actElement`, `builtin-tools.ts`): `href` is the nearest link's absolute URL (null for none), `name`
-  the accessible name (`""` for none; null only when nothing resolved, so a `deny` written on what is allowed fires). The page's word,
-  as `clickHref` already was: a rule binds what the model may attempt, never the page's honesty. A click by `@pt:` token (what `locate`
-  produces) is the click on the element under the point as the synthetic click lands (a CDP click on a point our own sidebar or card covers reaches the page beneath, since the hosts are hidden around the dispatch: sidebar.md, "Keeping the extension out of a click"): `actElement` makes the same hit-test `clickAt` makes, so a deny written on the
-  accessible name judges it, and a link around the element is its `href`. A box token resolves none (the click is refused outright). A
-  page that predates the `element` field sends none, and the call is judged with null facts: a deny fires, an allow does not.
-- **`autoApprove` is async.** The element comes from the page, so the loop awaits it (`agent-loop.ts`). A `deny` row refuses the call
-  with the policy named and no card; an `allow` skips the card; an `ask` or nothing asks as before. The link a click follows is judged
-  first as a `fetch` navigation (`clickLinkRefusal`), so an `allow` on the click never lets it through to a page a `fetch` row denies.
+- **The element is the page's resolution at the call.** `actPolicy` (`sw-run-host.ts`) sends a precheck to the page,
+  which returns the element its selector resolves to (`actElement`, `builtin-tools.ts`): `href` is the nearest link's
+  absolute URL (null for none), `name` the accessible name (`""` for none; null only when nothing resolved, so a `deny`
+  written on what is allowed fires). The page's word, as `clickHref` already was: a rule binds what the model may
+  attempt, never the page's honesty. A click by `@pt:` token (what `locate` produces) is the click on the element under
+  the point as the synthetic click lands (a CDP click on a point our own sidebar or card covers reaches the page
+  beneath, since the hosts are hidden around the dispatch: sidebar.md, "Keeping the extension out of a click"):
+  `actElement` makes the same hit-test `clickAt` makes, so a deny written on the accessible name judges it, and a link
+  around the element is its `href`. A box token resolves none (the click is refused outright). A page that predates the
+  `element` field sends none, and the call is judged with null facts: a deny fires, an allow does not.
+- **`autoApprove` is async.** The element comes from the page, so the loop awaits it (`agent-loop.ts`). A `deny` row
+  refuses the call with the policy named and no card; an `allow` skips the card; an `ask` or nothing asks as before. The
+  link a click follows is judged first as a `fetch` navigation (`clickLinkRefusal`), so an `allow` on the click never lets it through to a page a `fetch` row denies.
 - **The self-approval list is the builtin `allow`** when no row decides (`senderSelfApproves`, read, never changed).
 - **Test with** `tests/act-policy.test.mjs` (facts, element, proposals), the `act:` tests in `tests/nav-arrival-host.test.mjs` (the host),
   and `tests/e2e/policy-worked-example.spec.mjs` (the worked example against the demo site).

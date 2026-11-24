@@ -3,7 +3,7 @@
 // server JSON is genuinely opaque, so it's typed `any`; our own data uses the
 // shared contract types.
 import { PageGone, forgetPageBuilt, forgetPageBuiltTab, movePageBuiltTab, notePageBuilt } from "./sw/page-route";
-import { dropAllLocalTools } from "./sw/sw-local-tools";
+import { dropAllLocalTools, localToolTexts } from "./sw/sw-local-tools";
 import { invocationInfo } from "./sw/sw-invocation";
 import { onIsolatedMessage, pageApproved } from "./sw/sw-isolated-exec";
 import { onMlCall } from "./sw/sw-ml-wire";
@@ -31,8 +31,9 @@ import { workerLook } from "./sw/worker-look";
 import { workerLocate } from "./sw/worker-locate";
 import { fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw/sw-fetch";   // outbound fetch layer (ml.fetch, rendered fetch, credentialed Google Sheets CSV)
 import { executeServerTool, serverToolResult } from "./sw/sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
-import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw/sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
+import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, observeRequests, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw/sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw/sw-events";
+import { energyRequest, cutOpenStretches, watchPower } from "./sw/sw-energy";
 import { configureSessionCommands, handleSessionTitle, ingestSessionEvent, sessionPageMoved, sessionPageGone, keepSession, liveHeldSessions, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw/sw-sessions";   // the cross-tab session index the chat page reads
 import { backupAction, backupFailure } from "./sw/sw-backup";   // backup and restore, for Settings
 import { folderAction } from "./sw/sw-archive";   // the session archive's folder, for Settings
@@ -45,14 +46,14 @@ import { costCalls } from "./sw/sw-prices";
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, externalApprovals, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants } from "./sw/sw-consent";
 import { syncPresence, isVisible, presence, injectRunTools, injectPageScripts, SITE_REQUESTS_KEY } from "./sw/sw-presence";
 import { isExtensionSender, senderFacts, editSiteAccess, pageRefusal, agentRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, upgradeNotice, dismissUpgradeNotice } from "./sw/sw-site-access";
-import { policiesReady, forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView, sessionPolicies, removeFromSession } from "./sw/sw-policies";
+import { policiesReady, forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView, sessionPolicies, removeFromSession, isFilesRule } from "./sw/sw-policies";
 import { POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "./sw/policy-valid";
 import { addManifest, manifestView, removeManifest } from "./sw/sw-manifests";
 import { librariesReady, removeLibrary, storedLibraries } from "./sw/sw-libraries";
 import { checkDraft } from "./sw/sw-manifest-proposal";
 
 import { bringableSessions, bringHere } from "./sw/bring-here";
-import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, contextByRun, turnByRun, workerRunsStarting, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, senderOwnsRun, reconcileTabPins, startingControllers, abortStart, startingOwnedBy } from "./sw/sw-runs";
+import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, contextByRun, turnByRun, workerRunsStarting, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, detachTabRuns, runHasNoTab, senderOwnsRun, reconcileTabPins, startingControllers, abortStart, startingOwnedBy } from "./sw/sw-runs";
 import { cancelPageTasks, detachTask, dropAllTaskMemory, resetTaskChain, taskAction, type TaskOutcome } from "./sw/sw-tasks";
 import { refreshTaskRow, setNoTabReader, setReleaseAtReader, syncTaskRows } from "./sw/sw-task-rows";
 import { moveTabKey } from "./sw/tab-replaced";
@@ -73,6 +74,7 @@ import { runControlPayloadError } from "./sw/run-payload-check";
 import { asIsTokens, forBackendFromPage, forPage, forTurn, scanTurn } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets; a page's model request, without a registered secret
 import { TurnUnreadable } from "./secret-registry";
 import { secretRegistryOp } from "./sw/sw-secret-registry";
+import { filesHideList, signalFilesHideChanges } from "./sw/sw-files-hide";
 import { pythonPrewarm, pythonExec, pythonInterrupt, relayPyStdout, deletePythonRun, dropPythonLibraries, pythonReaped, filesAttached, filesSecretForms, pythonStarted, pythonDone } from "./sw/sw-python";
 import { focusLineFor } from "./sw/sw-focus";
 import { chatHashFor, openChatPage } from "./sw/sw-open-chat";
@@ -116,6 +118,11 @@ const inflight = new Map<string, AbortController>();
 // respawn doesn't miss the in-flight run (the respawn race).
 // Logs this worker's start, and infers the previous one's eviction from a heartbeat it left in storage.session.
 void housekeeping.start();
+// The energy hold (sw-energy.ts): a record a dead worker left open is marked cut first, then every session's model
+// call is heard, so a local runtime's draw is watched while it generates; every stream says whether its box reports power.
+void cutOpenStretches();
+watchPower();
+observeRequests(energyRequest);
 // A worker evicted mid-run leaves its tabs pinned against discard with nobody left who knows why. After the
 // rehydrate — so a run that came back keeps its own tab — release the ones that did not.
 void hydrationDone.then(() => reconcileTabPins());
@@ -168,6 +175,8 @@ startValueSweeps(liveHeldSessions);   // its first pass releases held rows no se
 // the cancel path are tested against before any consumer exists.
 (globalThis as unknown as { __mlRaiseAskForTest?: unknown }).__mlRaiseAskForTest = (runId: string, seq: number, kind: string, facts: Record<string, unknown>) => raiseAsk(runId, seq, { kind, facts });
 (globalThis as unknown as { __mlKeepSessionForTest?: unknown }).__mlKeepSessionForTest = (hash: string): void => keepSession(hash);
+// The texts of the tools a worker-built run registered to run in the worker: what the model must read of them.
+(globalThis as unknown as { __mlLocalToolTextsForTest?: unknown }).__mlLocalToolTextsForTest = (runId: string) => localToolTexts(runId);
 // TEST-ONLY (SW realm only): start a run as the HUD Commander's Send does (sw-run-start.ts). The real route is the
 // extension's own frame through the content-script shell, which a spec cannot click without driving the whole
 // composer; a page cannot reach this, so it is no way in for one.
@@ -178,6 +187,8 @@ startValueSweeps(liveHeldSessions);   // its first pass releases held rows no se
 
 // TEST-ONLY (SW realm only): plug a reader into the session row's `noTab` / `releaseAt` (sw-task-rows.ts) and refresh a row, as the
 // move-run lane and the release build will. A page cannot reach this.
+// A run with no tasks is marked as held with no tab only by this lane's word (sw-task-rows.ts asks it for a 0/0 run).
+setNoTabReader(runHasNoTab);
 (globalThis as unknown as { __mlTaskRowReadersForTest?: unknown }).__mlTaskRowReadersForTest = { setNoTabReader, setReleaseAtReader, refreshTaskRow };
 
 // TEST-ONLY (SW realm only): detach a task of a run by hand, as an executor does, and get its id and a function that ends
@@ -257,7 +268,14 @@ if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
     void handOverOnRevoke().catch(() => []);
 }
 if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
-    chrome.tabs.onRemoved.addListener((tabId) => { tabPageUrl.delete(tabId); forgetHandOverTab(tabId); forgetArrivalTab(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); replayedTo.delete(tabId); forgetTab(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseSessionValues(pageValueSession(tabId)); releaseDebugger(tabId); sessionPageGone(tabId, { closed: true }); void forgetPageBuiltTab(tabId); });
+    chrome.tabs.onRemoved.addListener((tabId) => {
+        // The async lane's `onTabClosed(tabId)` (#2107, the closed-tab release) goes HERE, AHEAD of the detach: it finds the
+        // runs held on this tab by their tabId, which the detach sets to NO_TAB, so after it no held run gets a release deadline.
+        // Then, while the runs still name the tab: a run the worker drives goes on with no tab (no-tab.ts), so its row is
+        // not marked interrupted and the list says it is held with no tab.
+        const noTab = detachTabRuns(tabId);
+        for (const hash of noTab) void refreshTaskRow(hash);
+        tabPageUrl.delete(tabId); forgetHandOverTab(tabId); forgetArrivalTab(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); replayedTo.delete(tabId); forgetTab(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseSessionValues(pageValueSession(tabId)); releaseDebugger(tabId); sessionPageGone(tabId, { closed: true, noTab }); void forgetPageBuiltTab(tabId); });
 }
 // THE THIRD THING A TAB CAN DO, besides navigate and close: come back under a new id. A discard the browser
 // restores, or a prerender swapped in, fires only this — so without it a run's tab state is left filed under an
@@ -516,7 +534,8 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         const runId = (message.payload as { runId?: unknown } | undefined)?.runId;
         const toTabId = sender.tab?.id;
         if (!isExtensionSender(sender) || toTabId == null || typeof runId !== "string") { sendResponse({ error: "Refused: a session is moved only from the extension's own surface in the tab it moves to." }); return; }
-        void bringHere(runId, toTabId).then((r) => sendResponse("refused" in r ? { error: r.refused } : { data: true }), (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
+        // A run with a turn running is not moved yet: the answer says it moves when its current step ends (move-run.ts).
+        void bringHere(runId, toTabId).then((r) => sendResponse("refused" in r ? { error: r.refused } : "queued" in r ? { data: { queued: r.queued } } : { data: true }), (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
         return true;
     }
     // The sessions "bring a session here" offers in the HUD on this tab: the same sender rule as MOVE_RUN.
@@ -782,9 +801,12 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
                 addGlobalPolicy({ consumer, effect, source, label });
             } else if (p.op === "edit") {
                 const id = str(p.id, 100);
+                if (id && isFilesRule(id)) { sendResponse({ error: "a hiding rule is not edited: remove it from its session's view and add another" }); return; }
                 if (!id || !editPolicy(id, { source: str(p.source, POLICY_SOURCE_MAX), label: str(p.label, POLICY_LABEL_MAX), effect })) { sendResponse({ error: "no such policy" }); return; }
             } else if (p.op === "remove") {
                 const id = str(p.id, 100);
+                // Removing a hide widens: only a session's view removes one, and it shows what that exposes first.
+                if (id && isFilesRule(id)) { sendResponse({ error: "a hiding rule is removed from its session's view, which shows what it exposes first" }); return; }
                 if (!id || !removePolicy(id)) { sendResponse({ error: "no such policy" }); return; }
             } else if (p.op === "session") {
                 // One session's effective view (docs/spec/POLICIES.md, "The effective view"): a read, so no change to answer with.
@@ -1046,6 +1068,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     if (message.type === "PY_REAPED") { pythonReaped(message, sender, noteRunLine); return false; }
     if (message.type === "FILES_ATTACHED") { sendResponse(filesAttached(message, sender)); return false; }
     if (message.type === "FILES_SECRET_FORMS") { void filesSecretForms(sender).then(sendResponse); return true; }
+    if (message.type === "FILES_HIDE_LIST") { void filesHideList(message, sender).then(sendResponse); return true; }
     if (message.type === "SERVER_TOOL_EXEC") {
         // Run ONE OpenWebUI-configured tool. CHOKE POINT, and a real one: the fetch spends the user's API
         // key, and the tool it runs is caller-chosen — a hostile page reaching this handler directly could
@@ -1647,6 +1670,8 @@ function rightClickedContext(tabId: number): Promise<unknown> {
 // A redirect hop's target, read for the worker's judged fetches (sw-redirects.ts); registered at the top level, so a
 // fetch in a worker that just woke still sees its hop.
 watchRedirects();
+// The `/files` reader's hiding rules: a policy change makes the offscreen reader ask for its lists again (sw-files-hide.ts).
+signalFilesHideChanges();
 
 chrome.runtime.onInstalled?.addListener((details) => {
     // A deliberate reload or an update (NOT an idle SW respawn — that never fires onInstalled): invalidate any

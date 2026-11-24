@@ -23,7 +23,7 @@
 // Each of these channels has its own rest draw and its own tail.
 
 import type { ElectricityPrice } from "../contract/contract-chat";
-import type { ComputeInfo, ProcessModelResponse } from "../proto/events.gen";
+import type { ComputeInfo, ProcessModelResponse, Wire } from "../resource/events-wire";
 import { normModel } from "../resource/resource-model";
 import { isOffPeak } from "./price-book";
 
@@ -86,7 +86,7 @@ const J_PER_KWH = 3.6e6;
  * with its wrap, and its watts when the source reports them too) or, without a counter, as watts; and where each resident model sits (`place`, from the frame's
  * `ps.models` when given). A source reporting an error, or a scope this does not know, is left out.
  */
-export function reading(t: number, compute: Partial<ComputeInfo> | null | undefined, models: ProcessModelResponse[] | null = null): Reading {
+export function reading(t: number, compute: Wire<ComputeInfo> | null | undefined, models: Wire<ProcessModelResponse>[] | null = null): Reading {
     const gpus = compute?.supported_gpus;
     const gpuBy = Array.isArray(gpus) && gpus.length && gpus.every((g) => Number.isFinite(g?.power?.draw_mw))
         ? Object.fromEntries(gpus.map((g, i) => [String(g.gpu_id ?? i), g.power!.draw_mw! / 1000])) : null;
@@ -103,7 +103,7 @@ export function reading(t: number, compute: Partial<ComputeInfo> | null | undefi
 
 /** Where each resident model sits: its normalised name → `{ <gpu_id>: share of its VRAM on that GPU }`; a model the
  *  frame gives no per-GPU sizes for is left out (and counts as on every GPU). */
-export function placement(models: ProcessModelResponse[] | null | undefined): Placement {
+export function placement(models: Wire<ProcessModelResponse>[] | null | undefined): Placement {
     const out: Placement = {};
     for (const m of Array.isArray(models) ? models : []) {
         const name = m?.name ?? m?.model;

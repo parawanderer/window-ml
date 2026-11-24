@@ -101,6 +101,9 @@ export interface AgentLoopDeps {
     // The loop uses it to SKIP the approval prompt for an action that would just fail. Page-delegated on
     // the background path (the DOM is page-side); safe BECAUSE the precheck can't mutate.
     precheck?(name: string, args: Record<string, unknown>): Promise<string | null>;
+    /** A call this host cannot run at all, answered with the returned text before anything decides or asks: a page
+     *  tool of a run with NO tab (sw/no-tab.ts). Null to go on as usual. */
+    unrunnable?(name: string, args: Record<string, unknown>): string | null;
     // Build the initial neutral message array (system + user(task)) — world-specific (page context).
     buildMessages(task: string): unknown[];
     // Append the assistant tool-call message / a tool-result message to the running history.
@@ -1043,6 +1046,9 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 // Arguments that are not JSON: a call cut off mid-stream, or fragments that stopped being JSON (a server
                 // whose parser saw a parameter written twice). Never run on a guess; the model is told and can call again.
                 result = `Error: the arguments of this "${call.name}" call did not arrive as complete JSON, so it did not run. Call it again.`;
+            } else if (deps.unrunnable?.(call.name, args)) {
+                // Nothing to ask about: the host has nowhere to run it (a page tool with no page), so no gate opens.
+                result = deps.unrunnable(call.name, args)!;
             } else if (meta.capabilities?.includes("meta")) {
                 // Self-introspection (chat_metadata): the LOOP answers it — it holds the live token counts
                 // and message list, so the numbers are accurate on both the page and background paths with no

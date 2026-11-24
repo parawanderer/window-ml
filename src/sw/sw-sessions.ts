@@ -2,6 +2,7 @@
 // served over the `ml-sessions` port to extension pages (session-server.ts). background.ts feeds it from the same
 // places that feed the DevTools panel, so the index holds what a panel would show for every tab at once
 // (docs/dev/chat-page.md §The local index).
+import { addFilesRule, removeFilesRule } from "./sw-files-hide";
 import { restoreChatRecord } from "../session/chat-record";
 import { forgetRunPolicies, runPolicies, archivedPolicyLoss } from "./sw-policies";
 import { hintSession, type SentFile } from "../contract/contract-run";
@@ -23,7 +24,7 @@ import type { NeutralMessage } from "../contract/contract-chat";
 import { cleanTitle, titleMessages } from "../session/session-title";
 import { defineState } from "../state-registry";
 import { bindTaskRows, refreshTaskRow, syncTaskRows } from "./sw-task-rows";
-import { bgRuns, hydrationDone, keptOnRebuild, makeWorkerRun, pageValueSession, runControllers, runRebuilds, startingControllers, trackRun, untrackRun, workerRunsStarting } from "./sw-runs";
+import { bgRuns, hydrationDone, isWorkerRun, runHasNoTab, runInboxes, keptOnRebuild, makeWorkerRun, pageValueSession, runControllers, runRebuilds, startingControllers, trackRun, untrackRun, workerRunsStarting } from "./sw-runs";
 import { moveRun } from "./move-run";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { isExtensionSender } from "./sw-site-access";
@@ -49,6 +50,7 @@ import { shellCapabilities, refreshShell, onShellStatus, hostMissing, hostIsOutd
 import { keptEvent } from "./sw-asks";
 import { forRow, forRowText } from "./sw-scrub";
 import { onRegistryChanged } from "./sw-secret-registry";
+import { isNoTab } from "./no-tab";
 
 /**
  * Ask a tab's page something, PUTTING THE CONTENT SCRIPT BACK if it is not there.
@@ -372,6 +374,7 @@ export function configureSessionCommands(run: RunDeps): void {
                 return true;
             } catch { return false; }   // closed between the check and the focus
         },
+        workerTab: (hash) => (isWorkerRun(hash) ? runInboxes.get(hash)?.tabId ?? bgRuns.get(hash)?.tabId : undefined),
         toPage: async (tabId, action, body, origin) => {
             // A run the worker built is driven from the worker: the page never carries the person's message.
             if (action === "send" || action === "continue") {
@@ -409,6 +412,8 @@ export function configureSessionCommands(run: RunDeps): void {
         },
         keepSession,
         pinSession,
+        addFilesRule,
+        removeFilesRule,
         renameSession,
         ...(sessionStore ? { storageReport } : {}),
         listModels: async () => {
@@ -442,6 +447,8 @@ export function configureSessionCommands(run: RunDeps): void {
             // move, never hosted a second time: its memory is fresher than the saved history, so that is not read back.
             // On its own tab it is resumed as before.
             const held = bgRuns.get(hash);
+            // A turn running is not resumed: it is moved, from a surface that says it waits for the step (`moveRun`).
+            if (runControllers.has(hash) || runInboxes.has(hash)) return "busy";
             if (held && held.tabId !== tabId) {
                 const rebuild = held.p.rebuild;
                 if (!rebuild) return "none";
@@ -722,7 +729,8 @@ if (sessionStore) {
             // A dropped id is written back, or the next start in this browser restores it again, onto whatever tab holds it then.
             const stale = new Set(rows.filter((r) => r.summary.page?.tabId != null).map((r) => r.summary.id?.hash));
             for (const row of restored) if (stale.has(row.id.hash) && row.page?.tabId == null) store.putSummary(row);
-            void syncTaskRows().catch(() => undefined);
+            // A run held with no tab and no tasks has no table for that pass to find (sw-task-rows.ts): its row is set here.
+            void syncTaskRows().catch(() => undefined).then(() => hydrationDone).then(() => Promise.all([...bgRuns.keys()].filter(runHasNoTab).map(refreshTaskRow))).catch(() => undefined);
             void recordStorageSnapshot().catch(() => { /* storage unavailable */ });
             // Whatever a previous worker saved and never compacted, sessions from before compaction existed included.
             imageCompaction?.kick();
@@ -1084,7 +1092,7 @@ export function sessionPageMoved(tabId: number, url: string): void {
  * @param tabId the tab
  * @param opts whether the tab closed, or only its document went
  */
-export function sessionPageGone(tabId: number, opts: { closed: boolean }): void {
+export function sessionPageGone(tabId: number, opts: { closed: boolean; noTab?: readonly string[] }): void {
     for (const row of sessionServer.pageGone(tabId, opts)) if (row.saved) sessionStore?.putSummary(row);
 }
 
@@ -1092,6 +1100,9 @@ export function sessionPageGone(tabId: number, opts: { closed: boolean }): void 
  *  must not break the relay it rides beside, and a full disk must not stop a run.
  *  @returns the session's hash when the index took the event, else undefined */
 export function ingestSessionEvent(event: unknown, source: IngestSource): string | undefined {
+    // A run with no tab is filed under the sentinel (no-tab.ts), which is no tab of the browser's: the index is told none,
+    // so no row ever names it as the session's tab.
+    if (isNoTab(source.tabId)) source = { ...source, tabId: undefined };
     try {
         const out = sessionServer.ingest(event as MlDebugEvent, source);
         if (!out.accepted) return undefined;
