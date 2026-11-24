@@ -190,6 +190,17 @@ test("FILES_LOST is recorded in the session's run log from the offscreen documen
     assert.equal(got[0].detail.path, "agent/w.npy");
 });
 
+test("FILES_LOST records the path with its secrets masked: the run log is the model's to read (ml.current.log)", { timeout: 30000 }, async () => {
+    let seen;
+    const { bg } = await wireRun(async (wire) => { seen = wire; }, { calls: [{ name: "python_exec", args: { code: "print(1)" } }], local: REGISTRY });
+    void bg.send({ type: "FILES_LOST", session: seen.run, path: `agent/${REGISTERED}.npy`, at: 1, reason: "channel-ended" }, { ...OFFSCREEN });
+    await new Promise((r) => setTimeout(r, 20));
+    const got = (await bg.send({ type: "DUMP_RUN_LOG", payload: { run: seen.run } }, POPUP_SENDER)).data.events.filter((e) => e.subsystem === "files");
+    assert.equal(got.length, 1);
+    assert.equal(got[0].detail.path, "agent/[REDACTED:DB_PASS].npy");
+    assert.ok(!JSON.stringify(got).includes(REGISTERED), "the value is nowhere in the record");
+});
+
 test("FILES_QUOTA and FILES_LOST are not a page's messages: the relay has no entry for them", () => {
     for (const t of ["FILES_QUOTA", "FILES_LOST"]) {
         assert.equal(t in HANDLE_MAP, false, t);

@@ -2253,13 +2253,18 @@ is the one place every front end lists and opens through, so the rule is there.
    name addresses that file (an exclusive create is `EEXIST`), never a second one.
 7. The cursor is not a path: it is the last entry's ordinal among those sharing its shown name, then that shown name
    (`c:<ordinal>:<shown>`), so a folder of colliding names pages to its end. A cursor of any other shape is `EINVAL`.
-8. Under `agent/`, a create or a rename whose last segment holds `[REDACTED:` and names no file there is
-   `EACCES: '<path>' is reserved`: it would make a second file under a shown name.
+8. Under `agent/`, a create or a rename whose last segment holds a marker a shown name can carry and names no file
+   there is `EACCES: '<path>' is reserved`: it would make a second file under a shown name. The markers are
+   `[REDACTED` (both `[REDACTED:<NAME>]` and the bare `[REDACTED]`), the GitHub token's `[a GitHub token]`, and every
+   `put` the forms carry at that call (`[server]`, `[price service]`, `[model filter]`).
 
 The exact match keeps two cases working: an attached name that holds the marker text itself, and a file written
 before the value in its name was registered, both open by the name the cell wrote. Python's mount lists both entries
 of a collision and caches neither, so its lookup asks the reader, which refuses it. A value registered mid-session is
-masked from the next listing on; a cell that read the name before holds it already, as with the bytes.
+masked from the next listing on; a cell that read the name before holds it already, as with the bytes. A cursor read by a reader
+rebuilt since its page (the offscreen document restarted) may repeat or skip an entry, and only one tied on its birth
+time with another under one shown name: the tie's salt is drawn per reader. That cost is accepted; it needs equal
+birth times, a shared shown name and a restart between pages.
 
 **Asked by ruling 36 of the packages notebook, still not on main** (the design was fixed and built without them):
 whether worker memory stays flat reading ranges of a 1 GiB file; the cost of the scrub inside the read, both the

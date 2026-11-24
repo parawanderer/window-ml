@@ -2,6 +2,7 @@
 // `ml.fs`", slice 1): a session's files read by range through channels, nothing loaded whole, for every front end.
 
 import { maskName, maskOverlap, maskSecretBytes, type SecretForm } from "../secret-mask";
+import { GITHUB_TOKEN_PUT } from "../secret-scrub";
 import { FILES_CHUNK, type DirPage, type FileStat, type FilesChannel, type FsError, type FsErrorCode, type Txn, type WriteFlags } from "../python/files-reader";
 import { AgentFilesError, type AgentFiles, type AgentOp, type LostWrite } from "./agent-files";
 
@@ -53,9 +54,9 @@ const CURSOR = "c:";
 /** A cursor's ordinal and shown name. */
 const CURSOR_SHAPE = /^c:(\d{1,6}):([\s\S]*)$/;
 
-/** What a name a run makes under `agent/` may not hold unless it names a file already there: the shown form of a
- *  masked name, which a create would otherwise make a second file under. */
-const RESERVED = "[REDACTED:";
+/** The markers a name a run makes under `agent/` may not hold unless it names a file already there, besides every
+ *  form's own `put`: the shown form of a masked name, which a create would otherwise make a second file under. */
+const RESERVED = ["[REDACTED", GITHUB_TOKEN_PUT];
 
 /** A node of a volume, as a channel resolves a path: a directory, or a file whose bytes are a Blob read by range. */
 interface VNode {
@@ -376,15 +377,20 @@ export class RangedReader {
         const agent = reader.deps.agent;
         /**
          * A path a write may name: under `agent/`, with a store to keep it; else EROFS (the root, `attached/`). Resolved
-         * as a read resolves it, so a shown name addresses its file. A path naming no file whose last segment holds
-         * `[REDACTED:` is EACCES, reserved: it would make a second file under a shown name. Hidden is EACCES.
+         * as a read resolves it, so a shown name addresses its file. A path naming no file whose last segment holds a
+         * marker a shown name can carry (`[REDACTED`, the GitHub token's, any form's `put`) is EACCES, reserved: it
+         * would make a second file under a shown name. Hidden is EACCES.
          * @returns the stored path, the path as written, and the node there or null
          */
         const writable = async (s: string, path: unknown, syscall: string): Promise<{ path: string; given: string; node: VNode | null }> => {
             const given = canonical(path, syscall);
             if (!agent || !given.startsWith("agent/")) throw fsError("EROFS", syscall, given, "read-only file system");
             const { path: p, node } = await lookup(s, given, syscall);
-            if (!node && baseName(given).includes(RESERVED)) throw fsError("EACCES", syscall, given, `EACCES: '${given}' is reserved: a name holding ${RESERVED} is how a masked name is shown`);
+            if (!node) {
+                const last = baseName(given);
+                const puts = [...RESERVED, ...(await formsNow()).map((f) => f.put).filter((x): x is string => !!x)];
+                if (puts.some((m) => last.includes(m))) throw fsError("EACCES", syscall, given, `EACCES: '${given}' is reserved: it holds a marker a masked name is shown with`);
+            }
             if (await isHidden(s, p)) throw hiddenRefusal(syscall, given);
             return { path: p, given, node };
         };

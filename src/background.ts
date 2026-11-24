@@ -1069,7 +1069,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     if (message.type === "FILES_ATTACHED") { sendResponse(filesAttached(message, sender)); return false; }
     if (message.type === "FILES_SECRET_FORMS") { void filesSecretForms(sender).then(sendResponse); return true; }
     if (message.type === "FILES_QUOTA") { void filesQuota(sender).then(sendResponse); return true; }
-    if (message.type === "FILES_LOST") { filesLost(message, sender); return false; }
+    if (message.type === "FILES_LOST") { void filesLost(message, sender); return false; }
     if (message.type === "FILES_HIDE_LIST") { void filesHideList(message, sender).then(sendResponse); return true; }
     if (message.type === "SERVER_TOOL_EXEC") {
         // Run ONE OpenWebUI-configured tool. CHOKE POINT, and a real one: the fetch spends the user's API
