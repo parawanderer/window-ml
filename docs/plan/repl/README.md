@@ -2135,10 +2135,10 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   - **Ruling 113's host half, corrected (2026-11-24, the coordinator's calls on the files-host lane's review of the
     merged section against window-ml-host main and window-ml-host#58).** The by-key splice is made at `commit` through
     the held parent descriptor, not at `put`; a by-key `put` carries `mask: true`, accepted only under a `mask` entry;
-    the commit keeps the file's mode; an overwrite asks as any overwrite does; the restore test is "a well-formed fake
+    the commit keeps the file's mode; an overwrite always asks (`decidePut`: an existing file asks whatever a policy allows), so every by-key write on a host root asks until Shane wants otherwise; the restore test is "a well-formed fake
     of this key at its own length", so a fake read before the person changed a value still restores it; `stdoutTo` is
     not a mediated write; an allowed program writes in place only; `default:dotenv` as a mask is a basename pattern
-    found by ONE walk a root, cached by directory modification time, capped at 1,000,000 entries, with no directory
+    found by ONE walk a root, cached by directory inode and change time, capped at 1,000,000 entries, with no directory
     skipped by name; past the cap a Linux spawn fails and a macOS call runs with the files hidden; the output scrub
     runs when output is written to the host's store, with a holdback, over every channel by enumeration, and the
     `diff` withholds a masked path; the held values are kept out of core dumps. The files-host lane takes slices 1 and

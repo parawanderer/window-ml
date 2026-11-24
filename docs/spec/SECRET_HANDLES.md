@@ -1246,8 +1246,8 @@ value instead of landing over it. `K` is in the derivation, so a fake moved to a
 value lands as written: that is the model setting a key, which the write's own policy judged. A key not in the new
 content is removed; a new key lands. A k past the file's last `K` takes the first `K`'s value, the default of ruling
 100's open point. Bytes are restored only into the file they came from, resolved by the holder: a fake written to any
-other path stays a fake, so a copy of a masked file made from a read is a file of fakes. A write of `K=***` meant
-literally restores the value instead: a stated limit.
+other path stays a fake, so a copy of a masked file made from a read is a file of fakes. A value of 1 to 7 `*` meant
+literally restores the current value, whatever its length: a stated limit.
 
 - *The offscreen document as holder* splices inside the store's commit, as under rulings 100 and 101.
 - *The host as holder* splices at `commit`, not at `put`: `put` only resolves the target and holds the parent
@@ -1262,10 +1262,10 @@ literally restores the value instead: a stated limit.
   the platform allows. A hard link to the file is broken by the rename, as for any commit. `commit`'s `size` and
   `sha256` describe the bytes that LANDED, which differ from the bytes sent; the worker does not compare them with
   what it sent.
-- *Overwriting asks as any overwrite does.* A by-key write is to an existing file, so it carries `replace: true`,
-  which the worker sends after the person approved the overwrite or a policy allowed it. A masked file gets no freedom
-  here that another file under the root lacks, and no extra gate. (For Shane to override: a session that edits `.env`
-  often wants an `allow` for that write.)
+- *Overwriting always asks.* A by-key write is to an existing file, so it carries `replace: true`, which the worker
+  sends only after the person approved the overwrite: an existing file always asks, whatever a policy allows
+  (`decidePut`, [shell.md](../dev/shell.md)). So every by-key write to a masked file on a host root asks, in this
+  version. Letting a policy allow it is a change to `decidePut`, not a policy, and is Shane's to want.
 - *The fake key.* The session's fake key goes to the host on a `put` (for the write-back) and on a `spawn` (for the
   masked copy). It is no secret of the person's: a fake has no value as input, and a restore is bound to the file and
   the key's name. Over the hub a `put` is refused (reason `scope`), so there is no by-key write over the hub; a
@@ -1289,22 +1289,29 @@ The masked copy is made when the call starts and removed when it ends.
 - *An allowed program's writes.* The default holds deny writes too (Seatbelt's `file-write*` on the dotenv names; on
   Linux a read-only bind, and Landlock). An allowed program's call is exempted from them for the files its entry
   names, for a write in place. A writer that makes a temporary file and renames it over the original fails at a root's
-  top under `write: "roots"`, where names directly under a root cannot be created, removed or renamed. That is a
+  top under `write: "roots"`, where names directly under a root cannot be created, removed or renamed, and on macOS at
+  any depth when the temporary file's name is itself a dotenv name (`.env.tmp`, an editor's `.env.swp`). That is a
   stated limit of this version.
 - *Finding the files: one walk per root.* `default:dotenv` as a `mask` needs a pattern kind the hide list lacks, a
   BASENAME at any depth under a root (a hide pattern is absolute, with a fixed number of segments and no `**`). The
   host walks each root once per call for all such entries together, not once per entry, without following symlinks.
   Both platforms walk: Linux to bind the copies, and both to read the values the scrub holds. The found set is cached
-  per directory, keyed by the directory's modification time, so an unchanged directory costs one `stat`; that keeps
-  the second walk at `start` (window-ml-host#58) cheap. No directory is skipped by name: a `node_modules` or `.git`
-  left out would be where a planted `.env` goes.
+  per directory, keyed by the directory's device, inode and CHANGE time, so an unchanged directory costs one `stat`;
+  that keeps the second walk at `start` (window-ml-host#58) cheap. The modification time is not the key: a program in
+  the call can set it back after adding a file, and no program can set the change time; the inode catches a directory
+  replaced by a rename. No directory is skipped by name: a `node_modules` or `.git` left out would be where a planted
+  `.env` goes. On macOS a basename `mask` other than the built-in dotenv names needs its own Seatbelt deny, which is
+  new profile code in slice 3.
 - *The walk's bound is entries, not matches.* The cap is 1,000,000 directory entries a root for this walk (the hide
   list's is 100,000 an entry, which a `node_modules` passes). The files-host lane's measurement, warm, macOS, in
   Python: 24,186 entries in 30 ms; 1,927,407 entries (a folder of every clone) in 12.7 s, about 0.65 s per 100,000.
   Past the cap, on Linux the spawn fails naming the root and the count, since nothing else holds the files; on macOS
   the call runs with every masked file treated as hidden for that call (the name denies need no walk), no allowed-
-  program entry honoured, and the scrub holding what the walk found, and the run log records it. The remedy on both is
-  a narrower root. The 256-match bound stays as the hide list's.
+  program entry honoured, and the scrub holding what the walk found, and the run log records it. The remedy on both is a
+  narrower root.
+- *The bound on found files* is 256 a call, counted apart from the hide list's 256 matches, since on Linux each costs
+  a bind. Past it the outcome is the entry cap's: the Linux spawn fails naming the root and the count, and the macOS
+  call runs with the masked files hidden.
 - *A file made after the call starts*, or renamed over the path, is not covered for that call (the hide list's stated
   limit). `host-plain` is bound by nothing, as today.
 
@@ -1347,8 +1354,12 @@ its account. Nothing else changes for the call: its own policy still judges whet
   the library's automatic choice falls to an NFA past about 100 patterns, three to four times slower. `peek`'s lag is
   the holdback, up to about 360 bytes for a 120-byte value whose percent form is long. The holdback is flushed only at
   the end of the stream, never on a timer, since a timed flush on a stalled stream lets a split value through.
-- *The values in the host's memory* are kept out of a core dump (`RLIMIT_CORE` 0 or `MADV_DONTDUMP`) and zeroed at
-  `done`.
+- *The values in the host's memory* are kept out of a crash dump for the whole process, not by region: the automaton's
+  tables encode the values and live in the ordinary heap. On Linux `prctl(PR_SET_DUMPABLE, 0)`, which also blocks
+  same-user `ptrace` and `/proc/<pid>/mem` and resets at `execve`, so a spawned program is unaffected (the host's own
+  uses of `/proc/self` are checked, since they become root-owned). On macOS `RLIMIT_CORE` 0, restored in the child
+  before `exec`, so the person's programs keep their core files. The held values are zeroed at `done`; the automaton's
+  heap is freed and not zeroed. A dump taken from outside by a debugger is not prevented on macOS: a stated limit.
 - *By the reader, for the browser's copy.* A masked file in the browser's copy of a session's files is parsed by the
   `/files` reader, and its values become `session` entries of the registry ("A masked answer" defines the origin):
   kept in `chrome.storage.session`, gone with the session, never in Settings, a backup or an export. They have their
@@ -1424,9 +1435,11 @@ its card and the pin. None is scheduled; the red team gets this section as its t
     `diff` body (a masked path withheld). A value split across two chunks at every offset is scrubbed; `outputCap`
     cutting a value shows no part of it; two overlapping `read` ranges agree.
 16. The walk: a root past the cap fails the spawn on Linux naming it, and on macOS runs with the files hidden and the
-    record written; a `.env` under `node_modules` and under `.git` is found; an unchanged tree's second walk reads no
-    directory.
-17. The held values are absent from a core dump of the host taken during a call.
+    record written; the same past 256 found files; a `.env` under `node_modules` and under `.git` is found; an
+    unchanged tree's second walk reads no directory; a `.env` added under a directory whose modification time is then
+    set back is found.
+17. The held values are absent from the core a CRASH of the host leaves during a call (SIGABRT), on each platform; a
+    spawned program still leaves its own core file.
 
 The red team's properties are rows 5 and 8, that a page-started caller reaches none of it, and that no reader of a
 masked file exists outside the list in row 2.
