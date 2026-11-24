@@ -1,8 +1,8 @@
 // redteam-release-run.test.mjs — what the release of a run whose tab closed (docs/spec/ASYNC_CALLS.md, "A run whose tab
-// closed: the release") must not be made to do, red-teamed at e09bff410c3dd4392ed1eb37ec201043f275f718 and re-verified
-// unchanged at 7733e9c95ee1e5545e85ae93c49bd4a57a9b35f3 (the branch moved by merging main; sw-release.ts and sw-tasks.ts
-// are not in that diff). Six properties, in the real bundle (`dist/background.js` in node:vm, tests/helpers.js
-// `loadBackground` with `alarms: true`):
+// closed: the release") must not be made to do, red-teamed at e09bff410c3dd4392ed1eb37ec201043f275f718, re-verified
+// unchanged at 7733e9c95ee1e5545e85ae93c49bd4a57a9b35f3 (the branch moved by merging main), and both open rows verified
+// fixed at b03323ae215afb302bf59e10bc57774816dcccb4. Six properties, in the real bundle (`dist/background.js` in
+// node:vm, tests/helpers.js `loadBackground` with `alarms: true`):
 //
 //   1. nothing a page sends releases a run: a content script's `ml-sessions` port is closed unheard, and its
 //      `session.release` leaves no deadline, no PY_DELETE_RUN and no change to the run — while the same command from
@@ -16,10 +16,11 @@
 //      releases nothing of a real run.
 //   4. a worker that never saw the run reads its stored task table first: a row still running holds the release with no
 //      deadline, and the run beside it, with no running row, is released in the same pass.
-//   5. the model's `change_setting` cannot take `closedRunGraceMin` past the 1440 minutes the release clamps to
-//      (RED TEAM, open: measured 99999 and 1441 written), and a settings change releases no other run.
-//   6. a kept undelivered row carries no value after a release: its `result` is cleared, but the figure it drew is
-//      still stored and delivered with the row at the next turn (RED TEAM, open: measured).
+//   5. the model's `change_setting` cannot take `closedRunGraceMin` past the 1440 minutes the release clamps to (was
+//      open: measured 99999 and 1441 written; fixed by the domain's `max: 1440` at b03323ae), and a settings change
+//      releases no other run.
+//   6. a kept undelivered row carries no value after a release: its `result`, `image`, `value` and `chars` all go (was
+//      open: the image was still stored and delivered with the row at the next turn; fixed at b03323ae).
 import { test } from "node:test";
 import assert from "node:assert";
 import { createRequire } from "node:module";
@@ -222,7 +223,7 @@ test("a stored table with a row still running holds its own run with no deadline
 
 // --- the model's own setting cannot go past the release's range, or release anything ---
 
-test("the model's change_setting cannot take closedRunGraceMin past the 1440 minutes the release clamps to", { ...T, todo: "open: closedRunGraceMin's domain is `{ kind: \"number\", min: 0, integer: true }` with no max (src/setting-class.ts:124), so `domainAllows` accepts 1441 and 99999 and the worker WRITES it (measured: \"Changed closedRunGraceMin from 10 to 99999\") while `releaseGraceMs` silently clamps the deadline to a day (sw-release.ts MAX_GRACE_MIN). The panel and ml.settings() then show a value the release does not use. Add `max: 1440` to the domain and assert `domainAllows` refuses both" }, async () => {
+test("the model's change_setting cannot take closedRunGraceMin past the 1440 minutes the release clamps to", { ...T }, async () => {
     const w = boot();
     const a = await w.run(7)("set it");
     const lastTool = () => (JSON.parse(w.bodies().at(-1) ?? "{}")?.messages ?? []).filter((m) => m.role === "tool").at(-1)?.content ?? "";
@@ -257,7 +258,7 @@ test("a settings change releases no other session's run and arms nothing", T, as
 
 // --- a kept row carries no value after the release ---
 
-test("a kept undelivered row carries no figure after a release: its result is cleared, but the image it drew is still stored and delivered with the row", { ...T, todo: "open: endTasks with `keepUndelivered` (sw/sw-tasks.ts:588-594) clears `t.result` only. A row's `image` (a data URL, the figure the call drew) and `t.value`/`t.chars` (the key of the whole it was cut from, in the value store the release empties) stay on the row, are persisted by `rowOf` (:328) and are carried by `carried` (:536) into the next turn's inbox item — measured: the stored row kept its image after `session.release` and the model's next request body carried the data URL beside \"its value was released\". Clear `image`, `value` and `chars` with `result` when keeping the row" }, async () => {
+test("a kept undelivered row carries no figure after a release: its result is cleared, but the image it drew is still stored and delivered with the row", { ...T }, async () => {
     const w = boot();
     const a = await w.run(7)("probe");
     const MARK = "U0VDUkVUTUFSS0VS";   // base64("SECRETMARKER"), a figure no delivery should carry after the release
