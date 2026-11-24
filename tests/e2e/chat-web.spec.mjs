@@ -3887,9 +3887,9 @@ test("a run with no tab shows a banner in place of the 'tab closed' bar, and Bri
     await setBackground(page, CAPPED, { running: 1, waiting: 0, noTab: true });
     await expect(page.locator(".chat-notab")).toContainText("This run has no tab. 1 running in background. A result is read at its next turn.");
     await expect(page.locator(".chat-resume")).toHaveCount(0);
-    // Today's case: canResume is true, so no composer is drawn and the banner does not promise one.
-    await expect(page.locator(".composer")).toHaveCount(0);
-    await expect(page.locator(".chat-notab")).not.toContainText("A message sent here");
+    // A run with no tab is not resumable (`resumableHere`), so the composer is drawn and the banner says what a message does.
+    await expect(page.locator(".composer")).toBeVisible();
+    await expect(page.locator(".chat-notab")).toContainText("A message sent here starts its next turn, with no page.");
     await page.locator(".chat-notab .chat-resume-go").click();
     await expect(page.locator(".chat-dialog .tp-pill-tab")).toBeVisible();
     expect(errors).toEqual([]);
