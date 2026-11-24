@@ -51,7 +51,21 @@ export interface AttachDeps {
     shelf: FileShelf;
     /** the turn's input scrub (`forTurn`, ruling 39): a text file's text and a PDF's page text are scrubbed before they
      *  are stored or framed, so the value store holds what the model reads; a PDF's bytes are kept as attached */
-    scrub?: Pick<TurnScrub, "text" | "deep">;
+    scrub?: Pick<TurnScrub, "text" | "deep" | "again">;
+}
+
+/**
+ * Where a worker-built run's cells open an attached file, `/files/attached/<handle>/<name>` (ranged-reader.ts), or
+ * undefined when that text would not open it as written: a name holding `/`, which the mount reads as a folder, or one
+ * the turn's scrub changes, since the framed task is scrubbed whole and the mount lists the stored name. The model then
+ * lists the folder.
+ * @param p the file's pointer, its id the handle
+ * @param scrub the turn's scrub, if any
+ */
+export function openablePath(p: Pick<FilePointer, "id" | "name">, scrub?: Pick<TurnScrub, "again">): string | undefined {
+    if (p.name.includes("/")) return undefined;
+    const path = `/files/attached/${p.id}/${p.name}`;
+    return !scrub || scrub.again(path) === path ? path : undefined;
 }
 
 /** A count a reader reported, floored to the non-negative integer every reader of the pointer may take it for (0 when it
@@ -122,9 +136,10 @@ async function attachEach(runId: string, files: readonly SentFile[], turn: numbe
         if (!isPdfFile(sent)) {
             const f = d.scrub ? { ...sent, text: d.scrub.text(sent.text) } : sent;
             const p = await holdText(runId, f, turn, d, added);
-            if (whole[i]) { out.push({ name: p.name, type: p.type, text: f.text, pointer: fileRef(p) }); continue; }
+            const at = openablePath(p, d.scrub);
+            if (whole[i]) { out.push({ name: p.name, type: p.type, text: f.text, pointer: fileRef(p), ...(at ? { path: at } : {}) }); continue; }
             const outline = textOutline(p, f.text, d.shelf.firstNamed(p.name, p.id));
-            out.push({ name: p.name, type: p.type, bytes: p.bytes, lines: p.lines ?? 0, body: outline.text, escaped: outline.escaped, pointer: fileRef(p) });
+            out.push({ name: p.name, type: p.type, bytes: p.bytes, lines: p.lines ?? 0, body: outline.text, escaped: outline.escaped, pointer: fileRef(p), ...(at ? { path: at } : {}) });
             continue;
         }
         const f = sent;
@@ -154,7 +169,8 @@ async function attachEach(runId: string, files: readonly SentFile[], turn: numbe
             added.push(p);
         }
         const outline = fileOutline(p, r.doc, d.shelf.firstNamed(p.name, p.id));
-        out.push({ name: p.name, type: p.type, bytes: p.bytes, pages: p.pages, body: outline.text, escaped: outline.escaped, pointer: fileRef(p) });
+        const at = openablePath(p, d.scrub);
+        out.push({ name: p.name, type: p.type, bytes: p.bytes, pages: p.pages, body: outline.text, escaped: outline.escaped, pointer: fileRef(p), ...(at ? { path: at } : {}) });
     }
 }
 
