@@ -346,7 +346,9 @@ UNLISTED = {("numpy", "ndarray"): {"round": "a C method that writes its out argu
 LISTED = {("numpy", None): {"rint"}, ("pandas", "DataFrame"): {"columns", "shape"}, ("pandas", "Series"): {"iloc"}}
 
 # Builtin kinds' methods listed whatever the count: str.endswith, startswith's mirror, refused alone in 7 cells of the
-# bench corpus's replay (2026-11-24, repl-specs); no cell of the corpus counted here calls it.
+# bench corpus's replay (2026-11-24, repl-specs); no cell of the corpus counted here calls it. The runs (hash prefix,
+# cell index under replay.mjs --all-cells): sweep corpus 15d5afdd36a9:2, aa8c46293e88:5, 4370d572c30d:3; sweep corpus-a
+# (its corpus.jsonl) f4c1ff9f7948:0, d3724e15a2c4:0, e74b2094137b:0, 0301db82ec50:0.
 # tests/python-dialect-str-kind.test.mjs holds every public method of the core's str as listed or refused with a reason.
 BUILTIN_LISTED = {"str": {"endswith"}}
 
@@ -512,7 +514,11 @@ md("""
 `data/whitelist.json`: the node set (`STARLARK`, the one ratchet), what stays excluded and why with the share of cells
 each costs, the modules and builtins the first allow lists start from, and the methods on builtin types cells call.
 Builtins are proposed when observed in at least `MIN_CELLS` cells and not in `REFUSED_BUILTINS`; a builtin kind's
-methods likewise, plus `BUILTIN_LISTED`.
+methods likewise. A method is listed by hand in `BUILTIN_LISTED`, whatever the count, only when it is read-only, takes
+the arguments a listed method takes, and a replay found cells refused for it alone: `str.endswith` is `startswith`'s
+mirror, in no counted cell and refused alone in 7 bench cells that move-run's replay (`cell-replay/replay.mjs
+--all-cells`, on #2154's os subset, 2026-11-24) found in the git-ignored sweeps `corpus` (3) and `corpus-a` (4); the
+runs are named in the comment above `BUILTIN_LISTED`.
 """)
 
 code("""
