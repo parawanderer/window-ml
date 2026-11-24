@@ -56,14 +56,15 @@ export interface AttachDeps {
 
 /**
  * Where a worker-built run's cells open an attached file, `/files/attached/<handle>/<name>` (ranged-reader.ts), or
- * undefined when that text would not open it as written: a name holding `/`, which the mount reads as a folder, or one
+ * undefined when that text would not open it as written: a name holding `/`, which the mount reads as a folder, a name
+ * that is `.` or `..`, which the mount refuses as a segment, or one
  * the turn's scrub changes, since the framed task is scrubbed whole and the mount lists the stored name. The model then
  * lists the folder.
  * @param p the file's pointer, its id the handle
  * @param scrub the turn's scrub, if any
  */
 export function openablePath(p: Pick<FilePointer, "id" | "name">, scrub?: Pick<TurnScrub, "again">): string | undefined {
-    if (p.name.includes("/")) return undefined;
+    if (p.name.includes("/") || p.name === "." || p.name === "..") return undefined;
     const path = `/files/attached/${p.id}/${p.name}`;
     return !scrub || scrub.again(path) === path ? path : undefined;
 }
