@@ -703,6 +703,45 @@ reach it through the factory's closure, so a JsProxy there would be one in the n
 harness's references captured before any cell ran, never the importable `json`/`base64`, which a cell may patch.
 Tested under real CPython against a fake transport: `tests/ml-facade.test.mjs`.
 
+## The outside mark (`py-mark.ts`)
+
+Once a worker has been posted a cell outside the read-only dialect, no later cell in it is tried inside
+(PYTHON_DIALECT.md, "What an inside run may leave behind is data, never code", layer 3). An approved cell can plant code
+that the gate's lifted calls run ungated, and `tests/python-outside-plant.test.mjs` shows two such shapes.
+
+- **Where it lives.** `outsideMarks`, a `WeakMap<Worker, { told }>` in the offscreen document (state
+  `python.outside-mark`). It is never in the worker and never in Python, since approved code reaches both. A fresh
+  Worker object is unmarked, so a reap, a kill or a restart clears it with no code of its own.
+- **When it is set.** `ensureWorker` wraps the new Worker's `postMessage`. Every post to a Python worker, from
+  `offscreen.ts` or `files-host.ts`, is classified by `postMarks` BEFORE it is sent, so an inside post that races a
+  running outside cell is already refused. The cell's result carries `markSet` (the document's field, written over
+  whatever the worker sent), and the service worker writes the run log's `python/outside-mark` record from it.
+- **What it does.** `runInWorker` answers an inside post to a marked worker itself, with `{ ok: false, notInDialect:
+  MARKED_FIRST | MARKED_AGAIN, marked: true }`, and never sends it. That covers the readiness probe and an inside run's
+  libraries. `pythonDialectReady` does not cache a `marked` answer: its cache spans every run of the service worker, and
+  one marked run must not make the others ask. `pythonOutsideWhy` turns the refusal into the card's line (cause
+  `sandbox-marked`) and gives the model its sentence on `MARKED_FIRST` only, once per worker.
+- **Which posts mark: an enumeration, not an exclusion** (`WORKER_POSTS`). A kind the table does not know marks, and so
+  does a field outside `KNOWN_FIELDS`. The classifier mirrors the worker's dispatch order and its exact conditions:
+  an answer needs a numeric `seq`, and a buffer returns early only with no `id`, so a message the worker would run is
+  never classified as harmless. `tests/python-outside-mark.test.mjs` holds the table to the fields `onMessage` reads.
+
+| Kind (dispatch order) | What it is | Runs cell-supplied code ungated |
+| --- | --- | --- |
+| `mlAnswer` | an `ml` wire call's answer | no |
+| `interruptBuffer` | the interrupt buffer, once, at birth | no |
+| `filesShared` | the `/files` mount's buffers, once, at birth | no |
+| `takeDropped` | the idle reap's hand-over | no |
+| `deleteRun` | drop a run's kept namespace | no |
+| `prewarm` | start the runtime early | no |
+| `env` | the harness reads the interpreter | no |
+| `complete` | the editor's completion (jedi), which may import what the source names | yes (marks) |
+| `library` | a tier 3 library's shape or load, person-approved, shape-checked | no |
+| `benchReset` | drop the bench's kept namespace | no |
+| `inside` | a cell inside the dialect, run by the fork's gate | no (and refused when marked) |
+| `run` | a cell outside the dialect: approved, the bench's, a page's, an install candidate's | yes (marks) |
+| anything else | a kind or field the table does not know | yes (marks) |
+
 ## Installing a package (`python_install`, slices 2 to 4b of docs/plan/repl/PACKAGES_INSTALL.md)
 
 Offered to a run the worker builds (`OFFER_PYTHON_INSTALL`, `sw-run-start.ts`). An install belongs to that run: its
@@ -827,6 +866,8 @@ alone.
 - **A worker-hosted run keeps one namespace across its cells; every other call is stateless** (a page's `ml.pythonExec`, a page-hosted agent).
 - **Every cell runs hardened; membership in the dialect, decided by running it, is what skips the card.** There is no
   `mode`: a cell outside the dialect asks, whatever it does.
+- **After a cell runs outside the dialect in a worker, no later cell there is tried inside** (the outside mark): each
+  asks until the worker is replaced. A new message to a Python worker marks unless `WORKER_POSTS` says it runs no cell code.
 - **The lock is not what ships.** `pyodide-lock.json` names 354 packages; the extension ships the 25 of the start-up
   set's closure (`pkg-shipped.gen.ts`). Anything that treats a lock entry as present on disk is wrong for the other 329.
 - **A Python callable a cell gave JavaScript is REVOKED at the cell's cancel, never destroyed** (`cell-gate.ts`): a

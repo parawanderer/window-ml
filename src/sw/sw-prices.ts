@@ -167,28 +167,38 @@ export async function pricesReady(setting: unknown): Promise<PriceRef | null> {
     return current?.ref ?? null;
 }
 
+/** The electricity settings a call's price is read from. */
+type ElectricityConfig = { electricityPerKwh?: unknown; electricityCurrency?: unknown; electricityOffPeakPerKwh?: unknown; electricityOffPeakHours?: unknown; electricityOffPeakWeekends?: unknown };
+
 /**
  * What a model call records for spend: the price snapshot (when the service is set) and the electricity price (when
  * one is set). Never rejects: a call does not fail over its bookkeeping.
  * @param config the two settings it reads
  */
-export async function spendForCall(config: { priceSnapshotUrl?: unknown; electricityPerKwh?: unknown; electricityCurrency?: unknown; electricityOffPeakPerKwh?: unknown; electricityOffPeakHours?: unknown; electricityOffPeakWeekends?: unknown }, now: Date = new Date()): Promise<Pick<TokenUsage, "prices" | "electricity">> {
+export async function spendForCall(config: { priceSnapshotUrl?: unknown } & ElectricityConfig, now: Date = new Date()): Promise<Pick<TokenUsage, "prices" | "electricity">> {
     const out: Pick<TokenUsage, "prices" | "electricity"> = {};
     const prices = await pricesForCall(config.priceSnapshotUrl).catch(() => null);
     if (prices) out.prices = prices;
-    const perKwh = Number(config.electricityPerKwh);
-    if (Number.isFinite(perKwh) && perKwh > 0) {
-        const currency = String(config.electricityCurrency || "").trim().toUpperCase();
-        const offPeak = Number(config.electricityOffPeakPerKwh);
-        if (Number.isFinite(offPeak) && offPeak > 0) {
-            const offPeakHours = String(config.electricityOffPeakHours ?? ""), offPeakWeekends = config.electricityOffPeakWeekends !== false;
-            const off = isOffPeak(now, offPeakHours, offPeakWeekends);
-            const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { return ""; } })();
-            out.electricity = { perKwh: off ? offPeak : perKwh, currency, rate: off ? "off-peak" : "normal",
-                tariff: { normalPerKwh: perKwh, offPeakPerKwh: offPeak, offPeakHours, offPeakWeekends, tz } };
-        } else out.electricity = { perKwh, currency };
-    }
+    const electricity = electricityForCall(config, now);
+    if (electricity) out.electricity = electricity;
     return out;
+}
+
+/** The electricity price a call runs under, or null when none is set: the rate in effect at `now`, and for a two-rate
+ *  tariff the whole tariff. */
+export function electricityForCall(config: ElectricityConfig, now: Date = new Date()): NonNullable<TokenUsage["electricity"]> | null {
+    const perKwh = Number(config.electricityPerKwh);
+    if (!(Number.isFinite(perKwh) && perKwh > 0)) return null;
+    const currency = String(config.electricityCurrency || "").trim().toUpperCase();
+    const offPeak = Number(config.electricityOffPeakPerKwh);
+    if (Number.isFinite(offPeak) && offPeak > 0) {
+        const offPeakHours = String(config.electricityOffPeakHours ?? ""), offPeakWeekends = config.electricityOffPeakWeekends !== false;
+        const off = isOffPeak(now, offPeakHours, offPeakWeekends);
+        const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { return ""; } })();
+        return { perKwh: off ? offPeak : perKwh, currency, rate: off ? "off-peak" : "normal",
+            tariff: { normalPerKwh: perKwh, offPeakPerKwh: offPeak, offPeakHours, offPeakWeekends, tz } };
+    }
+    return { perKwh, currency };
 }
 
 /**
