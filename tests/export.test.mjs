@@ -348,3 +348,14 @@ test("control: a whole table says nothing about a prefix", () => {
         steps: [{ step: 1, seq: 1, tool: "python_exec", arguments: { code: "df" }, result: "a frame", renderOut: { type: "python-out", df: { columns: ["a"], rows: [[1], [2]], rowCount: 2 } } }] };
     assert.doesNotMatch(serializeSession(s).md, /the first \d+ of/);
 });
+
+// --- a step stored before every approval recorded its tool time ---
+test("UPGRADE: a stored step with no toolMs exports without a durationMs, and one with it carries the number", async () => {
+    const { sessionToJson } = await import("../src/sidebar/export/export-json.ts");
+    const base = { step: 1, seq: 1, ts: 1000, tool: "exec", arguments: { js: "x" }, result: "0", approval: "readonly" };
+    const s = { hash: "abc", kind: "agent", model: "m", tag: "session", createdTs: 1, lastTs: 2, status: "ok", turns: [], task: "t",
+        steps: [base, { ...base, step: 2, seq: 2, toolMs: 7 }], answers: [] };
+    const steps = sessionToJson(s).session.steps;
+    assert.equal("durationMs" in steps[0], false, "an old step has no duration, and nothing throws");
+    assert.equal(steps[1].durationMs, 7);
+});
