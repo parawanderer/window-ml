@@ -66,6 +66,7 @@ DIR_LISTING_STEPS = const("src/python/python-dialect-run.ts", "DIR_LISTING_STEPS
 FILE_BYTES_PER_STEP = const("src/python/python-dialect-run.ts", "FILE_BYTES_PER_STEP")
 FILE_READ_STEPS_SHIPPED = const("src/python/python-dialect-run.ts", "FILE_READ_STEPS")
 DIR_PAGE = const("src/python/files-mount.ts", "DIR_PAGE")
+DIR_FIRST_PAGE = const("src/python/files-mount.ts", "DIR_FIRST_PAGE")
 BUDGET = step_rate["default_budget"]
 listing_steps = lambda n, d=DIR_ENTRY_STEPS, l=DIR_LISTING_STEPS: l + n * d   # listingSteps in python-dialect-run.ts
 print(f"DIR_LISTING_STEPS={DIR_LISTING_STEPS}  DIR_ENTRY_STEPS={DIR_ENTRY_STEPS}  FILE_READ_STEPS={FILE_READ_STEPS_SHIPPED}  "
@@ -193,7 +194,7 @@ md("""
 ## 4. The `/files` overcharge: arithmetic only
 
 The `/files` mount charges before it asks for a page, and cannot know the count first, so every page request costs
-`listingSteps(DIR_PAGE)` steps however many names came back (the fork cannot credit a short page). The corpus
+`listingSteps(DIR_FIRST_PAGE)` for the first page and `listingSteps(DIR_PAGE)` for each later one, however many names came back (the fork cannot credit a short page). The corpus
 figures are given constants, not measured here: source "bench corpus replay, 2026-11-24, aggregate counts" (counts only,
 no cell text; the repo is public).
 """)
@@ -202,12 +203,14 @@ code("""
 PAGE_STEPS = listing_steps(DIR_PAGE)
 CORPUS_LARGEST_DIR, CORPUS_ALL_LISTED = 147, 1749   # bench corpus replay, 2026-11-24, aggregate counts
 print(f"one page request: {DIR_LISTING_STEPS} + {DIR_PAGE} x {DIR_ENTRY_STEPS} = {PAGE_STEPS:,} steps = {PAGE_STEPS * NS_STEP * 1e-6:.2f} ms strict, {PAGE_STEPS * NS_STEP_TYPICAL * 1e-6:.2f} ms typical")
-print(f"page requests in one DEFAULT_BUDGET ({BUDGET:,}): {BUDGET / PAGE_STEPS:,.0f}")
+FIRST_STEPS = listing_steps(DIR_FIRST_PAGE)
+print(f"a directory of up to {DIR_FIRST_PAGE} names (one first page): {FIRST_STEPS:,} steps; {BUDGET / FIRST_STEPS:,.0f} such directories in one DEFAULT_BUDGET")
+print(f"each later page request: {BUDGET / PAGE_STEPS:,.0f} in one DEFAULT_BUDGET ({BUDGET:,})")
 pd.DataFrame([
     {"listing": "largest MEMFS dir in the corpus", "names": CORPUS_LARGEST_DIR, "charged by count": listing_steps(CORPUS_LARGEST_DIR),
-     "charged as one page": PAGE_STEPS, "overcharge x": PAGE_STEPS / listing_steps(CORPUS_LARGEST_DIR)},
+     "charged by the mount's pages": FIRST_STEPS + PAGE_STEPS, "overcharge x": (FIRST_STEPS + PAGE_STEPS) / listing_steps(CORPUS_LARGEST_DIR)},
     {"listing": "all listings together (1 page each at best)", "names": CORPUS_ALL_LISTED, "charged by count (names only)": CORPUS_ALL_LISTED * DIR_ENTRY_STEPS,
-     "charged as one page": np.nan, "overcharge x": np.nan},
+     "charged by the mount's pages": np.nan, "overcharge x": np.nan},
 ]).set_index("listing")
 """)
 
@@ -323,7 +326,7 @@ rows = [
     ("ns per step (strict, pass_loop)", f"{NS_STEP:.1f}"),
     ("listing: DIR_LISTING_STEPS + N x DIR_ENTRY_STEPS", f"{DIR_LISTING_STEPS} + N x {DIR_ENTRY_STEPS}: tightest margin {lm.min():.2f}x strict ({lw.call}, N={int(lw.n)}); {'HOLDS' if lm.min() >= 1 else 'DOES NOT HOLD'} at every measured N"),
     ("read: FILE_READ_STEPS + ceil(size / FILE_BYTES_PER_STEP)", f"{FILE_READ_STEPS_SHIPPED} + ceil(size / {FILE_BYTES_PER_STEP}): tightest margin {rm.min():.2f}x strict ({rw.call}, {int(rw['size'])} bytes); {'HOLDS' if rm.min() >= 1 else 'DOES NOT HOLD'} at every measured size"),
-    ("a /files page: listingSteps(DIR_PAGE)", f"{PAGE_STEPS:,} steps a page, {BUDGET / PAGE_STEPS:,.0f} pages per DEFAULT_BUDGET"),
+    ("a /files directory: listingSteps(DIR_FIRST_PAGE), then listingSteps(DIR_PAGE) a page", f"{FIRST_STEPS:,} steps for up to {DIR_FIRST_PAGE} names ({BUDGET / FIRST_STEPS:,.0f} per DEFAULT_BUDGET), {PAGE_STEPS:,} each later page"),
 ]
 pd.DataFrame(rows, columns=["constant", "result"]).set_index("constant")
 """)

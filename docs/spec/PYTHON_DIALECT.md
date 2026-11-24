@@ -390,14 +390,18 @@ core's own `os` against it). A hidden file under `/files` stays listed, and read
 
 - **Cost.** A listing is charged before it is built, in the file system's readdir, which every listing reaches (glob,
   `os.walk` and `Path.iterdir` list from inside a lifted call): `DIR_LISTING_STEPS` (512) a listing plus
-  `DIR_ENTRY_STEPS` (128) a name, from a MEMFS directory's own count, and a whole page of `DIR_PAGE` (500) names
-  before each page the `/files` mount asks for. The figures are set on the strict basis, the cheapest step's time, as
-  the regex charge is: `Path.iterdir` takes about 89 steps' time a name. The fork cannot credit, so a short page keeps
-  its full charge: 64,512 steps a request, about 230 directory pages in a 15M budget. A read (`Path.read_text`,
-  `read_bytes`) is charged `512 + ceil(size / 2)` before it reads, and only a regular file is read. The figures and the overcharge's effect: `notebooks/python-dialect/os-cost.ipynb`.
+  `DIR_ENTRY_STEPS` (128) a name, from a MEMFS directory's own count, and a whole page of names
+  before each page the `/files` mount asks for: `DIR_FIRST_PAGE` (50) first, then `DIR_PAGE` (500). The figures are set
+  on the strict basis, the cheapest step's time, as the regex charge is: `Path.iterdir` takes about 89 steps' time a
+  name. The fork cannot credit, so a short page keeps its full charge: a `/files` directory of up to 50 names costs
+  6,912 steps (about 2,170 directories in a 15M budget), and each further page 64,512. A read (`Path.read_text`,
+  `read_bytes`) is charged `512 + ceil(size / 2)` before it reads, and only a regular file is read. The figures and
+  the overcharge's effect: `notebooks/python-dialect/os-cost.ipynb`.
 - **State outside the namespace.** The working directory and the environment are put back when the cell is refused, so
-  an approved rerun starts from what was there; a finished cell keeps what it changed. A fresh interpreter's
-  environment is exactly `PYTHON_ENV` (`python-env.ts`).
+  an approved rerun starts from what was there; a finished cell keeps what it changed, and a later inside cell reads
+  it. Changing them does not set the outside mark: only a post that runs cell code ungated marks the worker
+  (`WORKER_POSTS`, `py-mark.ts`), and an inside cell runs under the gate. A fresh interpreter's environment is exactly
+  `PYTHON_ENV` (`python-env.ts`).
 - **What the fork leaves asking, each for its own reason:** builtin `open` (a dropped file is finalized under the gate;
   a kept one is not data; `with` is not in the node list); `Path.glob`/`rglob` (each maps a `Path` method that sets an
   attribute, from C, under the gate; `glob.glob` reads the same names); `os.environ[k] = v` and `del os.environ[k]`

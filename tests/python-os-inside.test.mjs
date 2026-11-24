@@ -13,7 +13,7 @@ import { wrapUserSetup, wrapUserScript } from "../src/python/python-runtime.ts";
 import { dialectSetup, DIALECT_OS_READS, DIR_ENTRY_STEPS, FILE_BYTES_PER_STEP, FILE_READ_STEPS, listingSteps } from "../src/python/python-dialect-run.ts";
 import { pyodideLoadOptions, PYTHON_ENV, pinEnvironment } from "../src/python/python-env.ts";
 import { restrictedCharge, chargeMemfsListings } from "../src/python/listing-charge.ts";
-import { makeFilesMount, DIR_PAGE, FILES_AT } from "../src/python/files-mount.ts";
+import { makeFilesMount, DIR_PAGE, DIR_FIRST_PAGE, FILES_AT } from "../src/python/files-mount.ts";
 import { DIR_PAGE_MAX } from "../src/session/ranged-reader.ts";
 
 const PYODIDE_DIR = path.resolve(import.meta.dirname, "../dist/pyodide");
@@ -331,7 +331,7 @@ test("the page the mount asks for is the reader's own page cap, so the charge is
     assert.strictEqual(DIR_PAGE, DIR_PAGE_MAX);
 });
 
-test("a /files listing inside is charged a full page before it is asked for; with the hook unset, nothing is", { timeout: 60000 }, async (t) => {
+test("a /files listing inside is charged its first page before it is asked for; with the hook unset, nothing is", { timeout: 60000 }, async (t) => {
     if (skip) return t.skip(skip);
     const entries = ["a.csv", "b.csv", "c.csv"].map((name) => ({ name, kind: "file", size: 1, mtimeMs: 0, hidden: false, readonly: true }));
     const call = (op) => {
@@ -351,7 +351,8 @@ test("a /files listing inside is charged a full page before it is asked for; wit
     const unset = steps(undefined);
     const set = steps((names) => charge(listingSteps(names)));
     assert.ok(unset < DIR_ENTRY_STEPS * 3, `unset, three names cost ${unset} steps`);
-    assert.ok(set - unset >= listingSteps(DIR_PAGE), `a page of ${DIR_PAGE} is charged whatever it holds: ${set - unset} more`);
+    assert.ok(set - unset >= listingSteps(DIR_FIRST_PAGE), `a first page of ${DIR_FIRST_PAGE} is charged whatever it holds: ${set - unset} more`);
+    assert.ok(set - unset < listingSteps(DIR_PAGE), `a three-name directory paid for a full page: ${set - unset} more`);
 });
 
 test("a charge refused on a later page fails the listing with EIO and caches nothing, so the next listing asks again", { timeout: 60000 }, async (t) => {
@@ -364,11 +365,13 @@ test("a charge refused on a later page fails the listing with EIO and caches not
         throw new Error("not served: " + op);
     };
     let charges = 0, refuseSecond = true;
-    const chargeListing = () => !(refuseSecond && ++charges === 2);
+    const limits = [];
+    const chargeListing = (n) => { limits.push(n); return !(refuseSecond && ++charges === 2); };
     makeFilesMount({ FS: py.FS, ERRNO_CODES: py.ERRNO_CODES, call, data: new Uint8Array(16), Interrupted: class extends Error {}, chargeListing }).remount();
     try {
         assert.throws(() => py.FS.readdir(FILES_AT), (e) => e.errno === py.ERRNO_CODES.EIO);
         assert.strictEqual(asked, 1, "the second page is never asked for");
+        assert.deepStrictEqual(limits, [DIR_FIRST_PAGE, DIR_PAGE], "a short first page, then full ones");
         assert.strictEqual(py.FS.lookupPath(FILES_AT).node.kids ?? null, null, "no half-filled list is cached");
         refuseSecond = false;
         assert.deepStrictEqual(py.FS.readdir(FILES_AT).filter((n) => !n.startsWith(".")), ["a.csv", "b.csv"]);

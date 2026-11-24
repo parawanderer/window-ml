@@ -11,7 +11,7 @@ import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import { PY_PACKAGE_LOADS } from "../src/python/python-env.ts";
 import { allocFilesShared } from "../src/python/files-wire.ts";
-import { DIR_PAGE } from "../src/python/files-mount.ts";
+import { DIR_PAGE, DIR_FIRST_PAGE } from "../src/python/files-mount.ts";
 import { listingSteps } from "../src/python/python-dialect-run.ts";
 
 const DIST = path.resolve(import.meta.dirname, "../dist");
@@ -207,7 +207,8 @@ test("inside, a /files listing is charged a full page before each request, by th
     assert.equal(r.notInDialect, undefined, r.notInDialect);
     // The steps that run used, read by the next cell (`_restricted.steps()` is the last finished run's).
     const used = Number(await ok("import _restricted\nprint(_restricted.steps())"));
-    assert.ok(used >= listingSteps(DIR_PAGE), `two names in /files cost ${used} steps, not a page of ${DIR_PAGE}`);
+    assert.ok(used >= listingSteps(DIR_FIRST_PAGE), `two names in /files cost ${used} steps, not a first page of ${DIR_FIRST_PAGE}`);
+    assert.ok(used < listingSteps(DIR_PAGE), `two names in /files cost ${used} steps, a full page of ${DIR_PAGE}`);
 });
 
 // --- reads are ranged: a seek reads its chunk, never the file ---
