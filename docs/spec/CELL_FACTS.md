@@ -1,6 +1,6 @@
 # Cell facts: what a cell did, recorded, and what a cell is for, classified offline
 
-**Status: ruled, not built.** RULED 2026-11-24 (Shane, ruling 111, in the coordinator's session): both halves are
+**Status: ruled; Half 2 built, Half 1 not.** RULED 2026-11-24 (Shane, ruling 111, in the coordinator's session): both halves are
 wanted, "not shown to the model, but kept for our own reference and e.g. exposed in the JSON export". A cell is one
 `exec` or `python_exec` call of a run. Owners: the recorded facts are the async lane's, for both languages; the
 classifier is the bench lane's.
@@ -69,6 +69,9 @@ lifted calls are computed or thrown and then dropped; no wire-call count exists.
   recorder runs outside the cell's realm).
 
 ## Half 2: the offline classifier
+
+**Built** (taxonomy 1): [notebooks/cell-labels/](../../notebooks/cell-labels/README.md), first used in
+`cell-labels-baseline.ipynb`.
 
 One tool, one taxonomy for both languages, reading the JSON export and writing a table beside it. It lives with the
 bench's notebooks (`docs/dev/notebooks.md`) and nothing under `src/` imports it (a test asserts this).
