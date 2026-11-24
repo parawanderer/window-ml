@@ -2194,12 +2194,16 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     wide.** `SETTING_ENUMERATE_MAX` goes from 2048 to 256, on #2107, and the pairing is not changed. The async lane's
     `closedRunGraceMin` (an integer, 0 to 1440) was the first range wider than 60 the measure tried whole, and the
     janitor's review of #2107 found the cost: each value a rule names is paired with every `to` tried, so a rule
-    naming 40 numbers (120 values with their neighbours) made 120 x 1,441 pairs, 1.4M to 2.8M steps at 8 to 16 a pair,
-    against the measure's 1M (`SETTING_MEASURE_STEPS`), and the proposal was refused as too costly. At 256 the same
-    rule costs 0.25M to 0.5M. A wider range is sampled: both ends, the default, four random values, and each number
-    the rule names with its neighbours. The card does not change, since such a key already reads as sampled for its
-    `from`. What is lost, on that key only: a `to` condition whose boundary the rule does not name can read "none".
-    Not decided, recorded: named values are never paired with each other, so a rule fixing `from` and a `to` window
+    naming 40 numbers (120 values with their neighbours) made 120 x 1,441 pairs against the measure's 1M steps
+    (`SETTING_MEASURE_STEPS`), and the proposal was refused as too costly. The cap bounds the pairs, not the steps: a
+    rule's steps an evaluation grow with its length (about 80 for 40 numbers, not the 8 to 16 the coordinator first
+    assumed), so the cost is quadratic in the numbers named. Measured by the async lane on #2107: the 40-number rule
+    spends 816,478 steps on the 60-wide key and 498,946 on the sampled one. So 256 is not a width the budget
+    guarantees; no key is 61 to 256 wide, and a row over every bounded integer key fails for the first one that would
+    exhaust the budget. A wider range is sampled: both ends, the default, four random values, and each number the rule
+    names with its neighbours. The card does not change, since such a key already reads as sampled for its `from`.
+    What is lost, on that key only: a `to` condition whose boundary the rule does not name can read "none". Not
+    decided, recorded: named values are never paired with each other, so a rule fixing `from` and a `to` window
     between unnamed ends is missed on every sampled number key; pairing them when a rule names few is a later question
     for Shane. The same day, the coordinator's calls: main's two red rows could not be repaired apart (#2140 and #2146
     were each red on the other's row), so #2146 carries both and #2140 is closed after it; #2124 merged (964e2745).
