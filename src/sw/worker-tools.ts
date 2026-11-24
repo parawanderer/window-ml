@@ -383,7 +383,7 @@ export interface TableReadDeps {
 type Cell = string | number | boolean | null;
 
 /** The longest source string `ml.table` reads: a CSS selector or a URL, never a document. */
-const TABLE_SRC_MAX = 4096;
+export const TABLE_SRC_MAX = 4096;
 
 /**
  * One `ml.table(src)` read for a run the worker built, judged exactly as a `tables` source was (ML_TABLE.md, ruling 70):
@@ -448,9 +448,10 @@ export async function workerTableRead(ctx: Pick<RunCtx, "tabId" | "tabUrl" | "ca
     const csvUrl = /^https?:\/\//i.test(url) ? googleSheetCsvUrl(url) : null;
     if (csvUrl) {
         const id = googleSheetId(url);
-        const tabUrl = ctx.tabUrl();
-        const trusted = (await senderTrust({ tab: { id: ctx.tabId, url: tabUrl } as chrome.tabs.Tab, url: tabUrl })) !== "untrusted";
-        if (!trusted && !(id && ctx.pyCall?.sheets.has(id))) {
+        // A Sheet is read with the person's login, so the call must have been approved for it: the gate approves the
+        // ones the code names as literals (dom.ts externalSheetIds), and any other asks here, on a trusted page too, since
+        // a source the code COMPUTES is seen by no gate. The page's own Sheet (`current` on a Sheet's tab) is the page.
+        if (!sheetPage && !(id && ctx.pyCall?.sheets.has(id))) {
             await deps.sheet(id ?? url, url);
             if (id) { ctx.pyCall?.sheets.add(id); ctx.pyCall?.approveSheet?.(id); }
         }

@@ -161,7 +161,7 @@ function workerTimers() {
 // lets a test declare contextMenus, which GET_INVOCATION reads as "the right-click entry exists".
 // `holdPolicies` is a promise the policy store's first storage read waits on.
 // `holdRestore` is a promise the worker's read of ALL of local storage (its run restore) waits on.
-function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, onPdfRead, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, siteAgents = "always", userScripts, onTabsGet, holdRestore, onNative, dialectInside, pyInside, holdPolicies, onPyDelete, extensionTabs = [], onPyInstallTest, onFsCall }) {
+function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, onPdfRead, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, siteAgents = "always", userScripts, onTabsGet, holdRestore, onNative, dialectInside, pyInside, holdPolicies, onPyDelete, extensionTabs = [], onPyInstallTest, onFsCall, playTables = false }) {
     const calls = [];
     // chrome.runtime.connectNative: each host name asked for, in order. With `onNative(name, end)`, the test plays the
     // native host: `end.send(msg)` delivers a message to the worker's port, `end.close(why)` disconnects it, and the
@@ -414,7 +414,12 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 sendMessage: async (msg) => {
                     runtimeSent.push(msg);
                     if (msg?.type === "PY_RUN" && msg.inside) { pyInsideRuns.push(msg); return pyInside ? pyInside(msg) : { ok: false, stdout: "", notInDialect: "this Pyodide build has no membership predicate (the stock core, not the restricted-mode fork)" }; }
-                    if (msg?.type === "PY_RUN") { pyRuns.push(msg); return onPyRun ? onPyRun(msg) : { ok: true, value: null, stdout: "" }; }
+                    if (msg?.type === "PY_RUN") {
+                        pyRuns.push(msg);
+                        // `playTables`: the cell makes its `ml.table("…")` reads first, as the real one does over the wire.
+                        if (playTables && msg.wire) msg.read = await playTableReads(msg);
+                        return onPyRun ? onPyRun(msg) : { ok: true, value: null, stdout: "" };
+                    }
                     if (msg?.type === "PY_DELETE_RUN") { pyDeletes.push(msg); return onPyDelete ? onPyDelete(msg) : { ok: true }; }
                     // python_install's candidate: `onPyInstallTest(msg)` answers for it; by default the import passes.
                     if (msg?.type === "PY_INSTALL_TEST") { pyInstallTests.push(msg); return onPyInstallTest ? onPyInstallTest(msg) : { ok: true }; }
@@ -542,6 +547,23 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         }
     };
     vm.createContext(context);
+    /**
+     * A cell's `ml.table` reads, played as the real cell makes them: each `ml.table("<literal>")` in its code, in order,
+     * one wire call from the offscreen document (sw-ml-table.ts), stopping at the first error as a raised MlError does.
+     * A test-only scan (no options, plain quotes and raw strings); the real one is src/python/table-literals.ts.
+     */
+    let readSeq = 0;
+    async function playTableReads(msg) {
+        const read = [];
+        const wire = JSON.parse(JSON.stringify(msg.wire));
+        for (const m of String(msg.code ?? "").matchAll(/ml\.table\(\s*[rR]?(["'])((?:(?!\1)[^\\\n])*)\1/g)) {
+            const req = { type: "ML_CALL", client: wire.client, run: wire.run ?? null, seq: ++readSeq, call: "table", args: [m[2]] };
+            const a = await new Promise((resolve) => listeners[0](req, { id: "test", url: "chrome-extension://test/offscreen.html", origin: "chrome-extension://test" }, resolve));
+            read.push({ src: m[2], ...JSON.parse(JSON.stringify(a ?? {})) });
+            if (a?.error) break;
+        }
+        return read;
+    }
     // `dialectInside`: a substring that marks a python_exec cell as INSIDE the read-only dialect. The built worker has no
     // real membership predicate yet (agent/python-dialect.ts), and a bundle in a vm cannot reach the source module's test
     // seam, so the default verdict is replaced in the bundle's text.

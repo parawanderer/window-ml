@@ -81,3 +81,17 @@ test("non-string input is no code", () => {
     assert.deepEqual(tableLiterals(undefined), []);
     assert.deepEqual(tableLiterals(null), []);
 });
+
+// --- what a failed cell is told after it read a table ---
+
+test("a cell that read a table and then failed loading something is not told the table was preloaded; one with a screenshot is told img", async () => {
+    const { buildPythonTool } = await import("../src/python/python-tool.ts");
+    const { defineTool } = await import("../src/ml/ml-tool-factories.ts");
+    const run = (r) => buildPythonTool({ defineTool, _queryAll: () => [], pythonExec: async () => ({ stdout: "", ...r }), _mintToken: async () => "@pt:abcdef12" })
+        .run({ code: "df = ml.table('#t')\npd.read_csv('sales.csv')" });
+    const table = String((await run({ ok: false, error: "FileNotFoundError: sales.csv", inputTables: [{ name: "#t", columns: ["a"], rows: [[1]] }] })).content);
+    assert.match(table, /FileNotFoundError/);
+    assert.doesNotMatch(table, /ALREADY loaded|PARAMETER|#t`/);
+    const image = String((await run({ ok: false, error: "FileNotFoundError: canvas#stage", inputImage: "data:image/png;base64,AA" })).content);
+    assert.match(image, /ALREADY loaded the screenshot as `img`\/`img_np`/);
+});

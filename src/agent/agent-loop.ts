@@ -818,7 +818,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         for (const ref of refs) {
             const { value: v } = tokenStore.resolveRef(ref, opts.labelMatch);
             if (!v) { resolved[ref] = { error: memoryFault(ref, tokenStore.nearest(ref), step) }; continue; }
-            if (!v.table) { resolved[ref] = { error: `@tool:${v.id} is ${describeToken(v)}, not a table, so ml.table cannot read it as a DataFrame. Pass a pointer to a table (a fetch_url of a CSV/TSV/Parquet/Arrow file, a python_exec that returned a DataFrame), a URL fetch_url read, a CSS selector, or 'current'.` }; continue; }
+            if (!v.table) { resolved[ref] = { error: `@tool:${v.id} is ${describeToken(v)}, not a table, so ml.table cannot read it as a DataFrame. Pass a pointer to a table (a fetch_url of a CSV/TSV/Parquet/Arrow file, a python_exec that returned a DataFrame), a URL fetch_url read, or a CSS selector.` }; continue; }
             // `value` names the WHOLE table in the value store when `table` is its preview: the read takes that instead.
             // Both hosts qualify: the worker gates the read itself, on the run it hosts or on the tab it gave the key to.
             resolved[ref] = { ...v.table, pointer: `@tool:${v.id}${v.label ? ` (${JSON.stringify(v.label)})` : ""}`, ...(v.value ? { value: v.value } : {}) };

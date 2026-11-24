@@ -3560,7 +3560,7 @@ test("SECURITY (grant): an approved agent run lets THAT sheet read (untrusted pa
             if (call.url.includes("docs.google.com")) return sheetCsv();   // the FETCH_SHEET's credentialed fetch
             // The model: turn 1 → call python_exec(full) loading the sheet; turn 2 → finish.
             return (++turn === 1)
-                ? jsonResponse({ choices: [{ finish_reason: "tool_calls", message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "python_exec", arguments: JSON.stringify({ code: "df", mode: "full", tables: { df: OK_URL } }) } }] } }] })
+                ? jsonResponse({ choices: [{ finish_reason: "tool_calls", message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "python_exec", arguments: JSON.stringify({ code: `df = ml.table(${JSON.stringify(OK_URL)})\ndf`, mode: "full" }) } }] } }] })
                 : jsonResponse({ choices: [{ message: { content: "done" } }] });
         },
         onTabMessage: async (tabId, msg) => {
@@ -5070,8 +5070,8 @@ test("SECURITY (PYTHON_EXEC): a page may read a STORED table only while a run on
     const held = await seed.put(new Blob(["a\n1\n"]), { format: "csv", session: "run-elsewhere" });
     const loose = await seed.put(new Blob(["a\n1\n"]), { format: "csv" });
     // Self-approving so the cell is allowed to run at all; the property is the TABLE OWNERSHIP, on any allowed path.
-    const bg = loadBackground({ config: baseConfig(), indexedDB: idb, local: { ml_site_schema: 2, ml_site_selfapprove: ["https://evil.example"] } });
-    const table = (key) => ({ code: "return len(df)", tables: [{ name: "df", data: { kind: "value", key, label: "@tool:abc1234", columns: ["a"] } }] });
+    const bg = loadBackground({ config: baseConfig(), indexedDB: idb, playTables: true, local: { ml_site_schema: 2, ml_site_selfapprove: ["https://evil.example"] } });
+    const table = (key) => ({ code: 'df = ml.table("@tool:abc1234")\nreturn len(df)', hoisted: [{ src: "@tool:abc1234", opts: {}, answer: { source: { kind: "pointer", label: "@tool:abc1234" }, data: { kind: "value", key, label: "@tool:abc1234", columns: ["a"] } } }] });
     const page = { tab: { id: 9 }, url: "https://evil.example/attack" };
 
     for (const key of [held.key, loose.key]) {
@@ -5084,7 +5084,7 @@ test("SECURITY (PYTHON_EXEC): a page may read a STORED table only while a run on
     await bg.send({ type: "PYTHON_EXEC", payload: table("v00000000000000ff") }, page);
     // And our own surface (the bench) is trusted, as for every other PYTHON_EXEC decision.
     await bg.send({ type: "PYTHON_EXEC", payload: table(held.key) }, { tab: { id: 9 }, url: "chrome-extension://test/sidebar.html" });
-    assert.deepEqual(bg.pyRuns.filter((m) => m.type === "PY_RUN").map((m) => m.tables[0].data.key), ["v00000000000000ff", held.key]);
+    assert.deepEqual(bg.pyRuns.filter((m) => m.type === "PY_RUN").map((m) => m.read[0].value.data.key), ["v00000000000000ff", held.key]);
 });
 
 test("SECURITY (VALUE_COLUMNS): a stored table's columns are read only for a background run this worker hosts on the sender's tab", async () => {
@@ -5127,7 +5127,7 @@ test("SECURITY (page-hosted values): a tab reads a stored value the worker discl
     const mine = await seed.put(new Blob(["a\n1\n2\n"]), { format: "csv", session: "page:9" });
     const theirs = await seed.put(new Blob(["a\n7\n"]), { format: "csv", session: "page:11" });
     // Self-approving so the cell is allowed to run at all; the property is the DISCLOSURE SCOPE, on any allowed path.
-    const bg = loadBackground({ config: baseConfig(), indexedDB: idb, local: { ml_site_schema: 2, ml_site_selfapprove: ["https://shop.example"] } });
+    const bg = loadBackground({ config: baseConfig(), indexedDB: idb, playTables: true, local: { ml_site_schema: 2, ml_site_selfapprove: ["https://shop.example"] } });
     const page = { tab: { id: 9 }, url: "https://shop.example/report" };
 
     // VALUE_COLUMNS: the run id is decorative on this path — the entitlement is the tab's.
@@ -5139,11 +5139,11 @@ test("SECURITY (page-hosted values): a tab reads a stored value the worker discl
     assert.equal(no.columns, undefined);
 
     // PYTHON_EXEC takes the same entitlement.
-    const table = (key) => ({ code: "return len(df)", tables: [{ name: "df", data: { kind: "value", key, label: "@tool:abc1234", columns: ["a"] } }] });
+    const table = (key) => ({ code: 'df = ml.table("@tool:abc1234")\nreturn len(df)', hoisted: [{ src: "@tool:abc1234", opts: {}, answer: { source: { kind: "pointer", label: "@tool:abc1234" }, data: { kind: "value", key, label: "@tool:abc1234", columns: ["a"] } } }] });
     const bad = await bg.send({ type: "PYTHON_EXEC", payload: table(theirs.key) }, page);
     assert.match(bad.error, /^Refused: that stored table belongs to a run that is not running on this page\./);
     await bg.send({ type: "PYTHON_EXEC", payload: table(mine.key) }, page);
-    assert.deepEqual(bg.pyRuns.filter((m) => m.type === "PY_RUN").map((m) => m.tables[0].data.key), [mine.key], "only the disclosed one reached the sandbox");
+    assert.deepEqual(bg.pyRuns.filter((m) => m.type === "PY_RUN").map((m) => m.read[0].value.data.key), [mine.key], "only the disclosed one reached the sandbox");
 });
 
 // USER_FOCUS: chat_metadata's "user focus" line, answered relative to the SENDER's tab and always COARSE — the

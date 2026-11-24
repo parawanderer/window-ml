@@ -207,15 +207,13 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
 
                 if (!r.ok) {
                     const err = clipOut(r.error || "", PY_OUT_MAX);
-                    // Don't fight a hallucinated load pattern with docs alone — when data was PRELOADED
-                    // and the code errored trying to (re)load it (read_csv/read_html/open/requests/…),
-                    // redirect to the preloaded var. Fires on the failure, so it covers every variant
-                    // instead of enumerating them. (Observed: `pd.read_csv('current')` → FileNotFound.)
-                    const dfNames = (r.inputTables || []).map(t => `\`${t.name}\``).join("/");
-                    const loaded = [dfNames, r.inputImage ? "`img`/`img_np`" : ""].filter(Boolean).join(" and ");
-                    const looksLikeReload = /read_csv|read_html|read_excel|read_json|open\(|FileNotFoundError|No such file|ModuleNotFound|requests|urllib|urlopen|http|fetch|ConnectionError|storage_options/i.test(err);
-                    const hint = loaded && looksLikeReload
-                        ? `\n\nHint: the tool ALREADY loaded your data as ${loaded} (the table/sheet/image PARAMETER did it) — reference it directly; do not read_csv/read_html/open/fetch anything (${mintVia ? "your inputs are not files, and the sandbox has no network" : "the sandbox has no filesystem or network"}).`
+                    // Don't fight a hallucinated load pattern with docs alone — when the image was PRELOADED
+                    // and the code errored trying to (re)load it (Image.open/open/requests/…), redirect to the
+                    // preloaded var. Fires on the failure, so it covers every variant instead of enumerating them.
+                    // A table is no longer preloaded: the cell read it with ml.table into a name of its own.
+                    const looksLikeReload = /read_excel|read_json|open\(|FileNotFoundError|No such file|ModuleNotFound|requests|urllib|urlopen|http|fetch|ConnectionError|storage_options/i.test(err);
+                    const hint = r.inputImage && looksLikeReload
+                        ? `\n\nHint: the tool ALREADY loaded the screenshot as \`img\`/\`img_np\` (the image parameter did it) — reference it directly; do not open/fetch it (${mintVia ? "your inputs are not files, and the sandbox has no network" : "the sandbox has no filesystem or network"}).`
                         : "";
                     return done(`${tableNote}Python error: ${err}${hint}${stdoutClipped ? `\n\nstdout:\n${stdoutClipped}` : ""}`, { error: err });
                 }

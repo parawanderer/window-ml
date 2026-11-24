@@ -137,7 +137,7 @@ test("a live turn's events after the replace reach the restored tab, and its set
 // the tab that question goes to is the tab the worker tools hold for the run.
 
 const TABLE = { label: "table#t", data: { kind: "rows", columns: ["a"], rows: [[1]] } };
-const pyTable = { name: "python_exec", args: { code: "return 1", tables: "table#t" } };
+const pyTable = { name: "python_exec", args: { code: "df = ml.table(\"table#t\")\nreturn 1" } };
 
 /**
  * A worker-built run on tab 7 (tab 8 open beside it) whose model replies come from `script`, shifted as used. The page
@@ -147,6 +147,7 @@ const pyTable = { name: "python_exec", args: { code: "return 1", tables: "table#
  */
 async function pyRun({ script, onRead = () => {} }) {
     let bg;
+    const pyReads = [];
     bg = loadBackground({
         config: { chatUrl: "http://host/api/chat/completions", apiKey: "k", model: "m", apiFormat: "openai", debugMode: "off", autoApprovePython: true },
         openTabs: [{ id: 7, windowId: 3, active: true, url: SITE_URL, title: "Site" }, { id: 8, windowId: 3, active: false, url: "https://other.example/doc", title: "Other" }],
@@ -159,7 +160,8 @@ async function pyRun({ script, onRead = () => {} }) {
             if (!step) return jsonResponse({ choices: [{ message: { content: "done" } }] });
             return jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: `c${Math.random()}`, type: "function", function: { name: step.name, arguments: JSON.stringify(step.args) } }] } }] });
         },
-        onPyRun: async (msg) => (msg.type === "PY_RUN" ? { ok: true, value: "sandbox ran", stdout: "" } : { ok: true, prewarm: "started" }),
+        playTables: true,
+        onPyRun: async (msg) => (msg.type === "PY_RUN" ? (pyReads.push(msg.read), { ok: true, value: "sandbox ran", stdout: "" }) : { ok: true, prewarm: "started" }),
         onTabMessage: async (t, msg) => {
             if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
             if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } }, shellOn(t));
@@ -173,7 +175,7 @@ async function pyRun({ script, onRead = () => {} }) {
     const turns = () => bg.tabMessages.map((a) => a[1]).filter((m) => m?.type === "ML_DEBUG_TO_PAGE" && m.event?.kind === "agent-result" && m.event.id === hash).length;
     const reads = (tab) => bg.tabMessages.filter(([t, m]) => t === tab && m?.type === "RUN_TOOL_IN_PAGE" && m.payload?.pageRead).length;
     const results = () => (bg.calls.filter((c) => c.url.includes("/chat/completions")).at(-1)?.body.messages ?? []).filter((m) => m.role === "tool").map((m) => String(m.content));
-    return { bg, hash, turns, reads, results, script };
+    return { bg, hash, turns, reads, results, script, pyReads };
 }
 
 test("a worker-built run's python_exec after its tab is REPLACED mid-turn asks the restored tab for its table, not the removed id", T, async () => {
@@ -183,6 +185,7 @@ test("a worker-built run's python_exec after its tab is REPLACED mid-turn asks t
     assert.equal(r.reads(70), 1, "the call after the replace asked the restored tab");
     assert.equal(r.reads(7), 1, "the removed id was asked only by the call before it");
     assert.deepEqual(r.results().filter((x) => /sandbox ran/.test(x)).length, 2, "both cells ran");
+    assert.deepEqual(r.pyReads.map((x) => x.map((a) => [a.src, a.value?.data])), [[["table#t", TABLE.data]], [["table#t", TABLE.data]]], "each cell's ml.table call was answered with the page's table");
 });
 
 test("a worker-built run moved between turns asks the tab it was moved to for its table in the next turn", T, async () => {
@@ -195,6 +198,8 @@ test("a worker-built run moved between turns asks the tab it was moved to for it
     await nextTurn(r);
     assert.equal(r.reads(8), 1, "the next turn asked the tab the run was moved to");
     assert.equal(r.reads(7), 1, "and nothing more of the tab it left");
+    assert.equal(r.pyReads.length, 2, "both turns' cells ran");
+    assert.deepEqual(r.pyReads.at(-1).map((a) => [a.src, a.value?.data]), [["table#t", TABLE.data]], "the moved run's cell was answered by the tab it was moved to");
 });
 
 // --- moving a settled run to another tab: the HUD's "bring a session here" (MOVE_RUN.md, shape (a)) ---
