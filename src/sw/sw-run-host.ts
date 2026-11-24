@@ -72,7 +72,6 @@ import { claimValue, runMayClaim, valueHolders, readStoredBytes, readStoredColum
 import { isoServer, type IsoDeps } from "./iso-channel";
 import { fsCallFor } from "./sw-fs-call";
 import { shPut, shRead, shRun, takeShSpans } from "./sw-shell-call";
-import { shellTurnedOn } from "./sw-shell";
 import { focusLineFor } from "./sw-focus";
 import { delegateSend, CHANNEL_GONE } from "./delegate-send";
 import { NAV_COMMIT_MS } from "./nav-barrier";
@@ -355,7 +354,7 @@ export const GATED_TOOL_NAMES: ReadonlySet<string> = GATED_BUILTINS;
 /**
  * A page's START_RUN payload as the worker may trust it. A page's payload may ask for MORE gating, never less.
  * - Removed, the worker's to set: `builtBy`, `rebuild.builtBy`, `display`, `files` (pointers naming value-store rows), `sends`,
- *   `inputScrubbed` (a page's claim would spare a stored session's raw user turns the scrub on resume)
+ *   `inputScrubbed` (a page's claim would spare a stored session's raw user turns the scrub on resume), `shell`
  *   and `origin` (the PromptOrigin: a page could stamp its prompt as typed on an extension surface). Only the worker's own `hostRun` call
  *   (sw-run-start.ts) marks a run worker-built, and `makeWorkerRun` hands one over; a page's claim would give its run the
  *   worker's tool routing, grants, vision and answer, and lock the run as the person's.
@@ -375,7 +374,7 @@ export const GATED_TOOL_NAMES: ReadonlySet<string> = GATED_BUILTINS;
  */
 export function pageStartPayload(payload: unknown, sender: chrome.runtime.MessageSender, cfg: Pick<MlConfig, "autoApprovePython" | "autoApproveReadonly" | "autoApproveSelfSource" | "selfIntrospection">): unknown {
     if (!payload || typeof payload !== "object") return payload;
-    const { builtBy: _b, display: _d, files: _f, sends: _n, origin: _p, pageOrigin: _o, pageUrl: _u, inputScrubbed: _i, ...rest } = payload as StartRunPayload;
+    const { builtBy: _b, display: _d, files: _f, sends: _n, origin: _p, pageOrigin: _o, pageUrl: _u, inputScrubbed: _i, shell: _s, ...rest } = payload as StartRunPayload;
     // The budget RESUME_RUN honours, so a page cannot ask for an unbounded run; an invalid one is no budget, and the loop's default applies.
     const budget = stepBudget(rest.maxSteps);
     if (budget) rest.maxSteps = budget; else delete (rest as { maxSteps?: number }).maxSteps;
@@ -1784,10 +1783,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     const sh = typeof args.js === "string" && call && byWorker() && execNames(args.js).sh
                         ? surveySh({ runId, seq: seqBase + call.seq, local: call, signal: abortCtl.signal, tokens: sessionTokens(runId), origin: () => turnByRun.get(runId)?.()?.origin })
                         : undefined;
-                    // The prompt's own condition for naming `ml.sh` (a run the worker built, the shell turned on): a budget trip then names it.
-                    // FLIP TO THE FIXED FLAG: this reads the SETTINGS check only (`shellTurnedOn`), not whether the process host is present. When the
-                    // async lane's fix makes the run's `shell` flag mean host present AND setting on, read that flag here instead.
-                    const shellOffered = byWorker() && await getConfig().then(shellTurnedOn, () => false);
+                    // The prompt's own condition for naming `ml.sh` (a run the worker built, offered it at its start): a budget trip then names it.
+                    const shellOffered = byWorker() && !!p.shell;
                     const w = await guardSurvey(sh, () => evalReadonlyInWorker(args, {
                         ...(snap ? { current: () => current ?? snap({ model: modelNow(), log }) } : {}),
                         // ml.settings: a free read, only in a run the worker built (decided from its record, never the script).

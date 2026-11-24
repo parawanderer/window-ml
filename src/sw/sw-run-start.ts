@@ -157,6 +157,7 @@ async function startMinted(tabId: number, tab: chrome.tabs.Tab, url: string, ml:
         }),
         ...(recipe.display ? { display: recipe.display } : {}),
         ...(shelf.size ? { files: shelf.all() } : {}),
+        ...(shellOn ? { shell: true } : {}),
     };
     if (opts.keep) keepSession(runId);
     // The run's result reaches every surface through its own lifecycle events (`builtBy: "worker"`), so nobody

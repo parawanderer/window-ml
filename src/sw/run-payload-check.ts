@@ -93,7 +93,7 @@ const START_FIELDS: Record<string, Check> = {
     // Retired (a same-origin as-you fetch is free, docs/spec/POLICIES.md "One free tier"): still accepted, and dropped, so a
     // run persisted before the upgrade resumes.
     autoApproveSameOriginAuth: optional(bool),
-    autoApproveSelfSource: optional(bool), selfIntrospection: optional(bool), scrubInput: optional(bool), asIs: optional(listOf(RUN_PAYLOAD_LIMITS.asIs, str)), inputScrubbed: optional(bool), toolTokens: optional(bool), unattended: optional(bool), silent: optional(bool),
+    autoApproveSelfSource: optional(bool), selfIntrospection: optional(bool), scrubInput: optional(bool), asIs: optional(listOf(RUN_PAYLOAD_LIMITS.asIs, str)), inputScrubbed: optional(bool), shell: optional(bool), toolTokens: optional(bool), unattended: optional(bool), silent: optional(bool),
     resumeMessages: optional(listOf(RUN_PAYLOAD_LIMITS.resumeMessages, message)), images: optional(listOf(RUN_PAYLOAD_LIMITS.images, str)),
     stepBase: optional(count), seqBase: optional(count), forkOf: optional((v, at) => runIdError(v, at)), labelMatch: optional(oneOf(LEXICAL_METRICS)), surface: optional(oneOf(["overlay", "devtools", "off"])),
     pageOrigin: optional(str), pageUrl: optional(str), pageTitle: optional(str),

@@ -156,7 +156,7 @@ outcome (`proposalOutcome`).
 
 **A run is offered `ml.sh` when the settings turn it on AND a process host answers at the run's start** (`shellOffered`,
 sw-shell.ts, read once in sw-run-start.ts). That one check decides the prompt's shell clause and the shell figure in its
-lifetimes list, `propose_manifest`, and `task` (which `python_exec` offers too, `offersTask`). With the setting on, the
+lifetimes list, a read-only survey's budget stop naming `ml.sh` (the payload's `shell`), `propose_manifest`, and `task` (which `python_exec` offers too, `offersTask`). With the setting on, the
 start connects through `refreshShell` (a woken worker reconnects there, so it is offered the same tools) and waits at
 most 3 s for the hello; a host that has not answered by then counts as absent. The answer is fixed for the run: a host
 installed or started later offers nothing until the next run, and a host that dies mid-run leaves the tools in place,

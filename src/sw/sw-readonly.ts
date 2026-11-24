@@ -48,7 +48,7 @@ export interface WorkerReadonlyDeps {
      *  hold (`WORKER_STREAM_HOLD_MS`). On `needs-page`, `refused` and a budget trip it is taken back here, so the page's retry, or the
      *  approved run, streams from empty. */
     live?: LiveOutput;
-    /** The run is offered `ml.sh` (the prompt's shell clause: `shellTurnedOn`, and this `exec`): a budget trip names it. */
+    /** The run is offered `ml.sh` (the prompt's shell clause: the run's `shell`, set from `shellOffered` at its start): a budget trip names it. */
     shell?: boolean;
 }
 

@@ -79,3 +79,24 @@ test("a host answered earlier in this worker, its port closed idle, and a hello 
     assert.ok(r.bg.nativeConnects.length >= 2, `the start reconnected: ${r.bg.nativeConnects.length}`);
     notOffered({ system, tools });
 });
+
+// --- a read-only survey's budget stop follows the same check ---
+
+/** The text an exec that loops until its step budget runs out returns, in a run started with `configExtra` and `onNative`. */
+async function budgetStop({ configExtra, onNative }) {
+    const spin = { name: "exec", args: { js: "let i = 0; while (i >= 0) { i++ }" } };
+    const r = await runOn("readonly", [spin], { fetches: [], configExtra, ...(onNative ? { onNative } : {}) });
+    return r.results[0] ?? "";
+}
+
+test("ACCEPTANCE: a survey's budget stop with the setting on and no host does not point at ml.sh", T, async () => {
+    const out = await budgetStop({ configExtra: ON });
+    assert.match(out, /Stopped: the script used its whole step budget/);
+    assert.doesNotMatch(out, /ml\.sh/);
+});
+
+test("a survey's budget stop in a run offered ml.sh names it as the way on", T, async () => {
+    const host = fakeNativeHost({ landlockAbi: null });
+    const out = await budgetStop({ configExtra: ON, onNative: host.onNative });
+    assert.match(out, /Stopped: the script used its whole step budget.*run a script detached through ml\.sh/);
+});
