@@ -315,6 +315,8 @@ export async function runPython(payload: any, requestId: string | undefined, cal
         // Callbacks an earlier cell of this run handed to JavaScript fired after its result and ran nothing (cell-gate.ts).
         const dropped = (res as { dropped?: { count: number; afterCell: number } } | undefined)?.dropped;
         if (dropped && caller.wireRun) recordRunLog(caller.wireRun, { subsystem: "python", kind: "dropped", reason: "after-result", detail: { count: dropped.count, afterCell: dropped.afterCell } });
+        // The offscreen document marked this cell's worker before posting it (py-mark.ts): no later cell there runs inside.
+        if ((res as { markSet?: unknown } | undefined)?.markSet === true && caller.wireRun) recordRunLog(caller.wireRun, { subsystem: "python", kind: "outside-mark", reason: "outside-cell", detail: { principal } });
         if (key && caller.disclose && caller.tabId != null) claimValue(key, pageValueSession(caller.tabId));
         return { data: res };
     } catch (err) {

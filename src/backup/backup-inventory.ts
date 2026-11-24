@@ -109,6 +109,8 @@ export const INVENTORY: readonly InventoryEntry[] = [
     session("ml_setting_declined", "run-state", "the guarded settings each run's person declined, which that run does not ask again; meaningless outside the run"),
     session("ml_card_dismissed", "run-state", "the runs whose page card the person closed, so it stays closed across navigation; run hashes, meaningless in another browser"),
     session("ml_py_bridged", "run-state", "runs whose Python cell reached the browser's JavaScript, for their later cells' cards; dies with the namespace"),
+    local("ml_energy_", "run-state", "a session's local-model energy per stretch (sw-energy.ts): measured on this machine's stream, and not carried with a session to another", "never", { prefix: true }),
+    local("ml_power_seen", "cache", "which servers' event streams reported power, learned again from the next stream"),
     local("ml_policies_run", "policies", "run policies belong to one session and go with it when it is archived or restored"),
     local("ml_policies_archived", "policies", "what an archived session lost, told once"),
     local("ml_policies_lapsed", "policies", "why a call asks; text only, never an input to a decision"),
