@@ -201,8 +201,10 @@ export function pythonDialectReady(runId: string): Promise<string> {
     return pyDialectReady ??= runPython({ code: "pass" }, `wpy-${crypto.randomUUID()}`, {
         ownSurface: false, tabId: ctx.tabId, disclose: false, untrusted: async () => true, runGated: true, inside: true, wireRun: ctx.runId, tabUrl: ctx.tabUrl,
     }).then((r) => {
-        const why = (r.data as { notInDialect?: unknown } | undefined)?.notInDialect;
+        const why = (r.data as { notInDialect?: unknown; marked?: unknown } | undefined)?.notInDialect;
         if (r.error !== undefined) { pyDialectReady = null; return `the sandbox did not answer (${r.error})`; }
+        // A MARKED worker's refusal is that run's worker's, not the sandbox's: kept, it would make every run ask (py-mark.ts).
+        if ((r.data as { marked?: unknown } | undefined)?.marked === true) { pyDialectReady = null; return typeof why === "string" ? why : ""; }
         return typeof why === "string" ? why : "";
     });
 }

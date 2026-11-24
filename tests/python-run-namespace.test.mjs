@@ -310,7 +310,8 @@ test("bridges: only a literal true counts, and a full worker or an inside run is
         assert.equal("bridges" in await postedFor({ hardened: true, bridges, principal: "own" }, { id: "test" }), false, JSON.stringify(bridges));
     }
     assert.equal("bridges" in await postedFor({ hardened: false, bridges: true, principal: "full" }, { id: "test" }), false, "full mode has no refusal to lift");
-    assert.equal("bridges" in await postedFor({ hardened: true, bridges: true, inside: true, principal: "own" }, { id: "test" }), false, "an inside cell needs none");
+    // An inside cell on a worker no outside cell was posted to: a marked one is never posted an inside cell (py-mark.ts).
+    assert.equal("bridges" in await postedFor({ hardened: true, bridges: true, inside: true, principal: "run:bridges-inside" }, { id: "test" }), false, "an inside cell needs none");
     assert.equal("bridges" in await postedFor({ hardened: true, principal: "own" }, { id: "test" }), false, "positive control: no ask, none sent");
 });
 
