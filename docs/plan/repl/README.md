@@ -2300,6 +2300,40 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     strip), #2121 (2747ad2a, Python's writes under `/files/agent/`), and in window-ml-host #57 (b5cadac7, the
     describer) and #58 (e5fb12c3, `hide` and `show` in both sandboxes). SECRET_HANDLES.md's row saying a `hide`
     binds no shell program is corrected when #2155, the extension's half, merges.
+  - **Ruling 120 (Shane, 2026-11-24): the direction is two layers, and `@tool:` pointers are not legacy.** The
+    direction is two REPLs and few traditional tools. A REPL is how values are COMPUTED and combined: tools become
+    functions, and joining two of them is function composition inside one cell, where tool calling needed a round
+    trip through the context for each join. A pointer is what a cell's output IS: typed (a table, text, an image,
+    a file), addressed, and persisted with the session in the value store. Shane's statement of why the REPL does
+    not replace it: a pointer gives pass by reference, in the model's own output, on typed objects, and those
+    objects are what is stored, so the context can be worked on later; they are the output of the cell. A
+    namespace variable does none of that: it lives in worker memory and dies with the worker, only a later cell's
+    code can name it, the host does not know its type, and the context holds only what was printed. So the context
+    holds the reference and the store holds the whole, which is what lets a view be cut, held back, compacted and
+    read again. The join between the layers is two operations: a cell's result becomes a pointer, and a cell takes
+    a pointer as input. With fewer tools, more values are born in a cell, so pointers carry more, not less. No
+    lane removes or bypasses a pointer path on the ground that a REPL covers it. To check under ruling 119: the
+    dump's deferral assumes a cell can read any pointer's whole value; Python reads a table pointer (`ml.table`),
+    and whether it reads a text or image pointer whole is asked of packages. A gap there is repaired by a general
+    read of a pointer in Python, not by the dump.
+  - **The file browser is scheduled (Shane, 2026-11-24: it is needed to understand what is going on; Chat Page
+    hands the build to a Sonnet subagent).** This amends ruling 119, which left it unscheduled. Slice 1, the
+    coordinator's cut: a read-only tree over `/files/` (name, size, kind, hidden state), listed one directory at a
+    time, in the panel FILE_ATTACHMENTS.md describes; out of it are the menu commands, shell roots, `/history/`,
+    the phone's view and previews. The contract, accepted: `files.list` is a command whose ANSWER carries the page
+    (as `session.backfill`'s does), at most 500 entries and 256 KiB, and the stream carries only `files-changed`,
+    at most once per commit or attach, naming at most 16 changed directories and no entry. This amends item 5 of
+    "The file browser shows the mounts", which made the listing an event: an event is kept in history and
+    replayed, so each opened folder would have written a directory into it. It is a new message type, so e3's rows
+    land on the branch: a page-started sender, or one that does not own the session, gets no listing.
+  - **Names under `/files` (the coordinator, 2026-11-24; session-store's branch at 0c2cc780, no PR yet).** A name
+    is masked with every form the bytes are masked with, each with its marker. A folder sorts by its shown names,
+    ties by creation time and then a salted hash of the stored name. A create of a name that is a marker is
+    refused. The person's listing gets the SHOWN names too: one listing for every caller, since a panel listing
+    reaches a paired device over the hub; the human-only state inspector on the extension's own pages is the one
+    exception. Cost, stated: two files sharing a shown name look alike in the panel. Surfaced to Shane, who may
+    want the real names locally.
+  - **Merged, verified with `gh`:** #2164 (337b8cd3), this plan's ruling 119.
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
   `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks
