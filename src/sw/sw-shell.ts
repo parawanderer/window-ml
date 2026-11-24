@@ -301,9 +301,11 @@ const OFFER_WAIT_MS = 3000;
 export async function shellOffered(cfg: Pick<ShellSettings, "shellEnabled" | "shellRoots">): Promise<boolean> {
     if (!shellTurnedOn(cfg)) return false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const late = new Promise<void>((r) => { timer = setTimeout(r, OFFER_WAIT_MS); });
-    try { await Promise.race([refreshShell(), late]); } finally { clearTimeout(timer); }
-    return shellCapabilities().shellHost === true;
+    const late = new Promise<false>((r) => { timer = setTimeout(() => r(false), OFFER_WAIT_MS); });
+    // The idle close keeps the status of a host reached earlier, so only a hello answered now counts.
+    let answered: boolean;
+    try { answered = await Promise.race([refreshShell().then(() => true), late]); } finally { clearTimeout(timer); }
+    return answered && shellCapabilities().shellHost === true;
 }
 
 /**

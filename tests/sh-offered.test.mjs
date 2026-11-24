@@ -55,3 +55,27 @@ test("a host that connects and never answers its hello counts as absent once the
     const silent = (name) => (name === "com.parawanderer.window_ml_host" ? () => { /* never replies */ } : null);
     notOffered(await firstTurn({ configExtra: ON, onNative: silent }));
 });
+
+// --- a host reached earlier in the same worker ---
+
+test("a host answered earlier in this worker, its port closed idle, and a hello at the next start that never answers: not offered", T, async () => {
+    // The idle close keeps the status it measured, so only the hello at the run's start may decide.
+    const host = fakeNativeHost({ landlockAbi: null });
+    let silent = false;
+    const onNative = (name, e) => (silent && name === "com.parawanderer.window_ml_host" ? () => { /* never replies */ } : host.onNative(name, e));
+    const prepare = async (bg) => {
+        // The port's idle close, which waits SHELL_IDLE_MS (five minutes), comes at once.
+        const later = bg.context.setTimeout;
+        bg.context.setTimeout = (fn, ms, ...a) => later(fn, ms === 5 * 60_000 ? 0 : ms, ...a);
+        await bg.send({ type: "SHELL_STATUS", payload: { refresh: true } }, { id: "test", url: "chrome-extension://test/sidebar.html" });
+        for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
+        assert.ok(host.names().includes("hello"), "the host answered once");
+        silent = true;
+    };
+    const r = await runOn("userScripts", [], { fetches: [], configExtra: ON, onNative, onBg: prepare });
+    const call = r.bg.calls.find((c) => c.url.includes("/chat/completions"));
+    const system = String(call.body.messages.find((m) => m.role === "system")?.content ?? "");
+    const tools = (call.body.tools ?? []).map((t) => t.function?.name ?? t.name);
+    assert.ok(r.bg.nativeConnects.length >= 2, `the start reconnected: ${r.bg.nativeConnects.length}`);
+    notOffered({ system, tools });
+});
