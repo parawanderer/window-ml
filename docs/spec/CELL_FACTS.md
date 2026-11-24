@@ -8,8 +8,8 @@ classifier is the bench lane's.
 ## Why two things, and why only one is stored
 
 What a cell DID depends on the build, the namespace and the worker it ran in. It cannot be recovered afterwards: the
-bench recovers it today by replaying cells against a core, and 13 of 226 replayed cells did not reproduce their live
-output (the bench lane's baseline, 2026-11-23). So it is recorded when the cell runs. What a cell is FOR is a function
+bench recovers it today by replaying cells against a core, and 12 of 226 replayed cells did not reproduce their live
+output (the bench lane's baseline, 2026-11-23, replayed at #2124's aef9a8eb). So it is recorded when the cell runs. What a cell is FOR is a function
 of its source, which the export already holds. It can be computed at any time by any version of a classifier, so
 storing it would freeze one version's labels into old exports. It is computed offline and never stored.
 
@@ -79,32 +79,53 @@ bench's notebooks (`docs/dev/notebooks.md`) and nothing under `src/` imports it 
 
 - **Multi-label.** A cell that loads, filters and prints carries three labels. No label is primary.
 
-- **Versioned.** The output names `taxonomy: <n>`. Changing a rule or a label raises `n`; old exports are simply
-  classified again.
+- **Versioned, and the rules are data.** Each label's list of names lives in ONE data file beside the tool, and the
+  output names `taxonomy: <n>`. Changing a list, a rule or a label raises `n`; old exports are simply classified
+  again. The table below defines what each label MEANS and gives its leading names; the data file is the rule, and a
+  name not in it earns no label.
 
-| Label | Python, by syntax | JS, by syntax |
-| --- | --- | --- |
-| `ingest` | a call to a reader (`pd.read_*`, `open` for read, `json.load`, `ml.table`, `ml.fetch`) | `ml.table`, `ml.fetch`, `fetch`, a `@tool:` or `@file:` dereference |
-| `list` | `os.listdir`, `os.walk`, `glob`, `Path.iterdir` and kin | `ml.fs.readdir` |
-| `inspect` | a bare expression or `print` of `head`, `info`, `describe`, `dtypes`, `shape`, `columns`, `len`, `type`, `dir` | a bare read of `length`, `textContent`, `outerHTML`, `Object.keys` |
-| `select` | boolean indexing, `loc`/`iloc`, `query`, `filter`, a comprehension with `if` | `filter`, `find`, `querySelector(All)` with a non-trivial selector |
-| `transform` | assignment to a column or key, `assign`, `apply`, `map`, `astype`, `merge`, `sort_values` | `map`, `sort`, string and array reshaping |
-| `aggregate` | `sum`, `mean`, `count`, `groupby`, `value_counts`, `agg`, `min`/`max` | `reduce`, a `for…of` that accumulates |
-| `dom-read` | none | any read on `document` or an element |
-| `dom-act` | none | a write to the DOM, `click`, `dispatchEvent`, a form value set |
-| `write` | a writer (`to_csv`, `open` for write, `Path.write_*`) | `ml.fs.writeFile`, `ml.sh.put` |
-| `shell` | `ml.sh.*`, `subprocess` | `ml.sh.*` |
-| `plot` | `matplotlib`, `.plot(` | a canvas or SVG draw |
-| `define` | a `def`, `class` or `lambda` bound to a name | a function or class declaration |
+- **Never empty.** A cell that parses and earns no label gets `other`; one that does not parse gets `unparsed`.
+
+- **The step's arguments count as syntax.** A label may be earned from the tool call's arguments, which the export
+  holds: a `python_exec` step that passes `tables` (exports from before ruling 110) is `ingest`, with the flag
+  `by-argument`.
+
+| Label | Means | Python, leading names | JS, leading names |
+| --- | --- | --- | --- |
+| `ingest` | data enters the cell from outside its source | `pd.read_*`, `open` with no mode or a read mode, `Path.read_text`/`read_bytes`, `json.load`, `ml.table`, `ml.fetch`; the `tables` argument | `ml.table`, `ml.fetch`, `fetch`, `ml.fs.readFile`, a `@tool:` or `@file:` dereference |
+| `parse` | text is turned into records by hand | `io.StringIO(`, `csv.reader`, `json.loads`, a `split` on a line or field separator | a `split` on `"\n"` or `","`, `JSON.parse`; a `map` chained on such a `split` is part of the parse, not `transform` |
+| `list` | file-system metadata is read | `os.listdir`, `os.walk`, `os.scandir`, `glob`, `Path.iterdir`/`glob`/`rglob`, `os.path.exists`/`isfile`/`isdir`, `os.stat` | `ml.fs.readdir`, `ml.fs.stat` |
+| `probe` | the cell asks what its environment is | `globals()`, `locals()`, `vars()`, a bare `dir()`, `os.getcwd`, `os.environ`, `sys.version`, `sys.path`, `platform.*` | `typeof ml`, `Object.keys` of `globalThis` or `ml`, `navigator.*`, `location.*` |
+| `inspect` | a description of DATA is the cell's output | `head`, `tail`, `info`, `describe`, `dtypes`, `shape`, `columns`, `len`, `type`, `dir(x)`, where the value is printed, returned or a bare expression; the same name used inside a computation earns nothing | a bare or returned read of `length`, `textContent`, `outerHTML`, `Object.keys(x)` |
+| `select` | rows or items are kept or dropped | boolean indexing, `loc`/`iloc`, `query`, `filter`, `nlargest`/`nsmallest`, a comprehension with `if` | `filter`, `find`, `querySelector(All)` with a selector that is not a bare tag or id |
+| `transform` | values are changed, same cardinality | assignment to a column or key, `assign`, `apply`, `map`, `astype`, `to_datetime`/`to_numeric`, the `.str` accessor, `merge`, `sort_values`, `sorted`, `pivot`, `melt`, `cumsum`/`shift`/`diff`/`rank` | `map` (but see `parse`), `sort`, string and array reshaping |
+| `aggregate` | many values become fewer | `sum`, `mean`, `count`, `min`/`max` (methods and builtins), `groupby`, `value_counts`, `agg`, `idxmax`/`idxmin`, `pivot_table`, `crosstab` | `reduce`, `Math.max`/`min` over a spread, a `for…of` that accumulates |
+| `report` | the result is rendered for a reader | `to_markdown`, `to_string`, `to_dict`, `json.dumps`, a formatted `print` of a computed value | `JSON.stringify` of the result, a template string built for return |
+| `dom-read` | the page is read | none | any read on `document` or an element |
+| `dom-act` | the page is changed or driven | none | a write to the DOM, `click`, `dispatchEvent`, a form value set |
+| `write` | a file is written | `to_csv` and kin, `open` with a write mode, `Path.write_*` | `ml.fs.writeFile`, `ml.fs.appendFile`, `ml.sh.put` |
+| `shell` | a program is run | `ml.sh.*`, `subprocess` | `ml.sh.*` |
+| `plot` | a picture is drawn | `matplotlib`, `.plot(` | a canvas or SVG draw |
+| `define` | a function or class is bound to a name | a `def`, a `class`, a `lambda` ASSIGNED to a name; an inline `lambda` argument is not | a function or class declaration, an arrow assigned to a name |
 
 Structural flags, reported beside the labels: `loop` (`for`, `while`, a comprehension), `try`, `import` (with the
-module names), `lines`.
+module names), `returns` (the cell ends in a `return` or a bare expression), `by-argument`, `lines`.
 
-- **Tests.** A fixture corpus of at least 60 cells, 30 per language, with expected label sets, drawn from the bench's
-  recorded runs; every label has a positive and a negative case in each language it applies to.
+- **Rulings on the bench lane's objections (the coordinator, 2026-11-24, against its probe of the 371 Python and 344
+  JS baseline cells).** `len` alone, printed or returned, is `inspect` and not `aggregate`. `idxmax` and `idxmin`
+  reduce, so `aggregate`; `nlargest` and `nsmallest` return rows, so `select`. `pivot_table` and `crosstab` aggregate;
+  `pivot`, `melt` and the window operations keep cardinality, so `transform`. A bare `return` earns the `returns` flag
+  and no label. Hand-parsing is its own label because it is the behaviour of interest: in the baseline about 121 of
+  344 JS cells split CSV text by hand.
 
-- **First use.** The bench's baseline (114 runs, 371 cells), reported as labels by language by stratum, beside half
-  1's facts once those exist: which kind of step the model gives to which language, and which kinds run outside.
+- **Tests.** A fixture corpus of at least 60 cells, 30 per language, with expected label sets; every label has a
+  positive and a negative case in each language it applies to. Cells come from the bench's recorded runs where they
+  exist. A label the baseline never shows (`shell`, `plot`, `dom-act`, Python `write`) takes a hand-written minimal
+  cell, marked synthetic in the fixture.
+
+- **First use.** The bench's baseline (114 runs: 371 `python_exec` cells and 344 `exec` cells), reported as labels by
+  language by stratum, beside half 1's facts once those exist: which kind of step the model gives to which language,
+  and which kinds run outside.
 
 ## Open
 
