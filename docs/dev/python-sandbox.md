@@ -199,7 +199,7 @@ sequential id any worker can name, so each branch of a worker's `onmessage` (a r
 `spending`, an `mlCall`) reads its entry through `own`, which refuses another principal's id and records
 `pyodide/foreign-id` (reason the branch, key the sender's principal, nothing of the message) once. Before it, a
 full-mode cell could answer another run's cell, write into its stream or call `ml` under its wire stamp
-(`tests/offscreen-worker-ids.test.mjs`, and e4's red-team rows on the same branch). The
+(`tests/offscreen-worker-ids.test.mjs`, one row per branch; `tests/redteam-worker-ids.test.mjs`, the attacks). The
 lockdown is `lockdownReadonly` (`src/python/lockdown.ts`), one boot step that never undoes:
 (1) Agoric `ses` `lockdown()` with `overrideTaming: "severe"`, after one `runPythonAsync("1")` warmup. Pyodide's
 `getPyProxyClass` assigns `.constructor` on a plain object, which a frozen `Object.prototype` refuses for every PyProxy
