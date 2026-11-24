@@ -825,8 +825,9 @@ policy page's generic edit and remove refuse a `files` row (an `allow` saved ove
 removed a `hide` with no confirmation), so a hiding rule is removed only from a session's view, which confirms, and
 DevTools Settings' own form for these rows is PR C; a `hide` that matches a directory holds everything under it, as the
 offer's one row for a credential directory needs, while a `show` releases only what it matches; and
-`ml.current.policies` carries no `files` row, since a hidden file reads as absent and its path in that list would say
-it exists.
+`ml.current.policies` carries no `files` row. The reason given at #2088, that a hidden file reads as absent, does not
+hold: its NAME is listed ("What a hidden file shows", below). Whether the model may read its own hiding rules is decided
+with the masked-file design; until then the row stays out.
 
 **One list, two verbs, the policy store's.** A hiding rule is a `StoredPolicy` with consumer `files`, effect `hide` or
 `show`, and `source` a path or a glob. Scope `global`, or `run`, which is the session's and keyed by its hash, as for
@@ -870,7 +871,8 @@ offers no "always": a global `show` under a global `hide` is the person's own ed
 what matches LATER too, and the card says so beside the paths it lists. Nothing changes until the person approves. A
 person may also write an entry directly, in DevTools Settings, from the file browser's right-click (ruling 24), or with
 "always" on a card that offers it; that is expected to be rare. A page, `change_setting` and `ml.settings` can neither
-write nor propose one: the list is a gate key ([MODEL_SETTINGS.md](MODEL_SETTINGS.md)).
+write nor propose one: the entries are rows of the policy store, which is no setting
+([MODEL_SETTINGS.md](MODEL_SETTINGS.md), "Not settings, never writable").
 
 **One command to change it.** Adding or removing an entry is one session-contract command with one handler, whichever
 renderer sends it: the extension's, the file browser's, or a remote host's. It is sealed and carried over the hub like
@@ -882,7 +884,8 @@ the remove control until a person-signed command exists. The hub needs no change
 or the second verb: the sealed body is opaque to it ([hub-client.md](../dev/hub-client.md)).
 
 **What the host gets.** On each `spawn`, the worker sends the call's resolved list: the session's layer over the global
-one, as `{ "show": [<pattern>…], "hide": [<pattern>…] }` with each entry's id. The host applies `show` before it builds
+one, as ONE ordered array `hideList` of `{ id, effect, pattern }` in ascending precedence, so a later entry decides
+(the shape window-ml-host#58 builds; an earlier draft of this paragraph had two arrays). The host applies `show` before it builds
 the held set, so `hiddenSecrets` never lists a shown path, and adds each `hide`. On macOS a `hide` becomes read and
 write deny rules after the template allow, and a `show` an allow after the denies but never over a credential directory.
 On Linux a `hide` is resolved against the tree when the call is spawned and each match is masked; more than 256 matches
@@ -900,13 +903,15 @@ of this section's build). One list, every reader: a reader the host does not san
 itself before it reads. A hidden file readable through `ml.fs` is the defect this rules out, and a row asserts it for
 each reader.
 
-**What a hidden file shows.** As for a default-held file: its NAME is listed, by `ls`, the file browser and `glob`, on
+**What a hidden file shows.** The answer for every reader and platform is one table, in
+[SECRET_HANDLES.md](SECRET_HANDLES.md), "What the model can see of a secret". As for a default-held file: its NAME is listed, by `ls`, the file browser and `glob`, on
 both platforms; its content is not, and a read fails with EPERM on macOS and EACCES on Linux. A `hide` behaves as the
 defaults do on each platform, and the file browser marks the name as hidden (the per-entry `hidden` flag the hide-list
 item asks for).
 
-**Known limits.** On Linux a `hide` is resolved when the call is spawned, so a file the call creates that matches it is
-not masked for that call; macOS's rules match by pattern and cover it. The next call's spawn holds it on both. A file
+**Known limits.** Until the host half is built a `hide` binds no program the shell starts, and on Linux a default
+holds a dotenv file only at a root's top (`root/app/.env` is readable). On Linux a `hide` is resolved when the call is
+spawned, so a file the call creates that matches it is not masked for that call; macOS's rules match by pattern and cover it. The next call's spawn holds it on both. A file
 inside a credential directory, or under a mask in `$HOME`, has no `show` that releases it (ruling 46): a layout that
 keeps a file a call needs in one has no override in this version, and moves that file out.
 

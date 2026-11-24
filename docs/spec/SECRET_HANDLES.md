@@ -1,8 +1,83 @@
 # Idea: secrets an agent can use but never read
 
-**Status: idea; the handles are not started.** Written down on 2026-09-15 to come back to. Built since: the secret
-registry, scrubbed by value at every crossing (#1948, e8508959; "The scrub as built", below). The handles are not, and the sketch
-under [Shape](#shape-a-sketch-unvalidated) is a guess to be argued with, not a design.
+**Status: this file owns what the model can see of a secret; the handles are not started.** Written down on 2026-09-15
+as an idea to come back to. Built since: the secret registry, scrubbed by value at every crossing (#1948, e8508959;
+"The scrub as built", below), and the parts the table below marks built. The handles are not, and the sketch under
+[Shape](#shape-a-sketch-unvalidated) is a guess to be argued with, not a design.
+
+## What the model can see of a secret: the one table (2026-11-24)
+
+A secret can reach a model in two ways: its VALUE turns up in text the model reads, or the model reads the FILE that
+holds it. The two tables below say what the model sees for each, by surface and by platform, and what is built. Every
+other spec keeps its mechanism and points here for the answer. Where another file disagrees with these tables, that
+file is wrong and gets repaired. Read from main at 81192e50 and window-ml-host 0.10.0 (main at 9f99501), before
+window-ml-host#58.
+
+**A value in text.** A registered value is one in the registry ("The scrub as built": at most 64 entries, 8 to 512
+characters, matched as written and in its JSON, percent, base64 and shell forms).
+
+| Where the value would cross | What the model sees | State |
+| --- | --- | --- |
+| A tool result, the lines the loop appends, an `ml.sh` head and each `ml.sh.read` range, live output, a peek tail, a resumed history, the utility model's calls, what the run stores beside a result, a nested ask | `[REDACTED:<NAME>]` in place, and one count line on a tool result | built (#1948) |
+| A model request a page started; an error answered to a page | a bare `[REDACTED]`, no name, no count | built (#1948) |
+| What the person sends (the turn, a right-clicked element, attached text) | `[REDACTED:<NAME>]`, unless the person sent it as is | built by registered value (ruling 39); the shape detector is not |
+| A session row leaving the worker (lists, search, the hub, the HUD) | `[REDACTED:<NAME>]` | built (ruling 61) |
+| Bytes read from `/files` (`ml.fs`, Python's mount) | each byte of a match is `*`, so sizes and offsets hold | built; the per-secret fake value and the write-back (rulings 100, 101) are not |
+| A file's NAME under `/files` that holds a registered value | the listing shows the raw name; the file block of the turn shows it redacted | a defect (the session-store lane's account, 2026-11-24), repaired in the reader |
+| A GitHub token, registered or not | `[a GitHub token]`, by its shape | built, the one pattern there is |
+| Any other unregistered key shape (`sk-`, `AKIA`, a JWT, a PEM block, URL userinfo) | the value | not built (scrub PR 2; ruling 39's detector for the person's input) |
+| A value in a password field of a page | the value | ruled (30), not built |
+| A value of a hidden file that a program the person allowed prints | the value, unless it is registered | open design ("Open questions", below) |
+| A value in an image; a value cut, reversed or encoded outside the forms above; a value under 8 characters; the model's own tool arguments | the value | stated limits |
+
+**A file that holds secrets.** Three readers exist. The `/files` reader serves the browser's copy of a session's files
+to `ml.fs`, Python's mount and the file browser. A program started through `ml.sh` is bound by the host's sandbox, which
+differs by platform. A call run `host-plain` is bound by nothing.
+
+| File | `/files` reader | `ml.sh` program, macOS (Seatbelt) | `ml.sh` program, Linux (bubblewrap, Landlock) |
+| --- | --- | --- | --- |
+| `.env`, `.env.*` (not the templates `.env.example`, `.env.sample`, `.env.template`) | name listed with `hidden: true`; a read is refused in words naming it as hidden; built (#2088) | name listed; read EPERM and write denied, at any depth | name listed; read EACCES and write EROFS at each root's TOP only, and `$HOME/.env`; `root/app/.env` is READABLE (the stated gap) |
+| `.netrc`, `.git-credentials`, `.pgpass` | held at a root's top, as above | unreadable at any depth | held at each root's top and under `$HOME`; deeper, readable |
+| Credential directories (`.ssh`, `.gnupg`, `.aws`, `.azure`, `.kube`, `.docker`, `.password-store`, Keychains, `.config/gh`, `.config/gcloud`) | not a default of the browser copy | unreadable at any depth | masked under `$HOME` only |
+| `*.pem`, `id_*` and other secret-looking names inside a root | readable | READABLE; `rg pattern .` reads `root/key.pem` | the same |
+| A path a `hide` policy matches | held like a dotenv file; built (#2088) | not applied: a `spawn` carries no entry until window-ml-host#58 and its extension half | the same; then resolved when the call starts, so a file made later is readable to that call |
+| A path a `show` policy matches | released, readable and writable | not applied, as above | the same |
+| A held path NAMED in a call's marked path argument | not applicable | the call asks; approved, that path's READ is re-allowed for that call, and nothing else | the call asks; approved, the path is readable. Two DEFECTS at host 0.10.0 (the files-host lane's reading of `src/sandbox.rs`, 2026-11-24; the second checked by the coordinator): a named file at a root's top is also WRITABLE, and a named file under a credential directory unmasks the WHOLE directory for that call (`~/.ssh/id_ed25519.pub` named, the private key readable). A host repair is owed |
+
+- **A hidden file's NAME is listed everywhere, and its content nowhere.** That is Shane's position (2026-11-24): the
+  model should know a `.env` exists. No reader leaves the name out.
+
+- **A secret-looking name that is not held is flagged, never hidden.** The host's name check (`secret` on a path
+  argument: `.env`, `*.pem`, `id_*`, `.ssh/` and the rest of `SECRET_PATTERNS`) makes a call that NAMES such a path
+  ask. It does nothing for a program that walks to the file.
+
+- **Who may free the ask on a named held path.** As built, the read is outside the free tier and a policy may answer
+  it. As ruled (34; [`POLICIES.md`](POLICIES.md), "Hiding files"), no `allow` policy frees it and the durable way is a
+  `show` entry. The ruled form lands with the host half of the hide list.
+
+- **One secret does reach a process today.** A credentialed `gh` call gets the person's GitHub token as `GH_TOKEN`
+  from the host ([`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md), "The credentialed profile"). It always asks, the worker
+  never holds the value, and a printed token is scrubbed by its shape.
+
+- **Not decided here.** A masked state between hidden and shown (keys readable, values placeholders), what an allowed
+  program reads, and closing the Linux gap are under discussion with Shane (2026-11-24) and get their own section when
+  ruled.
+
+**Where each part's detail lives.**
+
+| Part | Owner |
+| --- | --- |
+| The registry, its forms, each crossing, the limits | this file, "The scrub as built" |
+| `hide` and `show` entries, the defaults' ids, which entry wins, the card and the command | [`POLICIES.md`](POLICIES.md), "Hiding files" |
+| What the sandbox holds on each platform, and each gap | window-ml-host's SANDBOX.md; the `hiddenSecrets` and `secret` facts in its PROTOCOL.md |
+| The `/files` reader, its length-keeping mask, hidden files in a backup | [`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md) |
+| The credentialed `gh` call | [`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md) |
+| A value typed into a prompt (`getpass`, a program's stdin) | [`SHELL_INTERACTIVE.md`](SHELL_INTERACTIVE.md), with the answers in "Amendments", below |
+
+**What each ruling's state is.** Built: the registry scrub (#1948), ruling 39's scrub of the person's input by
+registered value, ruling 61 (session rows), ruling 34's entries in the extension's readers (#2088). Not built: the
+handles; the key-shape patterns but the GitHub token's; rulings 30 (page password fields), 32 (hash-only entries), 33
+and 94 (the inbox item), 93 (personal details), 100 and 101 (the write-back); ruling 34's host half.
 
 ## The idea
 
@@ -81,7 +156,8 @@ of them has a place for it, and together they answer parts of the threat model a
   registered value can pass between the stages of a pipe on the host, and the host's `sha256` and `size` are over the
   raw bytes ("The scrub as built", below). A program whose manifest says it `echoes` its environment is refused with a
   secret present ([`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md)); that refusal lands with the handles slice, since until
-  then no secret can reach a process at all. In host mode the person's own credential files and helpers are on disk,
+  then no REGISTERED secret can reach a process (the one value a process is handed is the GitHub token of a
+  credentialed `gh` call, which the host holds and the worker never does; the table at the top). In host mode the person's own credential files and helpers are on disk,
   which the secret path flag and the scrubbed environment are for.
 - **A secret lives beside its sink.** The worker holds the ones `ml.fetch` injects; the host holds the ones processes
   need (the OS keychain is the natural store); a handle names a secret wherever it lives, and the grant is evaluated
@@ -222,7 +298,7 @@ on real captured output in its PR.
   `scrubPersonInput`), so a token in it that is neither registered nor the extension's own key reaches the model until
   the shape detector (ruling 39, PR 3); a value that was transformed or only partly echoed (threat 2); a value
   registered after a session stored it (re-scrubbing stored sessions is a later slice); anything a pattern does not know
-  until PR 2; a script or model that already holds a guess can confirm it, by echoing the guess and seeing the marker;
+  until PR 2 (the one pattern applied today is the GitHub token's shape, `GITHUB_TOKEN` in `src/secret-scrub.ts`); a script or model that already holds a guess can confirm it, by echoing the guess and seeing the marker;
   the model's own tool arguments, which are not scrubbed; an approved page that drives a model can confirm a full guess
   it already holds if the model repeats the marker, and learns no name; the page-world tool results of a page-hosted run
   stay the page's own and are not scrubbed for the page; a page whose own text comes back in an error (a refusal that
@@ -250,8 +326,12 @@ on real captured output in its PR.
 - Where does the model's authority stop: can a handle be passed to a server-side tool (OpenWebUI) at all, given
   that the server would then hold it?
 - Does this belong in the harness only, or also on the server, for model-provider keys a client should never hold?
-- **Scrubbing a hidden file's values (open design, not ruled).** The sandbox keeps a hidden file (a dotenv file, a
-  credential file, a path a `hide` policy holds) unreadable, but a program the person runs can still load it and print
+- **Scrubbing a hidden file's values (open design, not ruled).** STATE, 2026-11-24: Shane's position in discussion is
+  that reading a dotenv file and registering its values is a convenience worth having, which the person can switch off
+  per file, with the person registering values themselves as the ideal. That reverses the coordinator's earlier
+  recommendation against it. It is not ruled, and it is decided with the masked-file design. The text below is the
+  design as it stood. The sandbox keeps a hidden file (a dotenv file, a credential file, and a path a `hide` policy
+  holds once the host applies those entries) unreadable, but a program the person runs can still load it and print
   a value, and the registry scrub ([#1948](https://github.com/parawanderer/window-ml/pull/1948)) catches only values
   the person registered. The idea: the host parses a hidden file when the call is spawned and sends its STRING LEAVES
   to the worker, which adds them to the session's registry, so an echoed value is scrubbed like a registered one. What
@@ -295,8 +375,9 @@ on real captured output in its PR.
 ## Amendments after the scrub (2026-11-18)
 
 Four rulings of Shane's that build on the registry scrub ([#1948](https://github.com/parawanderer/window-ml/pull/1948),
-"The scrub as built"). The coordinator's calls under each are marked as such and were surfaced to Shane. Nothing here
-is built yet. Ruling 30's value scrub lands after scrub PR 2, its channel mask with handles; ruling 32 lands before
+"The scrub as built"). The coordinator's calls under each are marked as such and were surfaced to Shane. Of this
+section, ruling 39's scrub by registered value and ruling 61 are built; the rest is not (the list under the table at
+the top). Ruling 30's value scrub lands after scrub PR 2, its channel mask with handles; ruling 32 lands before
 handles; ruling 33 lands once ruling 32's store and its Settings page exist; ruling 39's by-value half lands after
 #1948, its shape half in its own PR. Rulings 40 to 42 and 44 settle four of ruling 39's open points, and ruling 43
 adds LLM provider tokens to its shape list; all five are written into its section. Rulings 93 and 94 (2026-11-20) add
@@ -950,8 +1031,8 @@ for whoever builds the item. Each line is one sentence or two that a person read
 - **Blank before the model sees it**: your full name, your address, a phone number. Blanked in text and in screenshots
   of pages, and filled into a form by name when you allow it.
 
-One line below them gives the limits: "Not caught: a value changed before it is shown (encoded, cut or reversed), text
-inside an image, and a value shorter than 8 characters (6 for a personal detail)."
+One line below them gives the limits: "Not caught: a value changed before it is shown (cut, reversed, or encoded in an unusual way),
+text inside an image, and a value shorter than 8 characters (6 for a personal detail)."
 
 The three lines replace the form's two-type text in ruling 33 ("The form"), and the form's type choice lists the three
 in this order with "Never read" (`mask`) preselected. The kinds' names in the code (`use`, `mask`, `detail`) are not
