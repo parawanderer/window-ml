@@ -1,8 +1,9 @@
 // sw-policies.test.mjs — the policy store (src/sw/sw-policies.ts, docs/spec/POLICIES.md): the order a call is judged
-// in (deny wins across scopes, a broken policy is no opinion, the built-in default last), what "Approve + remember"
+// in (deny wins across scopes, a broken deny or ask asks and a broken allow is no opinion, the built-in default last), what "Approve + remember"
 // adds, removal and a session's deletion, and what is read back from storage (only well-formed policies).
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { evalPolicy } from "../src/readonly-exec/policy-realm.ts";
 
 // Storage as a previous worker left it, read at module load: one well-formed global policy and assorted junk.
 const STORED = {
@@ -66,11 +67,13 @@ test("a broken policy is no opinion, reported with its reason, and does not stop
     assert.match(P.brokenReason(broken.id), /no field 'uurl'/, "kept for the policy page");
 });
 
-test("a broken DENY does not refuse and does not allow: the call asks", () => {
+test("a broken DENY does not refuse and does not allow: the call asks, naming the policy (ruling 108)", () => {
     P.addRunPolicy("h-bdeny", { consumer: "fetch", effect: "deny", source: "(c) => c.hots === 1", label: "typo deny", origin: "person" });
     const j = P.judgeCall("h-bdeny", "fetch", facts("https://x.example/"));
-    assert.equal(j.decision, undefined);
+    assert.equal(j.decision, "ask");
     assert.equal(j.broken.length, 1);
+    assert.equal(j.brokenAsk.policy.label, "typo deny");
+    assert.match(j.brokenAsk.reason, /no field 'hots'/);
 });
 
 test("with no person's answer the built-in default decides: a fetch reaches the network, so it is never free", () => {
@@ -490,14 +493,93 @@ test("over an undescribed call (effects: unknown) an ask that needs a resource's
     assert.notEqual(P.judgeCall("h-unk-allow", "sh", unknownCall, "host-sandbox").decision, "deny");
 });
 
-test("a broken ask is no opinion, recorded as broken, and does not stop the others; the call still asks where nothing frees it", () => {
+test("a broken ask asks too, is recorded as broken, and a live deny still decides past it (ruling 108)", () => {
     const b = P.addRunPolicy("h-bask", { consumer: "fetch", effect: "ask", source: "(c) => c.hots === 1", label: "typo ask", origin: "person" });
     const j = P.judgeCall("h-bask", "fetch", facts("https://x.example/"));
-    assert.equal(j.decision, undefined, "no opinion: a fetch is never free, so the tiers above decide, which is the card");
+    assert.equal(j.decision, "ask", "a question that cannot run is put to the person");
+    assert.equal(j.brokenAsk.policy.id, b.id);
     assert.equal(j.broken.length, 1);
     assert.match(P.brokenReason(b.id), /no field 'hots'/);
     P.addRunPolicy("h-bask", { consumer: "fetch", effect: "deny", source: '(c) => c.host === "x.example"', label: "deny x", origin: "person" });
-    assert.equal(P.judgeCall("h-bask", "fetch", facts("https://x.example/")).decision, "deny", "a live deny still decides past it");
+    const d = P.judgeCall("h-bask", "fetch", facts("https://x.example/"));
+    assert.equal(d.decision, "deny", "a live deny still decides past it");
+    assert.equal(d.brokenAsk, undefined);
+    assert.equal(d.broken.length, 1, "and the break is still recorded");
+});
+
+// --- a broken deny or ask asks (ruling 108); a broken allow stays no opinion ---
+
+/** A `sh` call the built-in default frees in the sandbox, so "falls to the free tier" has an observable answer. */
+const FREE_SH = { kind: "sh", argv: ["cat", "notes.txt"], program: "cat", effects: [{ op: "read", res: { kind: "fs", inRoot: true, path: "/r/notes.txt" } }] };
+const TYPO = "(c) => c.argvv[0] === 'cat'";
+const addSh = (run, effect, source, label) => P.addRunPolicy(run, { consumer: "sh", effect, source, label, origin: "person" });
+
+test("a broken allow is no opinion: the call falls to the free tier as before", () => {
+    addSh("h-108-allow", "allow", TYPO, "typo allow");
+    const j = P.judgeCall("h-108-allow", "sh", FREE_SH, "host-sandbox");
+    assert.deepEqual([j.decision, j.by], ["allow", "builtin"]);
+    assert.equal(j.broken.length, 1);
+    assert.equal(j.brokenAsk, undefined);
+});
+
+test("a broken deny, alone, asks where the free tier would have run the call, and says which policy", () => {
+    addSh("h-108-deny", "deny", TYPO, "never cat");
+    const j = P.judgeCall("h-108-deny", "sh", FREE_SH, "host-sandbox");
+    assert.equal(j.decision, "ask");
+    assert.equal(j.by.label, "never cat");
+    const why = P.askWhyOf(j);
+    assert.equal(why.cause, "broken-policy");
+    assert.equal(why.policyId, j.by.id);
+    assert.ok(P.askedByPolicy(why), "no remember on its card");
+});
+
+test("a broken ask, alone, asks where the free tier would have run the call", () => {
+    addSh("h-108-ask", "ask", TYPO, "ask on cat");
+    assert.equal(P.judgeCall("h-108-ask", "sh", FREE_SH, "host-sandbox").decision, "ask");
+});
+
+test("a clean deny beside a broken ask, or a broken deny, still denies, in either order", () => {
+    for (const [run, effect] of [["h-108-mix-ask", "ask"], ["h-108-mix-deny", "deny"]]) {
+        addSh(run, effect, TYPO, "broken one");
+        addSh(run, "deny", "(c) => c.argv[0] === 'cat'", "clean deny");
+        const j = P.judgeCall(run, "sh", FREE_SH, "host-sandbox");
+        assert.equal(j.decision, "deny", run);
+        assert.equal(j.by.label, "clean deny");
+        assert.equal(j.broken.length, 1);
+    }
+    addSh("h-108-mix-first", "deny", "(c) => c.argv[0] === 'cat'", "clean deny");
+    addSh("h-108-mix-first", "deny", TYPO, "broken after");
+    assert.equal(P.judgeCall("h-108-mix-first", "sh", FREE_SH, "host-sandbox").decision, "deny");
+});
+
+test("a broken deny beside a separate allow asks: the allow does not answer for it", () => {
+    addSh("h-108-sep", "deny", TYPO, "broken deny");
+    addSh("h-108-sep", "allow", "(c) => c.argv[0] === 'cat'", "allow cat");
+    const j = P.judgeCall("h-108-sep", "sh", FREE_SH, "host-sandbox");
+    assert.equal(j.decision, "ask");
+    assert.equal(j.brokenAsk.policy.label, "broken deny");
+});
+
+test("brokenPhrase says each reason evalPolicy gives in a few plain words", () => {
+    const f = { kind: "sh", argv: ["cat"], effects: "unknown" };
+    const say = (src) => P.brokenPhrase(evalPolicy(src, f, "deny").broken);
+    assert.equal(say("(c)=>c.argvv[0]==='cat'"), "it reads a field the call does not have ('argvv')");
+    assert.equal(say("(c)=>{const f=(n)=>n===0?0:f(n-1)+f(n-1); f(30); return true}"), "it ran out of steps");
+    assert.equal(say("(c)=>{const f=(n)=>n===0?0:1+f(n-1); return f(2000)>1}"), "it is nested too deep");
+    assert.equal(say("(c)=>c.argv.length"), "it returned something that is not true or false");
+    assert.equal(say("(c)=>null"), "it returned something that is not true or false");
+    assert.equal(say("(c)=>1+"), "its source does not parse");
+    assert.equal(say("(c)=>Date.now()>1"), "not allowed in a policy: 'Date' is not available");
+    assert.equal(say("(c)=>c.argv.foo()"), "it fails when it runs");
+});
+
+test("the card line and the model's sentence for a broken policy, with a hostile label spoken safely", () => {
+    const p = { id: "pid1", scope: "run", consumer: "sh", effect: "deny", source: "", label: 'evil "x" \nsecond', origin: "person", created: 1 };
+    const why = P.brokenPolicyWhy(p, "the call has no field 'hots'");
+    assert.equal(why.line, `Asking because the policy "evil 'x' second" is broken: it reads a field the call does not have ('hots'). It may have been meant to refuse calls like this. Edit it to fix it.`);
+    assert.equal(why.detail, `This call needed approval because the policy "evil 'x' second", which refuses calls like it, does not run (it reads a field the call does not have ('hots')), so it could not be checked; the call itself did not change.`);
+    assert.ok(!/  /.test(why.line + why.detail), "no two spaces in model-facing text");
+    assert.equal(P.brokenPolicyWhy({ ...p, effect: "ask" }, "x").line.includes("ask about calls like this"), true);
 });
 
 test("an edit may make a policy an ask, and an ask back into an allow; the edit that narrows an allow is reasoned as narrowed", () => {

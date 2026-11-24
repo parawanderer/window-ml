@@ -20,7 +20,7 @@ import { detachedCapMs, detachTask, type TailAnswer, type TaskOutcome } from "./
 import { toolToken } from "../util";
 import { defineState } from "../state-registry";
 import { binaryKind } from "./body-read";
-import { judgeCall, askWhyOf, askedByPolicy, revealsAskWhy } from "./sw-policies";
+import { judgeCall, askWhyOf, askedByPolicy, revealsAskWhy, BROKEN_POLICY_CAUSE } from "./sw-policies";
 import { getConfig } from "./sw-llm";
 import { base64Of, parseShPut, putFacts, putRefusalText, putTooLargeText, type PutFacts } from "../shell/sh-put";
 import { readStoredBytes, storeText } from "./sw-values";
@@ -450,7 +450,7 @@ async function decide(ctx: ShCallContext, f: ShFacts): Promise<{ by: string; pol
     // yet: the person does, on a card inside the running step. The card offers no "remember" (an ask's card never does).
     // A call that asks only because its program reveals other processes says so, and its card offers "Always allow".
     const why = askWhyOf(j) ?? revealsAskWhy(j, ctx.runId, "sh", asPolicyFacts(f), f.placement);
-    if (why) recordRunLog(ctx.runId, { subsystem: "policy", kind: askedByPolicy(why) ? "ask" : why.cause === REVEALS_CAUSE ? "reveals" : "lapsed", reason: why.cause, detail: { tool: "sh", policy: why.policy ?? "" } });
+    if (why) recordRunLog(ctx.runId, { subsystem: "policy", kind: why.cause === BROKEN_POLICY_CAUSE ? BROKEN_POLICY_CAUSE : askedByPolicy(why) ? "ask" : why.cause === REVEALS_CAUSE ? "reveals" : "lapsed", reason: why.cause, detail: { tool: "sh", policy: why.policy ?? "" } });
     const o = await raiseAsk(ctx.runId, ctx.seq, { kind: "sh", consumer: "sh", facts: asPolicyFacts(f), placement: f.placement, ...(why ? { why } : {}) });
     if (!o.allowed) return { refused: `ml.sh: ${o.state === "denied" ? "the person declined" : o.note || o.state}${o.state === "denied" && o.note ? ` (${o.note})` : ""}${why ? `. ${why.detail}` : ""}` };
     return { by: "person", waitedMs: o.waitedMs, ...(o.askId ? { askId: o.askId } : {}) };

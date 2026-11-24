@@ -102,6 +102,50 @@ test("the model reads which policy asked, in the result of an approved call", T,
     assert.match(b.results().join("\n"), /the policy "Ask about other\.example" asks the person about calls like it/);
 });
 
+// --- a broken deny or ask asks, and the card says so (ruling 108) ---
+
+const addBroken = (bg, effect, label = "never read other.example") => policies(bg, { op: "add", effect, source: '(c) => c.urll === "other.example"', label });
+
+test("a deny with a typo'd field no longer lets an allow run the fetch: the card names the policy, says why, offers its edit and no remember", T, async () => {
+    const b = browser({ calls: [{ name: "fetch_url", args: { url: OTHER } }], onCard: () => {} });
+    await addAllow(b.bg);
+    await addBroken(b.bg, "deny");
+    await b.bg.context.__mlStartUserRunForTest(7, { task: "read the other site", surface: "hud" });
+    await untilCalls(b, 1);
+    for (let i = 0; i < 200 && !b.cards.length; i++) await sleep(2);
+    assert.equal(b.cards.length, 1, "the allow did not run it");
+    const why = b.cards[0].askWhy;
+    assert.equal(why?.cause, "broken-policy");
+    assert.equal(why.policy, "never read other.example");
+    assert.ok(why.policyId, "the card can open the policy for editing");
+    assert.match(why.line, /is broken: it reads a field the call does not have \('urll'\)\. It may have been meant to refuse calls like this\. Edit it to fix it\./);
+    assert.equal(b.cards[0].grants, undefined, "nothing to remember");
+    assert.equal(b.fetched(), 0);
+    const log = (await b.bg.context.__mlRunLog.all()).filter((r) => r.subsystem === "policy").map(plain);
+    assert.ok(log.some((r) => r.kind === "broken-policy" && r.reason === "broken-policy" && r.detail.policy === "never read other.example" && r.detail.tool === "fetch_url"), JSON.stringify(log));
+    assert.ok(log.some((r) => r.kind === "broken" && r.detail?.tool === "fetch_url"), "the break itself is still recorded: "+JSON.stringify(log));
+});
+
+test("the control: the same allow with no broken policy runs the fetch with no card", T, async () => {
+    const b = browser({ calls: [{ name: "fetch_url", args: { url: OTHER } }] });
+    await addAllow(b.bg);
+    await b.bg.context.__mlStartUserRunForTest(7, { task: "read the other site", surface: "hud" });
+    await untilCalls(b, 2);
+    assert.equal(b.cards.length, 0);
+    assert.equal(b.fetched(), 1);
+});
+
+test("a broken ask asks the same way, and the model reads the sentence in the result of the approved call", T, async () => {
+    const b = browser({ calls: [{ name: "fetch_url", args: { url: OTHER } }], onCard: (e, ctx) => ctx.answer(e, true) });
+    await addAllow(b.bg);
+    await addBroken(b.bg, "ask", "ask on other.example");
+    await b.bg.context.__mlStartUserRunForTest(7, { task: "read the other site", surface: "hud" });
+    await untilCalls(b, 2);
+    assert.equal(b.cards[0]?.askWhy?.cause, "broken-policy");
+    assert.equal(b.fetched(), 1, "approved once: it ran");
+    assert.match(b.results().join("\n"), /the policy "ask on other\.example", which asks about calls like it, does not run \(it reads a field the call does not have \('urll'\)\), so it could not be checked/);
+});
+
 // --- an exec's "Keep" would remember an allow the ask overrides ---
 
 const EXEC = { name: "exec", args: { js: 'return await ml.fetch("https://other.example/a")' } };
