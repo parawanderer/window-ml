@@ -12,7 +12,7 @@ import { Worker } from "node:worker_threads";
 import { PY_PACKAGE_LOADS } from "../src/python/python-env.ts";
 import { allocFilesShared } from "../src/python/files-wire.ts";
 import { DIR_PAGE } from "../src/python/files-mount.ts";
-import { DIR_ENTRY_STEPS } from "../src/python/python-dialect-run.ts";
+import { listingSteps } from "../src/python/python-dialect-run.ts";
 
 const DIST = path.resolve(import.meta.dirname, "../dist");
 const hasPyodide = fs.existsSync(path.join(DIST, "pyodide", "pyodide.mjs"));
@@ -207,7 +207,7 @@ test("inside, a /files listing is charged a full page before each request, by th
     assert.equal(r.notInDialect, undefined, r.notInDialect);
     // The steps that run used, read by the next cell (`_restricted.steps()` is the last finished run's).
     const used = Number(await ok("import _restricted\nprint(_restricted.steps())"));
-    assert.ok(used >= DIR_PAGE * DIR_ENTRY_STEPS, `two names in /files cost ${used} steps, not a page of ${DIR_PAGE}`);
+    assert.ok(used >= listingSteps(DIR_PAGE), `two names in /files cost ${used} steps, not a page of ${DIR_PAGE}`);
 });
 
 // --- reads are ranged: a seek reads its chunk, never the file ---

@@ -389,11 +389,12 @@ and fd calls, and every name of `os` not listed (`DIALECT_OS_READS`, `python-dia
 core's own `os` against it). A hidden file under `/files` stays listed, and reading it raises `PermissionError`.
 
 - **Cost.** A listing is charged before it is built, in the file system's readdir, which every listing reaches (glob,
-  `os.walk` and `Path.iterdir` list from inside a lifted call): `DIR_ENTRY_STEPS` (20) a name, from a MEMFS
-  directory's own count, and a whole page of `DIR_PAGE` (500) names before each page the `/files` mount asks for. The
-  fork cannot credit, so a short page keeps its full charge: 10,000 steps a request, about 1,500 directory pages in a
-  15M budget. A read (`Path.read_text`, `read_bytes`) is charged `ceil(size / 2)` before it reads, and only a regular
-  file is read. The figures and the overcharge's effect: `notebooks/python-dialect/`, the os subset.
+  `os.walk` and `Path.iterdir` list from inside a lifted call): `DIR_LISTING_STEPS` (512) a listing plus
+  `DIR_ENTRY_STEPS` (128) a name, from a MEMFS directory's own count, and a whole page of `DIR_PAGE` (500) names
+  before each page the `/files` mount asks for. The figures are set on the strict basis, the cheapest step's time, as
+  the regex charge is: `Path.iterdir` takes about 89 steps' time a name. The fork cannot credit, so a short page keeps
+  its full charge: 64,512 steps a request, about 230 directory pages in a 15M budget. A read (`Path.read_text`,
+  `read_bytes`) is charged `512 + ceil(size / 2)` before it reads, and only a regular file is read. The figures and the overcharge's effect: `notebooks/python-dialect/os-cost.ipynb`.
 - **State outside the namespace.** The working directory and the environment are put back when the cell is refused, so
   an approved rerun starts from what was there; a finished cell keeps what it changed. A fresh interpreter's
   environment is exactly `PYTHON_ENV` (`python-env.ts`).

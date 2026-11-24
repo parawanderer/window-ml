@@ -349,11 +349,11 @@ worker drives with `autoApprovePython` on:
    registered lifted, and the kinds they return readable. Every other name of `os` asks, which
    `tests/python-os-inside.test.mjs` enumerates from the core's own `os`. A LISTING is charged in the file system, since
    `glob`, `os.walk` and `Path.iterdir` list from inside a lifted call the gate never sees again (`listing-charge.ts`):
-   a MEMFS directory `DIR_ENTRY_STEPS` a name from its own count, and a `/files` page of `DIR_PAGE` names before the
-   mount asks for it (`chargeListing`), kept when the page held fewer, because the fork's charge cannot credit.
+   `listingSteps`, `DIR_LISTING_STEPS` a listing plus `DIR_ENTRY_STEPS` a name, from a MEMFS directory's own count and
+   for a `/files` page of `DIR_PAGE` names before the mount asks for it (`chargeListing`), kept when the page held fewer, because the fork's charge cannot credit.
    `os.listdir` releases the GIL around its readdir, so the hook re-attaches the thread state and calls the fork's C
    charge (`_PyRestricted_Charge`) itself; outside a run that charge is nothing. A READ is `Path.read_text` or
-   `read_bytes` of a regular file, charged `ceil(size / FILE_BYTES_PER_STEP)` before it reads. Still asking, each for
+   `read_bytes` of a regular file, charged `FILE_READ_STEPS + ceil(size / FILE_BYTES_PER_STEP)` before it reads (figures: `os-cost.ipynb`). Still asking, each for
    its own reason: builtin `open` (a file the cell drops is finalized under the gate, which refuses its C finalizer;
    one it keeps is not data; `with` is not in the node list), `Path.glob`/`rglob` (each maps a `Path` method that sets
    an attribute, from C, under the gate; `glob.glob` reads the same names), `os.environ[k] = v` and `del` (the fork

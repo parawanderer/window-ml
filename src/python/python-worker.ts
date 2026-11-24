@@ -17,7 +17,7 @@
 import { PY_PACKAGE_LOADS, PY_LAZY_LOADS, PY_BENCH_BASE_NAMES, PY_STARTUP_PREPARE, pyodideLoadOptions, pinEnvironment } from "./python-env";
 import { DIALECT_FILES, DIALECT_MODULES, DIALECT_NODES } from "./dialect-data";
 import { wrapUserSetup, wrapUserScript, COMPLETE_HELPER, completeIn, RESET, injectInputs, stdoutWriter, injectStoredTable, takeIpc, releaseNamespace, hostRunScript, cancelPath, type PyCompletion } from "./python-runtime";
-import { dialectSetup, libraryLoad, libraryShape, DIR_ENTRY_STEPS, type DialectLibrary } from "./python-dialect-run";
+import { dialectSetup, libraryLoad, libraryShape, listingSteps, type DialectLibrary } from "./python-dialect-run";
 import { lockdownReadonly } from "./lockdown";
 import { makeFilesMount, FILES_OPEN_WORDS } from "./files-mount";
 import { restrictedCharge, chargeMemfsListings } from "./listing-charge";
@@ -140,11 +140,11 @@ function getPyodide(by: "prewarm" | "run" = "run"): Promise<any> {
         // Every directory listing is charged to the cell running inside the dialect, before it lists (listing-charge.ts);
         // outside a run the fork's charge is nothing. Null on a core without the fork, which never runs a cell inside.
         const charge = restrictedCharge(py._module);
-        if (charge) chargeMemfsListings(py.FS, py.ERRNO_CODES, charge, DIR_ENTRY_STEPS);
+        if (charge) chargeMemfsListings(py.FS, py.ERRNO_CODES, charge, listingSteps);
         // `/files` is built here, BEFORE the lockdown: the requester keeps `post` and the shared memory in its closure.
         if (filesShared) {
             const { call, data, Interrupted } = makeRequester(filesShared, post as never, interruptFlag);
-            const chargeListing = charge ? (names: number) => charge(names * DIR_ENTRY_STEPS) : undefined;
+            const chargeListing = charge ? (names: number) => charge(listingSteps(names)) : undefined;
             const mount = makeFilesMount({ FS: py.FS, ERRNO_CODES: py.ERRNO_CODES, call, data, Interrupted, home: filesHome, chargeListing });
             filesMount = mount;
             mount.remount();

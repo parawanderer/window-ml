@@ -10,7 +10,7 @@ import assert from "node:assert";
 import path from "node:path";
 import fs from "node:fs";
 import { wrapUserSetup, wrapUserScript } from "../src/python/python-runtime.ts";
-import { dialectSetup, DIALECT_OS_READS, DIR_ENTRY_STEPS, FILE_BYTES_PER_STEP } from "../src/python/python-dialect-run.ts";
+import { dialectSetup, DIALECT_OS_READS, DIR_ENTRY_STEPS, FILE_BYTES_PER_STEP, FILE_READ_STEPS, listingSteps } from "../src/python/python-dialect-run.ts";
 import { pyodideLoadOptions, PYTHON_ENV, pinEnvironment } from "../src/python/python-env.ts";
 import { restrictedCharge, chargeMemfsListings } from "../src/python/listing-charge.ts";
 import { makeFilesMount, DIR_PAGE, FILES_AT } from "../src/python/files-mount.ts";
@@ -60,7 +60,7 @@ before(async () => {
     await py.loadPackage(["numpy", "pandas", "pillow"], { messageCallback: () => {} });
     assert.strictEqual(await py.runPythonAsync(dialectSetup(FILES)), "");
     // As the worker does at boot (python-worker.ts): every MEMFS listing is charged to the cell running inside.
-    chargeMemfsListings(py.FS, py.ERRNO_CODES, restrictedCharge(py._module), DIR_ENTRY_STEPS);
+    chargeMemfsListings(py.FS, py.ERRNO_CODES, restrictedCharge(py._module), listingSteps);
     py.runPython(TREE);
 }, { timeout: 240000 });
 
@@ -274,7 +274,7 @@ test("walk's directory list is the library's: pruning it asks", { timeout: 60000
 
 // --- the charge: a listing and a read are paid for before the C work runs ---
 
-test("a listing is charged DIR_ENTRY_STEPS a name before it runs, and a budget one step short asks", { timeout: 60000 }, async (t) => {
+test("a listing is charged DIR_LISTING_STEPS plus DIR_ENTRY_STEPS a name before it runs, and a budget one step short asks", { timeout: 60000 }, async (t) => {
     if (skip) return t.skip(skip);
     const [none, base] = budgeted("import os\nx = os.listdir('/data/t')", 10_000_000);
     assert.strictEqual(none, null);
@@ -286,23 +286,23 @@ test("a listing is charged DIR_ENTRY_STEPS a name before it runs, and a budget o
     for (const call of ["[e.name for e in os.scandir('/data/many')]", "list(os.walk('/data/many'))"]) {
         const [ok, used] = budgeted(`import os\nx = ${call}`, 10_000_000);
         assert.strictEqual(ok, null, call);
-        assert.ok(used >= 100 * DIR_ENTRY_STEPS, `${call} used ${used}`);
+        assert.ok(used >= listingSteps(100), `${call} used ${used}`);
         assert.ok(budgeted(`import os\nx = ${call}`, used - 1)[0], call);
     }
 });
 
-test("a MEMFS directory grown past the shipped tree is charged by its own count: 10,000 names, 10,000 x DIR_ENTRY_STEPS", { timeout: 120000 }, async (t) => {
+test("a MEMFS directory grown past the shipped tree is charged by its own count: 10,000 names, listingSteps(10,000)", { timeout: 120000 }, async (t) => {
     if (skip) return t.skip(skip);
     py.runPython("import os\nos.makedirs('/data/big', exist_ok=True)\nfor i in range(10_000):\n    open('/data/big/f%05d' % i, 'w').close()");
     try {
         const [ok, used] = budgeted("import os\nx = os.listdir('/data/big')", 10_000_000);
         assert.strictEqual(ok, null);
-        assert.ok(used >= 10_000 * DIR_ENTRY_STEPS, `10,000 names cost ${used}`);
-        assert.ok(budgeted("import os\nx = os.listdir('/data/big')", 10_000 * DIR_ENTRY_STEPS)[0], "a budget the count does not cover asks before the list is built");
+        assert.ok(used >= listingSteps(10_000), `10,000 names cost ${used}`);
+        assert.ok(budgeted("import os\nx = os.listdir('/data/big')", listingSteps(10_000))[0], "a budget the count does not cover asks before the list is built");
     } finally { py.runPython("import shutil\nshutil.rmtree('/data/big')"); }
 });
 
-test("a read is charged one step per FILE_BYTES_PER_STEP bytes before it reads, and a budget one step short asks", { timeout: 60000 }, async (t) => {
+test("a read is charged FILE_READ_STEPS plus one step per FILE_BYTES_PER_STEP bytes before it reads, and a budget one step short asks", { timeout: 60000 }, async (t) => {
     if (skip) return t.skip(skip);
     const read = (f) => `from pathlib import Path\nx = Path('${f}').read_bytes()`;
     budgeted(read("/data/t/a/y.txt"), 10_000_000);   // warm: the first run fills caches the second does not pay for
@@ -312,6 +312,7 @@ test("a read is charged one step per FILE_BYTES_PER_STEP bytes before it reads, 
     assert.strictEqual(n2, null);
     const more = Math.ceil(1000 / FILE_BYTES_PER_STEP) - Math.ceil(5 / FILE_BYTES_PER_STEP);
     assert.ok(big - small >= more, `1000 bytes cost ${big - small} more steps than 5, not ${more}`);
+    assert.ok(small >= FILE_READ_STEPS + Math.ceil(5 / FILE_BYTES_PER_STEP), `a 5-byte read cost ${small}, under the fixed charge`);
     assert.match(String(budgeted(read("/data/t/b/z.txt"), big - 1)[0]), /step budget/);
 });
 
@@ -320,7 +321,7 @@ test("a charge cannot be turned into a value: a library's except around an exhau
     budgeted("import glob\nx = glob.glob('/data/many/*')", 10_000_000);   // warm: fnmatch's pattern cache
     const [ok, used] = budgeted("import glob\nx = glob.glob('/data/many/*')", 10_000_000);
     assert.strictEqual(ok, null);
-    assert.ok(used >= 100 * DIR_ENTRY_STEPS, `glob over 100 names used ${used}`);
+    assert.ok(used >= listingSteps(100), `glob over 100 names used ${used}`);
     assert.ok(budgeted("import glob\nx = glob.glob('/data/many/*')", used - 1)[0], "glob swallows OSError from its scandir; the run is tripped anyway");
 });
 
@@ -348,8 +349,30 @@ test("a /files listing inside is charged a full page before it is asked for; wit
     };
     const charge = restrictedCharge(py._module);
     const unset = steps(undefined);
-    const set = steps((names) => charge(names * DIR_ENTRY_STEPS));
+    const set = steps((names) => charge(listingSteps(names)));
     assert.ok(unset < DIR_ENTRY_STEPS * 3, `unset, three names cost ${unset} steps`);
-    assert.ok(set - unset >= DIR_PAGE * DIR_ENTRY_STEPS, `a page of ${DIR_PAGE} is charged whatever it holds: ${set - unset} more`);
+    assert.ok(set - unset >= listingSteps(DIR_PAGE), `a page of ${DIR_PAGE} is charged whatever it holds: ${set - unset} more`);
+});
+
+test("a charge refused on a later page fails the listing with EIO and caches nothing, so the next listing asks again", { timeout: 60000 }, async (t) => {
+    if (skip) return t.skip(skip);
+    const file = (name) => ({ name, kind: "file", size: 1, mtimeMs: 0, hidden: false, readonly: true });
+    let asked = 0;
+    const call = (op, [, o]) => {
+        if (op === "stat") return { kind: "dir", size: 0, mtimeMs: 0, hidden: false, readonly: true };
+        if (op === "opendir") { asked++; return o.cursor ? { entries: [file("b.csv")] } : { entries: [file("a.csv")], next: "p2" }; }
+        throw new Error("not served: " + op);
+    };
+    let charges = 0, refuseSecond = true;
+    const chargeListing = () => !(refuseSecond && ++charges === 2);
+    makeFilesMount({ FS: py.FS, ERRNO_CODES: py.ERRNO_CODES, call, data: new Uint8Array(16), Interrupted: class extends Error {}, chargeListing }).remount();
+    try {
+        assert.throws(() => py.FS.readdir(FILES_AT), (e) => e.errno === py.ERRNO_CODES.EIO);
+        assert.strictEqual(asked, 1, "the second page is never asked for");
+        assert.strictEqual(py.FS.lookupPath(FILES_AT).node.kids ?? null, null, "no half-filled list is cached");
+        refuseSecond = false;
+        assert.deepStrictEqual(py.FS.readdir(FILES_AT).filter((n) => !n.startsWith(".")), ["a.csv", "b.csv"]);
+        assert.strictEqual(asked, 3, "the next listing asks from the first page again");
+    } finally { py.FS.unmount(FILES_AT); }
 });
 

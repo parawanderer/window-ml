@@ -39,18 +39,18 @@ export function restrictedCharge(mod: ChargeModule): ((steps: number) => boolean
 }
 
 /**
- * Charge every MEMFS directory listing `perName` steps a name, before it is built. MEMFS directories share one ops
+ * Charge every MEMFS directory listing `steps(names)` steps, before it is built. MEMFS directories share one ops
  * table, so the hook covers every directory, made before or after. A listing the budget cannot pay fails with EIO.
  * @param FS Emscripten's FS
  * @param errno Emscripten's errno table
  * @param charge from {@link restrictedCharge}
- * @param perName the steps a name costs (DIR_ENTRY_STEPS)
+ * @param steps the steps a listing of so many names costs (`listingSteps`)
  */
-export function chargeMemfsListings(FS: any, errno: Record<string, number>, charge: (steps: number) => boolean, perName: number): void {
+export function chargeMemfsListings(FS: any, errno: Record<string, number>, charge: (steps: number) => boolean, steps: (names: number) => number): void {
     const ops = FS.filesystems.MEMFS.ops_table.dir.node;
     const real = ops.readdir;
     ops.readdir = function (node: any) {
-        if (!charge(Object.keys(node.contents).length * perName)) throw new FS.ErrnoError(errno.EIO);
+        if (!charge(steps(Object.keys(node.contents).length))) throw new FS.ErrnoError(errno.EIO);
         return real.call(this, node);
     };
 }

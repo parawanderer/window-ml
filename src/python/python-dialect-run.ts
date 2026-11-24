@@ -245,13 +245,30 @@ export const DIALECT_OS_READS: Record<"os" | "os.path" | "glob" | "pathlib", str
     pathlib: ["Path", "PosixPath", "PurePath", "PurePosixPath"],
 };
 
-/** Steps a directory listing is charged per name, before it lists: listdir measured about 14 steps' time a name and
- *  scandir about 19 (notebooks/python-dialect, the os subset). In `/files` the mount charges a whole page of
- *  `DIR_PAGE_MAX` names before each page it asks for, since it cannot know the count first. */
-export const DIR_ENTRY_STEPS = 20;
+/** Steps a directory listing is charged per name, before it lists. Set on the strict basis (the cheapest step's time),
+ *  as `REGEX_UNITS_PER_STEP` is: `Path.iterdir` takes about 89 steps' time a name, `glob.glob` about 60, `os.walk` 20,
+ *  `os.scandir` 15 and `os.listdir` 10 (notebooks/python-dialect/os-cost.ipynb), since the first three run Python per
+ *  name inside one lifted call the step count never sees. In `/files` the mount charges a whole page of `DIR_PAGE`
+ *  names before each page it asks for, since it cannot know the count first. */
+export const DIR_ENTRY_STEPS = 128;
 
-/** Bytes a read of a file is charged per step, before it reads: ceil(size / FILE_BYTES_PER_STEP). */
+/** Steps every directory listing is charged once, whatever it holds: the call's own cost, about 300 steps' time for
+ *  `glob.glob` and `Path.iterdir` on an empty directory (os-cost.ipynb). */
+export const DIR_LISTING_STEPS = 512;
+
+/**
+ * The steps a listing of `names` names is charged before it lists, by both readdirs (listing-charge.ts, the `/files`
+ * mount's page).
+ * @param names the names the listing holds, or the page it asks for
+ */
+export const listingSteps = (names: number): number => DIR_LISTING_STEPS + names * DIR_ENTRY_STEPS;
+
+/** Bytes a read of a file is charged per step, before it reads: FILE_READ_STEPS + ceil(size / FILE_BYTES_PER_STEP). */
 export const FILE_BYTES_PER_STEP = 2;
+
+/** Steps every read is charged once, whatever the file's size: `Path.read_text` of an empty file takes about 470
+ *  steps' time (os-cost.ipynb). */
+export const FILE_READ_STEPS = 512;
 
 /**
  * Make the interpreter ready to run cells inside the dialect, once per worker: the fork's modules present, its build
@@ -432,7 +449,7 @@ def _ml_os_reads(_restricted, restricted, _admitted):
     # lifted, and the kinds they return readable. allow_module REPLACES a module's names, so each is the union with what
     # load_manifests admitted. A listing is charged where every one of them lists, in the file system's readdir
     # (listing-charge.ts), so glob's and walk's own scandir calls are paid too. A read is charged here, before it reads:
-    # Path.read_text and read_bytes of a regular file, ceil(size / FILE_BYTES_PER_STEP). Not builtin open(): a file the
+    # Path.read_text and read_bytes of a regular file, FILE_READ_STEPS + ceil(size / FILE_BYTES_PER_STEP). Not builtin open(): a file the
     # cell drops (open(p).read()) is finalized under the gate, where its C finalizer is refused and the refusal caught,
     # so the run is refused anyway; one it keeps is not data; and "with" is outside the node whitelist.
     # What a cell changes outside its namespace, the working directory and the environment, _ml_inside_run puts back
@@ -452,7 +469,7 @@ def _ml_os_reads(_restricted, restricted, _admitted):
             return 0    # the call itself raises what the cell sees
         if _s.st_mode & 0o170000 != 0o100000:
             raise restricted.NotInDialect("not in dialect: reading " + repr(os.fspath(_p)) + ", which is not a regular file")
-        return -(-_s.st_size // ${FILE_BYTES_PER_STEP})
+        return ${FILE_READ_STEPS} - (-_s.st_size // ${FILE_BYTES_PER_STEP})
     def _read_check(func, self, args, kwargs):
         _restricted.charge(_cost(self if self is not None else args[0]))
     for _name, _names in _lists.items():
