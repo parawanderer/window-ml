@@ -393,7 +393,7 @@ An ordinary key is measured over its declared domain (`SettingDomain`, `src/sett
 | --- | --- | --- | --- |
 | `boolean` | every value | every value: all (from, to) pairs | exact |
 | `enum` | every word | every word: all pairs | exact |
-| `number`, integer with `min` and `max` and a range of at most 2048 values | every value | the current value and 4 drawn at random | sampled |
+| `number`, integer with `min` and `max` and a range of at most 256 values | every value | the current value and 4 drawn at random | sampled |
 | `number`, any other | `min`, `max` where declared, the default, and 4 drawn at random | the current value and 4 drawn at random | sampled |
 | `hours` | every valid `a-b` pair (552) | the current value and 4 drawn at random | sampled |
 | `currency` | every code `Intl.supportedValuesOf("currency")` lists | the current value and 4 drawn at random | sampled |
@@ -429,17 +429,23 @@ is off the card's covers line while the approved allow frees that change when it
 makes the miss unpredictable, never impossible. What bounds it: the residual is ordinary keys only (the judge frees no
 guarded key whatever the rule), an allow measuring "none" everywhere is refused, so such a rule must also cover a key
 the card names, and the closing line counts the sampled keys that showed no match, so the person sees how much of the
-table rests on samples alone.
+table rests on samples alone. An integer range wider than 256 values (`SETTING_ENUMERATE_MAX`, ruling 117) is sampled,
+not enumerated: its ends, its default, 4 random values and the rule's named numbers with their neighbours are tried as
+`to`.
 
-**Size.** With today's table and 162 currencies: about 5,100 evaluations per proposal with 40 server models (4,100 with
-2), most of them `hours` (552 × 5 = 2,760) and `currency` (162 × 5 = 810). Measured on an Apple M5 Pro under Node 26,
-one measure takes 21 ms for `c.key === "theme"`, 0.55 s for a rule that loops 100 steps per evaluation, 4.7 s for 1,000,
-23.6 s for 5,000, and 37 s for a rule that spends the whole per-evaluation budget (`POLICY_STEPS`, 50,000). So each
-evaluation's own budget does not bound the measure, and the measure has a budget of its own (coordinator, 2026-11-19):
+**Size.** With today's table and 162 currencies, `closedRunGraceMin` (0 to 1440) sampled: about 5,200 evaluations per
+proposal with 40 server models (4,050 with 2), most of them `hours` (552 × 5 = 2,760) and `currency` (162 × 5 = 810).
+`SETTING_ENUMERATE_MAX` (256) bounds the pairs a key adds, (named values) × (width), not the steps: an evaluation's
+steps grow with the rule's length, so a rule naming 40 numbers spends 816,478 steps on `detachedTaskMaxMin` (60 wide)
+and 498,946 on `closedRunGraceMin` (sampled), and what refuses a future key that would exhaust the budget is the row
+over `SETTING_CLASSES` (Tests, below). Measured on an Apple M5 Pro under Node 26, one measure takes 21 ms for `c.key ===
+"theme"`, 0.55 s for a rule that loops 100 steps per evaluation, 4.7 s for 1,000, 23.6 s for 5,000, and 37 s for a rule
+that spends the whole per-evaluation budget (`POLICY_STEPS`, 50,000). So each evaluation's own budget does not bound the
+measure, and the measure has a budget of its own (coordinator, 2026-11-19):
 
 - **One step budget for the measure, `SETTING_MEASURE_STEPS` (1,000,000 steps), shared by every `setting` row of one
   `propose_policy` call.** It is counted in steps, never in wall time. A predicate over the facts costs 8 to 16 steps an
-  evaluation, 40k to 81k for a whole measure (`c.key === "theme"`; a rule over `class`, `widens` and `key.startsWith`);
+  evaluation, 41k to 83k for a whole measure (`c.key === "theme"`; a rule over `class`, `widens` and `key.startsWith`);
   a rule that spends the budget is stopped after 0.3 to 0.4 s on the same machine. A call any of whose rows spends it is
   refused at check time, before any card, for `allow`, `deny` and `ask` alike: "this rule takes too long to measure over
   every setting; a setting policy is a short predicate. It is not proposed." Shared rather than per row, so a call of
@@ -503,7 +509,8 @@ is inert and the measure does not enumerate them), and the `change_setting` tool
 - `from` is varied: `c.key === "theme" || (c.key === "cardCorner" && c.from !== <its current value>)` reports Card
   corner, not only Theme;
 - exactness: every `boolean` and `enum` key is measured over all its pairs (the row iterates `SETTING_CLASSES`:
-  enumerate the inputs); every integer key with a range of at most 2048 has every `to` tried;
+  enumerate the inputs); every integer key with a range of at most 256 has every `to` tried, and every wider one is
+  sampled with both ends tried; a rule naming 40 numbers on each such key is measured inside `SETTING_MEASURE_STEPS`;
 - a bounded number: `c.key === "detachedTaskMaxMin" && c.to === <one value>` reports "some values";
 - random samples: two measures of the same rule draw different random `from` and number samples;
 - the budget: a rule just under `SETTING_MEASURE_STEPS` is measured, one just over is refused, for each effect; two rows
