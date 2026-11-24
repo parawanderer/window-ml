@@ -299,12 +299,13 @@ def classify_python(code: str, tables=None, rules: dict = RULES) -> dict:
     return {"labels": sorted(w.labels), "flags": sorted(w.flags), "imports": sorted(w.imports), "lines": lines, "parser": "ast"}
 
 
-def classify_js_many(sources: list[str]) -> list[dict]:
-    """Many `exec` cells' labels and flags, through one run of classify-js.mjs."""
+def classify_js_many(sources: list[str], rules_file: Path | None = None) -> list[dict]:
+    """Many `exec` cells' labels and flags, through one run of classify-js.mjs (under `rules_file`, labels.json if none)."""
     if not sources:
         return []
     feed = "".join(json.dumps({"id": i, "js": s or ""}) + "\n" for i, s in enumerate(sources))
-    p = subprocess.run(["node", "--import", "tsx", str(HERE / "classify-js.mjs")], input=feed, capture_output=True,
+    args = ["--rules", str(rules_file)] if rules_file else []
+    p = subprocess.run(["node", "--import", "tsx", str(HERE / "classify-js.mjs"), *args], input=feed, capture_output=True,
                        text=True, cwd=ROOT, check=True)
     rows = sorted((json.loads(l) for l in p.stdout.splitlines() if l.strip()), key=lambda r: r["id"])
     return [{k: v for k, v in r.items() if k != "id"} for r in rows]

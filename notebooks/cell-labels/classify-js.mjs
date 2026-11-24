@@ -1,7 +1,7 @@
 // classify-js.mjs — the cell classifier's JS half: an `exec` cell's labels and flags, read from its syntax tree
 // (docs/spec/CELL_FACTS.md, Half 2). The Python half and the export reader are classify.py, which calls this.
 //
-//   node --import tsx notebooks/cell-labels/classify-js.mjs < cells.jsonl > labels.jsonl
+//   node --import tsx notebooks/cell-labels/classify-js.mjs [--rules <file>] < cells.jsonl > labels.jsonl
 //
 // Each input line is `{ "id": …, "js": "<source>" }`; each output line is `{ "id", "labels", "flags", "imports",
 // "lines", "parser" }`. A cell is parsed by the dialect's own parser first (after the pointer macro, as `exec` runs it),
@@ -237,8 +237,9 @@ export function classifyJs(js, rules = RULES) {
         if (t === "MemberExpression" || t === "Identifier") {
             const name = dotted(n);
             if (matches(name, R["dom-read"].roots) || matches(name, R["dom-read"].reads)) labels.add("dom-read");
+            // `ml.current.files` is file metadata: `list` only, and the `ml.current` under it is not also a probe.
+            if (matches(name, R.list.reads)) { labels.add("list"); return; }
             if (matches(name, R.probe.reads)) labels.add("probe");
-            if (matches(name, R.list.reads)) labels.add("list");
         }
 
         if (t === "AssignmentExpression") {
@@ -280,11 +281,14 @@ export function classifyJs(js, rules = RULES) {
 // --- the command: JSONL in, JSONL out ---
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+    // `--rules <file>` classifies under another rules file (the notebook's what-if); labels.json otherwise.
+    const at = process.argv.indexOf("--rules");
+    const rules = at > 0 ? JSON.parse(fs.readFileSync(process.argv[at + 1], "utf8")) : RULES;
     const out = [];
     for (const line of fs.readFileSync(0, "utf8").split("\n")) {
         if (!line.trim()) continue;
         const { id: cellId, js } = JSON.parse(line);
-        out.push(JSON.stringify({ id: cellId, ...classifyJs(js) }));
+        out.push(JSON.stringify({ id: cellId, ...classifyJs(js, rules) }));
     }
     process.stdout.write(out.join("\n") + (out.length ? "\n" : ""));
 }

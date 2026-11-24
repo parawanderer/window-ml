@@ -98,6 +98,19 @@ c.reindex([l for l in order if l in c.index])
 """)
 
 md("""
+## `probe`, with and without the `ml.current` reads
+
+Any read of `ml.current` is `probe` (the cell asks what its run holds), except `ml.current.files` and
+`ml.current.attachments`, which are file metadata and so `list` only. The second column is the same cells classified
+with `ml.current` reads earning nothing, so the share that rests on that definition can be read off.
+""")
+
+code("""
+p = pd.DataFrame({"probe": rows.labels.map(lambda x: "probe" in x), "without ml.current": rows.probe_without_ml_current})
+p.groupby(rows.lang.map(LANG)).sum().astype(int)
+""")
+
+md("""
 ## Python: which kinds ran inside the dialect
 
 A Python cell's outcome, from the sweep's extract: `inside` ran inside the read-only dialect, `asked` ran outside it
@@ -150,7 +163,7 @@ md("""
 
 - **Hand-parsing is a JS behaviour.** 120 of the 131 `parse` cells are JS (92%), a third or more of the JS cells in
   every stratum; Python reads the same files with `pd.read_csv` (`ingest`).
-- **The JS cells probe.** 131 JS cells against 26 Python carry `probe`; 98 of those 131 earn it only by reading
+- **The JS cells probe.** 129 JS cells against 26 Python carry `probe`; 96 of those 129 earn it only by reading
   `ml.current` (a rule choice, below): the model looks for its files through the run's context, from JS.
 - **Every Python `list` cell was asked** (89 of 89): `os.listdir` and its kin are outside the dialect. Few cells of any
   kind ran inside it, as the baseline's class A count (9 of 226 cells that ran) already said.
@@ -164,8 +177,8 @@ md("""
 
 The spec's table gives each label's leading names; `labels.json` is the rule. Where it goes past the table:
 
-- Reading `ml.current` is `probe` (the cell asks what its run holds), and reading `ml.current.files` or
-  `ml.current.attachments` is also `list` (file metadata).
+- Reading `ml.current` is `probe` (the cell asks what its run holds), except `ml.current.files` and
+  `ml.current.attachments`, which are `list` only (file metadata).
 - `df.to_csv()` with no path returns text, so it is `report`, not `write`.
 - A call in a chain that feeds a separator `split` (`txt.trim().split("\\n")`) is part of the parse, like the `map`
   chained on it.

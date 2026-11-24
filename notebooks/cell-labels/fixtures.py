@@ -91,7 +91,9 @@ JS = [
     dict(code='try { x = JSON.parse(t); } catch (e) { x = null; }', labels={"parse"}, flags={"try"}),
     # list
     dict(code='const files = await ml.fs.readdir("/files/attached"); return files;', labels={"list"}, flags={"returns"}, against="write"),
-    dict(code='return ml.current.files.map(f => f.name);', labels={"list", "probe", "transform"}),
+    dict(code='return ml.current.files.map(f => f.name);', labels={"list", "transform"}, against="probe"),
+    dict(code='const a = ml.current?.attachments ?? null; return a;', labels={"list"}, against="probe"),
+    dict(code='return ml.current.state;', labels={"probe"}, against="list"),
     dict(code='return ml.current.messages.length;', labels={"probe", "inspect"}, against="list"),
     # probe
     dict(code='return typeof ml;', labels={"probe"}, flags={"returns"}),
