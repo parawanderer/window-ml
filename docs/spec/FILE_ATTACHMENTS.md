@@ -2230,6 +2230,37 @@ backup and any commit-on-cell-success live in one place.
   registry stores plaintext values, so the plaintext forms cover every registered value; when it lands, the forms'
   source changes and this read does not.
 
+#### Names under `/files` (the coordinator's rulings, 2026-11-24)
+
+BUILT (`src/session/ranged-reader.ts`, `maskName` in `src/secret-mask.ts`). The bytes are masked; the names are
+masked too, or a file named after a secret (an attachment's name, a file a cell wrote) would list it whole. The reader
+is the one place every front end lists and opens through, so the rule is there.
+
+1. Every name a listing returns is SHOWN: each match of a secret's form becomes its marker, `[REDACTED:<NAME>]` as the
+   person's turn writes it (the config's own markers, `[server]`, for a form the turn does not scrub), and a GitHub
+   token its marker. The forms come with their markers in `FILES_SECRET_FORMS`, asked at each call, as at each read.
+2. A folder sorts by its shown names. Entries sharing one are ordered by when they were made, then by a hash of the
+   stored name under a salt drawn once per reader, never by the stored name, so a cell cannot recover a secret from
+   where its own files sort beside it.
+3. A path resolves segment by segment: the child stored under exactly that name wins, even over a shown name it
+   shares; otherwise the one child whose shown name the segment is, as a whole value (no prefix, no part, no length).
+4. Two children sharing a shown name are both listed under it. A segment naming that shown name, with no exact match,
+   is `EACCES: '<path>' is ambiguous, <N> files`. The cost, accepted: neither opens by the shown name, a cell reaches
+   them only by their stored names, which it is never shown, and the person sees both in the panel.
+5. An error names the path as the caller wrote it, never a stored name: open, stat, the write side, a commit's
+   refusal and a discarded file's report alike.
+6. One lookup serves open, stat, opendir, unlink, rename (both ends), mkdir, rmdir and a create. A create on a shown
+   name addresses that file (an exclusive create is `EEXIST`), never a second one.
+7. The cursor is not a path: it is the last entry's ordinal among those sharing its shown name, then that shown name
+   (`c:<ordinal>:<shown>`), so a folder of colliding names pages to its end. A cursor of any other shape is `EINVAL`.
+8. Under `agent/`, a create or a rename whose last segment holds `[REDACTED:` and names no file there is
+   `EACCES: '<path>' is reserved`: it would make a second file under a shown name.
+
+The exact match keeps two cases working: an attached name that holds the marker text itself, and a file written
+before the value in its name was registered, both open by the name the cell wrote. Python's mount lists both entries
+of a collision and caches neither, so its lookup asks the reader, which refuses it. A value registered mid-session is
+masked from the next listing on; a cell that read the name before holds it already, as with the bytes.
+
 **Asked by ruling 36 of the packages notebook, still not on main** (the design was fixed and built without them):
 whether worker memory stays flat reading ranges of a 1 GiB file; the cost of the scrub inside the read, both the
 plaintext registry's and ruling 32's hash-only matcher's; and whether a Parquet writer wheel exists. Whether the

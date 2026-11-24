@@ -64,7 +64,10 @@ test("FILES_SECRET_FORMS answers the config's and the registry's forms to the of
     assert.ok(finds.includes(REGISTERED), "the registered value");
     for (const f of valueForms(REGISTERED)) assert.ok(finds.includes(f), `the registered value's form ${f}`);
     assert.ok(forms.some((f) => f.ci === true && /host/.test(f.find)), "the server URL, in any case");
-    for (const f of forms) assert.deepEqual(Object.keys(f).filter((k) => k !== "ci"), ["find"], "a form carries its text and case rule only");
+    for (const f of forms) assert.deepEqual(Object.keys(f).filter((k) => k !== "ci"), ["find", "put"], "a form carries its text, its case rule and the marker a name shows");
+    for (const f of forms.filter((x) => valueForms(REGISTERED).includes(x.find) || x.find === REGISTERED)) assert.equal(f.put, "[REDACTED:DB_PASS]", "a registered value's marker names it, as the person's turn does");
+    assert.equal(forms.find((f) => f.find === API_KEY).put, "[REDACTED:window-ml-api-key]", "the saved key's marker, as the person's turn writes it");
+    assert.equal(forms.find((f) => f.ci === true && /host/.test(f.find)).put, "[server]", "a form the turn does not scrub keeps the config's marker");
     assert.equal(new Set(finds).size, finds.length, "each form once");
     assert.deepEqual([...finds].sort((a, b) => b.length - a.length), finds, "longest first");
     assert.deepEqual(await askForms(bg, PAGE), { forms: null }, "a page's tab sender");

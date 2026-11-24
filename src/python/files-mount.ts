@@ -246,6 +246,10 @@ export function makeFilesMount(deps: FilesMountDeps) {
             readdir(node: any) {
                 const p = pathOf(node);
                 const kids = new Map<string, Stat>();
+                // Every entry, a shown name twice when two files share it: both are listed, and neither is cached,
+                // so a lookup by that name asks the reader, which refuses it as ambiguous.
+                const names: string[] = [];
+                const shared = new Set<string>();
                 let cursor: string | undefined;
                 do {
                     // Charged for a full page before asking, since the count is not known first; nothing gives back
@@ -253,11 +257,12 @@ export function makeFilesMount(deps: FilesMountDeps) {
                     const limit = cursor ? DIR_PAGE : DIR_FIRST_PAGE;
                     if (deps.chargeListing && !deps.chargeListing(limit)) throw new FS.ErrnoError(ERRNO_CODES.EIO);
                     const page = req("opendir", [p, { limit, ...(cursor ? { cursor } : {}) }]) as { entries: Array<{ name: string } & Stat>; next?: string };
-                    for (const e of page.entries) kids.set(e.name, e);
+                    for (const e of page.entries) { if (kids.has(e.name)) shared.add(e.name); kids.set(e.name, e); names.push(e.name); }
                     cursor = page.next;
                 } while (cursor);
+                for (const n of shared) kids.delete(n);
                 node.kids = kids;
-                return [".", "..", ...kids.keys()];
+                return [".", "..", ...names];
             },
             symlink() { throw new FS.ErrnoError(ERRNO_CODES.EPERM); },
             // This core's `os` has no `link`; refused here too, for whatever reaches the node op.
