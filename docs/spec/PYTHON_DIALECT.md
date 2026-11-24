@@ -370,8 +370,9 @@ inside run. The rule has three layers, and none is another's substitute:
      outside cell before an inside one, and 27 of their 44 inside cells would ask (`replay.json`, 8d910442). With
      `read_csv` served (`replay-read-csv-served.json`, 1fda7dec) it is 11 runs and 16 of 80 inside cells. These are
      UPPER bounds: the replay's outside cells were never approved and run, and only an approved, started cell marks.
-   - **Not in this layer.** Clearing the mark by restarting the worker, and carrying a namespace's data into a fresh
-     worker, are later work and Shane's to want.
+   - **Not in this layer.** Clearing the mark by restarting the worker is ruled and specified, not built:
+     `ml.python.restart()` ([ML_PYTHON.md](ML_PYTHON.md), ruling 116). Carrying a namespace's data into a fresh
+     worker is later work and Shane's to want.
 
 A refused try leaves no output either: its captured stdout is discarded with its env, and whether text the tee already
 wrote to the real stdout reaches the model in a streamed call is measured before it is called closed (rule 8), not
@@ -380,6 +381,33 @@ inferred. Each part is mutation-checked alone: revert it and the red team's test
 A cell inside the dialect that makes a gated `ml` call (`ml.fetch` on a new URL, `ml.sh`) does not fall out of it: the
 call SUSPENDS on an `ask` and continues when answered ([`ML_WIRE.md`](ML_WIRE.md), "Per-call asking"), which the JS
 survey could not do and which answers the manifest spec's "granularity of a refusal".
+
+### The `os` subset (ruling 112, Shane's yes, 2026-11-24)
+
+Unasked inside: reads and scans in `os`, `os.path`, `glob` and `pathlib`; `os.chdir` and `os.getcwd`; reading and
+writing `os.environ`. Still asking: anything that removes, renames or writes a file, `os.system`, `os.exec*`, process
+and fd calls, and every name of `os` not listed (`DIALECT_OS_READS`, `python-dialect-run.ts`; the test enumerates the
+core's own `os` against it). A hidden file under `/files` stays listed, and reading it raises `PermissionError`.
+
+- **Cost.** A listing is charged before it is built, in the file system's readdir, which every listing reaches (glob,
+  `os.walk` and `Path.iterdir` list from inside a lifted call): `DIR_LISTING_STEPS` (512) a listing plus
+  `DIR_ENTRY_STEPS` (128) a name, from a MEMFS directory's own count, and a whole page of names
+  before each page the `/files` mount asks for: `DIR_FIRST_PAGE` (50) first, then `DIR_PAGE` (500). The figures are set
+  on the strict basis, the cheapest step's time, as the regex charge is: `Path.iterdir` takes about 89 steps' time a
+  name. The fork cannot credit, so a short page keeps its full charge: a `/files` directory of up to 50 names costs
+  6,912 steps (about 2,170 directories in a 15M budget), and each further page 64,512. A read (`Path.read_text`,
+  `read_bytes`) is charged `512 + ceil(size / 2)` before it reads, and only a regular file is read. The figures and
+  the overcharge's effect: `notebooks/python-dialect/os-cost.ipynb`.
+- **State outside the namespace.** The working directory and the environment are put back when the cell is refused, so
+  an approved rerun starts from what was there; a finished cell keeps what it changed, and a later inside cell reads
+  it. Changing them does not set the outside mark: only a post that runs cell code ungated marks the worker
+  (`WORKER_POSTS`, `py-mark.ts`), and an inside cell runs under the gate. A fresh interpreter's environment is exactly
+  `PYTHON_ENV` (`python-env.ts`).
+- **What the fork leaves asking, each for its own reason:** builtin `open` (a dropped file is finalized under the gate;
+  a kept one is not data; `with` is not in the node list); `Path.glob`/`rglob` (each maps a `Path` method that sets an
+  attribute, from C, under the gate; `glob.glob` reads the same names); `os.environ[k] = v` and `del os.environ[k]`
+  (an item is written only on a value the cell owns; `update`, `setdefault` and `pop` run); `dict(os.environ)` (it
+  calls the mapping's Python `keys()` from C; `os.environ.copy()` runs); a `walk` that prunes its list.
 
 ### Code from elsewhere runs under the same gate (intended design; Shane, 2026-11-23; the dynamic case is not built)
 
@@ -533,7 +561,8 @@ running a Python script via `ml.sh.run(["python3", "script.py", ...])` do not sh
 
 - **In-kernel (`python_exec`, or `import helper` inside a cell):** Runs inside the persistent per-run `dict` under
   `CO_RESTRICTED` (tier 3 by default for pure-Python functions, [`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md)
-  for native leaves). It has no `open()`, `os`, `sys`, `argparse` or `subprocess`, and halts within the step budget with
+  for native leaves). It has no `open()`, `sys`, `argparse` or `subprocess`, of `os` only the reads "The `os` subset"
+  admits, and halts within the step budget with
   write-barrier rollback on failure. RULED 2026-10-28 (for `FILE_ATTACHMENTS.md` slice 3): an attached file reaches a cell
   the way a stored table does, as an injected value (`files: { name: "@file:…" }` giving the bytes; a tabular one through
   `ml.table`, [`ML_TABLE.md`](ML_TABLE.md)), never as a path under a mounted directory (superseded for `ml.table` and the served `read_csv`, which read a

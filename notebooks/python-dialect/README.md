@@ -33,8 +33,17 @@ beside it (`make-<name>.py`, the file to edit) and its pinned inputs under `data
   ruling 71 serves it (each call classed by its source), and a syntactic count (`cell-replay/stores.py`) of the stores
   behind each first refusal. The replay is `cell-replay/replay.mjs`; its extracts in
   `data/cell-replay/` hold features, never cell text. Generator: `make-cell-replay.py`.
+  A change to `replay.mjs` keeps its default modes' rows: `cell-replay/guard.mjs <run.json>...` replays each with the
+  working copy and with origin/main's and compares them. Its other options (`--all-cells`, `--files`, `--capture`,
+  `--replace`, `--count-steps`, `--admit`) serve the bench's rewrite test (`corpus-replay.mjs`, on the corpus branch).
 - [`reshape-edits.ipynb`](reshape-edits.ipynb): on the reshaping bench's multi-cell task (`reshape.bench.ts`), which
   python_exec cells finish inside the dialect, why the rest ask, and for each refused edit who made the value: the
   injected table, an earlier inside cell, an earlier asked cell, or an alias. A skeleton until the sweep runs (after the
   widened vocabulary is on main); its classifier is checked on the cells of `tests/e2e/python-dialect-edits.spec.mjs`.
   Reader: `reshape-edits/provenance.py`; rows pinned in `data/reshape-edits/cells.json`. Generator: `make-reshape-edits.py`.
+- [os-cost.ipynb](os-cost.ipynb): do `DIR_ENTRY_STEPS`, `FILE_BYTES_PER_STEP` (`python-dialect-run.ts`) and `DIR_PAGE`
+  (`files-mount.ts`) cover the time the os subset's calls take? The interpreter's ns per step (the cheapest step, an
+  empty loop, is the strict basis), `os.listdir` / `os.scandir` / `os.walk` / `glob.glob` / `Path.iterdir` in ns per entry on MEMFS
+  directories of 10 to 10,000 names as step-equivalents, `Path.read_bytes` / `read_text` as bytes per step, and the
+  `/files` page overcharge as arithmetic. Timings come from `os-cost/bench.py` (run by `os-cost/one.mjs`, from the repo
+  root, on `dist/pyodide`); inputs pinned in `data/os-cost/bench.json`. Generator: `make-os-cost.py`.

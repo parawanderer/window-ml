@@ -311,7 +311,7 @@ it (asks, the full gated `ml`).
 **Membership is decided by RUNNING the cell under the fork's gate, never by its source alone**
 (`docs/spec/PYTHON_DIALECT.md`, "Membership replaces `mode`"). The fork's `restricted.check()` admits `import`, calls
 and attributes; which modules, calls and attributes are allowed is enforced only by the allow tables while
-`restricted.run_cell` runs. So `import os` passes `check()` and is refused by `run_cell`. The path, for a run the
+`restricted.run_cell` runs. So `import subprocess` passes `check()` and is refused by `run_cell`. The path, for a run the
 worker drives with `autoApprovePython` on:
 
 1. The host's read-only try (`tryPythonInside`, `sw-run-host.ts`) runs the cell before the gate, with the run's grant
@@ -344,10 +344,30 @@ worker drives with `autoApprovePython` on:
    `DataFrame.dtypes` are not listed: `str()` of a numpy dtype imports from C under the cell's frame, which has no
    `__builtins__`, so it raises KeyError (#2040). `tests/python-dialect-vocab.test.mjs` holds every listed stdlib name to a call
    that runs inside or a reason. Both functions go when the fork does this itself.
+   **The `os` subset (ruling 112)** is `_ml_os_reads`: the names `DIALECT_OS_READS` lists of `os`, `os.path`, `glob`
+   and `pathlib` (reads and scans, `os.chdir`/`os.getcwd`, `os.environ` read and written through its methods), each
+   registered lifted, and the kinds they return readable. Every other name of `os` asks, which
+   `tests/python-os-inside.test.mjs` enumerates from the core's own `os`. A LISTING is charged in the file system, since
+   `glob`, `os.walk` and `Path.iterdir` list from inside a lifted call the gate never sees again (`listing-charge.ts`):
+   `listingSteps`, `DIR_LISTING_STEPS` a listing plus `DIR_ENTRY_STEPS` a name, from a MEMFS directory's own count and
+   for a `/files` page before the mount asks for it (`chargeListing`; `DIR_FIRST_PAGE` names first, so a walk over many small directories stays cheap, then `DIR_PAGE`), kept when the page held fewer, because the fork's charge cannot credit.
+   `os.listdir` releases the GIL around its readdir, so the hook re-attaches the thread state and calls the fork's C
+   charge (`_PyRestricted_Charge`) itself; outside a run that charge is nothing. A READ is `Path.read_text` or
+   `read_bytes` of a regular file, charged `FILE_READ_STEPS + ceil(size / FILE_BYTES_PER_STEP)` before it reads (figures: `os-cost.ipynb`). Still asking, each for
+   its own reason: builtin `open` (a file the cell drops is finalized under the gate, which refuses its C finalizer;
+   one it keeps is not data; `with` is not in the node list), `Path.glob`/`rglob` (each maps a `Path` method that sets
+   an attribute, from C, under the gate; `glob.glob` reads the same names), `os.environ[k] = v` and `del` (the fork
+   writes an item only of a value the cell owns), `dict(os.environ)` (it calls the mapping's Python `keys()` from C,
+   unlifted; `os.environ.copy()` runs), and a `walk` that prunes its directory list (the list is the library's). A
+   hidden file under `/files` stays listed, and reading it raises `PermissionError` in the cell, without the reader's
+   words: the open wrappers are off for an inside cell. The environment a fresh interpreter starts with is exactly
+   `PYTHON_ENV` (`pinEnvironment`, right after the load: Emscripten adds `_` and Pyodide `PYTHONINSPECT`).
 3. `wrapUserScript(…, inside)` runs the cell through `run_cell` (`INSIDE_CELL`, `python-dialect-run.ts`) in a COPY of the namespace that holds no `_` name.
    A bare trailing expression gets `return ` spliced in at its own column, so the value matches the full path. Decimal
    arithmetic sets the thread context's sticky flags from C, which no ownership check sees, so the context's flags and
-   traps are put back after the run, refused or not, and a later cell never reads what an inside cell computed.
+   traps are put back after the run, refused or not, and a later cell never reads what an inside cell computed. The
+   working directory and the environment are put back when the cell is refused, so its approved rerun starts from
+   what was there; a cell that finishes keeps what it changed.
 4. If it finishes, its bindings are copied back, except a builtin's name or one starting with `_`, and only if every
    new binding and the value are DATA (`_ml_not_inert`, an allowlist on the exact type: scalars, the builtin containers,
    numpy arrays, pandas frames, series and indexes, object values walked), or exactly what the cell's own import

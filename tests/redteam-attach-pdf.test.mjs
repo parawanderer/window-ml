@@ -167,7 +167,7 @@ test("ADVERSARIAL: a page's START_RUN loses `files`, in every shape it can be wr
 
 // --- the nested copy: a page can also write the alias INTO rebuild ---
 
-test("ADVERSARIAL: a page's START_RUN loses `files` inside `rebuild` too, not just beside it", { todo: "open: pageStartPayload strips `rebuild.builtBy` alone, so `rebuild.files` survives the page's own payload (sw-run-host.ts:335)" }, () => {
+test("ADVERSARIAL: a page's START_RUN loses `files` inside `rebuild` too, not just beside it", () => {
     // Asserted on the DATA, not by grepping the sources: a source scan for `rebuild?.files` misses `rebuild["files"]`,
     // a destructuring `const { files } = rebuild`, and `const r = p.rebuild; r.files`, so it cannot say what a payload
     // carries. The worker reads a run's shelf from `p.files` (sw-runs.ts `workerFiles`, which also requires
