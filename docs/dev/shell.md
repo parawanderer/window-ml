@@ -152,8 +152,17 @@ with the 2 s probe limit, re-runs only one the stored entry makes free under the
 `envelopeFor`'s envelope (which must be `write: "none"`, on a host that takes envelopes), and checks the exit against
 `okCodes`, the envelope the host reports, and `protectedChanged`; `markEvidence` stores the pass or the first failure.
 Both go to the run log (`shell`/`manifest-added`, `shell`/`manifest-evidence`). The tool itself only reports the
-outcome (`proposalOutcome`). It is offered by the settings (`shellTurnedOn`), not the measured status, so a run started
-while a woken worker reconnects is offered the same tools; a host that does not answer is the precheck's error.
+outcome (`proposalOutcome`).
+
+**A run is offered `ml.sh` when the settings turn it on AND a process host answers at the run's start** (`shellOffered`,
+sw-shell.ts, read once in sw-run-start.ts). That one check decides the prompt's shell clause and the shell figure in its
+lifetimes list, `propose_manifest`, and `task` (which `python_exec` offers too, `offersTask`). With the setting on, the
+start connects through `refreshShell` (a woken worker reconnects there, so it is offered the same tools) and waits at
+most 3 s for the hello; a host that has not answered by then counts as absent. The answer is fixed for the run: a host
+installed or started later offers nothing until the next run, and a host that dies mid-run leaves the tools in place,
+each call answering `ShellUnavailable` (and `propose_manifest` its precheck's error). A resume, a no-tab run's included,
+keeps the tools its start chose. Before 2026-11-23 the settings alone decided, so a person with the setting on and no
+host was told about `ml.sh` and every call failed.
 
 **`propose_manifest` with `library` proposes a tier 3 Python library** (READONLY_LIBRARY_MANIFEST.md, "The runtime
 import loop", rulings A to D of 2026-10-24; `sw-library-proposal.ts`, the pure half `library-proposal.ts`). The

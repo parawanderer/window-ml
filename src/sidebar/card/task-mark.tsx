@@ -1,7 +1,7 @@
 // task-mark.tsx — the small mark on the HUD card for a run that has background tasks.
 
 import { cursorTipOn } from "../ui-kit";
-import { taskMarkText, TASK_MARK_TIP } from "../transcript/task-mark-text";
+import { taskMarkText, TASK_MARK_TIP } from "../../chat/task-mark-text";
 import type { TaskBackground } from "../../contract";
 
 /**

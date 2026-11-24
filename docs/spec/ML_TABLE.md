@@ -236,7 +236,7 @@ where.
     from a bound method held in a name.
   - It normalises the path lexically, with `/` as the session root and `..` stopping there.
   - It admits a write, `rm` or a rename only when every target is under `/files/agent/`. It refuses anything else under
-    `/files/`, and asks for a hidden-list name (ruling 34).
+    `/files/`, a hidden-list name included (ruling 34): a hidden file is refused, never asked about.
   - A path it cannot normalise asks.
   - A C method with a path argument is not listed.
   - The offscreen document re-checks every write, and it is the boundary.
