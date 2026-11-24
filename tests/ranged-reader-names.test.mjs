@@ -280,6 +280,21 @@ test("a create, a mkdir or a rename to a new name holding [REDACTED: is EACCES r
     assert.ok(e3.message.includes("reserved"), e3.message);
 });
 
+for (const [label, last, form] of [
+    ["[REDACTED:X]", "x[REDACTED:X]y", undefined],
+    ["the bare [REDACTED]", "x[REDACTED]y", undefined],
+    ["[a GitHub token]", "x[a GitHub token]y", undefined],
+    ["a form's put, [server]", "x[server]y", { find: "srv-secret", put: "[server]" }],
+]) {
+    test(`a create under agent/ whose name holds ${label} is EACCES reserved`, T, async () => {
+        const { ch, forms } = setup();
+        if (form) forms.push(form);
+        const t = await ch.begin();
+        const err = await refused(ch.openWrite(`agent/${last}`, "w", t), "EACCES");
+        assert.ok(err.message.includes("reserved"), err.message);
+    });
+}
+
 test("a file that already exists under that literal name opens for write", T, async () => {
     const { ch, agent } = setup();
     await agent.commit("s1", [{ op: "put", path: "old[REDACTED:X]", data: new Blob(["1"]) }]);
