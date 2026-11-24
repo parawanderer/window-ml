@@ -68,6 +68,8 @@ export interface RunAgentHostDeps {
     scrubText?: AgentLoopDeps["scrubText"];
     /** The same crossing for the Out render and a pointer's fuller capture (agent-loop.ts `scrubStored`). */
     scrubStored?: AgentLoopDeps["scrubStored"];
+    /** What an exec or python_exec cell did, once its step is final (agent-loop.ts `cellFacts`). */
+    cellFacts?: AgentLoopDeps["cellFacts"];
     // Self-introspection (chat_metadata): the run's model + its context window + capability list, from the
     // SW's caches. The loop supplies the token/message counts; this only adds the model facts. Optional.
     chatMeta?(): Promise<{ model: string | null; contextWindow: number | null; capabilities: string[] | null } | null>;
@@ -212,6 +214,7 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         forModel: deps.forModel,
         scrubText: deps.scrubText,
         scrubStored: deps.scrubStored,
+        cellFacts: deps.cellFacts,
         renderFor: deps.renderFor,
         precheck: deps.precheck,
         unrunnable: deps.unrunnable,

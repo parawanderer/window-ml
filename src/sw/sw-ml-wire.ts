@@ -174,7 +174,7 @@ export function onMlCall(message: Partial<MlWireRequest>, sender: chrome.runtime
         sendResponse({ seq, error: { code: "Refused", message: "this sender cannot call ml over the wire" } });
         return true;
     }
-    serveWireCall(message, { run: client.run, members: membersFor(client), argsMeter: argsMeterOf(client), later: (a) => deliverLater(handle, a), isOpen: () => wireClient(handle) !== undefined, scrub })
+    serveWireCall(message, { run: client.run, members: membersFor(client), argsMeter: argsMeterOf(client), later: (a) => deliverLater(handle, a), isOpen: () => wireClient(handle) !== undefined, scrub, onCall: (n) => client.calls.set(n, (client.calls.get(n) ?? 0) + 1) })
         .then(sendResponse, async (e) => sendResponse({ seq, error: { code: "Failed", message: await scrub(String((e as Error)?.message || e)) } }));
     return true;
 }

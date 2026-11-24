@@ -66,7 +66,7 @@ export class Parser {
             this.next(); this.eat("(");
             const kw = this.peek();
             if (!(kw.t === "name" && (kw.v === "const" || kw.v === "let" || kw.v === "var")))
-                throw new NotInDialect("only `for (const x of iterable)` is supported — no C-style `for(;;)`");
+                throw new NotInDialect("only `for (const x of iterable)` is supported — no C-style `for(;;)`", { name: "for" });
             this.next();
             // The loop variable is a name or the same destructuring pattern a `const` takes:
             // `for (const [k, v] of Object.entries(o))`, `for (const { id } of rows)`.
@@ -75,7 +75,7 @@ export class Parser {
             if (id && id.t !== "name") throw new NotInDialect("expected loop variable name");
             const kwd = this.next();
             if (!(kwd.t === "name" && kwd.v === "of"))
-                throw new NotInDialect(kwd.v === "in" ? "`for…in` is not supported — use `for (const x of Object.keys(o))` or `.map`" : "expected `of` in a for-loop");
+                throw new NotInDialect(kwd.v === "in" ? "`for…in` is not supported — use `for (const x of Object.keys(o))` or `.map`" : "expected `of` in a for-loop", { name: kwd.v === "in" ? "in" : "for" });
             const iter = this.parseExpression();
             this.eat(")");
             const body = this.parseStatement();
@@ -162,7 +162,7 @@ export class Parser {
             // Not operators here, and said so where they stand: left alone, the expression just ends and the caller
             // reports whatever token it then meets (an `expected ')'`), which names neither the keyword nor the fix.
             if (t.t === "name" && (t.v === "in" || t.v === "instanceof"))
-                throw new NotInDialect(t.v === "in" ? "'in' is not available; read the field itself, or compare it with `undefined` on an object whose keys you know" : "'instanceof' is not available; use Array.isArray or typeof");
+                throw new NotInDialect(t.v === "in" ? "'in' is not available; read the field itself, or compare it with `undefined` on an object whose keys you know" : "'instanceof' is not available; use Array.isArray or typeof", { name: t.v });
             if (t.t !== "punct" || !(t.v in BP) || BP[t.v] < minbp) break;
             const op = t.v; this.i++;
             // JS refuses an UNPARENTHESISED unary operand on the left of `**` (`-2 ** 2` is a SyntaxError, because
@@ -319,7 +319,7 @@ export class Parser {
         }
         if (this.is("{")) return this.parseObject();
         if (this.is("(")) return this.parseParenOrArrow();
-        throw new NotInDialect(`unexpected token '${t.v || t.t}'`);
+        throw new NotInDialect(`unexpected token '${t.v || t.t}'`, { name: t.v || t.t });
     }
     parseParenOrArrow(): Node {
         // Try `(params) =>`; on failure restore and parse `( expr )`. Only the PARAMETER LIST is backtracked: an error in
@@ -431,7 +431,7 @@ export class Parser {
                 else throw new NotInDialect("object key");
                 // `{ __proto__: x }` sets the new object's PROTOTYPE to x, so reads through it reach a value the
                 // script did not build; reading `__proto__` is denied, so is writing it here.
-                if (key === "__proto__") throw new NotInDialect("a `__proto__` key: it sets the object's prototype");
+                if (key === "__proto__") throw new NotInDialect("a `__proto__` key: it sets the object's prototype", { name: "__proto__" });
                 if (this.is(":")) { this.i++; props.push({ key, value: this.parseExpression() }); }
                 else props.push({ key, value: { type: "Ident", name: key } });   // shorthand
             }

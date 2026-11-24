@@ -57,6 +57,13 @@ lifted calls are computed or thrown and then dropped; no wire-call count exists.
 
 - **Bounded.** The object is at most 4,096 characters serialized; past that the row lists are cut and the counts kept.
 
+- **The execution log keeps the cells apart from the mechanics.** Its `cell`/`facts` records have their own caps,
+  counted apart from the mechanics records (page, CDP, tab): 200 per run (`PER_RUN_CELL_CAP`) and 1,000 across every
+  run (`CELL_LOG_CAP`), each dropping its oldest. One record per cell would otherwise push a long run's own mechanics out
+  of the ring, and through the shared total another run's: the mechanics are what says why a cell asked. The total is
+  lower than the mechanics' 2,000 because a record may be up to 4 KB, at most about 4 MB of `storage.session`'s 10 MB.
+  The exports read `cell` from the session's steps, never from the log, so a trimmed log truncates no export.
+
 - **Deterministic fields diff cleanly.** `ran`, `class`, `why`, `lifted[].name`, `lifted[].calls` and `wire` are
   functions of the cell, the build and the worker's history. `steps.used` and `charged` are deterministic on one
   build; if a measurement shows they are not, they join `VOLATILE_FIELDS` (`docs/dev/export.md`).

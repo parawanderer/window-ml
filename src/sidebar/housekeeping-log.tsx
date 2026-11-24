@@ -13,6 +13,8 @@ import { fmtAge, fmtDelta, fmtDur } from "./timestamps";
 import { Disclosure } from "./disclosure";
 import { LOG_CAP, LOG_KEY, type HousekeepingEvent } from "../log/housekeeping";
 import type { JobStatus } from "../job-registry";
+import type { RunLogDetail } from "../log/run-log";
+import { cellFactsLine } from "../agent/cell-facts";
 
 /** A log rendered as text: the lines, the produced-at marks the timestamp gutter is drawn from, and — for a
  *  surface that wants it — which GROUP each line belongs to and how wide that column is. The last two are extra,
@@ -36,7 +38,7 @@ export interface LogText {
  * It exists because a key that is the same on every record in view is width spent saying nothing, and in a
  * narrow panel that width is what makes a one-record line wrap into two (the execution log's `tab`).
  */
-export function housekeepingText(events: HousekeepingEvent[], hidden: ReadonlySet<string> = new Set(), omit: ReadonlySet<string> = new Set()): LogText {
+export function housekeepingText(events: (Omit<HousekeepingEvent, "detail"> & { detail?: RunLogDetail })[], hidden: ReadonlySet<string> = new Set(), omit: ReadonlySet<string> = new Set()): LogText {
     const shown = events.filter((e) => !hidden.has(e.subsystem));
     const width = Math.max(0, ...shown.map((e) => e.subsystem.length));
     const lines: string[] = [];
@@ -51,7 +53,10 @@ export function housekeepingText(events: HousekeepingEvent[], hidden: ReadonlySe
         if (e.ms != null) parts.push(fmtDelta(e.ms));
         if (e.bytes != null) parts.push(formatBytes(e.bytes));
         if (e.key) parts.push(e.key);
-        for (const [k, v] of Object.entries(e.detail || {})) if (!omit.has(k)) parts.push(`${k}=${v}`);
+        const d = e.detail;
+        // The execution log's one nested detail (`cell`/`facts`): its seq, then the facts as the export's one line.
+        if (d && "cell" in d && typeof d.cell === "object") parts.push(`seq=${d.seq}`, cellFactsLine(d.cell));
+        else for (const [k, v] of Object.entries(d || {})) if (!omit.has(k)) parts.push(`${k}=${v}`);
         if (e.origin !== "worker") parts.push(`[${e.origin}${e.tab != null ? ` tab ${e.tab}` : ""}]`);
         const line = parts.join("  ");
         marks.push([offset, e.t]);
@@ -63,7 +68,7 @@ export function housekeepingText(events: HousekeepingEvent[], hidden: ReadonlySe
 }
 
 /** Each subsystem with how many events it has, in order of first appearance — the filter chips' labels. */
-export function subsystemCounts(events: HousekeepingEvent[]): [string, number][] {
+export function subsystemCounts(events: { subsystem: string }[]): [string, number][] {
     const counts = new Map<string, number>();
     for (const e of events) counts.set(e.subsystem, (counts.get(e.subsystem) || 0) + 1);
     return [...counts];

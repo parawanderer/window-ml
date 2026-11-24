@@ -9,7 +9,7 @@
 import type { NeutralMessage } from "../contract/contract-chat";
 import type { PromptSurface } from "../contract/contract-run";
 import type { LogLevel } from "../log/housekeeping";
-import type { RunLogEvent } from "../log/run-log";
+import { isCellFactsRecord, type RunLogEvent } from "../log/run-log";
 import { toolToken } from "../util";
 import type { CurrentClient } from "./current-client";
 import type { TableLike } from "../table/table-data";
@@ -238,7 +238,9 @@ export function logText(records: readonly CurrentLogRecord[]): string {
 /** Execution-log records as the model reads them in `ml.current.log`, oldest first: never `key`, `tab` or `origin`. Also
  *  what the state inspector shows for `run.log`, so the panel draws the model's view, not a fuller one. */
 export function currentLogRecords(log: readonly RunLogEvent[]): CurrentLogRecord[] {
-    return log.map((e): CurrentLogRecord => ({
+    // NEVER MODEL-FACING (docs/spec/CELL_FACTS.md, rule 1): a cell's recorded facts are for the person and the export.
+    // The one place every model-facing view of the log passes (`ml.current.log`, its `.text`, the state inspector).
+    return log.filter((e) => !isCellFactsRecord(e)).map((e): CurrentLogRecord => ({
         ts: e.t, level: e.level ?? "info", subsystem: e.subsystem, kind: e.kind, reason: e.reason ?? null,
         detail: e.detail && typeof e.detail === "object" ? structuredClone(e.detail) as Record<string, unknown> : null,
     })).sort((a, b) => a.ts - b.ts);

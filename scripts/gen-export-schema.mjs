@@ -75,18 +75,20 @@ function scanInterfaces(src, file, local = false) {
             while (!/\*\//.test(lines[i]) && i < lines.length - 1) pending.push(lines[++i]);
             continue;
         }
-        let m = line.match(/^export interface (\w+)(?:<[^>]*>)?\s*(?:extends ([\w\s,<>]+?)\s*)?\{/);
+        let m = line.match(/^export interface (\w+)(?:<[^>]*>)?\s*(?:extends ([\w\s,<>"|]+?)\s*)?\{/);
         // LOCAL mode (a `closed` spec's own source): an object-literal type alias and an unexported interface are
         // shapes too. Only for the normative file: in the contract's modules an `export type X = {` is read as the
         // inline alias it always was, and widening that would change the published export schemas.
-        if (!m && local) m = line.match(/^(?:export )?interface (\w+)(?:<[^>]*>)?\s*(?:extends ([\w\s,<>]+?)\s*)?\{/)
+        if (!m && local) m = line.match(/^(?:export )?interface (\w+)(?:<[^>]*>)?\s*(?:extends ([\w\s,<>"|]+?)\s*)?\{/)
             || line.match(/^export type (\w+)\s*()=\s*\{/);
         if (!m) { if (line.trim()) pending = []; continue; }
         const name = m[1];
         // `extends` was MATCHED and thrown away, which made an extended interface publish only its own members
         // — a schema describing less than it claims, silently, which is the one failure this generator exists
         // to prevent. The bases are kept and merged in `interfaceToSchema`.
-        const bases = (m[2] || "").split(",").map((b) => b.trim().replace(/<.*$/, "")).filter(Boolean);
+        // An `Omit<Base, "a" | "b">` base is Base without those members (a member the interface then declares again, wider).
+        const bases = (m[2] || "").replace(/Omit<\s*(\w+)\s*,\s*([^>]+)>/g, (_, b, keys) => `${b}-${keys.replace(/[\s"]/g, "")}`)
+            .split(",").map((b) => b.trim().replace(/<.*$/, "")).filter(Boolean);
         const doc = jsdocText(pending);
         pending = [];
         const members = [];
@@ -349,10 +351,12 @@ function membersOf(name, iface, ctx, seen = new Set()) {
     if (seen.has(name)) return [];                       // a cycle: already counted
     seen.add(name);
     const out = [];
-    for (const base of iface.bases || []) {
+    for (const spec of iface.bases || []) {
+        const [base, omitted] = spec.split("-");
         const b = ctx.ifaces.get(base);
         if (!b) throw new Error(`gen-export-schema: ${name} extends \`${base}\`, which is not in the resolved sources — publishing it would describe less than it claims`);
-        out.push(...membersOf(base, b, ctx, seen));
+        const drop = new Set(omitted ? omitted.split("|") : []);
+        out.push(...membersOf(base, b, ctx, seen).filter((x) => !drop.has(x.name)));
     }
     for (const m of iface.members) {
         const at = out.findIndex((x) => x.name === m.name);

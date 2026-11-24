@@ -197,9 +197,13 @@ test("an interface's BASE members are published too: `extends` used to be matche
 });
 
 test("a generic's own `|` is not a union boundary: `Record<string, string | number | boolean>` survives", () => {
+    // `detail` is a union since the cell facts (CELL_FACTS.md): the flat record, or the one nested `cell`/`facts` shape. The
+    // flat branch is the generic whose own `|` must survive.
     const detail = buildSchema("run-log").$defs.RunLogEvent.properties.detail;
-    assert.equal(detail.type, "object");
-    assert.deepEqual(detail.additionalProperties.anyOf.map((x) => x.type), ["string", "number", "boolean"]);
+    const [flat, nested] = detail.anyOf;
+    assert.equal(flat.type, "object");
+    assert.deepEqual(flat.additionalProperties.anyOf.map((x) => x.type), ["string", "number", "boolean"]);
+    assert.deepEqual(nested, { $ref: "#/$defs/CellFactsDetail" });
 });
 
 test("the log's open registries stay open: a new subsystem or kind must not fail an old consumer", () => {

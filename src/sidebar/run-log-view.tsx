@@ -23,7 +23,7 @@ import { Stepper } from "./ui-kit";
 import { IconFilter, IconGear } from "./icons";
 import { downloadBlob } from "./export/download";
 import { exportSessionJson } from "./export/export";
-import { RUN_LOG_KEY, runLogDocument, filterRunLog, levelCounts, type RunLogEvent } from "../log/run-log";
+import { RUN_LOG_KEY, runLogDocument, filterRunLog, flatDetail, levelCounts, type RunLogEvent } from "../log/run-log";
 import type { LogLevel } from "../log/housekeeping";
 import type { RunLogDump } from "../sw/sw-run-log";
 
@@ -123,7 +123,7 @@ export function RunLogView({ run }: { run: string | null }) {
     // a record wrap into two in a panel this narrow. Dropped from the LINES only while it is uniform — the
     // moment a run is re-filed under a new tab it differs, which is exactly when it is worth reading. The
     // download is unaffected: it carries the records.
-    const tabs = new Set(all.map((e) => e.detail?.tab).filter((v) => v != null));
+    const tabs = new Set(all.map((e) => flatDetail(e)?.tab).filter((v) => v != null));
     // The level and the text NARROW the lines; the subsystem colours, the count and the download stay over every
     // record, so narrowing never recolours a line or shrinks what is saved.
     const shown = filterRunLog(all, { minLevel, text: find });

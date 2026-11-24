@@ -452,6 +452,26 @@ person, never one that runs. Tests: `tests/readonly-stop.test.mjs` (the escapes 
 IIFE and `.then`; the checkpoint; each realm; the loop) and `tests/e2e/cancel-states.spec.mjs` (Stop in each state a
 run streams through, in the real extension).
 
+### What a cell spent, for its recorded facts
+
+A caller can hand `evalReadonly` a meter (`meter`, `newCellMeter()`), and the worker does for every survey it evaluates
+(`sw-readonly.ts`), for the cell's recorded facts (docs/spec/CELL_FACTS.md). The meter decides nothing: only `tick`
+writes it, nothing reads it back, and a test runs the same script with and without one.
+
+- **Every step is charged to exactly one place.** `tick` adds each step either to the host call in progress
+  (`chargeTo`, a row per function: `array.map`, `Math.max`, `ml.fetch`, a root's own name like `Number`) or to the
+  cell's own count. A host call's row is charged from its preflight to its result's copy; a callback it runs switches
+  back to the cell's own count for as long as the callback runs, so `map` is charged the same whatever its callback
+  does. So `own` plus every row's `charged` is the step meter's count, and `cell-facts.test.mjs` asserts it.
+- **`ml` members are counted on the wire too** (`ml.sh` members as `sh.<name>`), the same names the Python wire counts.
+- **The step meter at the end** (`steps: { used, budget }`) is written in `evalReadonly`'s `finally`, so a refused or
+  thrown survey has it too.
+- **A refusal says what it refused as fields, never as text**: `NotInDialect` and `Denied` take `{ name, budget }`
+  (`limits.ts`). `budget` marks a step budget or size cap tripping, with the cap's constant as the name
+  (`STEP_BUDGET`, `MAX_STRING`, `MAX_EXPANDED`); a refused construct or member names itself (`for`, `in`, `click`,
+  `ml.sh.run`). A throw site that does not know a name gives none, and the facts then carry the kind alone. `while`
+  is no keyword here: it reaches the evaluator as a name nothing declares and is refused as `Denied`.
+
 ## ml.embed: the one live call
 
 Added 2026-10-29 (Shane's ruling, "add ml.embed to the read-only dialect"), so a survey can map where a long text talks

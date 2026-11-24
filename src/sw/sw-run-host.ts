@@ -61,7 +61,8 @@ import { withRuntime } from "./sw-current-runtime";
 import { isolationAvailable, pageApproved, runIsolatedExec } from "./sw-isolated-exec";
 import { handOverSettled } from "./nav-handover";
 import { fetchTarget } from "./sw-fetch-url";
-import { grantRunFetch, grantRunOrigin, runOriginGranted, runOrigins, runFetchConsented, grantRunPython, takePyRefusal, pythonDialectReady, retabWorkerRun } from "./worker-tools";
+import { grantRunFetch, grantRunOrigin, runOriginGranted, runOrigins, runFetchConsented, grantRunPython, takePyRefusal, takePyFacts, pythonDialectReady, retabWorkerRun } from "./worker-tools";
+import { composeCellFacts, sanitizeCellFacts, type CellNote } from "../agent/cell-facts";
 import { autoApprovePython } from "../agent/auto-approve";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
 import { applyLiveMove, moveAfterTurn, takeMovedNote, type LiveTurn } from "./move-run";
@@ -822,6 +823,19 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // state: plumbing — why this run's python_exec cell was not run inside the dialect, by its exact source: written by the
         // read-only try, read once by the gate's why-asks line. A cell with no entry (edited, or never tried) is outside.
         const pyOutside = new Map<string, string>();
+        // state: plumbing — what the worker noted about each exec and python_exec cell of this turn, by the step's seq, for the
+        // cell's recorded facts (docs/spec/CELL_FACTS.md): written by the inside tries and the approved call, taken once by
+        // `cellFacts` after the step's result is final. No decision reads it.
+        const cellNotes = new Map<number, CellNote>();
+        const noteCell = (seq: number | undefined, note: CellNote | undefined): void => {
+            if (seq === undefined || !note) return;
+            const was = cellNotes.get(seq) ?? {};
+            cellNotes.set(seq, { ...was, ...note, ...(was.workerKnown && !note.workerKnown ? { workerKnown: true, markedWorker: was.markedWorker } : {}), ...(was.markSet || note.markSet ? { markSet: true } : {}) });
+        };
+        /** A python_exec cell's facts as the worker saw them (worker-tools.ts `PyCellFacts`), as its note. */
+        const pyNote = (f: ReturnType<typeof takePyFacts>): CellNote | undefined => f && {
+            ...(f.wire ? { wire: f.wire } : {}), ...(f.markSet ? { markSet: true } : {}), ...(f.workerKnown ? { workerKnown: true, markedWorker: f.markedWorker === true } : {}),
+        };
         // Cross-origin navigation consent: origins this run may navigate to WITHOUT re-prompting — seeded
         // with the start origin, and each cross-origin nav the user approves is added (so repeat navs to it
         // skip the gate). A run that didn't opt into crossOrigin never gates (its tool refuses cross-origin).
@@ -1196,14 +1210,14 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
          * `pyOutside` says where, and the call goes to the person, whose approval runs it on the full path. Only a run the
          * worker drives, with Python auto-approval on and every other gate of `autoApprovePython` passed.
          */
-        const tryPythonInside = async (args: Record<string, unknown>): Promise<import("../agent/agent-loop").ToolRunResult | null> => {
+        const tryPythonInside = async (args: Record<string, unknown>, seq?: number): Promise<import("../agent/agent-loop").ToolRunResult | null> => {
             const code = String((args as { code?: unknown }).code ?? "");
             pyOutside.delete(code);
             await handOverSettled(tabId);
-            const declined = (why: string): null => { pyOutside.set(code, why); return null; };
+            const declined = (why: string, note?: CellNote): null => { pyOutside.set(code, why); noteCell(seq, note); return null; };
             if (!p.autoApprovePython) return declined("auto-approval of Python is off");
-            if (!byWorker() || !runsInWorker(p, "python_exec")) return declined("this run's Python runs on the page, where nothing is tried inside the dialect");
-            if (!autoApprovePython(args, { autoApprovePython: true }, (id) => approvedSheets.has(id), () => true)) return declined("it asks for something the dialect does not decide (an unapproved sheet, a raised output cap, or hidden characters)");
+            if (!byWorker() || !runsInWorker(p, "python_exec")) return declined("this run's Python runs on the page, where nothing is tried inside the dialect", { why: { kind: "routing" } });
+            if (!autoApprovePython(args, { autoApprovePython: true }, (id) => approvedSheets.has(id), () => true)) return declined("it asks for something the dialect does not decide (an unapproved sheet, a raised output cap, or hidden characters)", { why: { kind: "argument" } });
             await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "", pyMedia);
             // A sandbox that cannot judge membership (the stock core) refuses every cell, so none of the call's inputs is read.
             const unready = await pythonDialectReady(runId);
@@ -1211,11 +1225,14 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             grantRunPython(runId, { sheets: externalSheetIds(args), code: null, inside: true });
             let env: Partial<import("../contract").PageToolEnvelope> | null;
             let refused: string | undefined;
+            let facts: CellNote | undefined;
             try { env = await sendTool({ runId, name: "python_exec", args }) as Partial<import("../contract").PageToolEnvelope> | null; }
-            finally { refused = takePyRefusal(runId); grantRunPython(runId, null); }
+            finally { refused = takePyRefusal(runId); facts = pyNote(takePyFacts(runId)); grantRunPython(runId, null); }
+            noteCell(seq, facts);
             if (refused !== undefined) {
                 recordRunLog(runId, { subsystem: "routing", kind: "python-outside", reason: "not-in-dialect", detail: { tool: "python_exec", where: refused } });
-                return declined(refused);
+                // The fork's refusal is text: its kind is what the worker knows (the mark), and its name waits for the fork to carry one.
+                return declined(refused, { why: { kind: facts?.markedWorker ? "marked" : "not-in-dialect" } });
             }
             if (!env) return declined("the worker did not run it");
             recordRunLog(runId, { subsystem: "routing", kind: "python-inside", reason: "in-dialect", detail: { tool: "python_exec" } });
@@ -1700,7 +1717,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         return { result: (env?.result || `Error: the page returned nothing for tool "${name}".`) + (execNote ? `\n\n${execNote}` : ""), renderIn: env?.renderIn, renderOut: env?.renderOut, feedback: env?.feedback, image: env?.image, imageLabel: env?.imageLabel, images: env?.images, remoteMs: env?.remoteMs, ...(env && workerEnvelopes.has(env) && typeof env.textValue === "string" ? { textValue: env.textValue, ...(typeof env.textChars === "number" ? { textChars: env.textChars } : {}) } : {}) };
                     } finally {
                         dropCallGrants(tabId, callKey);   // grants were for THIS approved call's sub-ops only; another run's call on the tab keeps its own
-                        if (pyInWorker) grantRunPython(runId, null);
+                        if (pyInWorker) { noteCell(call?.seq, pyNote(takePyFacts(runId))); grantRunPython(runId, null); }
                         if (reads) execReads.delete(runId);
                         if (onStream) delegateStreams.delete(runId);   // the call is done — stop routing live chunks to it
                     }
@@ -1736,7 +1753,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // A run held on its page (nav-arrival.ts) surveys nothing there, and runs no cell: the call goes on to its hold.
                     await arrivalSettled(tabId);
                     if (arrivalHold(runId)) return null;
-                    if (name === "python_exec") return tryPythonInside(args);
+                    if (name === "python_exec") return tryPythonInside(args, call?.seq);
                     if (name !== "exec" || !p.autoApproveReadonly) return null;
                     // Every decision below reads `byWorker()`: a navigation's hand-over must be decided first, as delegateTool does.
                     await handOverSettled(tabId);
@@ -1746,9 +1763,10 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     const world = (args as { world?: unknown }).world ?? undefined;   // null is omitted
                     // A page-built run's exec runs in the page's world or not at all: a world it cannot have is refused in the
                     // precheck below, never surveyed by the page.
-                    if (!byWorker() && pageWorldRefusal(world)) return null;
+                    const routed = (): null => { noteCell(call?.seq, { why: { kind: "routing" } }); return null; };
+                    if (!byWorker() && pageWorldRefusal(world)) return routed();
                     const worldAsked = byWorker() && world !== undefined;
-                    if (worldAsked && (typeof args.js !== "string" || (await execRoute(args.js, world)).where === "refused")) return null;
+                    if (worldAsked && (typeof args.js !== "string" || (await execRoute(args.js, world)).where === "refused")) return routed();
                     // Nor one policy isolates for what the SCRIPT names (`ml.sh`, `ml.current`, a pointer), on any setting.
                     // A page-built run keeps its page leg for any script: its approved exec is never routed and runs in the
                     // page's world too (`js` above, in the tool call), so the survey answers where the exec would.
@@ -1794,12 +1812,16 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     }
                     if (w.kind !== "needs-page") {
                         recordRunLog(runId, { subsystem: "routing", kind: "readonly-worker", reason: w.kind === "answered" ? "no-page-reads" : "out-of-dialect", detail: { tool: name } });
+                        noteCell(call?.seq, w.cell);
                         return w.kind === "answered" ? { result: w.result, renderIn: w.renderIn, renderOut: w.renderOut } : null;
                     }
                     if (!scriptLegOk || !pageLegOk) {
                         recordRunLog(runId, { subsystem: "routing", kind: "readonly-worker", reason: scriptLegOk ? "world-isolated" : "script-isolated", detail: { tool: name } });
+                        noteCell(call?.seq, { realm: "worker", why: { kind: "routing" } });
                         return null;
                     }
+                    // The page evaluates it from here: of what it reports, the cell's facts keep only what the worker decides.
+                    noteCell(call?.seq, { realm: "page" });
                     // Live console lines reach the loop's fan the way a delegated tool's do (delegateStreams). Dropped
                     // BEFORE returning, so a chunk still in flight from a refused try cannot land after the loop's
                     // discard: it finds no sink.
@@ -1828,6 +1850,15 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 // model's view of the log never carries.
                 toolThrew: (name, phase, e) => recordRunLog(runId, { level: "error", subsystem: "tool", kind: "threw", reason: phase,
                     key: thrownKey(e), detail: { tool: name } }),
+                // A cell's recorded facts (docs/spec/CELL_FACTS.md): composed from the step's approval and what this worker
+                // noted, crossed through the stored-text scrub, checked by enumeration, and kept once in the execution log.
+                cellFacts: async (name, seq, approval) => {
+                    const note = cellNotes.get(seq);
+                    cellNotes.delete(seq);
+                    const cell = sanitizeCellFacts(await forStored(composeCellFacts(name === "exec" ? "js" : "python", approval, note)));
+                    if (cell) recordRunLog(runId, { subsystem: "cell", kind: "facts", detail: { seq: seqBase + seq, cell } });
+                    return cell ?? undefined;
+                },
                 // Doomed-action precheck (click/type): ask the page to resolve the target side-effect-free.
                 // A non-null error → the gate is SKIPPED and the error returned. Only delegated for tools
                 // that HAVE a precheck (avoids a useless round-trip on every gated call).

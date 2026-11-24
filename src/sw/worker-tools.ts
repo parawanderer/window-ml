@@ -80,11 +80,16 @@ interface RunCtx {
     origins: Set<string>;
     /** What the python_exec call now running was approved for: external sheet ids, and the code of a cell outside the dialect. Set around the
      *  one call (`grantRunPython`), never on the tab. `inside`: the call is the host's try of the cell INSIDE the dialect,
-     *  before its gate, and `refused` is where the fork refused it (`takePyRefusal`). */
-    pyCall?: { sheets: Set<string>; code: string | null; step?: { seq: number; local: { step: number; seq: number } }; inside?: boolean; refused?: string; bridges?: boolean };
+     *  before its gate, and `refused` is where the fork refused it (`takePyRefusal`). `facts`: what the worker saw of the
+     *  cell once it answered, for its recorded facts (`takePyFacts`), read by no decision. */
+    pyCall?: { sheets: Set<string>; code: string | null; step?: { seq: number; local: { step: number; seq: number } }; inside?: boolean; refused?: string; bridges?: boolean; facts?: PyCellFacts };
     /** Its python_exec's image and cast (none: a call with an `image` is refused). */
     media?: WorkerPyMedia;
 }
+
+/** What the worker saw of one python_exec cell (docs/spec/CELL_FACTS.md): the `ml` members it called over the wire, whether it
+ *  set the outside mark, and, for an inside try the sandbox answered, whether its worker already carried the mark. */
+export interface PyCellFacts { wire?: { member: string; calls: number }[]; markSet?: boolean; workerKnown?: boolean; markedWorker?: boolean }
 
 const runs = new Map<string, RunCtx>();   // state: plumbing — per run, dropped with its local tools
 
@@ -220,6 +225,18 @@ export function takePyRefusal(runId: string): string | undefined {
     const r = call?.refused;
     if (call) delete call.refused;
     return r;
+}
+
+/**
+ * What the worker saw of the python_exec cell now running (`PyCellFacts`), for its recorded facts. Read by no decision.
+ * @param runId the run
+ * @returns the facts, or undefined
+ */
+export function takePyFacts(runId: string): PyCellFacts | undefined {
+    const call = runs.get(runId)?.pyCall;
+    const f = call?.facts;
+    if (call) delete call.facts;
+    return f;
 }
 
 /** Whether this run's worker-side fetch_url was already approved for `url` (a new one goes to the gate). */
@@ -420,6 +437,8 @@ async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; 
     const detachedMaxMs = leased ? await detachedCapMs() : undefined;
     let attached = true;
     const onStdout = opts.onStdout && ((chunk: string, ts?: number) => { if (attached) opts.onStdout!(chunk, ts); });
+    // The call's own grant, kept: the facts of its cell land on it, and a late answer's on a grant no step reads any more.
+    const pyCall = ctx.pyCall;
     const call = runPython({
         code, image: shot?.image ?? null, stream: !!opts.onStdout, ...(opts.keep === true ? { keep: true } : {}),
         tables: loaded.map((l, i) => ({ name: l.name, data: l.data, alias: specs[i][2] ?? (typeof specs[i][1] === "string" ? specs[i][1] : null) })),
@@ -433,10 +452,10 @@ async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; 
         ...(ctx.pyCall?.inside ? { inside: true } : {}),
         ...(ctx.pyCall?.bridges ? { bridges: true } : {}),
         ...(leased ? { cell: requestId, detachedMaxMs } : {}),
+        ...(pyCall ? { onCellFacts: (f: { wire: { member: string; calls: number }[]; markSet: boolean }) => { pyCall.facts = { ...pyCall.facts, wire: f.wire, ...(f.markSet ? { markSet: true } : {}) }; } } : {}),
     });
     // What the cell answered, as the tool reads it. A late one's (once detached) is read with the call's grant gone, so
-    // what it needs from the run is taken now.
-    const pyCall = ctx.pyCall;
+    // what it needs from the run is taken now (`pyCall`, above).
     const shape = (r: Awaited<typeof call>) => pythonShape(r, pyCall, shot, loaded);
     if (!leased) return shape(await call);
     const expectMs = typeof opts.expectMs === "number" && Number.isFinite(opts.expectMs) && opts.expectMs > 0 ? Math.floor(opts.expectMs) : null;
@@ -451,6 +470,8 @@ function pythonShape(r: { data?: unknown; error?: string }, pyCall: RunCtx["pyCa
     if (r.error !== undefined) throw new Error(r.error);
     // Outside the dialect: nothing of the try reaches the model (its output is discarded); the host reads the refusal.
     const outside = (r.data as { notInDialect?: unknown } | undefined)?.notInDialect;
+    // Whether the worker the inside try reached carried the outside mark: the class of the cell's worker (ruling 102).
+    if (pyCall?.inside && r.data) pyCall.facts = { ...pyCall.facts, workerKnown: true, markedWorker: (r.data as { marked?: unknown }).marked === true };
     if (pyCall?.inside && typeof outside === "string") { pyCall.refused = outside; throw new Error(`Not in the Python dialect: ${outside}`); }
     const res = r.data as { table?: { columns: string[]; rows: unknown[][] }; valueKey?: string } & Record<string, unknown>;
     const extra: Record<string, unknown> = {};

@@ -1,11 +1,33 @@
 // limits.ts — the read-only exec dialect's refusals (`NotInDialect`, `Denied`, `NeedsPage`) and its halting bounds:
 // the step budget, the size caps, the call depth, and the regex backtracking check.
 
+/** What a refusal says about itself, for the cell's recorded facts (docs/spec/CELL_FACTS.md): the first refused name as the
+ *  source spells it (`while`, `select`, `Function`), and `budget` when a step budget or a size cap tripped, with the
+ *  cap's name. Never read by a decision, and never its message text: a reader takes these fields or nothing. */
+export interface RefusalFacts { name?: string; budget?: boolean }
+
 /** The script uses a shape outside the dialect: the caller falls back to the human approval path. */
-export class NotInDialect extends Error {}
+export class NotInDialect extends Error {
+    /** The refused name, or the tripped cap's, when the thrower knows it. */
+    readonly refusedName?: string;
+    /** A step budget or a size cap tripped, rather than a construct being refused. */
+    readonly budget?: boolean;
+    constructor(message?: string, facts?: RefusalFacts) {
+        super(message);
+        if (facts?.name !== undefined) this.refusedName = facts.name;
+        if (facts?.budget) this.budget = true;
+    }
+}
 
 /** The script reached for something the dialect refuses (a denied property, an effectful call): falls back to approval. */
-export class Denied extends Error {}
+export class Denied extends Error {
+    /** The refused name, when the thrower knows it. */
+    readonly refusedName?: string;
+    constructor(message?: string, facts?: Pick<RefusalFacts, "name">) {
+        super(message);
+        if (facts?.name !== undefined) this.refusedName = facts.name;
+    }
+}
 
 /** The survey reached for the PAGE while being evaluated in the worker, which has none. Not a refusal of the script:
  *  the caller retries it on the page, where it has a DOM and no run context. A subclass of {@link NotInDialect} on
