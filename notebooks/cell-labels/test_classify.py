@@ -16,10 +16,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import classify  # noqa: E402
 from fixtures import CELLS  # noqa: E402
 
-LABELS = {
-    "python": {"ingest", "parse", "list", "probe", "inspect", "select", "transform", "aggregate", "report", "write", "shell", "plot", "define"},
-    "js": {"ingest", "parse", "list", "probe", "inspect", "select", "transform", "aggregate", "report", "dom-read", "dom-act", "write", "shell", "plot", "define"},
-}
+# Every label the rules define, per language: each object-valued key of labels.json's language section but `aliases`.
+# Read from the rules, so a label added there fails the coverage test until it has fixtures.
+LABELS = {lang: {k for k, v in classify.RULES[lang].items() if isinstance(v, dict) and k != "aliases"} for lang in ("python", "js")}
 
 
 class Fixtures(unittest.TestCase):
