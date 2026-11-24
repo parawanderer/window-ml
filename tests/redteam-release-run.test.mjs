@@ -1,7 +1,9 @@
 // redteam-release-run.test.mjs — what the release of a run whose tab closed (docs/spec/ASYNC_CALLS.md, "A run whose tab
 // closed: the release") must not be made to do, red-teamed at e09bff410c3dd4392ed1eb37ec201043f275f718, re-verified
 // unchanged at 7733e9c95ee1e5545e85ae93c49bd4a57a9b35f3 (the branch moved by merging main), and both open rows verified
-// fixed at b03323ae215afb302bf59e10bc57774816dcccb4. Six properties, in the real bundle (`dist/background.js` in
+// fixed at b03323ae215afb302bf59e10bc57774816dcccb4; re-verified unchanged at 60d357349cf4608ad0c0e29372802d37c3d60570
+// (the second main merge, bringing #2106: a released run's "no tab" is decided by runHasNoTab before chrome.tabs.get, and
+// no row here depends on which of the two answers). Six properties, in the real bundle (`dist/background.js` in
 // node:vm, tests/helpers.js `loadBackground` with `alarms: true`):
 //
 //   1. nothing a page sends releases a run: a content script's `ml-sessions` port is closed unheard, and its
