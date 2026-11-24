@@ -6,9 +6,9 @@
 // (src/pointers/file-pointer.ts) strips control and format characters, so the shapes left are quotes, entity text,
 // angle brackets and the reader's own path spelling. The reader is the barrier behind the address: `canonical()`
 // (src/session/ranged-reader.ts) refuses an empty, `.` or `..` segment, so no spelling of the name can leave the
-// file's own `/files/attached/<handle>/` folder. A `.` or `..` name is kept by `cleanFileName` and printed by
-// `openablePath` even though the address it prints is refused (the one todo row): no capability behind it, a lying
-// address in front of the model.
+// file's own `/files/attached/<handle>/` folder. A `.` or `..` name is still kept by `cleanFileName`, and
+// `openablePath` gives it no path at all, because the mount would refuse that address: the block never prints an
+// address it cannot open.
 //
 // The rows run against the real shelf and the real RangedReader over it, as tests/sw-attach.test.mjs does.
 import { test } from "node:test";
