@@ -14,8 +14,16 @@
 // the resume form's footer carries a sentence beside its button; a shell that insisted on a shape would be argued
 // with by every one of them. It owns the frame and the ways out.
 
-import type { ComponentChildren } from "preact";
-import { useRef, useEffect } from "preact/hooks";
+// THE CARD IS DRAWN OUT OF THE TREE IT WAS OPENED FROM. A modal is `position: fixed`, and a fixed box is placed against the
+// nearest ancestor that makes a containing block (a transform, a filter, `contain`, `content-visibility`, `will-change`)
+// and clipped by one that clips: mounted inside a transcript block, a card could be offset and cut off by whatever the
+// block sat under, and each such ancestor was a bug for every dialog opened below it. So the card renders into a host
+// appended to the ROOT the caller is in (the document's body, or the shadow root the panel draws in), where nothing can
+// sit between it and the viewport. The portal is Preact's own `render` into that host, not `preact/compat`'s
+// `createPortal`, for the reason `panel-head.tsx` gives; context does not cross it, and no dialog's content uses any.
+
+import { render, type ComponentChildren } from "preact";
+import { useRef, useEffect, useLayoutEffect } from "preact/hooks";
 
 /**
  * A modal card over the page.
@@ -25,9 +33,35 @@ import { useRef, useEffect } from "preact/hooks";
  * `initialFocus` if given, else the card), because a modal whose focus is still on the page behind it reads to a
  * keyboard as a page that did not change.
  *
- * @param labelledBy id of the heading inside; `alert` makes it an `alertdialog` (a confirmation, not a form).
+ * `labelledBy` is the id of the heading inside; `alert` makes it an `alertdialog` (a confirmation, not a form).
  */
-export function Dialog({ onClose, labelledBy, describedBy, alert, wide, initialFocus, children, onSubmit }: {
+export function Dialog(props: DialogProps) {
+    const mark = useRef<HTMLSpanElement>(null);
+    const host = useRef<HTMLDivElement | null>(null);
+    // Every render of the caller draws the card again into the host, so its content follows the caller's state.
+    useLayoutEffect(() => {
+        const at = mark.current;
+        if (!at) return;
+        if (!host.current) {
+            const root = at.getRootNode();
+            const into = root instanceof ShadowRoot ? root : (at.ownerDocument.body ?? at.parentNode!);
+            const div = at.ownerDocument.createElement("div");
+            div.style.display = "contents";
+            into.appendChild(div);
+            host.current = div;
+        }
+        render(<DialogShell {...props} />, host.current);
+    });
+    useLayoutEffect(() => () => {
+        if (!host.current) return;
+        render(null, host.current);
+        host.current.remove();
+        host.current = null;
+    }, []);
+    return <span ref={mark} hidden />;
+}
+
+type DialogProps = {
     onClose: () => void;
     labelledBy: string;
     describedBy?: string;
@@ -36,7 +70,10 @@ export function Dialog({ onClose, labelledBy, describedBy, alert, wide, initialF
     initialFocus?: { current: HTMLElement | null };
     children: ComponentChildren;
     onSubmit?: () => void;
-}) {
+};
+
+/** The card itself: the backdrop, the focus move on open and the Escape listener. */
+function DialogShell({ onClose, labelledBy, describedBy, alert, wide, initialFocus, children, onSubmit }: DialogProps) {
     const card = useRef<HTMLDivElement | HTMLFormElement>(null);
     useEffect(() => {
         (initialFocus?.current ?? card.current)?.focus();

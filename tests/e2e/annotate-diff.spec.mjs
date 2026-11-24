@@ -358,3 +358,48 @@ test("the revises pill scrolls to the OLD call's code, not to the top of its ste
         // time the assertions above have settled. It has its own coverage; this test is about WHERE.)
     } finally { await ext.context.close(); await fake.stop(); }
 });
+
+// THE MAXIMISED VIEW IS A MODAL OVER THE PANEL, whatever it is mounted under. It was rendered inline in the transcript, and an
+// ancestor that makes a containing block for `position: fixed` offset and clipped its card ("s exec: the timeline survey").
+test("the maximised revises view fits the panel, starts at its title, and its tips draw above it", async () => {
+    const { fake, ext, frame } = await setup();
+    try {
+        const step = frame.locator(".astep").nth(1);
+        if (!(await step.locator(".r-py-in").count())) await step.locator(".astep-head").click();
+        await expect(step.locator(".r-diff-max")).toBeVisible({ timeout: 30000 });
+        await step.locator(".r-diff-segbtn", { hasText: "split" }).click();
+        await step.locator(".r-diff-max").click();
+        const card = frame.locator(".chat-dialog:has(.r-max)");
+        await expect(card).toBeVisible();
+        await frame.locator(".r-max-head button[aria-label=Close]").hover();
+        await expect(frame.locator(".cursor-tip")).toBeVisible({ timeout: 5000 });
+        const m = await frame.locator("body").evaluate(() => {
+            const r = (el) => el.getBoundingClientRect();
+            const card = document.querySelector(".chat-dialog:has(.r-max)"), back = card.closest(".chat-dialog-back");
+            const tip = document.querySelector(".cursor-tip");
+            const walk = [];
+            for (let el = back.parentElement; el; el = el.parentElement) {
+                const cs = getComputedStyle(el);
+                const hit = ["transform", "filter", "contain", "contentVisibility", "willChange", "perspective", "overflow"].filter((k) => !["none", "visible", "auto", "normal", ""].includes(cs[k]));
+                if (hit.length) walk.push(`${el.tagName.toLowerCase()}.${el.className}: ${hit.map((k) => `${k}=${cs[k]}`).join(" ")}`);
+            }
+            const c = r(card), h = r(card.querySelector(".r-max-head h2"));
+            // A tip takes no pointer events, so `elementFromPoint` would skip it: compare the stacking instead (both are
+            // `position: fixed` in the one root, so the larger z-index is drawn last).
+            const z = (el) => Number(getComputedStyle(el).zIndex) || 0;
+            return { vw: innerWidth, vh: innerHeight, card: [c.left, c.top, c.right, c.bottom].map(Math.round), titleTop: Math.round(h.top - c.top),
+                     tipOnTop: !!tip && z(tip) > z(back), walk, parent: back.parentElement.className };
+        });
+        console.log("MAXIMISED", JSON.stringify(m));
+        await frame.locator("body").page().screenshot({ path: process.env.MAX_SHOT || "test-results/maximised.png" });
+        expect(m.card[0], "card left edge inside the panel").toBeGreaterThanOrEqual(0);
+        expect(m.card[2], "card right edge inside the panel").toBeLessThanOrEqual(m.vw);
+        expect(m.card[1]).toBeGreaterThanOrEqual(0);
+        expect(m.card[3]).toBeLessThanOrEqual(m.vh);
+        expect(m.titleTop, "the title row sits at the card's top").toBeLessThanOrEqual(20);
+        expect(m.tipOnTop, "the tip draws above the modal").toBe(true);
+        await frame.locator(".r-max-head .r-diff-segbtn", { hasText: "code" }).click();
+        await expect(frame.locator(".r-max-head .r-diff-segbtn.on")).toHaveText("code");
+        await expect(step.locator(".r-diff-segbtn.on")).toHaveText("code");
+    } finally { await ext.context.close(); await fake.stop(); }
+});
