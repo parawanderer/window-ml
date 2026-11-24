@@ -345,6 +345,11 @@ UNLISTED = {("numpy", "ndarray"): {"round": "a C method that writes its out argu
 # them would hand the model an error a full run never gives (#2040).
 LISTED = {("numpy", None): {"rint"}, ("pandas", "DataFrame"): {"columns", "shape"}, ("pandas", "Series"): {"iloc"}}
 
+# Builtin kinds' methods listed whatever the count: str.endswith, startswith's mirror, refused alone in 7 cells of the
+# bench corpus's replay (2026-11-24, repl-specs); no cell of the corpus counted here calls it.
+# tests/python-dialect-str-kind.test.mjs holds every public method of the core's str as listed or refused with a reason.
+BUILTIN_LISTED = {"str": {"endswith"}}
+
 def manifest(mod):
     fns = module_names(mod)
     kinds = kind_methods(KINDS[mod])
@@ -506,7 +511,8 @@ md("""
 
 `data/whitelist.json`: the node set (`STARLARK`, the one ratchet), what stays excluded and why with the share of cells
 each costs, the modules and builtins the first allow lists start from, and the methods on builtin types cells call.
-Builtins are proposed when observed in at least `MIN_CELLS` cells and not in `REFUSED_BUILTINS`.
+Builtins are proposed when observed in at least `MIN_CELLS` cells and not in `REFUSED_BUILTINS`; a builtin kind's
+methods likewise, plus `BUILTIN_LISTED`.
 """)
 
 code("""
@@ -520,7 +526,8 @@ proposed = {
     "modules": sorted(MODULES),
     "builtins": sorted({k for k, v in blt.items() if v >= MIN_CELLS and k not in REFUSED_BUILTINS} | {"isinstance", "type"}),
     "refused_builtins": sorted(REFUSED_BUILTINS),
-    "builtin_kinds": {k: sorted(n for n, v in d.items() if v >= MIN_CELLS) for k, d in builtin_methods.items()},
+    "builtin_kinds": {k: sorted({n for n, v in d.items() if v >= MIN_CELLS} | BUILTIN_LISTED.get(k, set()))
+                      for k, d in builtin_methods.items()},
     "admitted": {k: row(v) for k, v in LADDER.items()},
     "decided": "2026-10-15, repl-specs rulings 1-4 (session-mail 20261015-1201Z-repl-specs-to-repl-lane3-genexp-type-columns-rulings.md)",
     "parsed_with": f"CPython {__import__('sys').version.split()[0]} ast (Pyodide carries 3.14.0; 3.14 adds only TemplateStr/Interpolation)",

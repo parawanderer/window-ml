@@ -154,7 +154,7 @@ const NO_SIGNATURE = {
     "builtins.max": "takes values", "builtins.min": "takes values", "builtins.next": "takes an iterator",
     "builtins.range": "takes integers", "builtins.str": "takes an object", "builtins.type": "takes an object",
     "dict.update": "takes a mapping or pairs", "str.find": "takes a string", "str.index": "takes a string",
-    "str.startswith": "takes a string or a tuple of them",
+    "str.endswith": "takes a string or a tuple of them", "str.startswith": "takes a string or a tuple of them",
 };
 
 /** Every callable the gate admits (load_manifests' tables: builtins, modules' names, kinds' methods), by name, with
