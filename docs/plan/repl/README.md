@@ -2207,6 +2207,65 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     between unnamed ends is missed on every sampled number key; pairing them when a rule names few is a later question
     for Shane. The same day, the coordinator's calls: main's two red rows could not be repaired apart (#2140 and #2146
     were each red on the other's row), so #2146 carries both and #2140 is closed after it; #2124 merged (964e2745).
+  - **Ruling 118 (Shane, 2026-11-24): one wall for now.** A cell inside the Python dialect may run unasked with
+    the lockdown step as the only separation between it and the extension, on three conditions.
+    `autoApprovePython` stays off by default, and that default stays Shane's decision. The red team (e4) measures
+    whether a READONLY worker, after the strip, can recover the network or the extension origin's stores; it does
+    so after its passes on #2131, #2154 and #2158. The opaque-origin second wall (the worker in a sandboxed frame)
+    is built before the default ever turns on, or at once if that probe finds a route back. What the decision
+    rests on is e4's probe (#2157, the lane's account, measured from a FULL worker whose global was never
+    stripped, so an upper bound): a bypass reaches the extension origin's IndexedDB (drafts, the hub keyring,
+    saved sessions, values), its OPFS root and any host over `fetch`; it reaches no `chrome` API, cannot compile a
+    string (the CSP refuses `eval`), and loads a script only from the extension's own files. The second wall's
+    known cost, from packages' sandbox-page measurement: no SharedArrayBuffer, so the interrupt buffer and the
+    files mount are rebuilt. The shipped sandbox CSP does not change under this ruling.
+  - **A secret value in a file NAME is masked at listing (coordinator, 2026-11-24; a security repair of #2026).**
+    session-store builds it after #2121 merges, from main, and e4 writes the rows. The rule, in session-store's
+    six points: a listing and the opendir cursor show `[REDACTED:<NAME>]` in place of a registered value; a folder
+    is sorted by the names shown; a path segment resolves to the exact raw name, else to the one child with that
+    shown name, and the hide rule runs on the raw path; two raw names that share a shown name are both listed, and
+    naming that shown name is `EACCES` saying it is ambiguous and how many files; an error's text carries the path
+    as the cell wrote it; a raw name the cell already knows opens. The coordinator's additions: (A) an exact raw
+    match wins, and `EACCES` is only for a segment that matches no raw name and two or more shown names; (B) ties
+    are ordered by a key not derived from the raw name; (C) one resolver serves open, stat, unlink, rename (both
+    ends), create, exclusive create and opendir; (D) every path that hands a name to a cell or the model is
+    enumerated in the rows (opendir, stat of the parent, errors, `os.walk`, `scandir`, `glob`, `pathlib`, the JS
+    listing, `ml.current.files`, the file block, cell facts, both exports, the run log); (E) the in-cell scrub is
+    a full-value membership test no stronger than the byte mask, with no partial or prefix match and no length;
+    (F) the cursor is positional (the shown name plus its ordinal among equals), and `EACCES` applies to path
+    segments only; (G) `[REDACTED:` is reserved in a created or renamed-to name under `/files/agent/` unless the
+    segment resolves to an existing child. Accepted cost: two files under one shown name open only by raw name,
+    which arises only from an attached file's own name or a value registered after the file was written. The PR
+    also edits FILE_ATTACHMENTS.md's `path` paragraph (#2141), whose third case gives "the mount lists the stored
+    name" as its reason.
+  - **Bench rerun A, and the gate of rerun B (2026-11-24).** Rerun A is the lane's account, not verified by the
+    coordinator: build 882b3098, qwen3.8, 38 tasks, 3 repeats. Right answers 97 to 108 of 114; runs finished 112
+    to 114; `python_exec` calls not run 39.1% to 4.7%; runs that load data in Python 44 to 108; JS `exec` calls a
+    run 3.02 to 0.93; `dereference` calls a run 0.94 to 0.18. The first refusal of a run was `import os` in 82 of
+    113 runs, `read_csv` in 17, `try` in 3, `glob` in 3, other 8, and it fell on the run's first cell in 98; 414
+    of 527 asked cells were asked only because of the outside mark. Rerun B's gate (coordinator): #2131, #2141,
+    #2154 and #2158, on main at the first commit that holds all four, reporting counts by cause from the logs (the
+    first refusal of a run, cells importing `os`, cells listing a folder, cells opening a `/files/attached/` path
+    from the file block, cells calling `ml.table`) and the change per task with its spread. A real-model run
+    starts only on Shane's yes in bench's own session. Queue calls made for the gate: e4 passes #2131, #2154, then
+    #2158's rows, before anything else; janitor-3 reads #2154, #2131, #2158 before #2138, #2117, #2127, #2119.
+  - **Calls on #2158 and #2159 (coordinator, 2026-11-24).** #2158 (packages: `tables` removed, the Python
+    `ml.table` built, synchronous) merges only with e4's rows for the new facade member on its branch, among them
+    a facade object kept from an earlier cell and called in a later inside cell. A charge is a bound only where a
+    row measures the steps the cell spent: #2158's first charge on a rows or HTML answer was made inside the
+    harness's `run_sync`, on the event loop, where the dialect counts nothing, and two answers at the page-table
+    cap cost about 4,400 steps where the rule says about 16,000,000; it now charges after the wait, on the cell's
+    stack. move-run's account is that #2154's three charges run on the cell's stack and each has such a row. A
+    Google Sheet's body is read whole in the service worker today; packages caps it at the fetch cap in its own PR
+    after #2158. #2159 (Chat Page: `read_pages`, a worker chat's one tool) is accepted in shape: a chat turn's
+    tool calls are `agent-step` events with an optional `turn`, no new event kind, `step` and `seq` counting the
+    session's tool calls, and a step whose turn is not held kept as an orphan. It is a new builtin tool, so it
+    merges with e3's rows on its branch, among them that a result holding a registered secret is scrubbed for the
+    model, the page and both exports, and that a page-started chat cannot have a step reduced into a session it
+    does not own.
+  - **Merged since ruling 117, verified with `gh`:** #2129 (2829c59b), #2130 (d1301709), #2111 (018fdad6), and
+    #2146 (aee3e8cc), which repaired both rows that were red on main (#2129 meeting #2130, and #2111 merged on a
+    head that predated #2106); #2140 was closed unmerged, its change carried by #2146.
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
   `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks
