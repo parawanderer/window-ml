@@ -92,6 +92,11 @@ const RETRY_MS = [1000, 2000, 5000, 10_000, 30_000];
 export const RING_MS = 600_000;
 
 const subs = new Set<chrome.runtime.Port>();
+// What else keeps the connection up with no panel open: the energy hold (sw-energy.ts), while a local runtime generates
+// for a session. Counted, so two holders release independently.
+let holds = 0;   // state: plumbing
+const frameListeners = new Set<(frame: ResourceFrame, at: number) => void>();   // state: plumbing
+const wanted = (): boolean => subs.size > 0 || holds > 0;
 let abort: AbortController | null = null;
 let running = false;
 let lastFrameAt: number | null = null;
@@ -153,6 +158,7 @@ async function connect(): Promise<void> {
             if (frame.t >= 0) lastFrameAt = Math.max(lastFrameAt ?? 0, at);
             status.frames++; status.lastAt = at;
             frameRing.push({ frame, at });
+            for (const f of frameListeners) { try { f(frame, at); } catch { /* a listener's fault is its own */ } }
             void keepRecords(recorder.push(frame, at));
             if (frameRing.length > FRAME_RING) frameRing.splice(0, frameRing.length - FRAME_RING);
             status.kinds[frame.kind] = (status.kinds[frame.kind] || 0) + 1;
@@ -179,19 +185,19 @@ async function connect(): Promise<void> {
 async function pump(): Promise<void> {
     if (running) return;
     running = true;
-    while (subs.size) {
+    while (wanted()) {
         try {
             await connect();
             // A clean end of stream is still an end: the server restarted, or a proxy closed an idle
             // connection. Reconnect, and let the ring fill the gap.
-            if (subs.size) fan({ interrupted: "stream ended" });
+            if (wanted()) fan({ interrupted: "stream ended" });
         } catch (e: any) {
             if (e?.name === "AbortError") break;              // we closed it on purpose
             if (e?.unsupported) { status.unsupported = true; status.note = String(e.message); fan({ unsupported: String(e.message) }); break; }
             status.note = String(e?.message || e);
-            if (subs.size) fan({ interrupted: String(e?.message || e) });
+            if (wanted()) fan({ interrupted: String(e?.message || e) });
         }
-        if (!subs.size) break;
+        if (!wanted()) break;
         const wait = RETRY_MS[Math.min(attempt++, RETRY_MS.length - 1)];
         await new Promise<void>((r) => { retryTimer = setTimeout(r, wait); });
     }
@@ -200,28 +206,50 @@ async function pump(): Promise<void> {
     status.connected = false;
 }
 
-/** Attach a panel. The first subscriber opens the connection; the last one to leave closes it, because a
- *  worker holding a stream open for a panel nobody has open is the background polling this design exists
- *  to avoid. */
+/** Attach a panel. The first subscriber opens the connection; the last one to leave closes it unless the energy hold
+ *  (`holdResourceEvents`) still wants it, because a worker holding a stream open for a panel nobody has open is the
+ *  background polling this design exists to avoid. */
 export function subscribeResourceEvents(port: chrome.runtime.Port): void {
     subs.add(port);
     status.subscribers = subs.size;
     port.onDisconnect.addListener(() => {
         subs.delete(port);
         status.subscribers = subs.size;
-        if (!subs.size) {
-            abort?.abort();
-            if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
-        }
+        if (!wanted()) stop();
     });
     void pump();
+}
+
+function stop(): void {
+    abort?.abort();
+    if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+}
+
+/** Keep the connection up with no panel open, until the returned release is called (once; a second call does nothing).
+ *  For the energy hold: the stream carries the power readings, and nothing else holds them. */
+export function holdResourceEvents(): () => void {
+    holds++;
+    void pump();
+    let held = true;
+    return () => {
+        if (!held) return;
+        held = false;
+        holds--;
+        if (!wanted()) stop();
+    };
+}
+
+/** Hear every frame the connection receives, at its resolved wall clock, until the returned function is called. */
+export function onResourceFrame(f: (frame: ResourceFrame, at: number) => void): () => void {
+    frameListeners.add(f);
+    return () => { frameListeners.delete(f); };
 }
 
 /** Test seam: forget the connection state between cases. */
 export function _resetResourceEvents(): void {
     abort?.abort();
     if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
-    subs.clear(); abort = null; running = false; lastFrameAt = null; attempt = 0;
+    subs.clear(); abort = null; running = false; lastFrameAt = null; attempt = 0; holds = 0; frameListeners.clear(); frameRing.length = 0;
 }
 
 // The SW-realm handle. Reachable from `serviceWorker.evaluate` (Playwright, a live probe) and from nowhere a

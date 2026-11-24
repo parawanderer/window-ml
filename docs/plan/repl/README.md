@@ -2017,6 +2017,57 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     by composition"): `ml.table` takes an `@file:` pointer (ML_TABLE.md). Open: a read-only subset of `os`, `os.path`,
     `glob` and `pathlib` inside the dialect (Shane: scanning the virtual file system is fine; packages costs it); an
     owner for the 633,699-character `exec` result that filled one run's context.
+  - **Ruling 108 and the policy realm, 2026-11-23.** `while` is refused in the policy realm (the coordinator's call).
+    Shane: policies "should probably be even more restricted than anything else" and "may as well be like those total
+    kernel programs": verified at save, total by structure, a pure function of the call's facts, fail closed.
+    small-fixes' audit of main 8356772f against that target: not verified at save (a person's policy is stored
+    unchecked, a model's is vetted on one probe); not total by structure (recursion and `for…of` under a 50,000-step
+    budget); pure but for stack depth and, inferred, locale; not fail closed; every matching policy runs per call with
+    no cap on the count and no shared meter. RULING 108 (Shane: "Sure, I think it should also show an actionable
+    inline modal and text of why the escalation happened"): a broken `deny` or `ask` makes the call ask, and the card
+    says why and what to do (POLICIES.md). small-fixes builds it, and separately the stack-overflow repair (the
+    coordinator's call), each its own PR from main ahead of its PR three; redteam-e3 writes rows, flaky-ci reviews.
+    The cut to the language is NOT ruled. The coordinator proposed removing recursion and helper functions,
+    `try`/`catch`, regexes built from facts, `Set`, `Map`, `JSON.parse`, `sort`, `reduce`, `async` and locale methods,
+    adding a check at save and a per-call meter. Shane: there are no users, so stored policies do not matter, but a
+    form our own examples need belongs in the language. small-fixes enumerates every policy source we ship or show and
+    the forms each uses; the cut is decided on that table. Also recorded: host #58's third accepted limit (`?` matches
+    a byte under Seatbelt and a character on Linux, erring toward hiding); packages' Stop without shared memory
+    (cannot be raised from Python; proposed as an externally set trip in the fork's tick, about 1% cost; not
+    scheduled, only if the framed sandbox page is chosen); the page-hosted `python_exec` description read by every
+    person-started run (session-store's fix at the model-tools point, not yet opened). Merged since: #2108 at
+    8356772f. Open: #2125, move-run's "No tab" run, at c602a60f.
+  - **Ruling 109, 2026-11-23 (Shane: "I agree to these" for the expression, the ternary and leading `const`; "Sure I
+    think that is reasonable right now" for `Set`, `new URL` and `for…of` without `let`).** The policy language is the
+    loop-free predicate language in POLICIES.md, checked at save for both authors, with one meter per call. Decided on
+    small-fixes' census: no shipped or documented policy uses a refused form; the four forms models reached for are
+    admitted. small-fixes builds it as its own PR from main after its ruling 108 PR and its stack-overflow PR;
+    redteam-e3 writes rows, flaky-ci reviews. Merged since: #2126 (ruling 108) at 069e48c0. Open: #2127, small-fixes'
+    charge for a DOM collection's copy, at 4b6e4af1, flaky-ci reviewing.
+  - **Ruling 110, 2026-11-23 (Shane: "Sure move it up. I am surprised it wasn't done first"): the `tables` removal
+    moves to the front of the packages lane's queue.** Rulings 79 and 87 removed `tables` (ML_TABLE.md, "`tables` is
+    removed"), and ruling 54's build order tied the removal to the Python `ml.table` member, behind the JS member and
+    the fork work; main still offers the argument. Bench's baseline (its account; qwen3.8-flash-next:vision, build
+    9be83ae0, 114 runs, 97 correct, the model told "stateless, no filesystem", which is the description defect) is
+    what priced that order: of 371 `python_exec` cells, 145 were refused on `tables` before any code ran, 128 of them
+    an `@file:` pointer refused as "not a valid CSS selector"; of the 226 that ran, 9 were class A; the largest bin of
+    outside cells in the files stratum is `os`, `pathlib` and `glob` (54), then a reader (39) and `try` (17); the
+    forms stratum holds two cells with a `while`, both outside for another reason first, so it measures ingest and not
+    loops (bench proposes a change to its tasks; none is made before Shane sees it). The order now: packages'
+    `read_csv` of a `/files/` path (#2131, open at e24bbd2e: charged at 2 bytes a step before the parse, so an input
+    past about 30 MB asks), then one PR with the removal and the Python member, then the cost-charge PR. The
+    coordinator's calls on that PR: it is not split, since removal alone leaves a page table, `current`, a Sheet and
+    an `@tool:` pointer with no route into Python; it carries the synchronous path and inside admission for `table`
+    only, and the other members follow; admission skips the card for the cell, and each source is still judged by its
+    receiver; the member is charged before it runs (ruling 105), its cost function stated in ML_TABLE.md; the `@file:`
+    resolver (ruling 107) goes on the JS and Python members together. e4 red-teams it, janitor-3 reviews. Also open,
+    each verified at the head named: session-store's #2129 at 81274427 (a run the worker drives reads `python_exec` as
+    the worker-hosted tool; a page-built run handed to the worker reads it from its next turn), flaky-ci reviewing;
+    async's #2130 at 8ab7d9cb (a run is offered `ml.sh` only when a process host answers its hello within 3 s at the
+    run's start, fixed for the run), janitor-2 reviewing. The sentence #2121 will tell the model, accepted on a row
+    for each half: attached files are under `/files/attached/`, read-only, and the working directory `/files/agent/`
+    is writable. `os.listdir` is not inside the dialect, so the cell that lists them asks and sets the outside mark
+    until the `os` subset is ruled.
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like

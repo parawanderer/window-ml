@@ -103,7 +103,7 @@ cost so far" line is the short form of these totals.
 | --- | --- | --- | --- |
 | Tokens over time, and totals | built | `usageSamples`/`timedUsage` (`usage.tsx`, reducer): one `TokenUsage` per call, ordered by its step's or turn's `ts`; `promptTokens`, `completionTokens`, `cachedTokens`, `reasoningTokens` | — |
 | Cost over time, and total, for an external model | partial | `sessionCalls` priced through `services().priceCalls` against each call's own snapshot (`TokenUsage.prices`, `src/spend/price-book.ts`) | Extension pages only; no cost on the web or hub chat page (session-store). An unpriced call is counted, not costed. |
-| Energy for a local model, and its cost | partial | Measured on the box: the patched backend's `sample` frames carry GPU board watts and `compute.power_sources`, and the bench attributes them per session (`src/spend/energy.ts`, fed from the box log by `tests/e2e/bench/electricity.mjs`). Each call records the electricity price it ran under (`TokenUsage.electricity`) | The extension reads no power field yet. Owner: bench (ruling 53); the design is "Energy and its cost" below. A figure from a rated wattage draws nothing. |
+| Energy for a local model, and its cost | partial | Measured on the box: the patched backend's `sample` frames carry GPU board watts and `compute.power_sources`, and the bench attributes them per session (`src/spend/energy.ts`, fed from the box log by `tests/e2e/bench/electricity.mjs`). Each call records the electricity price it ran under (`TokenUsage.electricity`) | The worker records each session's share while it holds the stream (`sw-energy.ts`, `session.energy`); the page does not draw it yet. Owner: bench (ruling 53); the design is "Energy and its cost" below. A figure from a rated wattage draws nothing. |
 
 #### Energy and its cost
 
@@ -127,7 +127,7 @@ What the attribution needs per session, and whether the extension holds it:
 | Input | Used for | Held today |
 | --- | --- | --- |
 | `hint.session` on every `gen.end`, ours and every other client's | which generations are this session's; another client's take their share of an interval | Yes, live: each request sends `hintSession(hash)` (`contract-run.ts`), and `gen.end` frames carry every client's hint. |
-| Power readings (`sample` frames' `info.compute`) | the energy | Only while the stream is held: `sw-events.ts` connects while a resource panel subscribes and stops with the last. The server's ring is 10 min (`RING_MS`); the sidebar keeps 45 min, in memory (`RESOURCE_RETENTION_MS`). |
+| Power readings (`sample` frames' `info.compute`) | the energy | Only while the stream is held: `sw-events.ts` connects while a resource panel subscribes or the energy hold (`sw-energy.ts`, below) holds it, and stops when neither does. The server's ring is 10 min (`RING_MS`); the sidebar keeps 45 min, in memory (`RESOURCE_RETENTION_MS`). |
 | Residency per GPU (`sample` frames' `ps.models[].gpus`) | which card's draw a generation can take | As the readings: the same frames. |
 | Rest baseline: each channel's median draw over readings at least 30 s after any generation, within 5 min of the session's generations | "above idle" and the 30 s tails | As the readings, and only when the stream was held around the session. |
 | The electricity price (`usage.electricity`) | cost | Yes: each call records it (`price-book.ts`). |
@@ -145,10 +145,16 @@ generation, every client's included. When neither part has such readings (the bo
 the next stretch opened inside the 30 s after), the rest is unknown: the stretch keeps its energy and draws no "above
 idle", and its tails go unattributed, as `attribute` already does.
 
+As built (`sw-energy.ts`): a call holds the stream only for a server whose stream has already been SEEN reporting power.
+Every connection's first sample after its hello, a resource panel's or an earlier hold's, records whether its server
+reports power, per origin (`ml_power_seen`). Probing on a call instead would have cost a cloud or stock backend two
+requests on every model call (`/api/ps`, `/api/events`). The price: a box is first learned about while a resource panel
+streams from it, so a session on a box no panel has shown draws no energy line.
+
 What an evicted worker leaves. A stretch's readings are in worker memory, and the worker can die between the last
 generation and the close. The worker re-runs the attribution over the stretch so far at each of its `gen.end` frames and
 writes the share each time, so an eviction loses only what came after the last write: the tail and any later
-generation's part. The record is `{ J, aboveJ, basis, ms, cost, open, cut }`. It is written `open: true` until the close
+generation's part. The record is `{ J, aboveJ, basis, ms, cost, currency, open, cut }`. It is written `open: true` until the close
 writes `open: false`. On its next start, the worker marks every stretch still `open` as `cut: true`, and the page draws a
 cut stretch's figure with the words "cut short: the browser stopped watching before the stretch ended". So a cut stretch
 never reads as a complete one. The `defineState` declaration's description says this: "A session's local-model energy

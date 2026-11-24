@@ -66,6 +66,38 @@ must be unable to do anything but answer. The dialect is exactly that: it is the
 it has a step budget, and it already has the halting and adversarial tests. A policy that throws, runs out of budget or
 reaches outside the dialect is **no opinion**, so the call asks: a broken policy fails closed.
 
+**RULED 2026-11-23 (Shane, ruling 109): a policy is written in a smaller language than the dialect, checked when it is
+saved.** Shane's target is the kernel's verified programs: checked before they are stored, total by structure, a pure
+function of the call's facts, fail closed (ruling 108 is the last). The whole dialect is more than a predicate over a
+frozen record needs: it admitted recursion, helper functions and `try`/`catch`, and the last caught the host's stack
+overflow. Not built; small-fixes builds it.
+
+**Admitted.** `(c) => <expression>`, or a block of leading `const` bindings and `for…of` statements ending in one
+`return <expression>`. An expression is built from literals (string, number, boolean, an array of strings, a regex
+literal), `===`, `!==`, `&&`, `||`, `!`, same-type `<` and `>`, the ternary, strict reads on `c`, indexing and
+`.length`, `.some` and `.every` with an inline arrow, `.includes`, `.startsWith`, `.endsWith`, `.slice`, `.join`, a
+regex literal's `.test`, `c.effects.has` and `.uses`, `new Set(<array literal>)` read with `.has` and `.size` only,
+and `new URL(<string>)` read through its string properties only. A `for (const x of xs)` body holds only `if
+(<expression>) return <expression>;` and nested `for…of`: it is `.every` or `.some` spelled as a loop.
+
+**Refused.** `let` and every assignment; helper functions and recursion; an arrow anywhere but `.some` and `.every`;
+`try`/`catch` and `throw`; `while` and the classic `for`; `new RegExp`; `Map`; `JSON.parse`; `sort` and `reduce`;
+`async`; locale-dependent methods; a `Set`'s mutators; a `URL`'s setters and `searchParams`.
+
+**Why these.** The admitted list follows a census of every policy we ship or show (small-fixes, 331 sources in
+`tests/fixtures/policy-corpus.json` plus the built-ins, docs and settings read on main): no shipped, documented or
+realistic-test policy uses a refused form. Of 110 model-written answers, 23 reached outside the expression forms: a
+`const` list or `Set` first (9), `for…of` (8), the ternary (5), `new URL` (1). Shane: a form our own authors reach for
+belongs in the language, so those four are admitted, `for…of` without `let` so that no loop carries an accumulator and
+the source still reads as a rule to the person approving it.
+
+**The check at save.** Both authors pass it: a person's policy (the `POLICIES` message) and a model's
+(`propose_policy`). A source outside the language is refused with a line naming the rewrite. A stored policy outside
+the language is broken when it loads, so by ruling 108 a `deny` or `ask` among them asks. With no recursion and no
+loop but over the facts, every policy halts by construction; the size caps and the step budget stay as guards, because
+`const a = s + s; const b = a + a;` still doubles a string per line and a regex can still backtrack. One meter is
+shared by all policies judged on a call.
+
 **A JS subset, not a policy language of its own.** The policy languages before this one each brought their own syntax
 (Cedar, Rego, CEL, IAM's JSON conditions); Starlark and eBPF are restricted subsets of a language people already know.
 This is the second kind, with two things those lack: the subset already exists and is already the security boundary (the
@@ -111,6 +143,19 @@ card shows the call's resolved facts, not the script.
      hold does not fire, and the call asks anyway; one that tests an absence fires. Either way no `ask` fails open.
      A BROKEN `ask` is no opinion, like a broken `deny`: a call an `allow` or the built-in default frees still runs, and
      the policy page shows the `ask` as broken.
+     **RULED 2026-11-23 (Shane, ruling 108): a broken `deny` or `ask` makes the call ASK.** The sentence above and "a
+     broken policy fails closed" (in "Why the read-only dialect") disagreed, and the code followed this one: a `deny`
+     with a typo in a field name, one that used its whole step budget and one that overflowed the stack were each
+     skipped, and a call an `allow` or the built-in default frees then ran (small-fixes' audit of main 8356772f,
+     re-run by it; the coordinator read `judgeCall`). From this ruling a broken `deny` or `ask` yields `ask`, with
+     that policy as the reason; a broken `allow` stays no opinion; a `deny` that evaluates cleanly still wins. The
+     card says inline why the call escalated and what to do (Shane): it names the policy, gives the break in plain
+     words, carries an action that opens the policy for editing, and offers no "remember". The cause slug is
+     `broken-policy`. Not built; small-fixes builds it. Two more findings of the same audit: the dialect's
+     `try`/`catch` catches the host's stack overflow, below `MAX_CALL_DEPTH`, so a policy can return the opposite
+     answer with nothing recorded, and the outcome depends on the caller's stack depth (small-fixes repairs it for
+     both realms: the overflow becomes a stop no script catches and the depth limit moves below the host's); and
+     `propose_policy` vets a proposal against one probe only.
   2. **The card says why.** It names the `ask` policy that raised it, and offers no "remember" whose only result would be
      an `allow` the `ask` overrides.
   3. **The upgrade.** Builds before this one load only `allow` and `deny` (`sw-policies.ts`, the load filter), so a stored
