@@ -2386,6 +2386,28 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     macOS denies reading the sessions folder itself, a stated platform difference with a row per platform. Cut:
     "sync and backup read the folder", and the folder watch with its `notify` dependency, deferred whole.
   - **Merged, verified with `gh`:** #2165 (0129ae8d), ruling 120; #2154 (1eb4bfe4), move-run's `os` subset.
+  - **Ruling 122 (Shane, 2026-11-24, said in packages' session and confirmed in the coordinator's): reading an
+    image the current page loaded needs no approval, and how it is read is an implementation detail.** Shane: "the
+    CDP rules were there previously because it was doing escalated actions like clicking in an external origin
+    iframe. For images I think it's just a stupid implementation detail", and "The model can literally `look` at
+    that page and see the image". So the spec states a contract and not a mechanism: a cell gets the image at the
+    best quality the browser hands over (the file, else the decoded pixels at natural size, else the pixels as
+    drawn) and can tell which it got. Four rules bind any route: no request (UNVERIFIED until counted at a server,
+    and a case that sends one is not used); nothing in the page changes; no ask; the size is bounded before
+    anything is allocated. The conditions of the entry above stand, except that the debugger route attaches
+    without asking, so Chrome's "is debugging" banner can flash for a read: the setting's JSDoc, CDP_CLICK.md and
+    detection-surface.md each gain a sentence. A hidden image is read too, which is more than `look` shows; it is
+    accepted because the bytes never reach a page. The coordinator's rule of earlier the same day, to ask when no
+    attach exists, is withdrawn.
+  - **Ruling 122, second part (Shane, the same message): "if the bytes are loaded in the context you should be
+    able to read them and inspect them in JS like you can the page".** The coordinator's reading: the JS REPL
+    (`exec`) reads a loaded image as Python does, under the same contract and four rules. The coordinator's
+    conditions: it runs only in an isolated world, as an `exec` naming `ml.current`, `ml.sh` or `ml.fs` does, and
+    is refused where there is none; never in a page-started call. It is a new `ml.*` member for `exec`, so it gets
+    a red-team pass. Not scheduled yet: it follows Python's `ml.image`, and its owner is named then.
+  - **Open with Shane:** whether a cell's read of an image puts the pixels before the model, or only the text view
+    until the cell returns the image or the model looks. The `ml.image` section assumes neither.
+  - **Merged, verified with `gh`:** #2168 (828160fa), this plan's ruling 121.
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
   `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks
