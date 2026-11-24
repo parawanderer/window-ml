@@ -228,9 +228,22 @@ pandas parses the kept bytes, and the cell owns the frame. A URL the run did not
 
 Inside the dialect a table's decode is a lifted leaf, so the interpreter counts no steps for it. `ml.table` charges the
 budget itself, before the decode it pays for. The check registered with `allow_call` charges
-`ceil(len(src) / ML_TABLE_BYTES_PER_STEP)` steps for the source string, and `_ml_table_frame` charges the same rate on
-the bytes of a stored value or a `/files/` file before it decodes them. A rows or HTML answer, which the page already
-bounded, is not charged. Outside a run the charge is nothing.
+`ceil(len(src) / ML_TABLE_BYTES_PER_STEP)` steps for the source string. The facade's synchronous call charges the same
+rate on the answer's JSON (`_call_sync`, `ml-facade.ts`), which is where a rows or HTML answer's size is paid. It charges
+after `run_sync` returns and before the decode, on the cell's own stack: inside `run_sync` the awaited chain runs on the
+event loop, where the dialect counts nothing, so a charge made there was silently free (found 2026-11-24 by
+`tests/python-table-charge.test.mjs`; two answers at the cap cost about 4,400 steps). The decode itself then runs on the
+cell's stack and is counted too, a few steps a cell.
+`_ml_table_frame` charges it again on the bytes of a stored value or a `/files/` file, which cross beside the JSON. A
+page table's answer is bounded by `PAGE_TABLE_CAPS` (`worker-page-read.ts`: 2,000 columns, 1,000,000 rows, 4,000,000
+cells, 100,000 characters a cell, 16,000,000 characters of HTML), and the charge applies up to that cap. At the HTML
+cap one call costs about 8,000,000 steps, more than half the cell's 15,000,000, so two such calls exhaust the budget.
+Outside a run the charge is nothing.
+- **Known limit (2026-11-24): a Sheet's body is read whole.** `fetchSheetCsv` (`sw-fetch.ts`) reads the export with
+  `res.text()` and no size cap before it is parsed to at most `MAX_TABLE_ROWS` (200,000) rows, with no column or cell
+  cap. The charge bills what crosses to the cell, but the service worker holds the whole body first. A fetched table is
+  held to the fetch cap and parsed to the same 200,000 rows. Capping the Sheet's body at the fetch cap, refused past it
+  with a sentence naming the size, is its own change after this one.
 
 - **`ML_TABLE_BYTES_PER_STEP = 2`.** It was measured on the fork core (2026-11-24, Node, best of 3). One interpreter step
   took 20.2 ns. `pd.read_csv` took 6.0 to 7.8 ns per byte for a numeric file and 8.9 to 9.7 ns per byte for a

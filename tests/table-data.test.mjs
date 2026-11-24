@@ -202,7 +202,8 @@ test("the preview names the source so the model can load the WHOLE table, not th
     const t = tableFromDelimited("a,b\n1,2");
     assert.equal(tablePreview(t).includes("python_exec"), false);           // only when a source is given
     const out = tablePreview(t, { source: '"https://x/data.csv"' });
-    assert.match(out, /pass "https:\/\/x\/data\.csv" to python_exec's `tables`/);
+    assert.match(out, /Whole table cached: in python_exec, `df = ml\.table\("https:\/\/x\/data\.csv"\)` reads all 1 rows as a DataFrame/);
+    assert.doesNotMatch(out, /`tables`/, "the removed argument is not offered");
 });
 
 test("a table cut at the row cap says so — a prefix must not read as the whole file", () => {

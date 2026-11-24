@@ -151,13 +151,13 @@ test("ml.fetch on an Arrow file hands the page the Table facade", async () => {
 
 // ---- One table, both runtimes, through pointers -------------------------------------------------------------
 
-test("python_exec opens a fetched table by POINTER — tables: { df: \"@tool:…\" } — as a DataFrame", async () => {
+test("python_exec opens a fetched table by POINTER — df = ml.table(\"@tool:…\") — as a DataFrame", async () => {
     test.skip(!HAS_PYODIDE, "needs the bundled Pyodide (npm run fetch-pyodide)");
     test.setTimeout(120_000);
     const [fetched, py] = await runSteps([
         { tool: "fetch_url", args: { url: `${data.url}/stock.arrow`, token: "the stock table" } },
-        { tool: "python_exec", args: { mode: "readonly", tables: { df: '@tool:"the stock table"' },
-            code: "print(df.shape); print(df.dtypes.to_dict()); return int(df['stock'].sum())" } },
+        { tool: "python_exec", args: { mode: "readonly",
+            code: "df = ml.table('@tool:\"the stock table\"')\nprint(df.shape); print(df.dtypes.to_dict()); return int(df['stock'].sum())" } },
     ]);
     expect(fetched, "setup: the fetch reached the tool").toContain("stock.arrow");
     expect(py).toContain("(4, 4)");
@@ -184,7 +184,7 @@ test("a table past the page's parse cap reads every row by pointer, in JavaScrip
     const [fetched, js, py] = await runSteps([
         { tool: "fetch_url", args: { url: `${data.url}/big.csv`, token: "the big table" } },
         { tool: "exec", args: { js: 'const t = @tool:"the big table".table; return [t.shape[0], (await t.col("revenue")).length]' } },
-        { tool: "python_exec", args: { mode: "readonly", tables: { df: '@tool:"the big table"' }, code: "return len(df)" } },
+        { tool: "python_exec", args: { mode: "readonly", code: "df = ml.table('@tool:\"the big table\"')\nreturn len(df)" } },
     ], { timeout: 150_000 });
     expect(fetched, "setup: the preview already knows the real size").toMatch(/\[300,000 rows x 3 columns\]/);
     expect(js).toContain(`[${BIG_ROWS},${BIG_ROWS}]`);

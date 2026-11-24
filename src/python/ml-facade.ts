@@ -82,13 +82,17 @@ def _ml_make(_send, _codec):
     _seq = [0]
     _run_sync, _charge, _frame, _asks = (getattr(_codec, _k, None) for _k in ("run_sync", "charge", "frame", "asks"))
 
-    async def _call(name, args, kwargs, meter=None):
+    async def _ask(name, args, kwargs):
         _seq[0] += 1
         seq = _seq[0]
         wire_args = [_out(a) for a in args] + ([_out(kwargs)] if kwargs else [])
-        raw = await _send(_dumps({"seq": seq, "call": name, "args": wire_args}))
-        # A synchronous call's answer is decoded by the harness, so its size is charged before it is read.
-        if meter is not None: meter(len(raw))
+        return seq, await _send(_dumps({"seq": seq, "call": name, "args": wire_args}))
+
+    async def _call(name, args, kwargs):
+        seq, raw = await _ask(name, args, kwargs)
+        return _answer(name, seq, raw)
+
+    def _answer(name, seq, raw):
         try:
             ans = _loads(raw)
         except Exception:
@@ -113,7 +117,11 @@ def _ml_make(_send, _codec):
         # One call, waited on in place over JSPI: the cell's stack suspends until the answer, and nothing else runs
         # Python on its namespace meanwhile (docs/plan/repl/ML_TABLE.md, "The requirement of the JSPI route").
         if _run_sync is None: raise MlError("Absent", "ml." + name + " needs a sandbox that can wait in place, which this one cannot")
-        return _run_sync(_call(name, args, kwargs, _charge))
+        seq, raw = _run_sync(_ask(name, args, kwargs))
+        # The answer's size is charged HERE, on the cell's own stack, before it is decoded: inside run_sync the
+        # awaited chain runs on the event loop, where the dialect's budget counts nothing (python-table-charge.test.mjs).
+        if _charge is not None: _charge(len(raw))
+        return _answer(name, seq, raw)
 
     def _table(src, raw=False, delimiter=None, header=None):
         """A table as a pandas DataFrame you own: \`df = ml.table("current")\`. \`src\` is a CSS selector, "current", a URL
