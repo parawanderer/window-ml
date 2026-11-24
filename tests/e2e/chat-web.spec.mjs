@@ -358,7 +358,7 @@ test("desktop: with nothing open the page is a start box; an agent run picks a t
     const options = list.getByRole("option");
     await expect(options.first()).toHaveText("New tab");
     await expect(list.locator(".tp-rule")).toHaveCount(1);
-    await expect(options).toHaveText([/New tab/, /The front page.*news\.example/, /Tables — API reference/, /Pointers — the pipe dialect/, /Your cart/, /Inbox \(3\)/, /Flights AMS → LIS/]);
+    await expect(options).toHaveText([/New tab/, /No tab/, /The front page.*news\.example/, /Tables — API reference/, /Pointers — the pipe dialect/, /Your cart/, /Inbox \(3\)/, /Flights AMS → LIS/]);
     await expect(list.locator(".tp-window")).toHaveCount(3);
     // A group the runtime can name has a coloured heading; one it cannot (no tabGroups grant) is a plain rule. Both
     // indent their tabs. A runtime-made icon is drawn; a tab without one gets its site's letter.
@@ -1834,7 +1834,7 @@ test("tabs the runtime could not list are counted in a warning at the top of the
     await expect(warn).toContainText("Allowed in that browser's extension settings");
     await expect(warn.getByRole("button")).toHaveCount(0);
     // It is about the whole list: filtering hides it, and the listed tabs are all still there.
-    await expect(list.getByRole("option")).toHaveCount(7);
+    await expect(list.getByRole("option")).toHaveCount(8);
     await list.getByRole("searchbox", { name: "Filter tabs" }).fill("cart");
     await expect(warn).toHaveCount(0);
     await list.getByRole("searchbox", { name: "Filter tabs" }).fill("");
