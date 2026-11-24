@@ -632,6 +632,19 @@ function useNarrow(el: { current: HTMLElement | null }, min: number): boolean {
     return narrow;
 }
 
+/** The code | diff | split switch of a revising call's block, in the block's header and again in its maximised view, so the
+ *  two are one control over one state. `narrow` marks `split` as drawing the diff.
+ */
+function RevisionSwitch({ views, picked, narrow, onPick }: { views: [RevisionView, string][]; picked: RevisionView; narrow: boolean; onPick: (v: RevisionView) => void }) {
+    return (
+        <span class="r-diff-seg" role="group" aria-label="View">
+            {views.map(([v, tip]) => <button key={v} type="button" class={`r-diff-segbtn${picked === v ? " on" : ""}`}
+                aria-pressed={picked === v} data-fallback={v === "split" && narrow ? "" : undefined}
+                onClick={() => onPick(v)} {...cursorTipOn(tip)}>{v}</button>)}
+        </span>
+    );
+}
+
 /** WHAT CHANGED SINCE THE CALL THIS REVISES. The commonest loop in a run is: a code tool fails, the model
  *  retries with a tweak, and the reader diffs two twenty-line blocks by eye to find the one line that moved.
  *
@@ -652,6 +665,7 @@ function useNarrow(el: { current: HTMLElement | null }, min: number): boolean {
  *  @gallery diff view {"revision":{"ref":"9d3822f","tool":"exec","seq":1,"label":"the timeline survey","before":"const a = [1, 2, 3];\nconst n = a.length;\nreturn n;","claim":"Counts both lists."},"after":"const a = [1, 2, 3];\nconst b = [4, 5];\nconst n = a.length + b.length;\nreturn n;","lang":"javascript","view":"diff"}
  *  @gallery split view {"revision":{"ref":"9d3822f","tool":"exec","seq":1,"label":"the timeline survey","before":"const a = [1, 2, 3];\nconst n = a.length;\nreturn n;","claim":"Counts both lists."},"after":"const a = [1, 2, 3];\nconst b = [4, 5];\nconst n = a.length + b.length;\nreturn n;","lang":"javascript","view":"split"}
  *  @gallery narrow, split falls back to diff {"revision":{"ref":"9d3822f","tool":"exec","seq":1,"label":"the timeline survey","before":"const a = [1, 2, 3];\nconst n = a.length;\nreturn n;","claim":"Counts both lists."},"after":"const a = [1, 2, 3];\nconst b = [4, 5];\nconst n = a.length + b.length;\nreturn n;","lang":"javascript","view":"split","splitMinPx":100000}
+ *  @gallery-flow maximised tests/gallery-flows/CodeDiff.mjs {"revision":{"ref":"9d3822f","tool":"exec","seq":1,"label":"the timeline survey","before":"const a = [1, 2, 3];\nconst n = a.length;\nreturn n;","claim":"Counts both lists."},"after":"const a = [1, 2, 3];\nconst b = [4, 5];\nconst n = a.length + b.length;\nreturn n;","lang":"javascript","view":"split"}
  *  @gallery failed step opens on the diff {"revision":{"ref":"9d3822f","tool":"exec","seq":1,"before":"const n = 1;\nreturn n;"},"after":"const n = 2;\nreturn nn;","lang":"javascript","failed":true}
  */
 export function CodeDiff({ revision, after, lang, hash, failed, view: initial, splitMinPx = SPLIT_MIN_PX, children }: { revision: CodeRevision; after: string; lang: string; hash?: string; failed?: boolean; view?: RevisionView; splitMinPx?: number; children?: ComponentChildren }) {
@@ -687,12 +701,17 @@ export function CodeDiff({ revision, after, lang, hash, failed, view: initial, s
         ? (plain || !children ? <Code text={after} lang={lang} /> : children)
         : v === "split" ? <SplitLines rows={rows!} lang={lang} numbers={nums} class="r-diff-body" />
         : <DiffLines rows={rows!} lang={lang} numbers={nums} class="r-diff-body" />;
-    const claim = shown !== "code" && revision.claim
+    const claimFor = (v: RevisionView): ComponentChildren => v !== "code" && revision.claim
         ? <div class="r-diff-claim"{...cursorTipOn("The model's own account of what it changed. The diff below is computed from the two sources; this is not.")}>
             <span class="r-diff-claim-tag">the model says:</span> <Prose md={revision.claim} steps={sessionMap.get(hash || "")?.steps} hash={hash} /></div>
         : null;
-    const VIEWS: [RevisionView, string][] = [["code", "The code of this call."], ["diff", "What changed since the call this revises, one column."],
+    const claim = claimFor(shown);
+    // The maximised view is as wide as the panel gives it, so `split` is not folded to the diff there on the strength of
+    // the inline block's width; it follows the same picked view, and a switch inside it is the inline one.
+    const mshown: RevisionView = rows ? picked : "code";
+    const viewsFor = (narrow: boolean): [RevisionView, string][] => [["code", "The code of this call."], ["diff", "What changed since the call this revises, one column."],
         ["split", narrow ? `Old and new side by side. Too narrow for two columns here (under ${splitMinPx}px), so this shows the diff.` : "Old and new side by side."]];
+    const VIEWS = viewsFor(narrow);
     return (
         <div class="r-diff" ref={root} data-view={shown}>
             <div class="r-diff-head">
@@ -713,11 +732,7 @@ export function CodeDiff({ revision, after, lang, hash, failed, view: initial, s
                     : <span class="r-diff-same">no change — the source is identical</span>}
                 <span class="r-diff-tools">
                     {rows
-                        ? <span class="r-diff-seg" role="group" aria-label="View">
-                            {VIEWS.map(([v, tip]) => <button key={v} type="button" class={`r-diff-segbtn${picked === v ? " on" : ""}`}
-                                aria-pressed={picked === v} data-fallback={v === "split" && narrow ? "" : undefined}
-                                onClick={() => setPicked(v)} {...cursorTipOn(tip)}>{v}</button>)}
-                        </span>
+                        ? <RevisionSwitch views={VIEWS} picked={picked} narrow={narrow} onPick={setPicked} />
                         : null}
                     <button type="button" class="icon-btn r-diff-max" aria-label="Maximise this view" onClick={() => setMaxed(true)} {...cursorTipOn("Open this view full size.")}><IconExpand /></button>
                 </span>
@@ -732,11 +747,14 @@ export function CodeDiff({ revision, after, lang, hash, failed, view: initial, s
                 ? <Dialog onClose={() => setMaxed(false)} labelledBy={`rev-max-${revision.ref}`}>
                     <div class="r-max">
                         <div class="r-max-head">
-                            <h2 id={`rev-max-${revision.ref}`}>Revises {revision.label ? `${revision.tool}: ${revision.label}` : revision.ref} · {shown}</h2>
-                            <button type="button" class="icon-btn" aria-label="Close" onClick={() => setMaxed(false)} {...cursorTipOn("Close (Esc).")}><IconClose /></button>
+                            <h2 id={`rev-max-${revision.ref}`}>Revises {revision.label ? `${revision.tool}: ${revision.label}` : revision.ref} · {mshown}</h2>
+                            <span class="r-diff-tools">
+                                {rows ? <RevisionSwitch views={viewsFor(false)} picked={picked} narrow={false} onPick={setPicked} /> : null}
+                                <button type="button" class="icon-btn" aria-label="Close" onClick={() => setMaxed(false)} {...cursorTipOn("Close (Esc).")}><IconClose /></button>
+                            </span>
                         </div>
-                        {claim}
-                        <div class="r-max-body">{bodyOf(shown, true)}</div>
+                        {claimFor(mshown)}
+                        <div class="r-max-body">{bodyOf(mshown, true)}</div>
                     </div>
                 </Dialog>
                 : null}

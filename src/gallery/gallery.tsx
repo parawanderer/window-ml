@@ -12,6 +12,7 @@ import { DEFAULT_STATE, WIDTHS, formatHash, parseHash, type GalleryState } from 
 import { ComponentTile, CustomTile, calls, entryLog, entryPoints, statusKey, statuses, type GalleryItem, type StageContext } from "./gallery-stage";
 import { installServices } from "../sidebar/services";
 import { installTooltipLayer } from "../sidebar/tooltip-layer";
+import { CursorTipLayer } from "../sidebar/ui-kit";
 import { initThemeStyle } from "../sidebar/prefs";
 import { markdown } from "../sidebar/format";
 import { Disclosure } from "../sidebar/disclosure";
@@ -326,6 +327,15 @@ function Gallery() {
         const c = items.peek().find((it) => it.id === id)?.component;
         const load = c && loaders[c.file];
         return load ? load() : Promise.reject(new Error(`no component module for ${id}`));
+    },
+    /** Mount the cursor-tip layer the panel's app mounts (the page has none, so a flow that HOVERS a `cursorTipOn`
+     *  trigger and shoots the tip asks for one). Once; a tile that sets the signal itself does not call it. */
+    mountTipLayer: () => {
+        if (document.getElementById("gl-tip-layer")) return;
+        const host = document.createElement("div");
+        host.id = "gl-tip-layer";
+        document.body.appendChild(host);
+        render(<CursorTipLayer />, host);
     },
     status: (id: string, variant: string) => statuses.peek()[statusKey(id, variant)] ?? null,
     statuses: () => statuses.peek(),
