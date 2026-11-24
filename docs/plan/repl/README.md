@@ -2405,9 +2405,19 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     conditions: it runs only in an isolated world, as an `exec` naming `ml.current`, `ml.sh` or `ml.fs` does, and
     is refused where there is none; never in a page-started call. It is a new `ml.*` member for `exec`, so it gets
     a red-team pass. Not scheduled yet: it follows Python's `ml.image`, and its owner is named then.
-  - **Open with Shane:** whether a cell's read of an image puts the pixels before the model, or only the text view
-    until the cell returns the image or the model looks. The `ml.image` section assumes neither.
   - **Merged, verified with `gh`:** #2168 (828160fa), this plan's ruling 121.
+  - **Ruling 123 (Shane, 2026-11-24): the model reads an image as text until it looks.** "Returning an image just
+    gives you a pointer. It doesn't give you the full object. If the model wants to look at that pointer in detail
+    it uses the `look` call or it uses `verify` which is just an inline-chained look call. By default it gets just
+    the summarised text view. We can make it more detailed than a generic "an image" by providing metadata like we
+    do for tables." So reading or computing on an image in a cell puts no pixels before the model, and neither
+    does returning one: the person sees it, the model gets the pointer and the text view. That is what the code
+    does today, so nothing changes there. What changes is the text view: "Returned an image." becomes one line of
+    facts (kind, dimensions, size and the like, nothing from the file's metadata), stated in the stored image
+    format's spec as the preview of an image. A fetched image body follows the same rule. Shane's reason is cost;
+    it is also the rule a table already follows, and it is ruling 121 (1) applied to a picture. This answers the
+    question the entry above left open, which is removed.
+  - **Merged, verified with `gh`:** #2169 (8aeeef22), this plan's ruling 122.
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
   `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks
