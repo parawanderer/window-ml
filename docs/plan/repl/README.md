@@ -2168,6 +2168,20 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     its eight arguments; `keep` as `ml.keep()` is not answered and stays an argument. Moving top-level tools to
     functions is NOT taken up now ("refactoring busywork, more of a question for later"); `answer` and the
     consent-shaped tools stay tools in any case.
+  - **RULING 116 (Shane, 2026-11-24, in the coordinator's session): Python-only members go under one namespace, and a
+    cell can find out what `ml` has.** "I think all the python-only functions should start to get grouped under a
+    'python namespace'", the kernel control commands with them, `ml.image` left out since it could have a JS analogue;
+    then, on the coordinator's proposals, "Sure your call is fine. I think being able to list the packages while the
+    kernel is dead is useful". The spec is ML_PYTHON.md, which is also the restart command's spec the coordinator
+    owed. The calls in it: the name is `ml.python` (not `ml.py`, which reads as a file's name); `ml.python.restart()`
+    runs unasked from a JS cell and from a Python cell, resets integrity only, reaches the run's own kernel only, ends
+    a detached cell with a named reason and is bounded to one a step; `keep` becomes `ml.python.keep()`;
+    `ml.python.packages()` answers from outside the kernel, so with it dead too (Shane's word, reversing the
+    coordinator's no); `ml.python.names()` is wanted and not scheduled; the mark is never a member. Discovery, on the
+    packages lane's finding that a model is told of `ml.table` and nothing else: one `ML_MEMBERS` table with each
+    member's languages, from which `dir(ml)`, `help(ml)`, `agent_api_docs` and the unknown-member error all answer,
+    and one description line whose bench run needs Shane's yes in the bench lane's session. The packages lane builds
+    it after the `tables` removal and `ml.image`.
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
   `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks
