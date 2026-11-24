@@ -2334,6 +2334,58 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     exception. Cost, stated: two files sharing a shown name look alike in the panel. Surfaced to Shane, who may
     want the real names locally.
   - **Merged, verified with `gh`:** #2164 (337b8cd3), this plan's ruling 119.
+  - **Ruling 121 (Shane, 2026-11-24, said in packages' session and confirmed in the coordinator's): a pointer
+    points at the object, and an image is an object.** Five statements. (1) The preview is the model-facing text
+    view of a value, like a notebook's `str` cut off; the pointer points at the underlying object.
+    POINTER_VALUES.md's reader table already gives `python_exec` the value, so a cell that gets only the text view
+    of an image is a gap. (2) An image gets a stored type: its bytes go in the value store under the same budget,
+    least-recently-read eviction and tombstones as a table. Today the pixels ride in the token as a data URL and
+    nothing is stored. One budget for images and tables is the coordinator's call, with the cost named: a run of
+    many screenshots can evict a table the model still needs; they are split only if that is seen. (3) An image
+    the current page has already loaded can be read in the REPL. (4) The fetch gate stays in fetch: `ml.image` has
+    no http(s) source and makes no request, and a download is `ml.image(await ml.fetch(url))`. (5) A URL is
+    accepted by both calls and means two things, and the spec says why: in `ml.image(url)` it is a NAME for a file
+    the page loaded, read without a request; in `ml.fetch(url)` it is an ADDRESS, a request under the fetch gate
+    whatever page it came from.
+  - **What ruling 121 schedules, for packages, in this order after #2158:** the stored image format (its spec in
+    POINTER_VALUES.md: what the panel and both exports show, the vision turn unchanged, sessions written before
+    it, what an image is charged, the tombstone, `res.outputs` giving a page no read of the store); then
+    `ml.fetch` and `fetch_url` storing an image body (raster only, fetch's own cap, a truncated image not stored,
+    a page-started fetch unchanged; red-team rows under rule 10); then `ml.image` (ruling 114). `ml.image` reads
+    an element's capture, a loaded image, a data URL (inside the dialect: raster, SVG refused, a byte cap, the
+    pixel charge before the decode) and a stored value. Each PR's spec text comes to the coordinator before a
+    push.
+  - **The loaded-image read, as accepted (coordinator, 2026-11-24).** It reads the browser's own copy over the
+    debugger attach the extension already makes, only for a URL in the current page's resource tree at the time of
+    the call, and never falls back to a fetch; with the debugger setting off, or the copy gone, the read is the
+    element's crop. Conditions: "makes no request" is UNVERIFIED until requests are counted at a server in a real
+    browser (memory-cached, evicted, `no-store`, cross-origin, subframe, redirected, a `srcset` variant), and a
+    case that sends one fails closed; the bytes never reach a page, by `res.outputs`, a main-world `exec` or a
+    page-started cell, since a page cannot read a cross-origin image itself; file metadata is kept byte for byte
+    and never printed in the text view. Refused: re-fetching a loaded image unasked. A hostile page embeds N
+    images, and which of them a cell re-fetches is a message of about N bits to that page's server.
+  - **Names under `/files`, amended by Shane (2026-11-24): more is shown locally.** This replaces the sentence
+    above that gives the person's listing the shown names only. An entry's `name` is always the shown name. An
+    optional `realName` goes with it only when the two differ and only to the extension's own pages on this
+    device: never to the hub, an event, an export, the run log, `ml.fs` or the Python mount. The panel shows the
+    real name, marked with an icon whose tip says "The model sees this as <name>". The mask is #2166 (open); the
+    `realName` option is session-store's next PR. In the worker it is sent only when the command came from this
+    browser, a fact the transport sets, with e3's rows: a hub client, a page-started sender and an export never
+    get it.
+  - **The file browser's design principle (Shane, 2026-11-24): "build a normal file browser and then add the
+    weirdness of our crap on top of it".** The base is an ordinary tree; hidden state, masked names and mounts are
+    annotations that could be removed without changing the tree. Chat Page's slice 1 renders `realName` from the
+    fake host; slice 1b is the worker's half. The root listing also answers a count per mount, from
+    session-store's `AgentFiles.stats` (#2167, open); while the `agent` count is absent the header does not
+    present `attached` as the total.
+  - **`/files` on the person's disk (ruling 119), files-host's slices as accepted (coordinator, 2026-11-24).**
+    First a docs-only PR with eleven corrections to FILE_ATTACHMENTS.md. Then: (1) the host creates the session's
+    folder, keeps it out of git and takes uploads into the call's snapshot; (2) the host refuses another session's
+    folder, cell and spawn side; (3) the sandbox profile on both platforms; (4) the extension mounts it at session
+    start; (5) the Python mount on the folder. Rulings: the two new plan fields are additive and tolerated absent;
+    macOS denies reading the sessions folder itself, a stated platform difference with a row per platform. Cut:
+    "sync and backup read the folder", and the folder watch with its `notify` dependency, deferred whole.
+  - **Merged, verified with `gh`:** #2165 (0129ae8d), ruling 120; #2154 (1eb4bfe4), move-run's `os` subset.
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
   `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks
