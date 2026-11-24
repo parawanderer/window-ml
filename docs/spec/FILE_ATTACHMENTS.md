@@ -2448,14 +2448,16 @@ is the top frame's and the comparison is exact; the composers (sidebar, DevTools
 `dereference` tool reads a text pointer as its text through the pipe ("Text, N lines" in the header); the inventory,
 the shelf's refusals and the `run.files` state row say lines for text and pages for a PDF. Images wait, as ruled.
 
-**Built (2026-11-24): where a cell opens it.** On a run the worker built, each block also names the file's path
-under the mount, after `pointer`: `path="/files/attached/<handle>/<name>"`, the handle being the pointer's id and the
-name the stored one, as the mount lists it (sw-attach.ts `openablePath`). It is there only when it opens the file as
-written: a name holding `/` (the mount reads it as a folder), a name that is `.` or `..` (the mount refuses the segment) and a name the turn's scrub changes (the framed task is
-scrubbed whole, the mount lists the stored name) get none, and the model lists the folder. A `"` in a name is written
-`&quot;`, as in `name`; the attribute's decoded value is the path. A hidden attachment carries its path, since its name
-is listed; the read is refused by the hide rule. A message stored before this is replayed as stored. It costs 32
-characters and the name per attached file.
+**Built (2026-11-24): where a cell opens it.** On a run the worker built, each block also names the file's path under
+the mount, after `pointer`: `path="/files/attached/<handle>/<name>"`, the handle being the pointer's id and the name the
+stored one, as the mount lists it (sw-attach.ts `openablePath`). It is there only when it opens the file as written: a
+name holding `/` (the mount reads it as a folder), a name that is `.` or `..` (the mount refuses the segment) and a name
+the turn's scrub changes (the framed task is scrubbed whole, the mount lists the stored name) get none. Only the
+attribute is absent: the file is still attached, its block still names its pointer, and its folder
+`/files/attached/<handle>/` is listed, so the model lists the folder. A `"` in a name is written `&quot;`, as in `name`;
+the attribute's decoded value is the path. A hidden attachment carries its path, since its name is listed; the read is
+refused by the hide rule. A message stored before this is replayed as stored. It costs 32 characters and the name per
+attached file.
 
 ## Open
 
