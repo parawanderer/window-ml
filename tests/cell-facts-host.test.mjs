@@ -112,3 +112,36 @@ test("JS on the page, refused there: the page's claim of why is not kept, only t
     const r = await run("exec", { js: "document.querySelector('p').click()" }, { page: (msg) => msg.payload?.readonlyTry ? { readonly: false, cell: { why: { kind: "budget", name: "forged" } } } : { result: "clicked" } });
     assert.deepEqual(r.done.cell, { lang: "js", ran: "outside", realm: "page" });
 });
+
+// --- routing in both languages: Python only when the run executes its Python on the page ---
+
+test("Python routing: a run the PAGE built executes its Python on the page, so the cell is not tried inside; why routing", T, async () => {
+    const PAGE = { id: 7, windowId: 1, active: true, url: "https://site.example/report", title: "Report" };
+    let turns = 0, bg;
+    bg = loadBackground({
+        config: { ...config }, openTabs: [PAGE], local: { ml_site_always: ["https://site.example"] },
+        onFetch: (c) => {
+            if (!c.url.includes("/chat/completions")) return jsonResponse({});
+            return ++turns === 1
+                ? jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "python_exec", arguments: JSON.stringify({ code: "return 1" }) } }] } }] })
+                : jsonResponse({ choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (_t, msg) => {
+            if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
+            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+            if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
+            if (msg.payload.finish) return { result: "" };
+            if (msg.payload.renderOnly || msg.payload.precheck) return {};
+            return { result: "ran on the page" };
+        },
+    });
+    const sender = { tab: { id: 7, url: PAGE.url }, url: PAGE.url, origin: new URL(PAGE.url).origin, frameId: 0 };
+    const tools = [{ name: "python_exec", description: "python", parameters: { type: "object", properties: { code: { type: "string" } } }, requiresApproval: true, capabilities: [] }];
+    void bg.send({ type: "START_RUN", payload: { runId: "pagepy1", task: "calls", systemPrompt: "sys", tools, model: "m", think: null, maxSteps: 20, surface: "off", autoApprovePython: true,
+        rebuild: { toolNames: ["python_exec"], model: "m", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: false } } }, sender);
+    for (let i = 0; i < 3000 && turns < 2; i++) await tick();
+    await new Promise((r) => setTimeout(r, 20));
+    const done = bg.tabMessages.filter(([, m]) => m.type === "ML_DEBUG_TO_PAGE" && m.event?.tool === "python_exec" && !m.event.pending && m.event.result !== undefined).map(([, m]) => plain(m.event)).at(-1);
+    assert.equal(bg.pyInsideRuns.length, 0, "nothing was tried inside");
+    assert.deepEqual(done.cell, { lang: "python", ran: "outside", why: { kind: "routing" } });
+});
