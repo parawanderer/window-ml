@@ -1,5 +1,7 @@
 // python-dialect.ts — whether a python_exec cell is INSIDE the read-only Python dialect, the one question that replaced `mode`.
 
+import { MARKED_CARD_LINE, MARKED_MODEL_LINE, markedRefusal } from "../python/py-mark";
+
 /**
  * Whether a python_exec cell may be treated as inside the read-only Python dialect without running it (docs/spec/
  * PYTHON_DIALECT.md, "Membership replaces `mode`"). FALSE FOR EVERY CELL, by design: membership is decided by the
@@ -35,6 +37,9 @@ export function setPythonDialectForTest(fn: ((code: string) => boolean) | null):
  * @returns the why-asks line and the sentence the model reads with the result
  */
 export function pythonOutsideWhy(where: string | undefined, bridged = false): import("../contract").AskWhy {
+    // Asked only because an earlier cell ran outside the dialect in this worker: the model is told once per worker.
+    const marked = markedRefusal(where);
+    if (marked) return { line: MARKED_CARD_LINE, detail: marked === "first" ? MARKED_MODEL_LINE : "", cause: "sandbox-marked", ...(bridged ? { bridged: true as const } : {}) };
     const at = (where ?? "").replace(/^not in dialect:\s*/, "").trim();
     return {
         line: at ? `Outside the read-only Python dialect: ${at}` : "Outside the read-only Python dialect",
