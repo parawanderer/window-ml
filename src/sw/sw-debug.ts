@@ -3,6 +3,7 @@
 // this; a panel opened mid-run does, which is what the buffer is for.
 
 import { activeRuns, tabHasBgRun } from "./sw-runs";
+import { isNoTab } from "./no-tab";
 
 // The in-page overlay receives __mlDebug via window-messages; a DevTools panel can't, so
 // the content-script shell also forwards each event here (ML_DEBUG_EVENT). We buffer per
@@ -27,6 +28,7 @@ const COALESCED_DEBUG_KINDS = new Set(["agent-stream", "agent-turn"]);
  *  is kept as its scrubbed copy (sw-asks.ts), so a panel opened later, or after the ask settled, replays none
  */
 export function relayDebugEvent(tabId: number, event: unknown, buffered: unknown = event): void {
+    if (isNoTab(tabId)) return;   // no tab, so no DevTools panel of a tab to relay to, and no ring every such run would share
     let buf = debugBuffer.get(tabId);
     if (!buf) { buf = []; debugBuffer.set(tabId, buf); }
     // COALESCE the live deltas. A streamed turn sends one every ~100 ms, and in a 500-event ring they pushed out the

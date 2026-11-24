@@ -9,7 +9,7 @@
 
 import { defineState } from "../state-registry";
 import { DEFAULT_CONFIG } from "../contract/contract-config";
-import { activeRuns, bgRuns, releaseSessionTokens, runControllers, runInboxes, startingControllers, type ReleaseReason } from "./sw-runs";
+import { activeRuns, bgRuns, releaseSessionTokens, runControllers, runHasNoTab, runInboxes, startingControllers, type ReleaseReason } from "./sw-runs";
 import { hydrateTasks, onTaskCounts, taskCounts } from "./sw-tasks";
 import { refreshTaskRow } from "./sw-task-rows";
 
@@ -74,10 +74,11 @@ export async function releaseGraceMs(): Promise<number> {
     return Math.round(n * 60_000);
 }
 
-/** Whether the run has no tab a turn could run on: the worker holds none for it, or the one it holds is gone. A run the
- *  worker no longer holds (it started since, and a settled run is not read back) has one only if some tab still tracks it.
- *  Kept to one function so the lane that exports `runHasNoTab` from sw-runs.ts can replace it. */
+/** Whether the run has no tab a turn could run on: it was detached to no tab (`runHasNoTab`, no-tab.ts), the worker holds
+ *  none for it, or the one it holds is gone (a tab closed while the worker slept, which no `onRemoved` reached). A run the
+ *  worker no longer holds (it started since, and a settled run is not read back) has one only if some tab still tracks it. */
 export async function runLacksTab(runId: string): Promise<boolean> {
+    if (runHasNoTab(runId)) return true;
     const held = bgRuns.get(runId);
     if (!held) return ![...activeRuns.values()].some((ids) => ids.has(runId));
     const id = held.tabId;

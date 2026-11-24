@@ -32,8 +32,9 @@ async function settled(config = {}) {
     });
     bg.commit?.(7, { documentId: "doc-7", url: SITE_URL });
     const { hash } = await bg.context.__mlStartUserRunForTest(7, { task: "probe", surface: "hud", maxSteps: 5 });
-    const events = () => bg.tabMessages.filter(([t, m]) => t === 7 && m?.type === "ML_DEBUG_TO_PAGE").map(([, m]) => m.event);
-    const turns = () => events().filter((e) => e?.kind === "agent-result" && e.id === hash).length;
+    // Each turn here is one call to the model, counted from the calls: a run whose tab closed is on no tab, and its
+    // events no longer reach tab 7.
+    const turns = () => bg.calls.filter((c) => c.url.includes("/chat/completions")).length;
     const live = () => bg.context.__mlRunStateForTest().controllers.includes(hash);
     const starting = () => bg.context.__mlRunStateForTest().starting.includes(hash);
     const idle = (n) => () => turns() >= n && !live() && !starting();
@@ -101,6 +102,16 @@ test("a closing tab gives each run on it a deadline of now plus the grace, store
     assert.ok(await until(() => r.row()?.background?.releaseAt === e.due), JSON.stringify(r.row()?.background));
 });
 
+test("a closing tab both detaches its run to no tab and gives it a deadline: the release reads the run's tab before the detach does", T, async () => {
+    // background.ts onRemoved calls onTabClosed before detachTabRuns: the other way round, the release finds no run on
+    // the closed tab (it is on no tab already) and sets no deadline.
+    const r = await settled();
+    r.closeTab();
+    assert.ok(await until(() => r.entry()), "the deadline is stored");
+    assert.ok(await until(() => r.row()?.background?.noTab === true && typeof r.row()?.background?.releaseAt === "number"), JSON.stringify(r.row()?.background));
+    assert.equal(r.row().background.releaseAt, r.entry().due);
+});
+
 test("a grace of 0 releases at once", T, async () => {
     const r = await settled({ closedRunGraceMin: 0 });
     r.closeTab();
@@ -154,16 +165,22 @@ test("a deadline that comes due while a task runs keeps the entry with no deadli
 
 // --- what cancels it ---
 
-test("a person's message that starts a turn removes the deadline, the alarm and the row's releaseAt", T, async () => {
+test("a person's message that starts a turn removes the deadline, the alarm and the row's releaseAt; the turn's end on no tab sets a fresh one", T, async () => {
     const r = await settled();
     r.closeTab();
     assert.ok(await until(() => r.entry()));
-    r.openTabs.push({ id: 7, windowId: 3, active: true, url: SITE_URL, title: "Site" });
+    const first = r.entry().due;
+    let release; r.hold.model = new Promise((res) => { release = res; });
+    // The run is on no tab (a closed tab's id never comes back), so the turn runs there.
     await r.bg.context.__mlUserRunActionForTest(r.hash, "send", { text: "back", surface: "hud" });
-    assert.ok(await until(() => r.entry() === undefined), "the deadline is gone");
-    assert.ok(await until(r.idle(2)));
+    assert.ok(await until(() => r.entry() === undefined), "the deadline is gone while the turn runs");
     assert.equal(r.bg.alarms.set.has("ml-release"), false, "the alarm is cleared");
     assert.ok(await until(() => r.row()?.background?.releaseAt === undefined));
+    const before = Date.now();
+    release();
+    assert.ok(await until(r.idle(2)));
+    assert.ok(await until(() => r.entry()), "the turn ended on no tab: a fresh deadline");
+    assert.ok(r.entry().due >= before + 10 * 60_000 && r.entry().due > first, JSON.stringify(r.entry()));
     assert.equal(r.bg.pyDeletes.length, 0, "nothing was released");
 });
 

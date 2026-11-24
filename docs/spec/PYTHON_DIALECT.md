@@ -140,6 +140,27 @@ the gap is there today with a `for` over a large `range`, with or without `while
 reason either: its methods are cell code a library calls, which "Code from elsewhere runs under the same gate" covers;
 that is noted, not ruled.
 
+**RULED 2026-11-23 (Shane, ruling 106): the property is BOUNDED COST PER SYNCHRONOUS STEP, not totality.** The agent
+loop is a program whose steps are tool calls. The loop need not end; what it needs is that every step returns, so that
+it always makes progress (productivity, as in a synchronous reactive language where each reaction is bounded and the
+system runs for ever, or a stream whose every element arrives in finite time). Three things follow, and each differs
+from what a total language asks. (1) WEAKER than totality: a cell does not have to return its answer, only SOMETHING.
+A budget trip is a result the model reads, so every cell is a partial function made total by an error value, and
+nothing has to be proven before the run. (2) STRONGER than totality: halting with no bound on when is worth nothing
+here (a total cell can run for days), so the property is a bound on cost, which the step budget gives only once every
+step's cost is charged (ruling 105). (3) The usual price is not paid: work with no bound known in advance (a
+simulation, a search, a script meant to run until it is killed) is not refused, it leaves the loop. The model writes a
+script and starts it detached through `ml.sh`; starting it is a step that returns at once, the process is a concurrent
+thing the run observes, and it is judged as any message leaving the worker is, by its effect under policies. So the
+dialect has to be complete for the synchronous steps only. The tiers are named by where the bound comes from: an
+EXPLICIT bound in the source (a `for` over data or a range; no `while`, no recursion), the IMPLICIT bound of the
+budget (`while`, recursion; ruling 104), and NO bound, detached. Between the first two the difference is not safety,
+since the budget bounds both: the explicit tier is refused before it runs instead of after the budget is spent,
+discards no attempt, and shows the model its bound in its own source. Intended beside it, not built: the budget trip's
+text names the two ways on (bound the loop, or run a script detached); that text is prompt-budget work. Being
+measured, not assumed (bench's rewrite test): how many cells outside the dialect have a rewrite inside it, how many
+budget-tier cells have a rewrite with an explicit bound, and whether that bound is derived from the data or guessed.
+
 **What the corpus count changed (2026-10-15, lane 3 of the plan: 1,714 unique cells from 18 models).** The Starlark set
 admits 89.4% of cells whole; no cell uses `while` or `class`, which confirms their static refusal. Three rulings on
 what the count surfaced:

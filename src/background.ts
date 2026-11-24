@@ -52,7 +52,7 @@ import { librariesReady, removeLibrary, storedLibraries } from "./sw/sw-librarie
 import { checkDraft } from "./sw/sw-manifest-proposal";
 
 import { bringableSessions, bringHere } from "./sw/bring-here";
-import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, contextByRun, turnByRun, workerRunsStarting, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, senderOwnsRun, reconcileTabPins, startingControllers, abortStart, startingOwnedBy } from "./sw/sw-runs";
+import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, contextByRun, turnByRun, workerRunsStarting, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, detachTabRuns, runHasNoTab, senderOwnsRun, reconcileTabPins, startingControllers, abortStart, startingOwnedBy } from "./sw/sw-runs";
 import { cancelPageTasks, detachTask, dropAllTaskMemory, resetTaskChain, taskAction, type TaskOutcome } from "./sw/sw-tasks";
 import { refreshTaskRow, setNoTabReader, setReleaseAtReader, syncTaskRows } from "./sw/sw-task-rows";
 import { onTabClosed, releaseAtOf, restoreReleases } from "./sw/sw-release";
@@ -184,6 +184,8 @@ startValueSweeps(liveHeldSessions);   // its first pass releases held rows no se
 
 // TEST-ONLY (SW realm only): plug a reader into the session row's `noTab` / `releaseAt` (sw-task-rows.ts) and refresh a row, as the
 // move-run lane and the release build will. A page cannot reach this.
+// A run with no tasks is marked as held with no tab only by this lane's word (sw-task-rows.ts asks it for a 0/0 run).
+setNoTabReader(runHasNoTab);
 (globalThis as unknown as { __mlTaskRowReadersForTest?: unknown }).__mlTaskRowReadersForTest = { setNoTabReader, setReleaseAtReader, refreshTaskRow };
 
 // TEST-ONLY (SW realm only): detach a task of a run by hand, as an executor does, and get its id and a function that ends
@@ -263,7 +265,15 @@ if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
     void handOverOnRevoke().catch(() => []);
 }
 if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
-    chrome.tabs.onRemoved.addListener((tabId) => { void onTabClosed(tabId); tabPageUrl.delete(tabId); forgetHandOverTab(tabId); forgetArrivalTab(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); replayedTo.delete(tabId); forgetTab(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseSessionValues(pageValueSession(tabId)); releaseDebugger(tabId); sessionPageGone(tabId, { closed: true }); void forgetPageBuiltTab(tabId); });
+    chrome.tabs.onRemoved.addListener((tabId) => {
+        // The release's deadline FIRST (sw-release.ts): it finds the runs held on this tab by their tabId, which the detach
+        // sets to NO_TAB, so after it no held run gets a release deadline. It reads them before its first await.
+        void onTabClosed(tabId);
+        // Then, while the runs still name the tab: a run the worker drives goes on with no tab (no-tab.ts), so its row is
+        // not marked interrupted and the list says it is held with no tab.
+        const noTab = detachTabRuns(tabId);
+        for (const hash of noTab) void refreshTaskRow(hash);
+        tabPageUrl.delete(tabId); forgetHandOverTab(tabId); forgetArrivalTab(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); replayedTo.delete(tabId); forgetTab(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseSessionValues(pageValueSession(tabId)); releaseDebugger(tabId); sessionPageGone(tabId, { closed: true, noTab }); void forgetPageBuiltTab(tabId); });
 }
 // THE THIRD THING A TAB CAN DO, besides navigate and close: come back under a new id. A discard the browser
 // restores, or a prerender swapped in, fires only this — so without it a run's tab state is left filed under an

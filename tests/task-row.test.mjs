@@ -106,8 +106,10 @@ test("after an eviction the row is rebuilt from the stored table, whatever memor
 
 test("with no reader set, a run that never had tasks and whose tab closed carries no field", T, async () => {
     const r = await settled();
-    // background.ts plugs in the release's reader (releaseAtOf): unplugged here, this is the hook's own default.
+    // background.ts plugs in the release's reader (releaseAtOf) and the move-run lane's (runHasNoTab): unplugged here, these
+    // are the hooks' own defaults.
     r.bg.context.__mlTaskRowReadersForTest.setReleaseAtReader(null);
+    r.bg.context.__mlTaskRowReadersForTest.setNoTabReader(null);
     r.openTabs.length = 0;
     r.bg.closeTab(7);
     await r.bg.context.__mlTaskRowReadersForTest.refreshTaskRow(r.hash);
@@ -117,11 +119,13 @@ test("with no reader set, a run that never had tasks and whose tab closed carrie
 
 test("a run that never had tasks and whose tab closed carries only the release deadline the closing set", T, async () => {
     const r = await settled();
+    // Only the release's reader: the move-run lane's (runHasNoTab) is unplugged, so noTab is left out.
+    r.bg.context.__mlTaskRowReadersForTest.setNoTabReader(null);
     r.openTabs.length = 0;
     r.bg.closeTab(7);
     await r.bg.context.__mlTaskRowReadersForTest.refreshTaskRow(r.hash);
     assert.ok(await until(() => r.row()?.background?.releaseAt));
-    assert.deepEqual(Object.keys(r.row().background).sort(), ["releaseAt", "running", "waiting"], "no noTab: that is the move-run lane's reader");
+    assert.deepEqual(Object.keys(r.row().background).sort(), ["releaseAt", "running", "waiting"], "no noTab: its reader is unplugged");
 });
 
 test("a noTab reader answering true gives {0,0,noTab}, none of it reaches the HUD, and unplugging clears it", T, async () => {
