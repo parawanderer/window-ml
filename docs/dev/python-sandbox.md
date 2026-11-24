@@ -847,7 +847,10 @@ disposes it when the worker dies, which aborts every write still open.
 - **What the model is told.** `python_exec`'s description, for a worker-hosted run only (the one with `_mintToken`),
   says the person's attached files are under `/files/attached/` (read-only, found with `os.listdir`) and that it writes
   in `/files/agent/`, the working directory; a page-hosted run's still says it has no filesystem
-  (`tests/worker-media.test.mjs`).
+  (`tests/worker-media.test.mjs`). A run the worker built and drives is sent the text of the tool that runs, at
+  every turn (`workerFacing`, sw-local-tools.ts): until 2026-11-23 it was sent the page-hosted text, written at the
+  start from the worker's assembling `ml`, and a session stored then still holds it in its payload
+  (`tests/sent-tool-texts.test.mjs`).
 
 ## `input()` and `getpass()` (proposed, not built)
 

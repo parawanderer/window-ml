@@ -850,6 +850,11 @@ lifetime rules (it survives a resume and is removed at archive) are the ones abo
   `.env` lands on the now-unmasked template (on macOS `.env` stays refused by its name, but the same bytes read under
   the template's). So the entry is refused, naming `.env` as the link that resolves to it; `show .env` with it is the
   entry that applies whole.
+- **`mask <pattern>`, a third effect, is ruled and not built** (ruling 113, 2026-11-24; SECRET_HANDLES.md, "A masked
+  file"). It lists the file, shows its keys with each value replaced, takes writes through the extension's own code
+  and puts the real values back, and is read-only to a program not allowed for it. `default:dotenv` becomes a `mask`.
+  On a tie within a layer the order is `hide`, `mask`, `show`. A `show` may then be scoped to one program and pinned
+  by hash. Until it is built, everything in this section stands as written.
 - **A `show` does not stop the registry scrub.** A value registered as a secret is still scrubbed from what a
   released file prints (SECRET_HANDLES.md, "The scrub as built").
 
