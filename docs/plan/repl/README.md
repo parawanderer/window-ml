@@ -2182,6 +2182,14 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     member's languages, from which `dir(ml)`, `help(ml)`, `agent_api_docs` and the unknown-member error all answer,
     and one description line whose bench run needs Shane's yes in the bench lane's session. The packages lane builds
     it after the `tables` removal and `ml.image`.
+  - **Ruling 116's mechanisms, corrected (2026-11-24, the coordinator's calls on the packages lane's read of
+    ML_PYTHON.md against main).** A restart also forgets the run's bridged mark, which a new Worker does not clear; it
+    is one message from the service worker (`PY_RESTART`), which the offscreen document refuses for any principal but
+    the calling run's; the one-a-step bound is counted in the service worker and a client with no step is refused; the
+    kill reason `restart` is added and no second housekeeping record is written; `ml.python.keep()` is a wire member
+    armed at the cell's result, never a flag in the worker's own result; `ml.python.packages()` is a service-worker
+    read of the shipped set and `ml_pkginstalls`, with `from` in place of `source` and no `loaded`; the names a cell's
+    `dir(ml)` shows are sent with the cell and are a snapshot from its start.
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
   `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks
