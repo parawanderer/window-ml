@@ -58,6 +58,10 @@ export interface SessionChrome {
     canPeek: boolean;
     /** a saved agent run whose tab has closed, which this device may pick back up on a page (`resumeRun`) */
     canResume: boolean;
+    /** the worker says this run has no tab: the sentence for a banner in the resume bar's place (`noTabText`) */
+    noTabText?: string;
+    /** this device may bring a no-tab run to a page (`mayBringHere`), which the banner offers as a button */
+    canBringHere: boolean;
 }
 
 /** What a runtime keeps, for the phone's Runtimes screen: figures already in WORDS, because the page owns how a size

@@ -3,8 +3,10 @@
 //
 // One worker-built run with Python auto-approval on, one namespace across its cells. A value an earlier INSIDE cell made
 // stays owned in later cells (docs/dev/python-sandbox.md, the ownership note), so editing it runs unasked. The injected
-// table is not the cell's, so writing a column to it asks. A value an ASKED cell made was made on the full path, outside
-// the gate's ownership, so editing it later asks too. Each asked cell is approved and reruns on the full path. Self-SKIPS
+// table is not the cell's, so writing a column to it asks. That cell is approved and reruns on the full path, which MARKS
+// the worker (py-mark.ts): every later cell asks with the mark's line, whatever it does, so the cells after it (one that
+// imports, one that edits what an asked cell made) ask for that reason, never for their own. The ownership refusal on a
+// full-path-made value is held by tests/fixtures/dialect-vectors/ownership.json. Each asked cell reruns on the full path. Self-SKIPS
 // without the fork core in dist/pyodide (python-dialect-inside.spec.mjs has the CI guard that a skip is not a pass).
 import { test, expect } from "@playwright/test";
 import http from "node:http";
@@ -14,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { launchExtension, configureExtension, waitForMl, watchRunEvents } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { salesCsv } from "../../examples/cross-page/sales.mjs";
+import { MARKED_CARD_LINE } from "../../src/python/py-mark.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STDLIB = join(HERE, "../../dist/pyodide/python_stdlib.zip");
@@ -26,8 +29,8 @@ const CELLS = [
     { name: "inside makes", code: "kept = [1, 2]\nlen(kept)", asks: null },
     { name: "inside edits what inside made", code: "kept.append(3)\nkept[0] = 9\nkept", asks: null },
     { name: "edits the injected table", code: "df['flag'] = 1\nlen(df)", tables: true, asks: "item assignment to a value the cell does not own: on DataFrame" },
-    { name: "asked cell makes", code: "import os\nmade = [1]\nlen(made)", asks: "import 'os'" },
-    { name: "edits what an asked cell made", code: "made.append(2)\nmade", asks: "a method that writes a value the cell does not own: 'append' of list" },
+    { name: "asked cell makes", code: "import os\nmade = [1]\nlen(made)", asks: MARKED_CARD_LINE },
+    { name: "edits what an asked cell made", code: "made.append(2)\nmade", asks: MARKED_CARD_LINE },
 ];
 
 /** Serve a blank page and /sales.csv on 127.0.0.1. */

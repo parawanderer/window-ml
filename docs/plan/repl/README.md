@@ -104,8 +104,9 @@ secrets, placement, the hub desktop runtime.
 "Generating and importing a manifest into the runtime"): the sandbox profile derived from a program manifest's claims
 (the description as the envelope: no separate sandbox profile file is introduced — the host's per-call sandbox `Plan` is
 compiled directly from the call's approved `EffectsData` set $E(c)$, the workspace roots, and the fixed credential/hook
-safety floor, with workspace secret files denied at the kernel level unless present in `allow_read`, see
-[`EFFECTS.md`](../../spec/EFFECTS.md)), `(program, entrypoint)` prefix matching so interpreted CLI scripts
+safety floor, with dotenv and credential files denied at the kernel level unless present in `allow_read`, see
+[`EFFECTS.md`](../../spec/EFFECTS.md); which files and at what depth on each platform is the table in
+[`SECRET_HANDLES.md`](../../spec/SECRET_HANDLES.md)), `(program, entrypoint)` prefix matching so interpreted CLI scripts
 (`["node", "scripts/<name>.mjs", ...]`, `["python3", "<script>.py", ...]`) with no preceding interpreter flags get their
 own manifests keyed on `argv[0..1]`, `sha256` pinning of a resolved binary, script closure, or library module, a
 manifests store with workspace and global scope, `propose_manifest` (drafting a program manifest from `--help`/script
@@ -611,7 +612,8 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   window plus a stub that points at the older range the first compaction design item.
 - **Ruling 20, secret files.** `.env` stays blocked in sandbox mode; naming it in a call asks, and approval opens
   it for that call. Users get a hide list of paths or globs for their own secret files, treated exactly like a
-  dotenv file; the list is a gate key, outside `change_setting`. Scrubbing values out of such files is deferred to
+  dotenv file; the list became `hide` and `show` rows of the policy store (ruling 34), outside `change_setting`.
+  Scrubbing values out of such files is deferred to
   the handles work, by a generic rule over JSON, YAML, TOML and dotenv string leaves of 8 to 512 characters; a
   user-supplied parser is refused. Optional: at root approval, offer gitignored files that look like credentials;
   never hide everything gitignored. Tasked to files-host after window-ml-host#46 merges, spec diff first. The
@@ -954,8 +956,10 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   surface exists.
 - **Hidden-file values in the scrub (#1961): open design, not ruled.** The idea is that the host parses a hidden
   file and registers its string values. Against it: it turns an unreadable file into one a script can confirm
-  guesses about through the redaction. The coordinator recommends against registering them; if ever, the host
-  sends hash-only entries, decided with handles.
+  guesses about through the redaction. The coordinator recommended against registering them; if ever, the host
+  sends hash-only entries, decided with handles. STATE 2026-11-24: Shane's position in discussion reverses that
+  recommendation (registering a dotenv file's values is a convenience the person can switch off per file); not
+  ruled, decided with the masked-file design (SECRET_HANDLES.md, "Open questions").
 - **The `/files` spec (#1964).** Coordinator's calls in it: a backup with files is a SET of version-1 backup files,
   each under the format's 1 GiB limit and authenticated on its own, the first naming the rest with their hashes,
   a restore committing only when all of them authenticate; a hidden file's bytes are never in a backup and a
@@ -2017,7 +2021,97 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     by composition"): `ml.table` takes an `@file:` pointer (ML_TABLE.md). Open: a read-only subset of `os`, `os.path`,
     `glob` and `pathlib` inside the dialect (Shane: scanning the virtual file system is fine; packages costs it); an
     owner for the 633,699-character `exec` result that filled one run's context.
+  - **Ruling 108 and the policy realm, 2026-11-23.** `while` is refused in the policy realm (the coordinator's call).
+    Shane: policies "should probably be even more restricted than anything else" and "may as well be like those total
+    kernel programs": verified at save, total by structure, a pure function of the call's facts, fail closed.
+    small-fixes' audit of main 8356772f against that target: not verified at save (a person's policy is stored
+    unchecked, a model's is vetted on one probe); not total by structure (recursion and `for…of` under a 50,000-step
+    budget); pure but for stack depth and, inferred, locale; not fail closed; every matching policy runs per call with
+    no cap on the count and no shared meter. RULING 108 (Shane: "Sure, I think it should also show an actionable
+    inline modal and text of why the escalation happened"): a broken `deny` or `ask` makes the call ask, and the card
+    says why and what to do (POLICIES.md). small-fixes builds it, and separately the stack-overflow repair (the
+    coordinator's call), each its own PR from main ahead of its PR three; redteam-e3 writes rows, flaky-ci reviews.
+    The cut to the language is NOT ruled. The coordinator proposed removing recursion and helper functions,
+    `try`/`catch`, regexes built from facts, `Set`, `Map`, `JSON.parse`, `sort`, `reduce`, `async` and locale methods,
+    adding a check at save and a per-call meter. Shane: there are no users, so stored policies do not matter, but a
+    form our own examples need belongs in the language. small-fixes enumerates every policy source we ship or show and
+    the forms each uses; the cut is decided on that table. Also recorded: host #58's third accepted limit (`?` matches
+    a byte under Seatbelt and a character on Linux, erring toward hiding); packages' Stop without shared memory
+    (cannot be raised from Python; proposed as an externally set trip in the fork's tick, about 1% cost; not
+    scheduled, only if the framed sandbox page is chosen); the page-hosted `python_exec` description read by every
+    person-started run (session-store's fix at the model-tools point, not yet opened). Merged since: #2108 at
+    8356772f. Open: #2125, move-run's "No tab" run, at c602a60f.
+  - **Ruling 109, 2026-11-23 (Shane: "I agree to these" for the expression, the ternary and leading `const`; "Sure I
+    think that is reasonable right now" for `Set`, `new URL` and `for…of` without `let`).** The policy language is the
+    loop-free predicate language in POLICIES.md, checked at save for both authors, with one meter per call. Decided on
+    small-fixes' census: no shipped or documented policy uses a refused form; the four forms models reached for are
+    admitted. small-fixes builds it as its own PR from main after its ruling 108 PR and its stack-overflow PR;
+    redteam-e3 writes rows, flaky-ci reviews. Merged since: #2126 (ruling 108) at 069e48c0. Open: #2127, small-fixes'
+    charge for a DOM collection's copy, at 4b6e4af1, flaky-ci reviewing.
+  - **Ruling 110, 2026-11-23 (Shane: "Sure move it up. I am surprised it wasn't done first"): the `tables` removal
+    moves to the front of the packages lane's queue.** Rulings 79 and 87 removed `tables` (ML_TABLE.md, "`tables` is
+    removed"), and ruling 54's build order tied the removal to the Python `ml.table` member, behind the JS member and
+    the fork work; main still offers the argument. Bench's baseline (its account; qwen3.8-flash-next:vision, build
+    9be83ae0, 114 runs, 97 correct, the model told "stateless, no filesystem", which is the description defect) is
+    what priced that order: of 371 `python_exec` cells, 145 were refused on `tables` before any code ran, 128 of them
+    an `@file:` pointer refused as "not a valid CSS selector"; of the 226 that ran, 9 were class A; the largest bin of
+    outside cells in the files stratum is `os`, `pathlib` and `glob` (54), then a reader (39) and `try` (17); the
+    forms stratum holds two cells with a `while`, both outside for another reason first, so it measures ingest and not
+    loops (bench proposes a change to its tasks; none is made before Shane sees it). The order now: packages'
+    `read_csv` of a `/files/` path (#2131, open at e24bbd2e: charged at 2 bytes a step before the parse, so an input
+    past about 30 MB asks), then one PR with the removal and the Python member, then the cost-charge PR. The
+    coordinator's calls on that PR: it is not split, since removal alone leaves a page table, `current`, a Sheet and
+    an `@tool:` pointer with no route into Python; it carries the synchronous path and inside admission for `table`
+    only, and the other members follow; admission skips the card for the cell, and each source is still judged by its
+    receiver; the member is charged before it runs (ruling 105), its cost function stated in ML_TABLE.md; the `@file:`
+    resolver (ruling 107) goes on the JS and Python members together. e4 red-teams it, janitor-3 reviews. Also open,
+    each verified at the head named: session-store's #2129 at 81274427 (a run the worker drives reads `python_exec` as
+    the worker-hosted tool; a page-built run handed to the worker reads it from its next turn), flaky-ci reviewing;
+    async's #2130 at 8ab7d9cb (a run is offered `ml.sh` only when a process host answers its hello within 3 s at the
+    run's start, fixed for the run), janitor-2 reviewing. The sentence #2121 will tell the model, accepted on a row
+    for each half: attached files are under `/files/attached/`, read-only, and the working directory `/files/agent/`
+    is writable. `os.listdir` is not inside the dialect, so the cell that lists them asks and sets the outside mark
+    until the `os` subset is ruled.
 
+  - **Rulings 111 and 112, 2026-11-24 (Shane, in the coordinator's session).** 111: cells are classified, for our
+    reference and never shown to the model, in two halves: what a cell did is recorded when it runs and exported; what
+    a cell is for is computed offline from its source by one syntactic, multi-label classifier shared by both
+    languages (docs/spec/CELL_FACTS.md; the async lane builds the first, the bench lane the second). 112: reads and
+    scans in `os`, `os.path`, `glob` and `pathlib` run unasked, and so do `os.chdir` and writes to `os.environ` ("I
+    don't think we should ban os.chdir when we allow ml.sh.cd()"; "The issue is being an approval monkey"); a hidden
+    file's name stays listed. Shane also agreed that the async and move-run lanes take topic items when their queues
+    run dry, and move-run builds the `os` subset. The coordinator's calls on its charge under rulings 105 and 106: a
+    listing in the `/files` mount is charged a full page before each page request, because a directory there has no
+    cap on its entries (the fork's charge takes no credit, so a short directory is overcharged; move-run reports the
+    effect); a listing in the fixed Pyodide tree (largest directory 147 entries, move-run's measurement) may be
+    charged after the call; a recursive walk goes one directory per step. Packages' resume: the coordinator's message
+    to it was refused twice by the coordinator's own permission check and was not retried, so packages resumes on
+    Shane's word in its own session. A secrets design is under discussion with Shane and not ruled: a state between
+    hidden and shown for dotenv files (name listed, keys readable, each value a per-key placeholder, typed writes
+    only), a program the person allowed reading the real values with its output scrubbed, values registered from the
+    file as a convenience the person can switch off, and a hash pin on a policy; an audit of the secrets docs found
+    them scattered over about fifteen files with nineteen contradictions, to be consolidated before that design is
+    written.
+
+  - **The secrets documents have one owner, and calls made since ruling 112 (2026-11-24).** SECRET_HANDLES.md now
+    opens with one table of what the model can see of a secret, by surface and platform, and the other specs point at
+    it. An audit found 19 stale or contradicting statements across twelve files; they are repaired in the same PR. The
+    ones that changed a claim: `*.pem` and `id_*` inside a root are NOT held by the sandbox (three files said they
+    were); on Linux a dotenv file below a root's top is readable; a hidden file's name is listed and its read is
+    refused, never asked about; a `hide` binds no shell program until window-ml-host#58's two halves land; the `spawn`
+    field is one ordered `hideList`. A found defect, the session-store lane's account: the `/files` listing shows a
+    registered value in a file NAME raw; its repair is a reader PR with e4's rows. The masked-file design (a state
+    between hidden and shown) is still in discussion with Shane and is not ruled. The coordinator's calls since ruling
+    112, each for Shane to override: (a) the JS evaluator turns the host's stack overflow into a stop of kind `depth`
+    that the model reads as an error, and a stop of any kind runs no `finally` body (#2136 carries the second); (b)
+    ruling 109's policy language gets `new URL` in the policy realm only, with nine string getters; (c) under ruling
+    110, a page caller's literal `ml.table("<literal>")` sources are read by the page's own receiver and shipped with
+    the run, and a computed source is an error naming the literal form; (d) cell facts (#2135): `class` is Python
+    only, a JS cell carries `realm`, and a page-realm cell keeps only what the worker decides; (e) ruling 108's model
+    sentence is `Asked the person because the policy "<label>" is broken (<phrase>) and could not be checked. Nothing
+    is wrong with the call.`; (f) a file block of a worker-built run carries `path` only when it opens the file as
+    written. Shane approved the bench's forms proposal (2026-11-24): read rerun B first, replace the two closed-form
+    tasks with ones whose stopping depends on state, and score by whether the invited form ran.
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
   `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks

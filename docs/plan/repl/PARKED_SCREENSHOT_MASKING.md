@@ -7,8 +7,8 @@ not a priority. Nothing here is assigned. The one part that IS scheduled is name
 
 Ruling 93 puts personal details (a full name, an address, a phone number) in the secret registry as a second kind of
 value. Text the model reads is scrubbed by registered value already. A screenshot is not text: `look`, `locate` and a
-picture-based `verify` show a vision model the page's pixels. Today `docs/spec/SECRET_HANDLES.md` masks the value of a
-held form field in those pictures and nothing else.
+picture-based `verify` show a vision model the page's pixels. `docs/spec/SECRET_HANDLES.md` RULES that the value of a held
+form field is masked in those pictures (ruling 30) and nothing else; that is not built yet either.
 
 ## What is already ruled (scheduled, not part of this parked plan)
 
