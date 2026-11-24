@@ -132,7 +132,7 @@ test("an inside cell's Decimal arithmetic leaves no flag a later cell reads", { 
 test("nor does a REFUSED inside cell that did Decimal arithmetic first", { timeout: 60000 }, async (t) => {
     if (skip) return t.skip(skip);
     await cell(`import decimal\ndecimal.getcontext().clear_flags()\n1`, true);
-    assert.ok((await cell(`from decimal import Decimal\nx = Decimal(1) / Decimal(3)\nimport os`)).refused);
+    assert.ok((await cell(`from decimal import Decimal\nx = Decimal(1) / Decimal(3)\nimport subprocess`)).refused);
     assert.strictEqual(json((await cell(FLAGS, true)).value), "[]");
 });
 
