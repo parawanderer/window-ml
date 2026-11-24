@@ -248,8 +248,11 @@ export class RangedReader {
     private readonly deps: RangedReaderDeps;
     /** Every open writer, by session, across channels: what the quota adds to the stored files. */
     private readonly writers = new Map<string, Set<Writer>>(); // state: plumbing — pending parts, gone with their channel
-    /** Each session's stored total, read at each `openWrite` and commit. */
-    private readonly stored = new Map<string, number>(); // state: cache — re-read from agent-files at every open and commit
+    /**
+     * Each session's stored total: read at each `openWrite`, and again after each commit succeeds. A commit's own quota
+     * check uses the figure already here; what another channel committed since is caught by the store's `maxBytes`.
+     */
+    private readonly stored = new Map<string, number>(); // state: cache — re-read from agent-files at every open and after every commit
 
     /** Whether `w` growing to `size` keeps its session within its quota, with every other pending part counted. */
     private fits(w: Writer, size: number): boolean {
