@@ -1262,10 +1262,14 @@ literally restores the current value, whatever its length: a stated limit.
   the platform allows. A hard link to the file is broken by the rename, as for any commit. `commit`'s `size` and
   `sha256` describe the bytes that LANDED, which differ from the bytes sent; the worker does not compare them with
   what it sent.
-- *Overwriting always asks.* A by-key write is to an existing file, so it carries `replace: true`, which the worker
-  sends only after the person approved the overwrite: an existing file always asks, whatever a policy allows
-  (`decidePut`, [shell.md](../dev/shell.md)). So every by-key write to a masked file on a host root asks, in this
-  version. Letting a policy allow it is a change to `decidePut`, not a policy, and is Shane's to want.
+- *A policy may allow the overwrite (RULING 115, Shane, 2026-11-24, in the coordinator's session: "This call is
+  fine").* A by-key write is to an existing file, and today an existing file always asks, whatever a policy allows
+  (`decidePut`, [shell.md](../dev/shell.md)), so every edit of a masked `.env` on a host root would raise a card that
+  becomes a click-through. For a by-key write to a path a `mask` entry decides, and for nothing else, an `allow`
+  policy of the write's consumer may answer the ask, and the worker then sends `replace: true` on its word. The reason
+  it is safe to free: the splice can only add, change or remove keys, and exposes no value. With no such policy the
+  write asks, as before. Every other overwrite of an existing file keeps asking whatever a policy allows. The card of
+  the first such write offers the policy ("always allow edits to this masked file"), scoped to the session by default.
 - *The fake key.* The session's fake key goes to the host on a `put` (for the write-back) and on a `spawn` (for the
   masked copy). It is no secret of the person's: a fake has no value as input, and a restore is bound to the file and
   the key's name. Over the hub a `put` is refused (reason `scope`), so there is no by-key write over the hub; a
@@ -1430,7 +1434,9 @@ its card and the pin. None is scheduled; the red team gets this section as its t
 
 14. The host's `put`: without `mask: true` a dotenv target is refused as today; with it and no `mask` entry deciding
     the target, refused; a 0600 file is 0600 after a by-key commit; the file changed between `put` and `commit` is
-    spliced against its content at `commit`.
+    spliced against its content at `commit`. `decidePut`: a by-key write to a masked path asks with no policy and runs
+    under an `allow`; the same `allow` does not free an overwrite of a file no `mask` decides, nor a write to the
+    masked path without `mask: true`.
 15. The scrub's channels, one row each: stdout, stderr, a pipe stage's stderr, a head, a `read` range, `peek`, the
     `diff` body (a masked path withheld). A value split across two chunks at every offset is scrubbed; `outputCap`
     cutting a value shows no part of it; two overlapping `read` ranges agree.
