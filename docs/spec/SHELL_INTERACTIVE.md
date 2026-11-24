@@ -227,7 +227,8 @@ so the same holds, with no heuristic.
     limits"). It is the same residual as any registered value, and the masked card says so in one line. "Use but never
     read" here means the harness never SHOWS the model the value. It does not mean the model's own code cannot reach
     it.
-  - **Open for files-host:**
+  - **Asked of files-host, and answered** (SECRET_HANDLES.md, "Amendments after the scrub", the answers to #2066's open
+    items: a generated name, a "save to the store" box that starts unticked):
     - whether the person is offered "save to the store" afterwards;
     - what NAME the registration carries, since the prompt text is program-written and cannot be the name as it stands;
     - whether `ml.sh`'s person-answered stdin (below) registers under the same origin.

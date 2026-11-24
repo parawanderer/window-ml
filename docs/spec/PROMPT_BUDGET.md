@@ -33,6 +33,13 @@ the one call shape, that each call is decided by their policies or asked of them
 `ml.current.runtime.capabilities` has `shellHost`. Not measured against a bench: it is a pointer added to a feature
 the person has switched on, and costs nothing while it is off.
 
+**2026-11-23: the shell clause also needs a process host that answers at the run's start** (`shellOffered`,
+sw-shell.ts, which `sw-run-start.ts` now reads in place of `shellTurnedOn`). A person with `ml.sh` turned on and no
+host installed, or one that does not answer its hello within 3 s, no longer pays the clause (the 356 to 469 characters
+above), the shell figure in the lifetimes list, or `propose_manifest`'s schema, and is no longer told about calls that
+would all fail. A run with a host sees the same text as before. `shell` is still set in that one place, from the
+settings and the host, never from a page.
+
 ## How the problems were found: the model panel
 
 `converse` (`.claude/skills/converse/SKILL.md`) runs a real model in the built extension and lets a session talk to it

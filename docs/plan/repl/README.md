@@ -104,8 +104,9 @@ secrets, placement, the hub desktop runtime.
 "Generating and importing a manifest into the runtime"): the sandbox profile derived from a program manifest's claims
 (the description as the envelope: no separate sandbox profile file is introduced — the host's per-call sandbox `Plan` is
 compiled directly from the call's approved `EffectsData` set $E(c)$, the workspace roots, and the fixed credential/hook
-safety floor, with workspace secret files denied at the kernel level unless present in `allow_read`, see
-[`EFFECTS.md`](../../spec/EFFECTS.md)), `(program, entrypoint)` prefix matching so interpreted CLI scripts
+safety floor, with dotenv and credential files denied at the kernel level unless present in `allow_read`, see
+[`EFFECTS.md`](../../spec/EFFECTS.md); which files and at what depth on each platform is the table in
+[`SECRET_HANDLES.md`](../../spec/SECRET_HANDLES.md)), `(program, entrypoint)` prefix matching so interpreted CLI scripts
 (`["node", "scripts/<name>.mjs", ...]`, `["python3", "<script>.py", ...]`) with no preceding interpreter flags get their
 own manifests keyed on `argv[0..1]`, `sha256` pinning of a resolved binary, script closure, or library module, a
 manifests store with workspace and global scope, `propose_manifest` (drafting a program manifest from `--help`/script
@@ -611,7 +612,8 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   window plus a stub that points at the older range the first compaction design item.
 - **Ruling 20, secret files.** `.env` stays blocked in sandbox mode; naming it in a call asks, and approval opens
   it for that call. Users get a hide list of paths or globs for their own secret files, treated exactly like a
-  dotenv file; the list is a gate key, outside `change_setting`. Scrubbing values out of such files is deferred to
+  dotenv file; the list became `hide` and `show` rows of the policy store (ruling 34), outside `change_setting`.
+  Scrubbing values out of such files is deferred to
   the handles work, by a generic rule over JSON, YAML, TOML and dotenv string leaves of 8 to 512 characters; a
   user-supplied parser is refused. Optional: at root approval, offer gitignored files that look like credentials;
   never hide everything gitignored. Tasked to files-host after window-ml-host#46 merges, spec diff first. The
@@ -954,8 +956,10 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   surface exists.
 - **Hidden-file values in the scrub (#1961): open design, not ruled.** The idea is that the host parses a hidden
   file and registers its string values. Against it: it turns an unreadable file into one a script can confirm
-  guesses about through the redaction. The coordinator recommends against registering them; if ever, the host
-  sends hash-only entries, decided with handles.
+  guesses about through the redaction. The coordinator recommended against registering them; if ever, the host
+  sends hash-only entries, decided with handles. STATE 2026-11-24: Shane's position in discussion reverses that
+  recommendation (registering a dotenv file's values is a convenience the person can switch off per file); not
+  ruled, decided with the masked-file design (SECRET_HANDLES.md, "Open questions").
 - **The `/files` spec (#1964).** Coordinator's calls in it: a backup with files is a SET of version-1 backup files,
   each under the format's 1 GiB limit and authenticated on its own, the first naming the rest with their hashes,
   a restore committing only when all of them authenticate; a hidden file's bytes are never in a backup and a
@@ -2089,6 +2093,25 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     them scattered over about fifteen files with nineteen contradictions, to be consolidated before that design is
     written.
 
+  - **The secrets documents have one owner, and calls made since ruling 112 (2026-11-24).** SECRET_HANDLES.md now
+    opens with one table of what the model can see of a secret, by surface and platform, and the other specs point at
+    it. An audit found 19 stale or contradicting statements across twelve files; they are repaired in the same PR. The
+    ones that changed a claim: `*.pem` and `id_*` inside a root are NOT held by the sandbox (three files said they
+    were); on Linux a dotenv file below a root's top is readable; a hidden file's name is listed and its read is
+    refused, never asked about; a `hide` binds no shell program until window-ml-host#58's two halves land; the `spawn`
+    field is one ordered `hideList`. A found defect, the session-store lane's account: the `/files` listing shows a
+    registered value in a file NAME raw; its repair is a reader PR with e4's rows. The masked-file design (a state
+    between hidden and shown) is still in discussion with Shane and is not ruled. The coordinator's calls since ruling
+    112, each for Shane to override: (a) the JS evaluator turns the host's stack overflow into a stop of kind `depth`
+    that the model reads as an error, and a stop of any kind runs no `finally` body (#2136 carries the second); (b)
+    ruling 109's policy language gets `new URL` in the policy realm only, with nine string getters; (c) under ruling
+    110, a page caller's literal `ml.table("<literal>")` sources are read by the page's own receiver and shipped with
+    the run, and a computed source is an error naming the literal form; (d) cell facts (#2135): `class` is Python
+    only, a JS cell carries `realm`, and a page-realm cell keeps only what the worker decides; (e) ruling 108's model
+    sentence is `Asked the person because the policy "<label>" is broken (<phrase>) and could not be checked. Nothing
+    is wrong with the call.`; (f) a file block of a worker-built run carries `path` only when it opens the file as
+    written. Shane approved the bench's forms proposal (2026-11-24): read rerun B first, replace the two closed-form
+    tasks with ones whose stopping depends on state, and score by whether the invited form ran.
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
   `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks

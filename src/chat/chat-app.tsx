@@ -23,6 +23,7 @@ import { truncate } from "../sidebar/format";
 import { STEP_JUMP_EVENT, STEP_GONE_EVENT } from "../sidebar/transcript/step-scroll";
 import type { ChatStore } from "./chat-store";
 import { mayCommand, resumableHere } from "./grants";
+import { noTabText, mayBringHere } from "./no-tab";
 import { ResumeSession, startableOn, type StartKind } from "./new-session";
 import { START_GRACE_MS, StartPage, useHeldTrue } from "./start-page";
 import { AttentionButton, AttentionPage, useAttention, useOwnCert } from "./attention-page";
@@ -399,6 +400,9 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
     const [resuming, setResuming] = useState(false);
     const canDrive = !!rt && rt.online && mayCommand(rt, "session.send", { key: sessionKey, summary }, store.host.self);
     const canResume = resumableHere(rt, sessionKey, summary, store.host.self);
+    // A run the worker says has no tab: a banner in the resume bar's place, with "Bring it here" where this device may.
+    const noTab = !!summary?.background?.noTab;
+    const bringHere = mayBringHere(rt, sessionKey, summary, store.host.self);
     // A session whose page went away, opened while the form was up: the form is about THIS session, so it closes.
     useEffect(() => setResuming(false), [sessionKey]);
     const title = summary?.title || s?.title || summary?.task || s?.task || "Session";
@@ -504,16 +508,28 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
             {/* A run whose page is gone cannot be sent to, so the composer is replaced by the one thing that WOULD
                 work: picking it up somewhere else. `canResume` is false while its tab is still open, so the two
                 never both offer to continue the same run. */}
-            {native ? null : canResume && id && rt ? (
+            {native ? null : noTab && id && rt ? (
+                resuming && bringHere
+                    ? <ResumeSession store={store} rt={rt} session={{ runtime: id.runtime, hash: id.hash }} extras={extras}
+                        onResumed={() => setResuming(false)} onCancel={() => setResuming(false)} />
+                    : <div class="chat-notab" role="status">
+                        <span class="chat-notab-what">{noTabText(summary?.background, { composer: !!(s && canDrive && !canResume) })}</span>
+                        {/* The button group is a row at the end, so a Stop can sit beside "Bring it here" later. */}
+                        <span class="chat-notab-actions">
+                            {bringHere ? <button class="chat-resume-go" onClick={() => setResuming(true)}>Bring it here</button> : null}
+                        </span>
+                    </div>
+            ) : null}
+            {native ? null : !noTab && canResume && id && rt ? (
                 resuming
                     ? <ResumeSession store={store} rt={rt} session={{ runtime: id.runtime, hash: id.hash }} extras={extras}
                         onResumed={() => setResuming(false)} onCancel={() => setResuming(false)} />
                     : <button class="chat-resume" onClick={() => setResuming(true)}>
                         <span class="chat-resume-what">The tab this run worked in has closed.</span><span class="chat-resume-go">Resume on a page</span>
                     </button>
-            ) : s && canDrive ? <Composer s={s} multiline keys={{ learned: knowsKeys(keyUse.value), used: noteKeyUse }}
+            ) : s && canDrive && !(noTab && canResume) ? <Composer s={s} multiline keys={{ learned: knowsKeys(keyUse.value), used: noteKeyUse }}
                 tools={composerTools(store, rt, summary, sessionKey, modelBelow)} />
-                : s && rt ? <div class="chat-readonly">{!rt.online ? `${rt.name} is offline. You can read this session, and send to it once it is back.` : `This device may watch sessions on ${rt.name}, not drive them.`}</div>
+                : s && rt && !(noTab && canDrive) ? <div class="chat-readonly">{!rt.online ? `${rt.name} is offline. You can read this session, and send to it once it is back.` : `This device may watch sessions on ${rt.name}, not drive them.`}</div>
                     : null}
         </main>
     );
