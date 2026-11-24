@@ -288,44 +288,11 @@ export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, 
             if (routed.notes) task = task ? `${task}\n\n${routed.notes}` : routed.notes;
         }
     }
-    // Unattended run: no human to approve, so shape the toolset for read-only autonomy. exec and
-    // python_exec are kept ONLY when their read-only auto-approve path is configured on (a readonly
-    // survey / the hardened sandbox run without a prompt); otherwise every call would need approval,
-    // so they're dropped entirely. The kept ones get a note that the mutating/full half is refused.
-    // Other approval-gated tools (click/type/…) stay wired but are refused at the gate below — the
-    // model is told, not silently disarmed. Clone (don't mutate) the shared tool defs.
-    if (unattended) {
-        toolset = toolset.flatMap(t => {
-            if (t.name === "exec") return autoRO ? [{ ...t, description: t.description + UNATTENDED_EXEC_NOTE }] : [];
-            if (t.name === "python_exec") return autoPy ? [{ ...t, description: t.description + UNATTENDED_PY_NOTE }] : [];
-            return [t];
-        });
-    }
-    // Tool tokens (opt-in): expose a `token` param ONLY on the result-producing tools, and ONLY when the
-    // run has tokens enabled — so a normal run's schemas aren't cluttered with a param that does nothing.
-    // The model sets `token: true` on a call whose output it intends to CITE; the loop surfaces the
-    // @tool:<id> only for those (see agent-loop). Clone the shared defs; don't mutate them.
-    if (toolTokens) {
-        // The other half of tool tokens: a token is a POINTER, not only a citation. `dereference` reads
-        // the value back — cheaper than re-running a tool, and it reaches the FULL output rather than
-        // the truncated copy the model was shown. The run loop answers it (agent-loop's derefLocally);
-        // this only advertises the schema.
-        toolset = [...toolset, buildDereferenceTool(ml.defineTool)];
-        toolset = toolset.map(t => CITABLE_TOOLS.has(t.name)
-            ? { ...t, parameters: { ...t.parameters, properties: { ...(t.parameters as { properties?: Record<string, unknown> }).properties,
-                token: citeParam("the pricing table") } } }
-            : t);
-    }
-    // A split tool's mechanics: a pointer into agent_api_docs, or the text itself without that tool (tool-details.ts).
-    toolset = withToolDetails(toolset);
-    // The compose hint: said once in `interactives`' description instead of in every findByText/interactives result.
-    toolset = withComposeNote(toolset);
-    // THE MODEL'S OWN ACCOUNT of each call, offered on every tool. Injected into the TOOLSET and not only into
-    // the model-facing `toolDefs`, which matters in three places at once: the background run's descriptors are
-    // built from the toolset too (so one injection covers both loops), and both the loop's `validateArgs` and the
-    // panel's argument-issue strip read `tool.parameters` — against which an unannounced `title` would read as an
-    // unknown property and put a ⚠ on every call that used it.
-    toolset = toolset.map(t => ({ ...t, parameters: withCallTitle(t.parameters) }));
+    // Tool tokens (opt-in): `dereference` reads a token back — cheaper than re-running a tool, and it reaches the FULL
+    // output rather than the truncated copy the model was shown. The run loop answers it (agent-loop's derefLocally);
+    // this only advertises the schema.
+    if (toolTokens) toolset = [...toolset, buildDereferenceTool(ml.defineTool)];
+    toolset = modelFacing(toolset, { unattended, autoRO, autoPy, toolTokens });
     const byName = Object.fromEntries(toolset.map(t => [t.name, t]));
     const toolDefs = toolset.map(t => ({
         type: "function",
@@ -343,6 +310,51 @@ export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, 
         toolset, byName, toolDefs, systemPrompt, task, pendingImages, turnImages, agentCfg, runModel, driverSees,
         runVisionModel, runGroundingModel, runGroundingRange, autoRO, autoPy, autoSelfSrc, selfIntro, labelMatch, pierceClosed, cdpOn,
     };
+}
+
+/**
+ * What the model reads of each tool, from the tools as their factories built them: the unattended notes, the `token`
+ * parameter, the details pointer, the compose note and the call title. The one chain for every host, so a run the worker
+ * drives reads its tools' texts as `assembleRun` would have written them (sw-run-host.ts, `workerFacing`).
+ * @param toolset the tools as built, `dereference` already among them when the run has tool tokens
+ * @param facts the run's facts the texts depend on
+ * @returns the tools the model is shown
+ */
+export function modelFacing(toolset: MlTool[], { unattended = false, autoRO = false, autoPy = false, toolTokens = false }: { unattended?: boolean; autoRO?: boolean; autoPy?: boolean; toolTokens?: boolean }): MlTool[] {
+    // Unattended run: no human to approve, so shape the toolset for read-only autonomy. exec and
+    // python_exec are kept ONLY when their read-only auto-approve path is configured on (a readonly
+    // survey / the hardened sandbox run without a prompt); otherwise every call would need approval,
+    // so they're dropped entirely. The kept ones get a note that the mutating/full half is refused.
+    // Other approval-gated tools (click/type/…) stay wired but are refused at the gate below — the
+    // model is told, not silently disarmed. Clone (don't mutate) the shared tool defs.
+    if (unattended) {
+        toolset = toolset.flatMap((t): MlTool[] => {
+            if (t.name === "exec") return autoRO ? [{ ...t, description: t.description + UNATTENDED_EXEC_NOTE }] : [];
+            if (t.name === "python_exec") return autoPy ? [{ ...t, description: t.description + UNATTENDED_PY_NOTE }] : [];
+            return [t];
+        });
+    }
+    // Tool tokens (opt-in): expose a `token` param ONLY on the result-producing tools, and ONLY when the
+    // run has tokens enabled — so a normal run's schemas aren't cluttered with a param that does nothing.
+    // The model sets `token: true` on a call whose output it intends to CITE; the loop surfaces the
+    // @tool:<id> only for those (see agent-loop). Clone the shared defs; don't mutate them.
+    if (toolTokens) {
+        toolset = toolset.map(t => CITABLE_TOOLS.has(t.name)
+            ? { ...t, parameters: { ...t.parameters, properties: { ...(t.parameters as { properties?: Record<string, unknown> }).properties,
+                token: citeParam("the pricing table") } } }
+            : t);
+    }
+    // A split tool's mechanics: a pointer into agent_api_docs, or the text itself without that tool (tool-details.ts).
+    toolset = withToolDetails(toolset);
+    // The compose hint: said once in `interactives`' description instead of in every findByText/interactives result.
+    toolset = withComposeNote(toolset);
+    // THE MODEL'S OWN ACCOUNT of each call, offered on every tool. Injected into the TOOLSET and not only into
+    // the model-facing `toolDefs`, which matters in three places at once: the background run's descriptors are
+    // built from the toolset too (so one injection covers both loops), and both the loop's `validateArgs` and the
+    // panel's argument-issue strip read `tool.parameters` — against which an unannounced `title` would read as an
+    // unknown property and put a ⚠ on every call that used it.
+    toolset = toolset.map(t => ({ ...t, parameters: withCallTitle(t.parameters) }));
+    return toolset;
 }
 
 /** What decides a run's stock system prompt: its tools and the few options that change what the model is told. */
