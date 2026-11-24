@@ -16,6 +16,7 @@ import type { SessionChrome } from "../../../src/native/bridge";
 import { useEmbed } from "../embed";
 import { useUpdateRow } from "../app-update";
 import { ago, approvalsPending, keyOf, needsYou, pinnedOf, sections, STATUS_LABEL, STATUS_TONE } from "../format";
+import { taskMarkText } from "../../../src/chat/task-mark-text";
 import { PinnedRows } from "../pinned-rows";
 import { setPinnedOrder, usePinnedOrder } from "../pinned-order";
 import { flushReadMarks, markRead, useReadMarks } from "../read-marks";
@@ -202,6 +203,7 @@ function Row({ s: x, unread, read, runtimeName, onPress, onLongPress, moveBy }: 
     const title = x.title || x.task || "(untitled)";
     const label = STATUS_LABEL[x.status];
     const tone = STATUS_TONE[x.status];
+    const taskMark = taskMarkText(x.background);
     // A bad ending already shown keeps its words and loses its dot (`endingSeen`).
     const dot = read ? "transparent" : tone === "busy" ? p.notice : tone === "err" ? p.err : tone === "stopped" ? p.warn : "transparent";
     return (
@@ -222,6 +224,8 @@ function Row({ s: x, unread, read, runtimeName, onPress, onLongPress, moveBy }: 
                     {x.pendingApprovals > 0
                         ? <Badge n={x.pendingApprovals} text={approvalsPending(x.pendingApprovals)} />
                         : label ? <Text style={[s.rowState, { color: tone === "err" ? p.err : tone === "stopped" ? p.warn : p.fgDim }]}>{label}</Text> : null}
+                    {/* The run's background tasks, in the web list's words (`taskMarkText`): quiet, after where it stands. */}
+                    {taskMark ? <Text numberOfLines={1} style={[s.metaText, { color: p.fgDim, flexShrink: 1 }]}>{taskMark}</Text> : null}
                     {/* The robot alone, as on the calm page (2026-10-09): most sessions are agent runs, and the word down every
                         row was noise. A phone has no hover, so the meaning rides the accessibility label. */}
                     {x.kind === "agent" ? <View style={s.kind} accessible accessibilityLabel="Agent session"><Bot size={13} color={p.fgFaint} /></View> : null}
