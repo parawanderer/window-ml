@@ -2418,6 +2418,40 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     it is also the rule a table already follows, and it is ruling 121 (1) applied to a picture. This answers the
     question the entry above left open, which is removed.
   - **Merged, verified with `gh`:** #2169 (8aeeef22), this plan's ruling 122.
+  - **Ruling 124 (Shane, 2026-11-24): the model can write an image to disk, or to the virtual file system, after
+    editing it.** No new member. A cell saves under `/files/agent/`: `img.save(path)` re-encodes, and
+    `ml.fs.writeFile(path, img.bytes)` writes the bytes as held, so a JPEG is not re-encoded and its metadata goes
+    with it (`img.bytes` exists for a file read and a fetched image, and is `None` for decoded or drawn pixels).
+    From a pointer the route is `ml.image("@tool:…")` and then a write, the composed route ruling 119 chose;
+    `ml.fs.cp` of a pointer stays deferred. Once `/files` is the person's folder (ruling 119 (2)) the file is on
+    their disk. A JS cell writes bytes it holds with `ml.fs`'s write members (session-store), which take bytes as
+    well as text. Not yet run: `img.save` to a path through the mount; the PR runs it first.
+  - **Ruling 125 (Shane, 2026-11-24): "writing to `/files/agents/` should be free and not require an approval".**
+    This confirms ruling 86 and ML_TABLE.md, "The model's writable folder", which already list the writers that
+    run unasked (the pandas, numpy, Pillow and pyarrow writers that take a path, and `ml.fs`'s `writeFile`,
+    `rename` and `rm`), the path checker and the rollback; only the build was missing, so today a cell that writes
+    asks every time. Ruling 125 schedules that build, for packages. The coordinator's rulings on it: `open` for
+    writing stays refused inside, for the section's reason (a handle kept under a name writes later with no path
+    to check), and its message names the routes that do not ask; `Path.write_text` and `write_bytes` are added if
+    the checker can admit them; `ml.fs.mkdir` is one more row; `ml.fs.cp` of a pointer is marked deferred there
+    (ruling 119 (3)); no fork commit or pin bump before it comes to the coordinator. The JS side is
+    session-store's `ml.fs` write members: free within `/files/agent/`, with the quota, the name mask and path
+    resolution as the stated bounds. `/files/attached/` stays read-only.
+  - **Packages' order, as of 2026-11-24:** #2158; the `/files/agent/` writers; the stored image format; `ml.fetch`
+    storing image bodies; `ml.image`. The writers moved ahead because they do not depend on the image work.
+  - **Ruling 126 (Shane, 2026-11-24, on the coordinator's recommendation, "for now"): binary bytes are not exempt
+    from the secret mask on a read.** One rule for all bytes. An exemption decided from a file's content is a
+    bypass, since whoever writes the file chooses its content: a program writes an image header followed by a
+    secret. A chance match in a real image is not a practical concern: a form is at least 8 bytes, so against 64
+    MB of compressed data it is about 4e-12 per form (the coordinator's arithmetic; session-store states its own
+    figure in the spec). What would reopen it: a measured false match, or a format the mask breaks with no secret
+    in it.
+  - **The text view of an image (ruling 123), as accepted for the stored image format's spec:** one line in place
+    of "Returned an image.", with the media type, width and height, colour mode, size through the existing byte
+    formatter, the frame count when above one, `source=` for an `ml.image` value, and "from the first 6 of 9 open
+    figures" when figures were stacked and some dropped. Nothing from the file's metadata. How to see the pixels
+    is said once, in `verify`'s description.
+  - **Merged, verified with `gh`:** #2170 (8808cb4e), this plan's ruling 123.
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
   `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks
