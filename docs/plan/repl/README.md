@@ -2112,6 +2112,26 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     is wrong with the call.`; (f) a file block of a worker-built run carries `path` only when it opens the file as
     written. Shane approved the bench's forms proposal (2026-11-24): read rerun B first, replace the two closed-form
     tasks with ones whose stopping depends on state, and score by whether the invited form ran.
+  - **RULING 113 (Shane, 2026-11-24, in the coordinator's session): a masked file.** "Your 6 point list is fine", and
+    "Your writes has to handle python `open` etc". A file has a third state between hidden and shown, the default for
+    dotenv files: the model's own reads get the keys with each value replaced by a same-length fake derived from the
+    key's name; a program the person allowed reads the real bytes and its output is scrubbed, with no card at each
+    run; writes land only through the extension's or the host's own code (`ml.fs`, `ml.sh.put`, `stdoutTo`, Python's
+    `open` through the mount), a written fake restoring the real value, and every other program sees the file
+    read-only; reading a masked file registers its values of 8 or more characters but for a common-settings list,
+    which the person can switch off per file; a policy can pin an allowed program by hash, moved only by the person's
+    approval; the host keeps no backup. The spec is SECRET_HANDLES.md, "A masked file", with the coordinator's calls
+    under it, each for Shane to override: `mask` as a third effect of the `files` consumer and `default:dotenv`
+    switched to it, the credential files and key files staying hidden; one dotenv grammar in one Rust masker built
+    native and to WebAssembly, an unreadable line masked whole; values under 8 bytes read as `*`; the write-back by
+    key, made by the holder; the output scrub made by the HOST for every call, so no value crosses to the worker in
+    the first build, and the crossing that would also scrub web content left to a later slice on Shane's word; a
+    256-value bound a session; four slices (masker, reader, host, scoped `show` and pin), owners assigned when queues
+    reach it, the red team given the section as its target first. Also since the last entry, the coordinator's calls:
+    `cell`/`facts` records get their own per-run cap of 200 in the run log, apart from the mechanics records' cap,
+    with a dropped count in the export (to async); #2129 needs no red-team pass, since it adds no tool, member or
+    page-started message type, and merges under ruling 98 on its reviewer's comment; in the classifier's rules a JS
+    read of `ml.current.files` or `ml.current.attachments` is `list` only, not also `probe` (#2138).
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
   `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks
