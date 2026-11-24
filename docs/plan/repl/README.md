@@ -2168,6 +2168,45 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     its eight arguments; `keep` as `ml.keep()` is not answered and stays an argument. Moving top-level tools to
     functions is NOT taken up now ("refactoring busywork, more of a question for later"); `answer` and the
     consent-shaped tools stay tools in any case.
+  - **RULING 116 (Shane, 2026-11-24, in the coordinator's session): Python-only members go under one namespace, and a
+    cell can find out what `ml` has.** "I think all the python-only functions should start to get grouped under a
+    'python namespace'", the kernel control commands with them, `ml.image` left out since it could have a JS analogue;
+    then, on the coordinator's proposals, "Sure your call is fine. I think being able to list the packages while the
+    kernel is dead is useful". The spec is ML_PYTHON.md, which is also the restart command's spec the coordinator
+    owed. The calls in it: the name is `ml.python` (not `ml.py`, which reads as a file's name); `ml.python.restart()`
+    runs unasked from a JS cell and from a Python cell, resets integrity only, reaches the run's own kernel only, ends
+    a detached cell with a named reason and is bounded to one a step; `keep` becomes `ml.python.keep()`;
+    `ml.python.packages()` answers from outside the kernel, so with it dead too (Shane's word, reversing the
+    coordinator's no); `ml.python.names()` is wanted and not scheduled; the mark is never a member. Discovery, on the
+    packages lane's finding that a model is told of `ml.table` and nothing else: one `ML_MEMBERS` table with each
+    member's languages, from which `dir(ml)`, `help(ml)`, `agent_api_docs` and the unknown-member error all answer,
+    and one description line whose bench run needs Shane's yes in the bench lane's session. The packages lane builds
+    it after the `tables` removal and `ml.image`.
+  - **Ruling 116's mechanisms, corrected (2026-11-24, the coordinator's calls on the packages lane's read of
+    ML_PYTHON.md against main).** A restart also forgets the run's bridged mark, which a new Worker does not clear; it
+    is one message from the service worker (`PY_RESTART`), which the offscreen document refuses for any principal but
+    the calling run's; the one-a-step bound is counted in the service worker and a client with no step is refused; the
+    kill reason `restart` is added and no second housekeeping record is written; `ml.python.keep()` is a wire member
+    armed at the cell's result, never a flag in the worker's own result; `ml.python.packages()` is a service-worker
+    read of the shipped set and `ml_pkginstalls`, with `from` in place of `source` and no `loaded`; the names a cell's
+    `dir(ml)` shows are sent with the cell and are a snapshot from its start.
+  - **Ruling 117 (Shane, 2026-11-24): the policy measure tries every `to` value of an integer range only up to 256
+    wide.** `SETTING_ENUMERATE_MAX` goes from 2048 to 256, on #2107, and the pairing is not changed. The async lane's
+    `closedRunGraceMin` (an integer, 0 to 1440) was the first range wider than 60 the measure tried whole, and the
+    janitor's review of #2107 found the cost: each value a rule names is paired with every `to` tried, so a rule
+    naming 40 numbers (120 values with their neighbours) made 120 x 1,441 pairs against the measure's 1M steps
+    (`SETTING_MEASURE_STEPS`), and the proposal was refused as too costly. The cap bounds the pairs, not the steps: a
+    rule's steps an evaluation grow with its length (about 80 for 40 numbers, not the 8 to 16 the coordinator first
+    assumed), so the cost is quadratic in the numbers named. Measured by the async lane on #2107: the 40-number rule
+    spends 816,478 steps on the 60-wide key and 498,946 on the sampled one. So 256 is not a width the budget
+    guarantees; no key is 61 to 256 wide, and a row over every bounded integer key fails for the first one that would
+    exhaust the budget. A wider range is sampled: both ends, the default, four random values, and each number the rule
+    names with its neighbours. The card does not change, since such a key already reads as sampled for its `from`.
+    What is lost, on that key only: a `to` condition whose boundary the rule does not name can read "none". Not
+    decided, recorded: named values are never paired with each other, so a rule fixing `from` and a `to` window
+    between unnamed ends is missed on every sampled number key; pairing them when a rule names few is a later question
+    for Shane. The same day, the coordinator's calls: main's two red rows could not be repaired apart (#2140 and #2146
+    were each red on the other's row), so #2146 carries both and #2140 is closed after it; #2124 merged (964e2745).
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
   `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks
