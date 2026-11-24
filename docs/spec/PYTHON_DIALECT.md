@@ -381,6 +381,28 @@ A cell inside the dialect that makes a gated `ml` call (`ml.fetch` on a new URL,
 call SUSPENDS on an `ask` and continues when answered ([`ML_WIRE.md`](ML_WIRE.md), "Per-call asking"), which the JS
 survey could not do and which answers the manifest spec's "granularity of a refusal".
 
+### The `os` subset (ruling 112, Shane's yes, 2026-11-24)
+
+Unasked inside: reads and scans in `os`, `os.path`, `glob` and `pathlib`; `os.chdir` and `os.getcwd`; reading and
+writing `os.environ`. Still asking: anything that removes, renames or writes a file, `os.system`, `os.exec*`, process
+and fd calls, and every name of `os` not listed (`DIALECT_OS_READS`, `python-dialect-run.ts`; the test enumerates the
+core's own `os` against it). A hidden file under `/files` stays listed, and reading it raises `PermissionError`.
+
+- **Cost.** A listing is charged before it is built, in the file system's readdir, which every listing reaches (glob,
+  `os.walk` and `Path.iterdir` list from inside a lifted call): `DIR_ENTRY_STEPS` (20) a name, from a MEMFS
+  directory's own count, and a whole page of `DIR_PAGE` (500) names before each page the `/files` mount asks for. The
+  fork cannot credit, so a short page keeps its full charge: 10,000 steps a request, about 1,500 directory pages in a
+  15M budget. A read (`Path.read_text`, `read_bytes`) is charged `ceil(size / 2)` before it reads, and only a regular
+  file is read. The figures and the overcharge's effect: `notebooks/python-dialect/`, the os subset.
+- **State outside the namespace.** The working directory and the environment are put back when the cell is refused, so
+  an approved rerun starts from what was there; a finished cell keeps what it changed. A fresh interpreter's
+  environment is exactly `PYTHON_ENV` (`python-env.ts`).
+- **What the fork leaves asking, each for its own reason:** builtin `open` (a dropped file is finalized under the gate;
+  a kept one is not data; `with` is not in the node list); `Path.glob`/`rglob` (each maps a `Path` method that sets an
+  attribute, from C, under the gate; `glob.glob` reads the same names); `os.environ[k] = v` and `del os.environ[k]`
+  (an item is written only on a value the cell owns; `update`, `setdefault` and `pop` run); `dict(os.environ)` (it
+  calls the mapping's Python `keys()` from C; `os.environ.copy()` runs); a `walk` that prunes its list.
+
 ### Code from elsewhere runs under the same gate (intended design; Shane, 2026-11-23; the dynamic case is not built)
 
 One principle covers a cell's own `def`, a module the model wrote under `/files/lib/`
@@ -533,7 +555,8 @@ running a Python script via `ml.sh.run(["python3", "script.py", ...])` do not sh
 
 - **In-kernel (`python_exec`, or `import helper` inside a cell):** Runs inside the persistent per-run `dict` under
   `CO_RESTRICTED` (tier 3 by default for pure-Python functions, [`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md)
-  for native leaves). It has no `open()`, `os`, `sys`, `argparse` or `subprocess`, and halts within the step budget with
+  for native leaves). It has no `open()`, `sys`, `argparse` or `subprocess`, of `os` only the reads "The `os` subset"
+  admits, and halts within the step budget with
   write-barrier rollback on failure. RULED 2026-10-28 (for `FILE_ATTACHMENTS.md` slice 3): an attached file reaches a cell
   the way a stored table does, as an injected value (`files: { name: "@file:…" }` giving the bytes; a tabular one through
   `ml.table`, [`ML_TABLE.md`](ML_TABLE.md)), never as a path under a mounted directory (superseded for `ml.table` and the served `read_csv`, which read a

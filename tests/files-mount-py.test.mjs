@@ -11,6 +11,8 @@ import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import { PY_PACKAGE_LOADS } from "../src/python/python-env.ts";
 import { allocFilesShared } from "../src/python/files-wire.ts";
+import { DIR_PAGE } from "../src/python/files-mount.ts";
+import { DIR_ENTRY_STEPS } from "../src/python/python-dialect-run.ts";
 
 const DIST = path.resolve(import.meta.dirname, "../dist");
 const hasPyodide = fs.existsSync(path.join(DIST, "pyodide", "pyodide.mjs"));
@@ -167,6 +169,45 @@ test("a file hidden after it was opened stops reading, in the reader's words too
     assert.equal(r.ok, false);
     assert.match(String(r.error ?? ""), /PermissionError: \[Errno \d+\] .*hidden/i);
     assert.doesNotMatch(String(r.error ?? ""), /Permission denied/);
+});
+
+// --- inside the dialect: the os subset reads /files, and a hidden file stays listed and unread ---
+
+/** One cell posted INSIDE the dialect, as the offscreen document posts an unasked try. */
+async function insideCell(code) {
+    const id = nextId++;
+    handler({ data: { id, code, image: null, hardened: true, tables: null, inside: true } });
+    for (let i = 0; i < 12000; i++) {
+        const done = posted.find((m) => m.id === id && !m.partial && !m.started && !m.booted && !m.spending);
+        if (done) return done;
+        await new Promise((r) => setTimeout(r, 10));
+    }
+    throw new Error("no answer for cell " + id);
+}
+
+test("inside, a hidden file is listed by name, and reading it raises PermissionError in the cell: the cell ran inside", T, async () => {
+    await ctl("seed", "s1", "attached/h9/data.csv", "a,b\n1,2\n");
+    await ctl("seed", "s1", "attached/h9/.secret", "API_KEY=sk-not-for-you\n");
+    await ctl("hide", "s1", "attached/h9/.secret");
+    const listed = await insideCell("import os\nreturn sorted(os.listdir('/files/attached/h9'))");
+    assert.equal(listed.notInDialect, undefined, listed.notInDialect);
+    assert.deepEqual(listed.value, [".secret", "data.csv"]);
+    const read = await insideCell("from pathlib import Path\nreturn Path('/files/attached/h9/.secret').read_text()");
+    assert.equal(read.notInDialect, undefined, read.notInDialect);
+    assert.equal(read.ok, false);
+    assert.match(String(read.error ?? ""), /PermissionError/);
+    assert.doesNotMatch(String(read.error ?? ""), /sk-not-for-you/);
+    const ok2 = await insideCell("from pathlib import Path\nreturn Path('/files/attached/h9/data.csv').read_text()");
+    assert.equal(ok2.notInDialect, undefined, ok2.notInDialect);
+    assert.equal(ok2.value, "a,b\n1,2\n");
+});
+
+test("inside, a /files listing is charged a full page before each request, by the hook the worker sets", T, async () => {
+    const r = await insideCell("import os\nreturn len(os.listdir('/files/attached/h9'))");
+    assert.equal(r.notInDialect, undefined, r.notInDialect);
+    // The steps that run used, read by the next cell (`_restricted.steps()` is the last finished run's).
+    const used = Number(await ok("import _restricted\nprint(_restricted.steps())"));
+    assert.ok(used >= DIR_PAGE * DIR_ENTRY_STEPS, `two names in /files cost ${used} steps, not a page of ${DIR_PAGE}`);
 });
 
 // --- reads are ranged: a seek reads its chunk, never the file ---

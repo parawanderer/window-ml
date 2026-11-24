@@ -14,12 +14,13 @@
 // the harness's captured refs) and stays that way. A FULL worker is a separate worker that is never
 // locked — that is why `self.name` is "readonly" or "full", set by the host when it spawns us.
 
-import { PY_PACKAGE_LOADS, PY_LAZY_LOADS, PY_BENCH_BASE_NAMES, PY_STARTUP_PREPARE, pyodideLoadOptions } from "./python-env";
+import { PY_PACKAGE_LOADS, PY_LAZY_LOADS, PY_BENCH_BASE_NAMES, PY_STARTUP_PREPARE, pyodideLoadOptions, pinEnvironment } from "./python-env";
 import { DIALECT_FILES, DIALECT_MODULES, DIALECT_NODES } from "./dialect-data";
 import { wrapUserSetup, wrapUserScript, COMPLETE_HELPER, completeIn, RESET, injectInputs, stdoutWriter, injectStoredTable, takeIpc, releaseNamespace, hostRunScript, cancelPath, type PyCompletion } from "./python-runtime";
-import { dialectSetup, libraryLoad, libraryShape, type DialectLibrary } from "./python-dialect-run";
+import { dialectSetup, libraryLoad, libraryShape, DIR_ENTRY_STEPS, type DialectLibrary } from "./python-dialect-run";
 import { lockdownReadonly } from "./lockdown";
 import { makeFilesMount, FILES_OPEN_WORDS } from "./files-mount";
+import { restrictedCharge, chargeMemfsListings } from "./listing-charge";
 import { makeRequester, type FilesShared } from "./files-wire";
 import { cellBoundary, cellDropped, onSpending } from "./cell-gate";
 import { shownText } from "./pkg-card";
@@ -130,15 +131,21 @@ function getPyodide(by: "prewarm" | "run" = "run"): Promise<any> {
         const t0 = Date.now();
         const { loadPyodide } = await import(new URL("pyodide/pyodide.mjs", base).href);
         const py = await loadPyodide(pyodideLoadOptions(new URL("pyodide/", base).href));
+        pinEnvironment(py);
         // The kernel's death's cause, from Pyodide's fatal-error handler (`API.on_fatal`, called with what it caught), not
         // a rejection's reason or a cell's answer, which a cell can choose; those stand in only for a Pyodide without the
         // hook. Set before the lockdown, like every hook here.
         if (py._api) py._api.on_fatal = (e: unknown) => { fatalCause ??= String((e as Error)?.message ?? e); };
         if (interruptFlag) py.setInterruptBuffer(interruptFlag);
+        // Every directory listing is charged to the cell running inside the dialect, before it lists (listing-charge.ts);
+        // outside a run the fork's charge is nothing. Null on a core without the fork, which never runs a cell inside.
+        const charge = restrictedCharge(py._module);
+        if (charge) chargeMemfsListings(py.FS, py.ERRNO_CODES, charge, DIR_ENTRY_STEPS);
         // `/files` is built here, BEFORE the lockdown: the requester keeps `post` and the shared memory in its closure.
         if (filesShared) {
             const { call, data, Interrupted } = makeRequester(filesShared, post as never, interruptFlag);
-            const mount = makeFilesMount({ FS: py.FS, ERRNO_CODES: py.ERRNO_CODES, call, data, Interrupted, home: filesHome });
+            const chargeListing = charge ? (names: number) => charge(names * DIR_ENTRY_STEPS) : undefined;
+            const mount = makeFilesMount({ FS: py.FS, ERRNO_CODES: py.ERRNO_CODES, call, data, Interrupted, home: filesHome, chargeListing });
             filesMount = mount;
             mount.remount();
             // A hidden file's refusal in the reader's words, not "Permission denied": the model acts on the text.
