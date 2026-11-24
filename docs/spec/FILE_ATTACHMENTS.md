@@ -820,11 +820,10 @@ branch of `mlFacade`, beside `ml.fetch` (policy.ts:520-531 copies functions only
 
 **Hidden and secret-looking files.** Every front end of the reader (`ml.fs`, the Python mount, the file browser)
 applies the hide list (ruling 34: hide and show entries, the most specific wins, a tie hides) BEFORE it answers. The
-rule's text and the answer's shape (listed by name or absent, the error code a read gets) are files-host's hide-list
-spec's (POLICIES.md, "Hiding files"), and this spec only references them. Slice 2 does not land `readFile` or any other
-read member in the read-only dialect before that rule exists. The invariant Python already has carries over: as a
-cell's `open()` of a file that looks like a secret asks, a dialect read of such a file through an `ml.fs` read member
-asks, and is never answered free.
+rule's text is POLICIES.md's, "Hiding files"; the answer's shape (the name is listed, a read is refused) is the one
+table in SECRET_HANDLES.md, "What the model can see of a secret", and this spec only references them. Slice 2 does not land `readFile` or any other
+read member in the read-only dialect before that rule exists. A read of a HIDDEN file is refused, by every front end, in the dialect or out of it; it does not ask. A file that
+only looks like a secret and is not hidden is read like any other under `/files`.
 
 **The extra columns.** `ml.files.list()`'s rows (who made it, last read, whether a transcript cites it) become extra
 fields on the stat result, under one key that cannot be mistaken for Node's: `stat.ml = { madeBy, lastReadMs, cited }`.
@@ -997,7 +996,8 @@ are what the model reads.
    the async lane) on the `files` volume; a volume is a tree resolved one path at a time, so `/history/` is a second
    volume beside it. The shelf reaches it through a `FilesSource`: a session's attachments and a stored Blob by key,
    neither of which loads bytes; a read slices one range of the Blob into the caller's buffer. The hide rule is a
-   function the reader asks at every open and every read, and lists nothing until the hide-list rule lands. Every
+   function the reader asks at every open and every read; it is the resolved hide list since #2088
+   (`src/session/files-hide-rule.ts`). Every
    byte read is masked by the length-preserving scrub of "Python's view: one mount type over the reader" (below), so
    slice 2's `ml.fs` reads get it too, text and binary alike (the coordinator, 2026-11-20 to 22, "The scrub"; the
    `[REDACTED:<NAME>]` window, `scrubRange` in `src/secret-scrub-range.ts`, is not used for them). The write verbs
@@ -1411,8 +1411,8 @@ tell the person what it cannot, for example in the inbox. The shape, for whoever
   ignored file, or a tracked one with uncommitted changes); deleting the person's own uploads (`attached/`); anything
   that leaves the mounts; network access; git operations that rewrite history or reach a remote.
 - Secrets: a cell's `open()` through a mount goes through the same check as an `ml.sh` path argument (`SHELL.md`, "The
-  free tier narrows to the roots"), so the defaults and the person's policies are one list: a file that looks like a
-  secret asks by default wherever it is, and a workspace policy overrides that either way.
+  free tier narrows to the roots"), so the defaults and the person's policies are one list. AS BUILT for the browser copy: a hidden file's
+  read is refused, not asked, and a `show` entry is the override (SECRET_HANDLES.md, the table at the top).
 - How it is enforced: a cell's writes and deletes go through the host's per-request check (above), so each is judged
   as it is made. An `ml.sh` process is judged before it starts, by its manifest's `effects` (`docs/spec/SHELL.md`),
   since the host cannot stop a running process mid-write; its writes are then shown in its diff. That bounds only a

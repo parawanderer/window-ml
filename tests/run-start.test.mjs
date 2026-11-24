@@ -301,9 +301,11 @@ test("the worker assembles the run, pushes its toolset into the page, and the mo
     for (const n of ["click", "type", "python_exec", "chat_metadata"]) assert.ok(names.includes(n), `the model is offered ${n}`);
 });
 
-test("the tools the model is shown are the page's own definitions, built by the same factories", T, async () => {
+test("the tools the page runs are shown to the model as the page's own definitions, built by the same factories", T, async () => {
     // One definition: the worker builds its descriptors with the page's factories (worker-ml.ts). A drift between
-    // them is what this catches, field for field, against the page bundle's own tools.
+    // them is what this catches, field for field, against the page bundle's own tools. A tool the WORKER runs reads as
+    // the worker's own (sw-local-tools.ts `workerFacing`; tests/sent-tool-texts.test.mjs), so it is not compared here.
+    const { WORKER_TOOL_NAMES } = await import("../src/sw/worker-tools.ts");
     const { bg, chats } = world();
     await bg.context.__mlStartUserRunForTest(7, { task: "go", surface: "hud" });
     await flush();
@@ -315,11 +317,9 @@ test("the tools the model is shown are the page's own definitions, built by the 
     // …and puts the compose hint on interactives when exec is wired (tools.ts `withComposeNote`).
     const { withComposeNote } = await import("../src/tools/tools.ts");
     const page = withComposeNote(withToolDetails([...ml.domTools, ml.clickTool(), ml.typeTool(), ml.pythonTool(), ml.chatMetaTool(), ml.fetchTool(), ...docs]), offered.has("exec")).slice(0, docs.length ? -1 : undefined);
-    for (const t of page) {
-        if (!offered.has(t.name)) continue;
-        assert.equal(offered.get(t.name), t.description, `${t.name}: the worker shows the model the page's description`);
-    }
-    assert.ok(page.filter((t) => offered.has(t.name)).length >= 10, "the comparison covered the kit, not two tools");
+    const compared = page.filter((t) => offered.has(t.name) && !WORKER_TOOL_NAMES.has(t.name));
+    for (const t of compared) assert.equal(offered.get(t.name), t.description, `${t.name}: the worker shows the model the page's description`);
+    assert.ok(compared.length >= 10, `the comparison covered the kit, not two tools: ${compared.length}`);
 });
 
 test("what the page answers is page context and nothing else: it cannot change the task", T, async () => {

@@ -36,11 +36,12 @@ lifted calls are computed or thrown and then dropped; no wire-call count exists.
 | --- | --- | --- |
 | `lang` | `"js"` or `"python"` | which evaluator |
 | `ran` | `"inside"`, `"outside"`, `"not-run"` | inside the dialect; outside it (asked or policy-allowed); refused before any code ran |
-| `class` | `"A"`, `"B"` | the ladder's class of the worker when the cell started (the plan's ruling 102); absent for `not-run` |
+| `class` | `"A"`, `"B"` | Python only: the ladder's class of the worker when the cell started (the plan's ruling 102); absent for `not-run` |
+| `realm` | `"worker"`, `"page"` | JS only: where the evaluator ran, set by the worker before it dispatches |
 | `why` | `{ kind, name? }` | for `outside` and `not-run`: why it was not inside. `kind` is a slug from the table below; `name` is the first refused name as the evaluator reports it (`pandas.read_csv`, `while`, `tables`) |
 | `steps` | `{ used, budget }` | the step meter at the cell's end; for `inside` cells and for a JS cell that tripped |
-| `lifted` | `[{ name, calls, charged }]` | each lifted or host function the cell called, with the steps charged for it; at most 32 rows, largest charge first, then `liftedMore: n` |
-| `wire` | `[{ member, calls }]` | each `ml` wire member the cell called; at most 32 rows |
+| `lifted` | `[{ name, calls, charged }]` | each lifted or host function the cell called, with the steps charged for it, not counting the steps of a callback it runs (`map`, `filter`, `sort`), which are the cell's own; at most 32 rows, largest charge first, then `liftedMore: n` |
+| `wire` | `[{ member, calls }]` | each `ml` wire member the cell called; at most 32 rows. For every Python cell and for a JS `inside` cell; absent for a JS `outside` cell, whose calls arrive as page messages nothing ties to the cell |
 | `marked` | `true` | this cell set the outside mark (Python); absent otherwise |
 
 | `why.kind` | When |
@@ -57,16 +58,41 @@ lifted calls are computed or thrown and then dropped; no wire-call count exists.
 
 - **Bounded.** The object is at most 4,096 characters serialized; past that the row lists are cut and the counts kept.
 
-- **Deterministic fields diff cleanly.** `ran`, `class`, `why`, `lifted[].name`, `lifted[].calls` and `wire` are
-  functions of the cell, the build and the worker's history. `steps.used` and `charged` are deterministic on one
+- **Deterministic fields diff cleanly.** `ran`, `class`, `realm`, `why`, `lifted[].name`, `lifted[].calls` and `wire`
+  are functions of the cell, the build and the worker's history. `steps.used` and `charged` are deterministic on one
   build; if a measurement shows they are not, they join `VOLATILE_FIELDS` (`docs/dev/export.md`).
 
-- **The refusal is kept where it is thrown.** Today `readonlyRefused` and `pythonCellInDialect` reduce a refusal to a
-  boolean. They return the first refusal instead, and their callers keep deciding on the boolean alone.
+- **The refusal is kept where it is thrown.** For JS, `readonlyRefused` reduces a refusal to a boolean today. It
+  returns the first refusal instead, and its callers keep deciding on the boolean alone. For Python, membership is
+  decided by running the cell, and the refusal comes back as text (`notInDialect`). `why.kind` is set from what the
+  worker already knows. `why.name` is absent until the fork's `NotInDialect` carries the name as an attribute; the
+  text is never parsed for it.
 
-- **Tests.** One row per `why.kind` for each language that can produce it; the upgrade row above; the row that the
-  recorder changes no outcome; a red-team row that a hostile cell cannot write or forge its own `cell` object (the
-  recorder runs outside the cell's realm).
+- **Why `class` is Python only.** A worker-realm JS cell shares its realm with no approved code, so it is always A; a
+  page-realm cell never was, because the page can replace the builtins. What tells JS cells apart is `realm`.
+
+- **A page-realm cell carries only what the worker decides.** `steps`, `lifted`, `why.name` and `wire` of a JS cell
+  evaluated in the page are computed where the page can forge them. The worker keeps `lang`, `realm`, `ran` and
+  `why.kind`, by allowlist, and drops every page-reported field.
+
+- **What Half 1 cannot record for Python.** The fork exposes no step counter and no per-leaf tally to the wrapper, so
+  `steps` and `lifted` are absent for Python until an accessor lands with the cost-charge change. Absent means
+  unknown.
+
+- **Cost of the tally.** One map update per host call, never per step. The async lane's account, 2026-11-24: 20,000
+  host calls in the worker realm, medians 122.9, 129.4 and 130.2 ms without against 120.6, 122.4 and 126.9 ms with,
+  which is inside the spread.
+
+- **The run-log record.** Subsystem `cell`, kind `facts`, one record per cell, written once the step's result is
+  final. The log's flat-`detail` rule is lifted for this kind only: the sanitizer checks the nested shape by
+  enumeration (known keys, their types, the row caps, the 4,096 characters) and drops a record with an unknown key.
+  `docs/spec/run-log.schema.json` changes with it.
+
+- **Tests.** One row per `why.kind` for each language that can produce it (`denied` and `routing` are JS only,
+  `marked` is Python only); the upgrade row above; the row that the recorder changes no outcome; a row that the
+  `charged` figures and the cell's own steps sum to `steps.used`; two red-team rows: a worker-realm cell cannot write
+  or forge its own `cell` object (the recorder runs outside the cell's realm), and a page forging the page leg's
+  answer changes no recorded field.
 
 ## Half 2: the offline classifier
 
