@@ -157,6 +157,17 @@ wrapped in a `SessionEventEnvelope`: `v`, the global `session` id, an `epoch` an
 - **A client drops an envelope whose `event.session.hash` differs from `session.hash`**, so no source can write into
   another session's record by mislabelling an event.
 - `gone` ends a subscription when the session is deleted.
+- **A chat turn's tool calls are `agent-step` events in the chat's session**: the event, and the step renderer, an
+  agent run already uses, with `turn` naming the chat turn they belong to (that turn's `chat` event `id`). A
+  worker-hosted chat emits them only when it offered the model a tool (`read_pages`, FILE_ATTACHMENTS.md). Each falls
+  between its turn's `chat` and its `chat-result` or `chat-error`, and a session's status is still decided by its
+  turns alone, never by a step. In a chat session `step` and `seq` are both the session's count of tool calls from 1,
+  kept in the chat's record, so each is unique in the session and increases across turns, in a chat brought back after
+  a worker restart too. A client holds a step whose `turn` names a `chat` it does not hold as an orphan until that
+  `chat` arrives: it is never drawn under another turn, and never becomes a turn of its own. Additive: a client that
+  predates `turn` reduces the step into the session's `steps`, draws the turn and its answer as before with no step
+  shown, and its JSON export still carries the step raw. The hub never reads it, since the event rides in the sealed
+  body.
 
 ## Render descriptors: new kinds and fallbacks
 

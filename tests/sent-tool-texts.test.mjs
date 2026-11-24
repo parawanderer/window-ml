@@ -81,8 +81,9 @@ function assertSentIsRun(bg, hash, tools, p, where) {
     }
 }
 
-/** Worker tools the run host builds for each call (worker-look.ts, worker-locate.ts): never registered, so not compared here. */
-const PER_CALL = new Set(["look", "locate"]);
+/** Worker tools the run host builds for each call (worker-look.ts, worker-locate.ts): never registered, so not compared
+ *  here; and `read_pages`, a worker CHAT's tool (sw-chat.ts), which no agent run is offered. */
+const PER_CALL = new Set(["look", "locate", "read_pages"]);
 
 /** What a run of this kit carries into the chain: what `assembleRun` read when it built it. */
 const FACTS = { unattended: false, autoRO: true, autoPy: false, toolTokens: true };
