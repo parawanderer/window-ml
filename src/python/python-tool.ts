@@ -213,7 +213,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                     // A table is no longer preloaded: the cell read it with ml.table into a name of its own.
                     const looksLikeReload = /read_excel|read_json|open\(|FileNotFoundError|No such file|ModuleNotFound|requests|urllib|urlopen|http|fetch|ConnectionError|storage_options/i.test(err);
                     const hint = r.inputImage && looksLikeReload
-                        ? `\n\nHint: the tool ALREADY loaded the screenshot as \`img\`/\`img_np\` (the image parameter did it) — reference it directly; do not open/fetch it (${mintVia ? "your inputs are not files, and the sandbox has no network" : "the sandbox has no filesystem or network"}).`
+                        ? `\n\nHint: the tool ALREADY loaded the screenshot as \`img\`/\`img_np\` (the image parameter did it) — reference it directly; do not open or fetch it.`
                         : "";
                     return done(`${tableNote}Python error: ${err}${hint}${stdoutClipped ? `\n\nstdout:\n${stdoutClipped}` : ""}`, { error: err });
                 }

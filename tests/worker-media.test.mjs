@@ -506,15 +506,14 @@ test("python_exec tells a worker-hosted run its attached files are under /files/
     assert.doesNotMatch(page.description, /\/files/);
     const said = async (tool) => { const r = await tool.run({ code: "open('data.csv')" }); return typeof r === "string" ? r : JSON.stringify(r); };
     const wHint = await said(worker), pHint = await said(page);
-    assert.match(wHint, /your inputs are not files, and the sandbox has no network/);
+    for (const h of [wHint, pHint]) assert.match(h, /Hint: the tool ALREADY loaded the screenshot as `img`\/`img_np` \(the image parameter did it\) — reference it directly; do not open or fetch it\./);
     const executedBefore = executed;
     for (const tool of [worker, page]) {
         const stale = await tool.run({ code: "open('data.csv')", tables: "table" });
         assert.match(String(stale), /^Error: python_exec has no `tables` argument\. Read each table in the code instead: `df = ml\.table\("<source>"\)`.* Nothing ran\.$/, "a stale tables argument is refused with the one sentence");
     }
     assert.equal(executed, executedBefore, "nothing ran for a stale tables argument");
-    assert.doesNotMatch(wHint, /no filesystem/);
-    assert.match(pHint, /the sandbox has no filesystem or network/);
+    assert.doesNotMatch(wHint, /no filesystem|no network/, "a run's sandbox has /files/ and may write under /files/agent/: the hint claims neither away");
     assert.doesNotMatch(worker.description + page.description + wHint + pHint, / {2}/, "no padding in model-facing text");
 });
 

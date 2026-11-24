@@ -11,7 +11,7 @@ import type { MlTool } from "../contract/contract-agent";
 /** `python_exec`'s `ml.table` and `cast` texts in full: its MECHANICS, served by {@link TOOL_DETAILS}. The
  *  schema carries {@link PYTHON}, the triggers (docs/spec/PROMPT_BUDGET.md, round 3: measured on five models). */
 export const PYTHON_FULL = {
-    "ml.table": "`df = ml.table(src)` returns a pandas DataFrame you own, in place (no await). src: a CSS selector for " +
+    "ml.table": "`df = ml.table(src)` returns a pandas DataFrame you own (no await). src: a CSS selector for " +
         "a page <table>/ARIA grid (the FIRST match) or 'current', a Google Sheets URL, a URL fetch_url already read, an " +
         "`@tool:` pointer to a table (a fetch_url of a CSV/Parquet/Arrow file, a python_exec that returned a DataFrame), " +
         "and in a run's own sandbox an `@file:` pointer or a /files/ path. Call it once per table and join them in " +
@@ -193,7 +193,7 @@ export const TOOL_DETAILS: Readonly<Record<string, string>> = {
         "under pandas 3's rules: text is `str`, a whole-number column holding one blank is `float64` (NaN forces the " +
         "float), and a Parquet file's dtypes are READ from its schema. 5 rows shown out of `[50,000 rows x 4 columns]` " +
         "means 50,000. In `python_exec`, `df = ml.table(\"<the url>\")` reads the already-parsed table from the cache as " +
-        "a real DataFrame: no second request, and never `read_csv` (the sandbox has no network). `schema: true` on a " +
+        "a real DataFrame: no second request; do not `read_csv` the URL (the sandbox has no network). `schema: true` on a " +
         "table returns its shape and dtypes. `pipe` skips the parsed preview and gives the raw lines your scan selected.",
         "`schema: true` on JSON returns a compact TS-like shape (`{ id: number, items: { name: string }[] }`) instead " +
         "of the payload, and a clear error saying what it was if it isn't JSON.",
