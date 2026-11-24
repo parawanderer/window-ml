@@ -123,7 +123,7 @@ test("RED TEAM (attach path): no name spells a second attribute, a second block,
 
 // --- an address the mount will refuse is not printed ---
 
-test("RED TEAM (attach path): a `.` or `..` name is given no path, since the mount refuses the address it would print", { todo: "open: openablePath prints `/files/attached/<h>/.` and `/..`, which canonical() refuses with ENOENT, so the block promises an address the mount will not open (sw-attach.ts openablePath: refuse a name that is `.` or `..`)" }, async () => {
+test("RED TEAM (attach path): a `.` or `..` name is given no path, since the mount refuses the address it would print", async () => {
     for (const name of [".", ".."]) {
         const w = world();
         const r = await attachFiles("run1", [{ name, type: "text/plain", text: "v\n" }], 1, w.deps);
