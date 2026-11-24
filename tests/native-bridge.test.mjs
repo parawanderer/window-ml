@@ -107,9 +107,10 @@ test("the chrome of a session this device may drive: it can send and switch, and
     const withTab = sessionChrome("laptop:7b21", summary({ ...noTab, page: { url: "https://example.com", title: "Example", tabId: 3 } }), rt(), self);
     assert.equal(withTab.canResume, false);
     assert.match(withTab.noTabText, /A message sent here starts its next turn, with no page\.$/);
+    // Ended with its tab closed: `resumableHere` refuses a noTab run, so there is no resume bar and the composer is drawn.
     const noPage = sessionChrome("laptop:7b21", summary({ ...noTab, status: "done", page: { url: "https://example.com", title: "Example" } }), rt(), self);
-    assert.equal(noPage.canResume, true, "today's case: the resume bar stands where the composer would");
-    assert.doesNotMatch(noPage.noTabText, /A message sent here/);
+    assert.equal(noPage.canResume, false, "a run with no tab is not resumed: the composer reaches it");
+    assert.match(noPage.noTabText, /A message sent here starts its next turn, with no page\.$/);
     assert.doesNotMatch(sessionChrome("laptop:7b21", summary(noTab), rt({ grants: [{ scope: "view" }] }), self).noTabText, /A message sent here/, "a watcher has no composer");
     assert.equal(sessionChrome("laptop:7b21", summary(noTab), rt({ grants: [{ scope: "view" }] }), self).canBringHere, false, "a watcher");
     assert.equal(sessionChrome("laptop:7b21", summary({ ...noTab, background: { running: 0, waiting: 0, noTab: true } }), rt(), self).noTabText, "This run has no tab. A message sent here starts its next turn, with no page.");
