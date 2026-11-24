@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { backgroundOf } from "../src/contract/contract-debug.ts";
-import { taskMarkText } from "../src/sidebar/transcript/task-mark-text.ts";
+import { taskMarkText } from "../src/chat/task-mark-text.ts";
 import { onDebug, forgetSessionReduced } from "../src/sidebar/debug-reducer.ts";
 import { sessionMap } from "../src/sidebar/store.ts";
 

@@ -370,8 +370,9 @@ inside run. The rule has three layers, and none is another's substitute:
      outside cell before an inside one, and 27 of their 44 inside cells would ask (`replay.json`, 8d910442). With
      `read_csv` served (`replay-read-csv-served.json`, 1fda7dec) it is 11 runs and 16 of 80 inside cells. These are
      UPPER bounds: the replay's outside cells were never approved and run, and only an approved, started cell marks.
-   - **Not in this layer.** Clearing the mark by restarting the worker, and carrying a namespace's data into a fresh
-     worker, are later work and Shane's to want.
+   - **Not in this layer.** Clearing the mark by restarting the worker is ruled and specified, not built:
+     `ml.python.restart()` ([ML_PYTHON.md](ML_PYTHON.md), ruling 116). Carrying a namespace's data into a fresh
+     worker is later work and Shane's to want.
 
 A refused try leaves no output either: its captured stdout is discarded with its env, and whether text the tee already
 wrote to the real stdout reaches the model in a streamed call is measured before it is called closed (rule 8), not
