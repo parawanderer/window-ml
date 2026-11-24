@@ -59,9 +59,10 @@ differs by platform. A call run `host-plain` is bound by nothing.
   from the host ([`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md), "The credentialed profile"). It always asks, the worker
   never holds the value, and a printed token is scrubbed by its shape.
 
-- **Not decided here.** A masked state between hidden and shown (keys readable, values placeholders), what an allowed
-  program reads, and closing the Linux gap are under discussion with Shane (2026-11-24) and get their own section when
-  ruled.
+- **The masked state is ruled and not built** (ruling 113, 2026-11-24; "A masked file", at the end of this file). When
+  it is built, the dotenv row above changes on every reader: the name is listed, a read gives the keys with each value
+  replaced, a write through the extension's own code puts the real values back, a program the person allowed reads the
+  real file, and every other program reads the masked copy or is refused. Until then the row stands as written.
 
 **Where each part's detail lives.**
 
@@ -77,7 +78,8 @@ differs by platform. A call run `host-plain` is bound by nothing.
 **What each ruling's state is.** Built: the registry scrub (#1948), ruling 39's scrub of the person's input by
 registered value, ruling 61 (session rows), ruling 34's entries in the extension's readers (#2088). Not built: the
 handles; the key-shape patterns but the GitHub token's; rulings 30 (page password fields), 32 (hash-only entries), 33
-and 94 (the inbox item), 93 (personal details), 100 and 101 (the write-back); ruling 34's host half.
+and 94 (the inbox item), 93 (personal details), 100 and 101 (the write-back), 113 (the masked file); ruling 34's host
+half.
 
 ## The idea
 
@@ -326,11 +328,12 @@ on real captured output in its PR.
 - Where does the model's authority stop: can a handle be passed to a server-side tool (OpenWebUI) at all, given
   that the server would then hold it?
 - Does this belong in the harness only, or also on the server, for model-provider keys a client should never hold?
-- **Scrubbing a hidden file's values (open design, not ruled).** STATE, 2026-11-24: Shane's position in discussion is
-  that reading a dotenv file and registering its values is a convenience worth having, which the person can switch off
-  per file, with the person registering values themselves as the ideal. That reverses the coordinator's earlier
-  recommendation against it. It is not ruled, and it is decided with the masked-file design. The text below is the
-  design as it stood. The sandbox keeps a hidden file (a dotenv file, a credential file, and a path a `hide` policy
+- **Scrubbing a hidden file's values (RULED 2026-11-24, ruling 113; "A masked file", at the end of this file).**
+  Shane: reading a dotenv file and registering its values is a convenience worth having, which the person can switch
+  off per file, with the person registering values themselves as the ideal. That reverses the coordinator's earlier
+  recommendation against it. The text below is the design as it stood before the ruling, kept for its objections,
+  each of which the ruled section answers or states as a limit. The sandbox keeps a hidden file (a dotenv file, a
+  credential file, and a path a `hide` policy
   holds once the host applies those entries) unreadable, but a program the person runs can still load it and print
   a value, and the registry scrub ([#1948](https://github.com/parawanderer/window-ml/pull/1948)) catches only values
   the person registered. The idea: the host parses a hidden file when the call is spawned and sends its STRING LEAVES
@@ -1161,3 +1164,186 @@ keyed on its position is not designed.
 The red team's properties are the wire assertion of row 7, the "only into P" property (no slot ever takes bytes from a
 file other than the one it is written to, a renamed or symlinked P included, resolved by the holder), and that a
 page-started caller reaches none of it.
+
+### A masked file: its name and keys are read, its values are not (ruling 113)
+
+**The ruling** (Shane, 2026-11-24, in the coordinator's session: "Your 6 point list is fine", with "Your writes has to
+handle python `open` etc"). A file can be in a third state between hidden and shown: MASKED. It is the default for
+dotenv files. The six points, as confirmed:
+
+1. **Reads.** The model's own reads (`ml.fs`, Python's mount, a described tool such as `cat` or `grep`) get the file
+   with each value replaced by a fake of the same length, derived from the key's name and a session key and never from
+   the value.
+2. **Allowed programs.** A program the person allowed for the file, by policy or on a card, reads the real bytes. What
+   it prints is scrubbed before the model sees it. It does not ask at each run.
+3. **Writes.** A write lands only through code the extension or the host owns: `ml.fs`, `ml.sh.put` and `stdoutTo`,
+   and Python's `open` and everything built on it, through the mount. A written fake puts the real value back in its
+   place. To every other program the file is read-only, so nothing is merged back from a program's own write.
+4. **Registration.** Reading a masked file registers its values of 8 or more characters for the scrub, but for a list
+   of common settings. The person can switch this off for a file. Registering a value by hand stays the main route.
+5. **A hash pin.** A policy that allows a program can pin it by hash. A changed pinned file changes the pin only with
+   the person's approval.
+6. **No backup by the host.** A file that must not change is made read-only by a policy or by the operating system.
+
+The rest of this section is the coordinator's calls under the ruling, each surfaced to Shane. Nothing here is built.
+It builds on rulings 100 and 101 (the section above), which already rule the fake and the write-back for a REGISTERED
+value; this section extends both to a value nobody registered, by reading the file's own grammar.
+
+**What it is for.** The person's project has a `.env`. The model should know it is there, read which keys it has, add
+a key that is no secret, and start the person's web server, which loads the real values. The model should never read a
+value. The danger point is the transcript: a value that enters it is sent again with every later request (the mlbox
+incident, 2026-10-17: four live keys printed once, resent about 540 times, one abused a month later). A model that is
+not hostile and prints a config by accident is the case this must cover in full. A hostile model is covered up to the
+limits stated at the end.
+
+**The three states.**
+
+| State | Name listed | The model's own read | A mediated write | A program not allowed for it | A program allowed for it |
+| --- | --- | --- | --- | --- | --- |
+| shown | yes | the bytes, registered values scrubbed | lands | reads and writes | the same |
+| masked | yes | keys as written, each value replaced | lands, real values put back | reads the masked copy or is refused; never writes | reads and writes the real file |
+| hidden | yes | refused | refused | refused | not offered: a `show` or a `mask` is the way |
+
+**The entry.** `mask <pattern>` is a third effect of the `files` consumer, beside `hide` and `show`
+([`POLICIES.md`](POLICIES.md), "Hiding files"), with the same patterns, scopes, origins and layer rule. Within a
+layer, on a tie, the order is `hide`, then `mask`, then `show`. `default:dotenv` becomes a `mask` entry; the other
+three defaults stay `hide` (the three credential files hold a value with no key beside it worth reading, and a key
+file has no grammar). Adding a `mask` over a `hide` widens, and is confirmed like a `show`; adding one over a shown
+file narrows. A `hide` on a dotenv file still hides it whole.
+
+**The grammar is dotenv, and there is one masker.** Version 1 reads one grammar: a line is blank, a comment, or
+`KEY=VALUE` with an optional `export`, the value bare, single-quoted or double-quoted, a double-quoted value possibly
+running over lines. A `mask` entry on any file is read with it. A line the grammar cannot read is masked WHOLE, its
+key included, so an unknown shape fails closed. The masker is one Rust crate built native for the host and to
+WebAssembly for the extension's reader (as window-ml-host#57 does for the describer), so both mask the same bytes; a
+shared vector file pins them. JSON, YAML and TOML are not read in this version: a `mask` on one masks every line,
+which is `hide` with the line count showing.
+
+**What a read shows.**
+
+- *Keys, comments, quotes and layout* are as written. A comment is not parsed for values: a secret pasted into a
+  comment is read, a stated limit.
+- *A value of 8 or more bytes* is replaced by its fake: ruling 101's shape (`RDCT`, then `[A-Za-z0-9]` to the value's
+  length) and derivation, with the name `<KEY>` and the session's fake key. The quotes stay; the fake is what is
+  between them. Two files with the same key and length show the same fake, which says nothing, since no value is an
+  input.
+- *A value of 1 to 7 bytes* is `*` at its length. *An empty value* is empty. The mask is total: `PORT=3000` reads
+  `PORT=****`. A person who wants a file's settings read marks the file `show` and registers its secrets; a per-key
+  `show` is not designed.
+- *Sizes and offsets hold*, as under ruling 101: a ranged read that cuts a value gets the matching slice.
+- *The same bytes for every reader of the masked copy*: `ml.fs`, Python's mount, the file browser's content view, an
+  `@file:` reference, and a described tool run by the host.
+
+**The write-back, by key.** A mediated write is the one of rulings 100 and 101: an `ml.fs` write member, a Python
+file's close, and the host's `put`, `write` and `commit` (so `stdoutTo`). For a masked file the splice is by KEY, not
+by occurrence of a form. The new content is read with the grammar. For the k-th line of a key `K`, if the value's
+bytes equal what a read shows for the k-th `K` of the current file (its fake, or its `*` run), the current value's raw
+bytes take their place. Any other value lands as written: that is the model setting a key, which the write's own
+policy judged. A key not in the new content is removed; a new key lands. A k past the file's last `K` takes the first
+`K`'s value, the default of ruling 100's open point. Bytes are restored only into the file they came from, resolved by
+the holder: a fake written to any other path stays a fake, so a copy of a masked file made from a read is a file of
+fakes. The holder does it: the offscreen document's store inside its commit, and the host inside its `put`, which
+reads the file itself, so no value crosses to the worker for a write. The host is sent the session's fake key with the
+call (it is not the person's secret) and declares `mask` in `hello`. A write of `K=***` meant literally, over a
+three-byte value, restores the value instead: a stated limit.
+
+**What a program reads.**
+
+| Program | macOS (Seatbelt) | Linux (bubblewrap) |
+| --- | --- | --- |
+| A described call that NAMES the file in a path argument (`cat .env`, `grep KEY .env`) | the host writes the masked copy to a private directory and rewrites the argument to it | the masked copy is bound read-only over the path |
+| A program that walks to the file or loads it without naming it | read refused (EPERM), as a hidden file is today: Seatbelt cannot substitute bytes | reads the masked copy, bound when the call starts |
+| Any write by a program not allowed for the file | denied | EROFS |
+| A program allowed for the file | reads and writes the real file | the same |
+
+The masked copy is made when the call starts and removed when it ends. On Linux a `mask` entry, the default included,
+is walked to every depth when the call starts, which closes the gap where `root/app/.env` is readable; the walk's cost
+on a large tree, and its bound (the hide list's, past which the spawn fails naming the entry), are measured by the
+files-host lane before the default is switched. A file made after the call starts, or renamed over the path, is not
+covered for that call (the hide list's stated limit). `host-plain` is bound by nothing, as today.
+
+**An allowed program.** The entry is a `show` scoped to a call: `show <pattern> for <program>`, where `<program>` is
+the resolved executable and, when the person pins it, a list of files with their SHA-256 (the script, a lock file,
+whatever the card listed). The model proposes it on a card that says "let `<program>` read the real `<file>`", or the
+person writes it. With it, a call of that program gets the real file, readable and writable, and does not ask on its
+account. Nothing else changes for the call: its own policy still judges whether it runs.
+
+- *The pin.* The host hashes each pinned file when the call starts. A mismatch makes the call ASK, on a card that
+  names the file that changed since the person allowed it and offers "allow and update the pin". No `allow` policy
+  answers that ask, and nothing but the person's approval moves a pin: a pin the model could move by editing the file
+  would be no mitigation. A mediated write to a pinned file is not itself gated on the pin's account.
+- *Unpinned* is permitted and is the person's choice; the card says in one line that the model can then change what
+  the program does with the values.
+
+**The scrub of what a program prints.**
+
+- *By the host, for every call.* When a call starts, the host reads the session's masked files under the call's roots
+  and holds their values of 8 or more bytes, but for the common-settings list, in memory for that call. Every byte the
+  call sends back (stdout, stderr, a `stdoutTo` head, a later `read` range) crosses the host's scrub, the masker
+  crate's, in the registry's forms (as written, JSON, percent, base64, shell). A match reads `[REDACTED:<KEY>]`,
+  naming the dotenv key, which is not secret. This covers the allowed program and every other program alike: a `docker
+  inspect` that prints the same value is scrubbed though it never opened the file. No value leaves the host for this.
+- *By the reader, for the browser's copy.* A masked file in the browser's copy of a session's files is parsed by the
+  `/files` reader, and its values become `session` entries of the registry ("A masked answer" defines the origin):
+  kept in `chrome.storage.session`, gone with the session, never in Settings, a backup or an export. They have their
+  own bound, 256 values a session, apart from the registry's 64; at the bound nothing held is dropped and the file
+  reads as hidden, with the reason.
+- *The crossing that is not in the first build.* The host's values would also catch the same secret in a web page or a
+  fetched body if they were sent to the worker's registry. That is a plaintext crossing no secret makes today. It is a
+  later slice, on the host's own machine only and never over the hub, and waits on Shane's word.
+- *The common-settings list* is enumerated in the masker crate, not a judgement: values that are a boolean or number
+  word, a bare hostname or `localhost` URL with no userinfo, a path, an environment name (`development`, `production`,
+  `staging`, `test`), a log level, a locale or a time zone. They are still masked on read; they are only kept out of
+  the scrub, where redacting `production` everywhere would damage every output.
+- *Switching it off.* A `mask` entry carries `register: false` when the person unmarks the file: its values are masked
+  on read and written back as above, and are not scrubbed from output.
+
+**Stated limits.**
+
+- A model that can change what an allowed program runs can make it print a value cut, reversed or encoded past the
+  scrub. The pin is the mitigation; unpinned, there is none.
+- A value under 8 bytes, or on the common-settings list, is masked on read and not scrubbed from output.
+- A guess that comes back redacted confirms itself. A model can print candidates and see which is replaced. The 8-byte
+  floor and the common-settings list bound it to values that are hard to guess.
+- On macOS a program that loads `.env` without naming it must be an allowed program, or its read fails.
+- A secret outside a masked file (a container's environment, an application's database) is covered only when its value
+  is also in a masked file under the call's roots, or registered.
+- A value's length is shown.
+
+**Slices, in order.** (1) The masker crate, with the grammar's vectors, native and WebAssembly. (2) The reader: `mask`
+in the `files` consumer, the masked read and the by-key write-back in the store, session registration, the default
+switched in the browser's copy. (3) The host: the `mask` entries on a spawn, the masked copy on both platforms, the
+by-key `put`, the output scrub, the default switched. (4) The scoped `show`, its card and the pin. Owners are assigned
+when the lanes' queues reach it; the red team gets this section as its target before slice 2 opens.
+
+**Rows, for whoever builds it.** Each is a test that fails first.
+
+1. The grammar, enumerated: every line shape above, a value with `=`, `#`, quotes and escapes inside, CRLF, no final
+   newline, a multi-line value, a line that does not parse (masked whole). The native and the WebAssembly masker give
+   the same bytes for each.
+2. A read through each reader (`ml.fs`, Python's mount, the content view, `@file:`, `cat` by the host on each
+   platform) shows every key and no byte of any value; the size equals `stat`.
+3. Round trip through Python `open`: read, add a line, write the whole file, close; the stored file holds every old
+   value at its old spelling and the new line. The same for modes `a` and `r+`, for `pathlib`, for `ml.fs` and for
+   `ml.sh.put`.
+4. A changed value lands; a removed key is removed; a duplicated key maps by position; `K=***` over a three-byte value
+   restores it.
+5. A fake written to another file, a renamed or symlinked path included, stays a fake, in the store and on the host.
+6. A program not allowed for the file cannot write it, on each platform; on Linux it reads the masked copy at any
+   depth; on macOS an unnamed read is refused.
+7. An allowed program reads the real value, and a value it prints reaches the model as `[REDACTED:<KEY>]` in each of
+   the registry's forms, in stdout, stderr, a head and a later range. A program that never opened the file and prints
+   the value is scrubbed the same.
+8. No message from the host to the worker carries a value of a masked file (asserted on the wire), and none from the
+   worker to the host does.
+9. The pin: a pinned file changed by a mediated write, and by a program, makes the next call ask; an `allow` policy
+   does not answer it; approval moves the pin; nothing else does.
+10. `register: false`: masked on read, not scrubbed from output.
+11. The bound: a session past 256 values reads the file as hidden with the reason, and scrubs every value it held.
+12. Upgrade: a session whose view holds `default:dotenv` as a `hide` row, and one with a person's `show` over it, read
+    by the new code, show the default as `mask` and keep the `show`.
+13. Nothing of a value, a fake's derivation input or the fake key in the run log, the export, the backup or an error's
+    text.
+
+The red team's properties are rows 5 and 8, that a page-started caller reaches none of it, and that no reader of a
+masked file exists outside the list in row 2.
