@@ -3828,3 +3828,67 @@ test("an open chat session's footer usage figure follows a new usage sample with
     expect(errors).toEqual([]);
     await page.close();
 });
+
+// --- background tasks on a row, and the banner for a run with no tab ---
+
+const setBackground = (page, key, background) => page.evaluate(([k, b]) => globalThis.__chatFake.updateSummary(k, { background: b }), [key, background]);
+
+test("a row marks its background tasks in both views, and draws nothing for a lone noTab or no field at all", async () => {
+    for (const calm of [false, true]) {
+        const { page, errors } = await open(DESKTOP, "", { "view.calm": calm });
+        // UPGRADE: the demo's rows carry no `background`, as the index wrote them before it existed.
+        await expect(row(page, CAPPED).locator(".chat-task-mark")).toHaveCount(0);
+        await setBackground(page, CAPPED, { running: 2, waiting: 1 });
+        await expect(row(page, CAPPED).locator(".chat-task-mark")).toHaveText("2 running · 1 result waiting");
+        await setBackground(page, CAPPED, { running: 0, waiting: 0, noTab: true });
+        await expect(row(page, CAPPED).locator(".chat-task-mark")).toHaveCount(0);
+        expect(errors).toEqual([]);
+        await page.close();
+    }
+});
+
+test("a run with no tab shows a banner in place of the 'tab closed' bar, and Bring it here opens the resume form", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CAPPED)}`);
+    // UPGRADE: no `background` key, so today's bar.
+    await expect(page.locator(".chat-resume")).toBeVisible();
+    await expect(page.locator(".chat-notab")).toHaveCount(0);
+
+    await setBackground(page, CAPPED, { running: 1, waiting: 0, noTab: true });
+    await expect(page.locator(".chat-notab")).toContainText("This run has no tab. 1 running in background. A result is read at its next turn.");
+    await expect(page.locator(".chat-resume")).toHaveCount(0);
+    // Today's case: canResume is true, so no composer is drawn and the banner does not promise one.
+    await expect(page.locator(".composer")).toHaveCount(0);
+    await expect(page.locator(".chat-notab")).not.toContainText("A message sent here");
+    await page.locator(".chat-notab .chat-resume-go").click();
+    await expect(page.locator(".chat-dialog .tp-pill-tab")).toBeVisible();
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("a no-tab banner offers no Bring it here to a device without the grant to resume", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CAPPED)}`);
+    await page.evaluate(() => globalThis.__chatFake.setRuntime("laptop", { grants: [{ scope: "view" }] }));
+    await setBackground(page, CAPPED, { running: 0, waiting: 0, noTab: true });
+    await expect(page.locator(".chat-notab")).toHaveText("This run has no tab.");
+    await expect(page.locator(".chat-notab .chat-resume-go")).toHaveCount(0);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("a no-tab run whose composer is drawn says a message starts its next turn", async () => {
+    const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(CAPPED_HERE)}`);
+    // CAPPED_HERE has its tab, so canResume is false and the composer stands; noTab on it is the held-with-no-tab case.
+    await setBackground(page, CAPPED_HERE, { running: 0, waiting: 0, noTab: true });
+    await expect(page.locator(".chat-notab")).toHaveText(/This run has no tab\. A message sent here starts its next turn, with no page\./);
+    await expect(page.locator(".composer")).toBeVisible();
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("a run that still has its tab keeps the composer and shows no banner", async () => {
+    const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(CAPPED_HERE)}`);
+    await expect(page.locator(".chat-notab")).toHaveCount(0);
+    await expect(page.locator(".chat-resume")).toHaveCount(0);
+    expect(errors).toEqual([]);
+    await page.close();
+});

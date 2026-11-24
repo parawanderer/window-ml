@@ -830,8 +830,8 @@ disposes it when the worker dies, which aborts every write still open.
 - **The working directory is `/files/agent`**, the reader's `home`, posted with the channel's memory and entered at
   every mount, so a relative `open()` lands where the run writes; `../attached/` reads, and never writes.
 - **A hidden file is refused in the reader's words**, since the model acts on the text and an errno carries none (the
-  reader's hide rule is a hook nothing sets yet: the offscreen document builds its `RangedReader` with none, so nothing
-  is hidden until POLICIES.md's "Hiding files" is built). The mount keeps this cell's EACCES messages by path; `open`,
+  reader's hide rule is the resolved hide list since #2088: the offscreen document builds its `RangedReader` with
+  `makeHideRule`, `src/session/files-hide-rule.ts`). The mount keeps this cell's EACCES messages by path; `open`,
   `io.open` and `os.open`, wrapped at boot (`FILES_OPEN_WORDS`), set the `PermissionError`'s `strerror` from them, and a
   failed cell's error is rewritten from them too (`inWords`) for a refusal no `open` saw. The wrappers are switched in
   only for a cell outside the dialect, the originals back for one inside. Not `sys.monitoring`: the cancel's spend owns
@@ -846,7 +846,10 @@ disposes it when the worker dies, which aborts every write still open.
 - **What the model is told.** `python_exec`'s description, for a worker-hosted run only (the one with `_mintToken`),
   says the person's attached files are under `/files/attached/` (found with `os.listdir`) and that `/files` is
   read-only; a page-hosted run's still says it has no filesystem. It promises no write until the reader's write side
-  lands (`tests/worker-media.test.mjs`).
+  lands (`tests/worker-media.test.mjs`). A run the worker built and drives is sent the text of the tool that runs, at
+  every turn (`workerFacing`, sw-local-tools.ts): until 2026-11-23 it was sent the page-hosted text, written at the
+  start from the worker's assembling `ml`, and a session stored then still holds it in its payload
+  (`tests/sent-tool-texts.test.mjs`).
 
 ## `input()` and `getpass()` (proposed, not built)
 

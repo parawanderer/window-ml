@@ -1,8 +1,85 @@
 # Idea: secrets an agent can use but never read
 
-**Status: idea; the handles are not started.** Written down on 2026-09-15 to come back to. Built since: the secret
-registry, scrubbed by value at every crossing (#1948, e8508959; "The scrub as built", below). The handles are not, and the sketch
-under [Shape](#shape-a-sketch-unvalidated) is a guess to be argued with, not a design.
+**Status: this file owns what the model can see of a secret; the handles are not started.** Written down on 2026-09-15
+as an idea to come back to. Built since: the secret registry, scrubbed by value at every crossing (#1948, e8508959;
+"The scrub as built", below), and the parts the table below marks built. The handles are not, and the sketch under
+[Shape](#shape-a-sketch-unvalidated) is a guess to be argued with, not a design.
+
+## What the model can see of a secret: the one table (2026-11-24)
+
+A secret can reach a model in two ways: its VALUE turns up in text the model reads, or the model reads the FILE that
+holds it. The two tables below say what the model sees for each, by surface and by platform, and what is built. Every
+other spec keeps its mechanism and points here for the answer. Where another file disagrees with these tables, that
+file is wrong and gets repaired. Read from main at 81192e50 and window-ml-host 0.10.0 (main at 9f99501), before
+window-ml-host#58.
+
+**A value in text.** A registered value is one in the registry ("The scrub as built": at most 64 entries, 8 to 512
+characters, matched as written and in its JSON, percent, base64 and shell forms).
+
+| Where the value would cross | What the model sees | State |
+| --- | --- | --- |
+| A tool result, the lines the loop appends, an `ml.sh` head and each `ml.sh.read` range, live output, a peek tail, a resumed history, the utility model's calls, what the run stores beside a result, a nested ask | `[REDACTED:<NAME>]` in place, and one count line on a tool result | built (#1948) |
+| A model request a page started; an error answered to a page | a bare `[REDACTED]`, no name, no count | built (#1948) |
+| What the person sends (the turn, a right-clicked element, attached text) | `[REDACTED:<NAME>]`, unless the person sent it as is | built by registered value (ruling 39); the shape detector is not |
+| A session row leaving the worker (lists, search, the hub, the HUD) | `[REDACTED:<NAME>]` | built (ruling 61) |
+| Bytes read from `/files` (`ml.fs`, Python's mount) | each byte of a match is `*`, so sizes and offsets hold | built; the per-secret fake value and the write-back (rulings 100, 101) are not |
+| A file's NAME under `/files` that holds a registered value | the listing shows the raw name; the file block of the turn shows it redacted | a defect (the session-store lane's account, 2026-11-24), repaired in the reader |
+| A GitHub token, registered or not | `[a GitHub token]`, by its shape | built, the one pattern there is |
+| Any other unregistered key shape (`sk-`, `AKIA`, a JWT, a PEM block, URL userinfo) | the value | not built (scrub PR 2; ruling 39's detector for the person's input) |
+| A value in a password field of a page | the value | ruled (30), not built |
+| A value of a hidden file that a program the person allowed prints | the value, unless it is registered | open design ("Open questions", below) |
+| A value in an image; a value cut, reversed or encoded outside the forms above; a value under 8 characters; the model's own tool arguments | the value | stated limits |
+
+**A file that holds secrets.** Three readers exist. The `/files` reader serves the browser's copy of a session's files
+to `ml.fs`, Python's mount and the file browser. A program started through `ml.sh` is bound by the host's sandbox, which
+differs by platform. A call run `host-plain` is bound by nothing.
+
+| File | `/files` reader | `ml.sh` program, macOS (Seatbelt) | `ml.sh` program, Linux (bubblewrap, Landlock) |
+| --- | --- | --- | --- |
+| `.env`, `.env.*` (not the templates `.env.example`, `.env.sample`, `.env.template`) | name listed with `hidden: true`; a read is refused in words naming it as hidden; built (#2088) | name listed; read EPERM and write denied, at any depth | name listed; read EACCES and write EROFS at each root's TOP only, and `$HOME/.env`; `root/app/.env` is READABLE (the stated gap) |
+| `.netrc`, `.git-credentials`, `.pgpass` | held at a root's top, as above | unreadable at any depth | held at each root's top and under `$HOME`; deeper, readable |
+| Credential directories (`.ssh`, `.gnupg`, `.aws`, `.azure`, `.kube`, `.docker`, `.password-store`, Keychains, `.config/gh`, `.config/gcloud`) | not a default of the browser copy | unreadable at any depth | masked under `$HOME` only |
+| `*.pem`, `id_*` and other secret-looking names inside a root | readable | READABLE; `rg pattern .` reads `root/key.pem` | the same |
+| A path a `hide` policy matches | held like a dotenv file; built (#2088) | not applied: a `spawn` carries no entry until window-ml-host#58 and its extension half | the same; then resolved when the call starts, so a file made later is readable to that call |
+| A path a `show` policy matches | released, readable and writable | not applied, as above | the same |
+| A held path NAMED in a call's marked path argument | not applicable | the call asks; approved, that path's READ is re-allowed for that call, and nothing else | the call asks; approved, the path is readable. Two DEFECTS at host 0.10.0 (the files-host lane's reading of `src/sandbox.rs`, 2026-11-24; the second checked by the coordinator): a named file at a root's top is also WRITABLE, and a named file under a credential directory unmasks the WHOLE directory for that call (`~/.ssh/id_ed25519.pub` named, the private key readable). A host repair is owed |
+
+- **A hidden file's NAME is listed everywhere, and its content nowhere.** That is Shane's position (2026-11-24): the
+  model should know a `.env` exists. No reader leaves the name out.
+
+- **A secret-looking name that is not held is flagged, never hidden.** The host's name check (`secret` on a path
+  argument: `.env`, `*.pem`, `id_*`, `.ssh/` and the rest of `SECRET_PATTERNS`) makes a call that NAMES such a path
+  ask. It does nothing for a program that walks to the file.
+
+- **Who may free the ask on a named held path.** As built, the read is outside the free tier and a policy may answer
+  it. As ruled (34; [`POLICIES.md`](POLICIES.md), "Hiding files"), no `allow` policy frees it and the durable way is a
+  `show` entry. The ruled form lands with the host half of the hide list.
+
+- **One secret does reach a process today.** A credentialed `gh` call gets the person's GitHub token as `GH_TOKEN`
+  from the host ([`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md), "The credentialed profile"). It always asks, the worker
+  never holds the value, and a printed token is scrubbed by its shape.
+
+- **The masked state is ruled and not built** (ruling 113, 2026-11-24; "A masked file", at the end of this file). When
+  it is built, the dotenv row above changes on every reader: the name is listed, a read gives the keys with each value
+  replaced, a write through the extension's own code puts the real values back, a program the person allowed reads the
+  real file, and every other program reads the masked copy or is refused. Until then the row stands as written.
+
+**Where each part's detail lives.**
+
+| Part | Owner |
+| --- | --- |
+| The registry, its forms, each crossing, the limits | this file, "The scrub as built" |
+| `hide` and `show` entries, the defaults' ids, which entry wins, the card and the command | [`POLICIES.md`](POLICIES.md), "Hiding files" |
+| What the sandbox holds on each platform, and each gap | window-ml-host's SANDBOX.md; the `hiddenSecrets` and `secret` facts in its PROTOCOL.md |
+| The `/files` reader, its length-keeping mask, hidden files in a backup | [`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md) |
+| The credentialed `gh` call | [`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md) |
+| A value typed into a prompt (`getpass`, a program's stdin) | [`SHELL_INTERACTIVE.md`](SHELL_INTERACTIVE.md), with the answers in "Amendments", below |
+
+**What each ruling's state is.** Built: the registry scrub (#1948), ruling 39's scrub of the person's input by
+registered value, ruling 61 (session rows), ruling 34's entries in the extension's readers (#2088). Not built: the
+handles; the key-shape patterns but the GitHub token's; rulings 30 (page password fields), 32 (hash-only entries), 33
+and 94 (the inbox item), 93 (personal details), 100 and 101 (the write-back), 113 (the masked file); ruling 34's host
+half.
 
 ## The idea
 
@@ -81,7 +158,8 @@ of them has a place for it, and together they answer parts of the threat model a
   registered value can pass between the stages of a pipe on the host, and the host's `sha256` and `size` are over the
   raw bytes ("The scrub as built", below). A program whose manifest says it `echoes` its environment is refused with a
   secret present ([`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md)); that refusal lands with the handles slice, since until
-  then no secret can reach a process at all. In host mode the person's own credential files and helpers are on disk,
+  then no REGISTERED secret can reach a process (the one value a process is handed is the GitHub token of a
+  credentialed `gh` call, which the host holds and the worker never does; the table at the top). In host mode the person's own credential files and helpers are on disk,
   which the secret path flag and the scrubbed environment are for.
 - **A secret lives beside its sink.** The worker holds the ones `ml.fetch` injects; the host holds the ones processes
   need (the OS keychain is the natural store); a handle names a secret wherever it lives, and the grant is evaluated
@@ -222,7 +300,7 @@ on real captured output in its PR.
   `scrubPersonInput`), so a token in it that is neither registered nor the extension's own key reaches the model until
   the shape detector (ruling 39, PR 3); a value that was transformed or only partly echoed (threat 2); a value
   registered after a session stored it (re-scrubbing stored sessions is a later slice); anything a pattern does not know
-  until PR 2; a script or model that already holds a guess can confirm it, by echoing the guess and seeing the marker;
+  until PR 2 (the one pattern applied today is the GitHub token's shape, `GITHUB_TOKEN` in `src/secret-scrub.ts`); a script or model that already holds a guess can confirm it, by echoing the guess and seeing the marker;
   the model's own tool arguments, which are not scrubbed; an approved page that drives a model can confirm a full guess
   it already holds if the model repeats the marker, and learns no name; the page-world tool results of a page-hosted run
   stay the page's own and are not scrubbed for the page; a page whose own text comes back in an error (a refusal that
@@ -250,8 +328,13 @@ on real captured output in its PR.
 - Where does the model's authority stop: can a handle be passed to a server-side tool (OpenWebUI) at all, given
   that the server would then hold it?
 - Does this belong in the harness only, or also on the server, for model-provider keys a client should never hold?
-- **Scrubbing a hidden file's values (open design, not ruled).** The sandbox keeps a hidden file (a dotenv file, a
-  credential file, a path a `hide` policy holds) unreadable, but a program the person runs can still load it and print
+- **Scrubbing a hidden file's values (RULED 2026-11-24, ruling 113; "A masked file", at the end of this file).**
+  Shane: reading a dotenv file and registering its values is a convenience worth having, which the person can switch
+  off per file, with the person registering values themselves as the ideal. That reverses the coordinator's earlier
+  recommendation against it. The text below is the design as it stood before the ruling, kept for its objections,
+  each of which the ruled section answers or states as a limit. The sandbox keeps a hidden file (a dotenv file, a
+  credential file, and a path a `hide` policy
+  holds once the host applies those entries) unreadable, but a program the person runs can still load it and print
   a value, and the registry scrub ([#1948](https://github.com/parawanderer/window-ml/pull/1948)) catches only values
   the person registered. The idea: the host parses a hidden file when the call is spawned and sends its STRING LEAVES
   to the worker, which adds them to the session's registry, so an echoed value is scrubbed like a registered one. What
@@ -295,8 +378,9 @@ on real captured output in its PR.
 ## Amendments after the scrub (2026-11-18)
 
 Four rulings of Shane's that build on the registry scrub ([#1948](https://github.com/parawanderer/window-ml/pull/1948),
-"The scrub as built"). The coordinator's calls under each are marked as such and were surfaced to Shane. Nothing here
-is built yet. Ruling 30's value scrub lands after scrub PR 2, its channel mask with handles; ruling 32 lands before
+"The scrub as built"). The coordinator's calls under each are marked as such and were surfaced to Shane. Of this
+section, ruling 39's scrub by registered value and ruling 61 are built; the rest is not (the list under the table at
+the top). Ruling 30's value scrub lands after scrub PR 2, its channel mask with handles; ruling 32 lands before
 handles; ruling 33 lands once ruling 32's store and its Settings page exist; ruling 39's by-value half lands after
 #1948, its shape half in its own PR. Rulings 40 to 42 and 44 settle four of ruling 39's open points, and ruling 43
 adds LLM provider tokens to its shape list; all five are written into its section. Rulings 93 and 94 (2026-11-20) add
@@ -950,8 +1034,8 @@ for whoever builds the item. Each line is one sentence or two that a person read
 - **Blank before the model sees it**: your full name, your address, a phone number. Blanked in text and in screenshots
   of pages, and filled into a form by name when you allow it.
 
-One line below them gives the limits: "Not caught: a value changed before it is shown (encoded, cut or reversed), text
-inside an image, and a value shorter than 8 characters (6 for a personal detail)."
+One line below them gives the limits: "Not caught: a value changed before it is shown (cut, reversed, or encoded in an unusual way),
+text inside an image, and a value shorter than 8 characters (6 for a personal detail)."
 
 The three lines replace the form's two-type text in ruling 33 ("The form"), and the form's type choice lists the three
 in this order with "Never read" (`mask`) preselected. The kinds' names in the code (`use`, `mask`, `detail`) are not
@@ -1080,3 +1164,186 @@ keyed on its position is not designed.
 The red team's properties are the wire assertion of row 7, the "only into P" property (no slot ever takes bytes from a
 file other than the one it is written to, a renamed or symlinked P included, resolved by the holder), and that a
 page-started caller reaches none of it.
+
+### A masked file: its name and keys are read, its values are not (ruling 113)
+
+**The ruling** (Shane, 2026-11-24, in the coordinator's session: "Your 6 point list is fine", with "Your writes has to
+handle python `open` etc"). A file can be in a third state between hidden and shown: MASKED. It is the default for
+dotenv files. The six points, as confirmed:
+
+1. **Reads.** The model's own reads (`ml.fs`, Python's mount, a described tool such as `cat` or `grep`) get the file
+   with each value replaced by a fake of the same length, derived from the key's name and a session key and never from
+   the value.
+2. **Allowed programs.** A program the person allowed for the file, by policy or on a card, reads the real bytes. What
+   it prints is scrubbed before the model sees it. It does not ask at each run.
+3. **Writes.** A write lands only through code the extension or the host owns: `ml.fs`, `ml.sh.put` and `stdoutTo`,
+   and Python's `open` and everything built on it, through the mount. A written fake puts the real value back in its
+   place. To every other program the file is read-only, so nothing is merged back from a program's own write.
+4. **Registration.** Reading a masked file registers its values of 8 or more characters for the scrub, but for a list
+   of common settings. The person can switch this off for a file. Registering a value by hand stays the main route.
+5. **A hash pin.** A policy that allows a program can pin it by hash. A changed pinned file changes the pin only with
+   the person's approval.
+6. **No backup by the host.** A file that must not change is made read-only by a policy or by the operating system.
+
+The rest of this section is the coordinator's calls under the ruling, each surfaced to Shane. Nothing here is built.
+It builds on rulings 100 and 101 (the section above), which already rule the fake and the write-back for a REGISTERED
+value; this section extends both to a value nobody registered, by reading the file's own grammar.
+
+**What it is for.** The person's project has a `.env`. The model should know it is there, read which keys it has, add
+a key that is no secret, and start the person's web server, which loads the real values. The model should never read a
+value. The danger point is the transcript: a value that enters it is sent again with every later request (the mlbox
+incident, 2026-10-17: four live keys printed once, resent about 540 times, one abused a month later). A model that is
+not hostile and prints a config by accident is the case this must cover in full. A hostile model is covered up to the
+limits stated at the end.
+
+**The three states.**
+
+| State | Name listed | The model's own read | A mediated write | A program not allowed for it | A program allowed for it |
+| --- | --- | --- | --- | --- | --- |
+| shown | yes | the bytes, registered values scrubbed | lands | reads and writes | the same |
+| masked | yes | keys as written, each value replaced | lands, real values put back | reads the masked copy or is refused; never writes | reads and writes the real file |
+| hidden | yes | refused | refused | refused | not offered: a `show` or a `mask` is the way |
+
+**The entry.** `mask <pattern>` is a third effect of the `files` consumer, beside `hide` and `show`
+([`POLICIES.md`](POLICIES.md), "Hiding files"), with the same patterns, scopes, origins and layer rule. Within a
+layer, on a tie, the order is `hide`, then `mask`, then `show`. `default:dotenv` becomes a `mask` entry; the other
+three defaults stay `hide` (the three credential files hold a value with no key beside it worth reading, and a key
+file has no grammar). Adding a `mask` over a `hide` widens, and is confirmed like a `show`; adding one over a shown
+file narrows. A `hide` on a dotenv file still hides it whole.
+
+**The grammar is dotenv, and there is one masker.** Version 1 reads one grammar: a line is blank, a comment, or
+`KEY=VALUE` with an optional `export`, the value bare, single-quoted or double-quoted, a double-quoted value possibly
+running over lines. A `mask` entry on any file is read with it. A line the grammar cannot read is masked WHOLE, its
+key included, so an unknown shape fails closed. The masker is one Rust crate built native for the host and to
+WebAssembly for the extension's reader (as window-ml-host#57 does for the describer), so both mask the same bytes; a
+shared vector file pins them. JSON, YAML and TOML are not read in this version: a `mask` on one masks every line,
+which is `hide` with the line count showing.
+
+**What a read shows.**
+
+- *Keys, comments, quotes and layout* are as written. A comment is not parsed for values: a secret pasted into a
+  comment is read, a stated limit.
+- *A value of 8 or more bytes* is replaced by its fake: ruling 101's shape (`RDCT`, then `[A-Za-z0-9]` to the value's
+  length) and derivation, with the name `<KEY>` and the session's fake key. The quotes stay; the fake is what is
+  between them. Two files with the same key and length show the same fake, which says nothing, since no value is an
+  input.
+- *A value of 1 to 7 bytes* is `*` at its length. *An empty value* is empty. The mask is total: `PORT=3000` reads
+  `PORT=****`. A person who wants a file's settings read marks the file `show` and registers its secrets; a per-key
+  `show` is not designed.
+- *Sizes and offsets hold*, as under ruling 101: a ranged read that cuts a value gets the matching slice.
+- *The same bytes for every reader of the masked copy*: `ml.fs`, Python's mount, the file browser's content view, an
+  `@file:` reference, and a described tool run by the host.
+
+**The write-back, by key.** A mediated write is the one of rulings 100 and 101: an `ml.fs` write member, a Python
+file's close, and the host's `put`, `write` and `commit` (so `stdoutTo`). For a masked file the splice is by KEY, not
+by occurrence of a form. The new content is read with the grammar. For the k-th line of a key `K`, if the value's
+bytes equal what a read shows for the k-th `K` of the current file (its fake, or its `*` run), the current value's raw
+bytes take their place. Any other value lands as written: that is the model setting a key, which the write's own
+policy judged. A key not in the new content is removed; a new key lands. A k past the file's last `K` takes the first
+`K`'s value, the default of ruling 100's open point. Bytes are restored only into the file they came from, resolved by
+the holder: a fake written to any other path stays a fake, so a copy of a masked file made from a read is a file of
+fakes. The holder does it: the offscreen document's store inside its commit, and the host inside its `put`, which
+reads the file itself, so no value crosses to the worker for a write. The host is sent the session's fake key with the
+call (it is not the person's secret) and declares `mask` in `hello`. A write of `K=***` meant literally, over a
+three-byte value, restores the value instead: a stated limit.
+
+**What a program reads.**
+
+| Program | macOS (Seatbelt) | Linux (bubblewrap) |
+| --- | --- | --- |
+| A described call that NAMES the file in a path argument (`cat .env`, `grep KEY .env`) | the host writes the masked copy to a private directory and rewrites the argument to it | the masked copy is bound read-only over the path |
+| A program that walks to the file or loads it without naming it | read refused (EPERM), as a hidden file is today: Seatbelt cannot substitute bytes | reads the masked copy, bound when the call starts |
+| Any write by a program not allowed for the file | denied | EROFS |
+| A program allowed for the file | reads and writes the real file | the same |
+
+The masked copy is made when the call starts and removed when it ends. On Linux a `mask` entry, the default included,
+is walked to every depth when the call starts, which closes the gap where `root/app/.env` is readable; the walk's cost
+on a large tree, and its bound (the hide list's, past which the spawn fails naming the entry), are measured by the
+files-host lane before the default is switched. A file made after the call starts, or renamed over the path, is not
+covered for that call (the hide list's stated limit). `host-plain` is bound by nothing, as today.
+
+**An allowed program.** The entry is a `show` scoped to a call: `show <pattern> for <program>`, where `<program>` is
+the resolved executable and, when the person pins it, a list of files with their SHA-256 (the script, a lock file,
+whatever the card listed). The model proposes it on a card that says "let `<program>` read the real `<file>`", or the
+person writes it. With it, a call of that program gets the real file, readable and writable, and does not ask on its
+account. Nothing else changes for the call: its own policy still judges whether it runs.
+
+- *The pin.* The host hashes each pinned file when the call starts. A mismatch makes the call ASK, on a card that
+  names the file that changed since the person allowed it and offers "allow and update the pin". No `allow` policy
+  answers that ask, and nothing but the person's approval moves a pin: a pin the model could move by editing the file
+  would be no mitigation. A mediated write to a pinned file is not itself gated on the pin's account.
+- *Unpinned* is permitted and is the person's choice; the card says in one line that the model can then change what
+  the program does with the values.
+
+**The scrub of what a program prints.**
+
+- *By the host, for every call.* When a call starts, the host reads the session's masked files under the call's roots
+  and holds their values of 8 or more bytes, but for the common-settings list, in memory for that call. Every byte the
+  call sends back (stdout, stderr, a `stdoutTo` head, a later `read` range) crosses the host's scrub, the masker
+  crate's, in the registry's forms (as written, JSON, percent, base64, shell). A match reads `[REDACTED:<KEY>]`,
+  naming the dotenv key, which is not secret. This covers the allowed program and every other program alike: a `docker
+  inspect` that prints the same value is scrubbed though it never opened the file. No value leaves the host for this.
+- *By the reader, for the browser's copy.* A masked file in the browser's copy of a session's files is parsed by the
+  `/files` reader, and its values become `session` entries of the registry ("A masked answer" defines the origin):
+  kept in `chrome.storage.session`, gone with the session, never in Settings, a backup or an export. They have their
+  own bound, 256 values a session, apart from the registry's 64; at the bound nothing held is dropped and the file
+  reads as hidden, with the reason.
+- *The crossing that is not in the first build.* The host's values would also catch the same secret in a web page or a
+  fetched body if they were sent to the worker's registry. That is a plaintext crossing no secret makes today. It is a
+  later slice, on the host's own machine only and never over the hub, and waits on Shane's word.
+- *The common-settings list* is enumerated in the masker crate, not a judgement: values that are a boolean or number
+  word, a bare hostname or `localhost` URL with no userinfo, a path, an environment name (`development`, `production`,
+  `staging`, `test`), a log level, a locale or a time zone. They are still masked on read; they are only kept out of
+  the scrub, where redacting `production` everywhere would damage every output.
+- *Switching it off.* A `mask` entry carries `register: false` when the person unmarks the file: its values are masked
+  on read and written back as above, and are not scrubbed from output.
+
+**Stated limits.**
+
+- A model that can change what an allowed program runs can make it print a value cut, reversed or encoded past the
+  scrub. The pin is the mitigation; unpinned, there is none.
+- A value under 8 bytes, or on the common-settings list, is masked on read and not scrubbed from output.
+- A guess that comes back redacted confirms itself. A model can print candidates and see which is replaced. The 8-byte
+  floor and the common-settings list bound it to values that are hard to guess.
+- On macOS a program that loads `.env` without naming it must be an allowed program, or its read fails.
+- A secret outside a masked file (a container's environment, an application's database) is covered only when its value
+  is also in a masked file under the call's roots, or registered.
+- A value's length is shown.
+
+**Slices, in order.** (1) The masker crate, with the grammar's vectors, native and WebAssembly. (2) The reader: `mask`
+in the `files` consumer, the masked read and the by-key write-back in the store, session registration, the default
+switched in the browser's copy. (3) The host: the `mask` entries on a spawn, the masked copy on both platforms, the
+by-key `put`, the output scrub, the default switched. (4) The scoped `show`, its card and the pin. Owners are assigned
+when the lanes' queues reach it; the red team gets this section as its target before slice 2 opens.
+
+**Rows, for whoever builds it.** Each is a test that fails first.
+
+1. The grammar, enumerated: every line shape above, a value with `=`, `#`, quotes and escapes inside, CRLF, no final
+   newline, a multi-line value, a line that does not parse (masked whole). The native and the WebAssembly masker give
+   the same bytes for each.
+2. A read through each reader (`ml.fs`, Python's mount, the content view, `@file:`, `cat` by the host on each
+   platform) shows every key and no byte of any value; the size equals `stat`.
+3. Round trip through Python `open`: read, add a line, write the whole file, close; the stored file holds every old
+   value at its old spelling and the new line. The same for modes `a` and `r+`, for `pathlib`, for `ml.fs` and for
+   `ml.sh.put`.
+4. A changed value lands; a removed key is removed; a duplicated key maps by position; `K=***` over a three-byte value
+   restores it.
+5. A fake written to another file, a renamed or symlinked path included, stays a fake, in the store and on the host.
+6. A program not allowed for the file cannot write it, on each platform; on Linux it reads the masked copy at any
+   depth; on macOS an unnamed read is refused.
+7. An allowed program reads the real value, and a value it prints reaches the model as `[REDACTED:<KEY>]` in each of
+   the registry's forms, in stdout, stderr, a head and a later range. A program that never opened the file and prints
+   the value is scrubbed the same.
+8. No message from the host to the worker carries a value of a masked file (asserted on the wire), and none from the
+   worker to the host does.
+9. The pin: a pinned file changed by a mediated write, and by a program, makes the next call ask; an `allow` policy
+   does not answer it; approval moves the pin; nothing else does.
+10. `register: false`: masked on read, not scrubbed from output.
+11. The bound: a session past 256 values reads the file as hidden with the reason, and scrubs every value it held.
+12. Upgrade: a session whose view holds `default:dotenv` as a `hide` row, and one with a person's `show` over it, read
+    by the new code, show the default as `mask` and keep the `show`.
+13. Nothing of a value, a fake's derivation input or the fake key in the run log, the export, the backup or an error's
+    text.
+
+The red team's properties are rows 5 and 8, that a page-started caller reaches none of it, and that no reader of a
+masked file exists outside the list in row 2.
