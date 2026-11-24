@@ -60,6 +60,7 @@ import { scanCode } from "./python/pkg-scan";
 import { readScan, type ScanResult } from "./python/pkg-scan-note";
 import { holdResult, takeResult } from "./python/py-held-results";
 import { shownText } from "./python/pkg-card";
+import { MARKED_AGAIN, MARKED_FIRST, postMarks } from "./python/py-mark";
 import { makeHideRule } from "./session/files-hide-rule";
 import type { HideEntry } from "./files-hide";
 
@@ -145,7 +146,11 @@ async function withStoredTables(tables: unknown): Promise<{ tables: unknown; tra
 // `bootMs`/`runMs` come from the WORKER, which is the executor — anything measured downstream of it is
 // measuring the message bus as well. See python-worker.ts.
 type PyEnv = { python: string; pyodide: string; packages: { name: string; version?: string }[] };
-type PyResult = { stopped?: "restarted"; prewarm?: "started" | "already" | "warm" | "starting"; ok: boolean; env?: PyEnv; completions?: { name: string; type: string; complete: string }[]; bench?: { id: string; vars: { name: string; type: string }[] }; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img" | "figure"; bootMs?: number; runMs?: number; nsReset?: string; dropped?: { count: number; afterCell: number }; fatal?: boolean };
+type PyResult = { stopped?: "restarted"; prewarm?: "started" | "already" | "warm" | "starting"; ok: boolean; env?: PyEnv; completions?: { name: string; type: string; complete: string }[]; bench?: { id: string; vars: { name: string; type: string }[] }; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img" | "figure"; bootMs?: number; runMs?: number; nsReset?: string; dropped?: { count: number; afterCell: number }; fatal?: boolean; notInDialect?: string;
+    /** This document's word, never the worker's: the inside try was refused by the outside mark (py-mark.ts). */
+    marked?: true;
+    /** This document's word, never the worker's: this cell's post set the outside mark. */
+    markSet?: true };
 
 // One worker per PRINCIPAL (PYODIDE_LOCKDOWN.md step 1): a worker-hosted run, a page, `full`. A principal
 // change is a new worker, never a reused one — a patch one principal left in module state must not reach
@@ -163,6 +168,11 @@ const respawned = new Set<string>();   // state: plumbing — principals awaitin
 // last cell's scope manifest (`bench.vars`, PERSISTENT_RUNTIME_SPEC.md). The live dict is the worker's; this is
 // the copy the state inspector reads (no `ml.current` path reaches it). Dropped with the run's session (`PY_DELETE_RUN`), its worker, or the idle reap; a turn's end (`PY_END_TURN`) leaves it.
 const runNsVars = new Map<string, { id: string; vars: { name: string; type: string }[] }>();   // state: python.run-namespace
+// THE OUTSIDE MARK (py-mark.ts; PYTHON_DIALECT.md, "What an inside run may leave behind is data, never code"): a worker
+// that was posted a cell outside the dialect, set BEFORE the post, here and never from anything the worker says. Every
+// later inside post to it is answered here and never sent. Keyed by the Worker object, so a fresh one (reap, kill,
+// restart) is unmarked; `told` is whether the model has been told once in this worker.
+const outsideMarks = new WeakMap<Worker, { told: boolean }>();   // state: python.outside-mark
 // Which workers hold a dict for a run: `run:<id>` for its readonly cells, and the SHARED `full` worker for its full
 // ones. A delete must reach every one of them, and a kill of one (the `full` worker included) is a loss for every run it
 // held. Recorded when a cell of the run is posted to a worker, since the worker creates the dict before the cell runs:
@@ -191,6 +201,11 @@ const endedRuns = new Set<string>();
 // `PY_END_TURN` carried it.
 let betweenTurnsMs = DEFAULT_REAP_BETWEEN_MS;   // state: plumbing — the between-turns idle reap delay, from the service worker's last word
 defineState({
+    id: "python.outside-mark", scope: "run", realm: "offscreen", audience: "human", lostOn: ["idle", "offscreen-close", "browser-restart"],
+    describe: "Whether the run's Python worker was posted a cell outside the read-only dialect, so no later cell there is tried inside it; gone with the worker.",
+    read: ({ runId }) => { const w = runId ? workers.get(`run:${runId}`)?.w : undefined; return w && outsideMarks.has(w) ? true : undefined; },
+});
+defineState({
     id: "python.ended-runs", scope: "run", realm: "offscreen", audience: "human", lostOn: ["offscreen-close", "browser-restart"],
     describe: "Whether the run's turn has ended, so a keep that arrives unstamped afterwards arms nothing (py-reap.ts); bounded to the last 256 ended runs.",
     heldOnly: true,
@@ -201,7 +216,7 @@ type WireStamp = { client: string; run: string | null };
 // `cell` names a worker-hosted run's LEASED cell (the service worker's id for it, py-lease.ts): its start is told to the
 // service worker, its cap is the detached ceiling, its output is kept in `ring` for `task tail`, and a cancel reaches it
 // by that id. `stopOnStart` is a cancel that came before the cell started, done when it does.
-const pending = new Map<number, { resolve: (r: PyResult) => void; timer: ReturnType<typeof setTimeout>; streamId?: string; armOnStart?: boolean; principal: string; wire?: WireStamp; spending?: boolean; bench?: boolean; started?: boolean; stopping?: boolean; cell?: string; detachedMaxMs?: number; ring?: string; stopOnStart?: () => void }>();   // state: plumbing
+const pending = new Map<number, { resolve: (r: PyResult) => void; timer: ReturnType<typeof setTimeout>; streamId?: string; armOnStart?: boolean; principal: string; wire?: WireStamp; spending?: boolean; bench?: boolean; started?: boolean; stopping?: boolean; cell?: string; detachedMaxMs?: number; ring?: string; stopOnStart?: () => void; markSet?: boolean }>();   // state: plumbing
 // THE `ml` WIRE (ML_WIRE.md): which worker a client handle's answers go back to. The handle is this
 // document's to stamp — the worker never sees it (LANE_1_PR2_DESIGN.md "Who stamps the handle"). An
 // `ask` first answer is NOT relayed down: the cell's `send` stays pending until the later `ML_ANSWER`
@@ -243,7 +258,7 @@ function killAfter(id: number, ms: number, error: string, reason: "timeout" | "s
         pending.delete(id);
         // Past the cell's own code: the cancel was spending a task the cell left, which would not stop (a loop inside a
         // C function is beyond the spend's bound, python-runtime.ts). Not the cell's computation, so not "simplify".
-        entry.resolve({ ok: false, stdout: "", error: entry.spending && reason === "timeout" ? SPEND_KILLED : error, ...(reason === "stopped" ? { stopped: "restarted" as const } : {}) });
+        entry.resolve({ ok: false, stdout: "", error: entry.spending && reason === "timeout" ? SPEND_KILLED : error, ...(reason === "stopped" ? { stopped: "restarted" as const } : {}), ...(entry.markSet ? { markSet: true as const } : {}) });
         killWorker(entry.principal, reason);   // nuke the (still-busy) instance + fail any others queued behind it
     }, ms);
 }
@@ -370,6 +385,13 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
     // a full worker is never locked. One Worker per principal is one REALM per principal — a second Pyodide
     // cannot boot in a realm `lockdown()` froze.
     const w = new Worker(chrome.runtime.getURL("python-worker.js"), { name: readonly ? "readonly" : "full" });
+    // EVERY post to this worker, from any module (files-host.ts too), is classified first: one whose kind runs code a cell
+    // supplied, ungated, or that the table does not know, marks the worker before it is sent (py-mark.ts WORKER_POSTS).
+    const post = w.postMessage.bind(w);
+    w.postMessage = ((msg: unknown, transfer?: Transferable[] | StructuredSerializeOptions) => {
+        if (postMarks(msg as Record<string, unknown>) && !outsideMarks.has(w)) outsideMarks.set(w, { told: false });
+        post(msg, transfer as Transferable[]);
+    }) as Worker["postMessage"];
     // The interrupt buffer goes first, before any run is posted, so the worker holds it when the runtime boots.
     const flag = typeof SharedArrayBuffer === "function" ? new Int32Array(new SharedArrayBuffer(4)) : undefined;
     if (flag) w.postMessage({ interruptBuffer: flag });
@@ -446,6 +468,10 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
         }
         const { id, ...result } = e.data as { id: number } & PyResult;
         const entry = pending.get(id);
+        // The mark's two fields are this document's alone: whatever the worker sent under those names is dropped.
+        delete result.marked;
+        delete result.markSet;
+        if (entry?.markSet) result.markSet = true;
         // THE KERNEL'S DEATH (ruling 26): the worker says its interpreter fatally failed. The cell is answered with that,
         // and the worker is ended, so the run's next cell starts a fresh one and opens with the loss line. An install's
         // candidate is not the run's interpreter: it keeps the cause alone (bounded), which installTest reports as a died candidate.
@@ -632,6 +658,15 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
     const ended = candidateEnds.get(principal);
     if (ended) return Promise.resolve({ ok: false, stdout: "", error: `Python worker stopped (${ended}).` });
     const w = ensureWorker(principal, hardened);
+    // A MARKED worker gets no inside try of any kind (the readiness probe and an inside run's libraries included): the
+    // refusal is answered here, the worker never sees the post, and the service worker asks as for any outside cell.
+    const mark = outsideMarks.get(w);
+    if (inside && mark) {
+        const first = !mark.told;
+        mark.told = true;
+        return Promise.resolve({ ok: false, stdout: "", notInDialect: first ? MARKED_FIRST : MARKED_AGAIN, marked: true });
+    }
+    const wasMarked = mark !== undefined;
     const id = nextId++;
     return new Promise((resolve) => {
         // A COMPLETION NEVER ARMS THE WATCHDOG. The timer starts when a message is POSTED, not when it runs,
@@ -667,6 +702,9 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
             ...(libraries?.library ? { library: libraries.library } : {}),
             // A run's installs (python_install): the ones this worker lacks, with their bytes (`wheelsForCell`).
             ...(wheels.length ? { wheels } : {}) }, [...transfer, ...wheels.map((x) => x.bytes)]);
+        // Whether THIS post set the mark: the service worker writes the run log's record of it from the result. Only a
+        // run's own worker is told: no other principal has a run log.
+        if (!wasMarked && outsideMarks.has(w) && principal.startsWith("run:")) pending.get(id)!.markSet = true;
     });
 }
 

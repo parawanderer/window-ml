@@ -2044,6 +2044,50 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     admitted. small-fixes builds it as its own PR from main after its ruling 108 PR and its stack-overflow PR;
     redteam-e3 writes rows, flaky-ci reviews. Merged since: #2126 (ruling 108) at 069e48c0. Open: #2127, small-fixes'
     charge for a DOM collection's copy, at 4b6e4af1, flaky-ci reviewing.
+  - **Ruling 110, 2026-11-23 (Shane: "Sure move it up. I am surprised it wasn't done first"): the `tables` removal
+    moves to the front of the packages lane's queue.** Rulings 79 and 87 removed `tables` (ML_TABLE.md, "`tables` is
+    removed"), and ruling 54's build order tied the removal to the Python `ml.table` member, behind the JS member and
+    the fork work; main still offers the argument. Bench's baseline (its account; qwen3.8-flash-next:vision, build
+    9be83ae0, 114 runs, 97 correct, the model told "stateless, no filesystem", which is the description defect) is
+    what priced that order: of 371 `python_exec` cells, 145 were refused on `tables` before any code ran, 128 of them
+    an `@file:` pointer refused as "not a valid CSS selector"; of the 226 that ran, 9 were class A; the largest bin of
+    outside cells in the files stratum is `os`, `pathlib` and `glob` (54), then a reader (39) and `try` (17); the
+    forms stratum holds two cells with a `while`, both outside for another reason first, so it measures ingest and not
+    loops (bench proposes a change to its tasks; none is made before Shane sees it). The order now: packages'
+    `read_csv` of a `/files/` path (#2131, open at e24bbd2e: charged at 2 bytes a step before the parse, so an input
+    past about 30 MB asks), then one PR with the removal and the Python member, then the cost-charge PR. The
+    coordinator's calls on that PR: it is not split, since removal alone leaves a page table, `current`, a Sheet and
+    an `@tool:` pointer with no route into Python; it carries the synchronous path and inside admission for `table`
+    only, and the other members follow; admission skips the card for the cell, and each source is still judged by its
+    receiver; the member is charged before it runs (ruling 105), its cost function stated in ML_TABLE.md; the `@file:`
+    resolver (ruling 107) goes on the JS and Python members together. e4 red-teams it, janitor-3 reviews. Also open,
+    each verified at the head named: session-store's #2129 at 81274427 (a run the worker drives reads `python_exec` as
+    the worker-hosted tool; a page-built run handed to the worker reads it from its next turn), flaky-ci reviewing;
+    async's #2130 at 8ab7d9cb (a run is offered `ml.sh` only when a process host answers its hello within 3 s at the
+    run's start, fixed for the run), janitor-2 reviewing. The sentence #2121 will tell the model, accepted on a row
+    for each half: attached files are under `/files/attached/`, read-only, and the working directory `/files/agent/`
+    is writable. `os.listdir` is not inside the dialect, so the cell that lists them asks and sets the outside mark
+    until the `os` subset is ruled.
+
+  - **Rulings 111 and 112, 2026-11-24 (Shane, in the coordinator's session).** 111: cells are classified, for our
+    reference and never shown to the model, in two halves: what a cell did is recorded when it runs and exported; what
+    a cell is for is computed offline from its source by one syntactic, multi-label classifier shared by both
+    languages (docs/spec/CELL_FACTS.md; the async lane builds the first, the bench lane the second). 112: reads and
+    scans in `os`, `os.path`, `glob` and `pathlib` run unasked, and so do `os.chdir` and writes to `os.environ` ("I
+    don't think we should ban os.chdir when we allow ml.sh.cd()"; "The issue is being an approval monkey"); a hidden
+    file's name stays listed. Shane also agreed that the async and move-run lanes take topic items when their queues
+    run dry, and move-run builds the `os` subset. The coordinator's calls on its charge under rulings 105 and 106: a
+    listing in the `/files` mount is charged a full page before each page request, because a directory there has no
+    cap on its entries (the fork's charge takes no credit, so a short directory is overcharged; move-run reports the
+    effect); a listing in the fixed Pyodide tree (largest directory 147 entries, move-run's measurement) may be
+    charged after the call; a recursive walk goes one directory per step. Packages' resume: the coordinator's message
+    to it was refused twice by the coordinator's own permission check and was not retried, so packages resumes on
+    Shane's word in its own session. A secrets design is under discussion with Shane and not ruled: a state between
+    hidden and shown for dotenv files (name listed, keys readable, each value a per-key placeholder, typed writes
+    only), a program the person allowed reading the real values with its output scrubbed, values registered from the
+    file as a convenience the person can switch off, and a hash pin on a policy; an audit of the secrets docs found
+    them scattered over about fifteen files with nineteen contradictions, to be consolidated before that design is
+    written.
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like

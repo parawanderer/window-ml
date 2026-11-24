@@ -195,7 +195,8 @@ export interface AskWhy {
     /** Why it asks, as a slug: why the policy is gone (`archived`, `removed`, `narrowed`), `outside-dialect`, `ask-policy`
      *  (an `ask` policy matched, and the card offers no "remember"), `nav-only` (a read of an origin a policy lets the run go
      *  to, not read), `start-left` (a read of the start origin once the tab has left it), or `reveals` (a call whose program shows other
-     *  processes and is not in `shellRevealsAllow`, and would otherwise run unasked). */
+     *  processes and is not in `shellRevealsAllow`, and would otherwise run unasked), or `sandbox-marked` (a python_exec
+     *  cell not tried inside the dialect because an earlier cell ran outside it in the same worker). */
     cause: string;
     /** The gone policy's label, or for `ask-policy` the policy that asks; absent when no policy is involved. */
     policy?: string;
