@@ -36,13 +36,13 @@ differs by platform. A call run `host-plain` is bound by nothing.
 
 | File | `/files` reader | `ml.sh` program, macOS (Seatbelt) | `ml.sh` program, Linux (bubblewrap, Landlock) |
 | --- | --- | --- | --- |
-| `.env`, `.env.*` (not the templates `.env.example`, `.env.sample`, `.env.template`) | name listed with `hidden: true`; a read is refused in words naming it as hidden; built (#2088) | name listed; read EPERM and write denied, at any depth | name listed; read EACCES and write EROFS at each root's TOP only; `root/app/.env` is READABLE (the stated gap) |
+| `.env`, `.env.*` (not the templates `.env.example`, `.env.sample`, `.env.template`) | name listed with `hidden: true`; a read is refused in words naming it as hidden; built (#2088) | name listed; read EPERM and write denied, at any depth | name listed; read EACCES and write EROFS at each root's TOP only, and `$HOME/.env`; `root/app/.env` is READABLE (the stated gap) |
 | `.netrc`, `.git-credentials`, `.pgpass` | held at a root's top, as above | unreadable at any depth | held at each root's top and under `$HOME`; deeper, readable |
 | Credential directories (`.ssh`, `.gnupg`, `.aws`, `.azure`, `.kube`, `.docker`, `.password-store`, Keychains, `.config/gh`, `.config/gcloud`) | not a default of the browser copy | unreadable at any depth | masked under `$HOME` only |
 | `*.pem`, `id_*` and other secret-looking names inside a root | readable | READABLE; `rg pattern .` reads `root/key.pem` | the same |
 | A path a `hide` policy matches | held like a dotenv file; built (#2088) | not applied: a `spawn` carries no entry until window-ml-host#58 and its extension half | the same; then resolved when the call starts, so a file made later is readable to that call |
 | A path a `show` policy matches | released, readable and writable | not applied, as above | the same |
-| A held path NAMED in a call's marked path argument | not applicable | the call asks; approved, that path's READ is re-allowed for that call | the same |
+| A held path NAMED in a call's marked path argument | not applicable | the call asks; approved, that path's READ is re-allowed for that call, and nothing else | the call asks; approved, the path is readable. Two DEFECTS at host 0.10.0 (the files-host lane's reading of `src/sandbox.rs`, 2026-11-24; the second checked by the coordinator): a named file at a root's top is also WRITABLE, and a named file under a credential directory unmasks the WHOLE directory for that call (`~/.ssh/id_ed25519.pub` named, the private key readable). A host repair is owed |
 
 - **A hidden file's NAME is listed everywhere, and its content nowhere.** That is Shane's position (2026-11-24): the
   model should know a `.env` exists. No reader leaves the name out.
