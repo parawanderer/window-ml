@@ -747,7 +747,7 @@ export function CodeDiff({ revision, after, lang, hash, failed, view: initial, s
                 ? <Dialog onClose={() => setMaxed(false)} labelledBy={`rev-max-${revision.ref}`}>
                     <div class="r-max">
                         <div class="r-max-head">
-                            <h2 id={`rev-max-${revision.ref}`}>Revises {revision.label ? `${revision.tool}: ${revision.label}` : revision.ref} · {mshown}</h2>
+                            <h2 class="r-max-title" id={`rev-max-${revision.ref}`}>Revises {revision.label ? `${revision.tool}: ${revision.label}` : revision.ref} · {mshown}</h2>
                             <span class="r-diff-tools">
                                 {rows ? <RevisionSwitch views={viewsFor(false)} picked={picked} narrow={false} onPick={setPicked} /> : null}
                                 <button type="button" class="icon-btn" aria-label="Close" onClick={() => setMaxed(false)} {...cursorTipOn("Close (Esc).")}><IconClose /></button>

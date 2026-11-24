@@ -18,7 +18,7 @@
 // nearest ancestor that makes a containing block (a transform, a filter, `contain`, `content-visibility`, `will-change`)
 // and clipped by one that clips: mounted inside a transcript block, a card could be offset and cut off by whatever the
 // block sat under, and each such ancestor was a bug for every dialog opened below it. So the card renders into a host
-// appended to the ROOT the caller is in (the document's body, or the shadow root the panel draws in), where nothing can
+// appended to the ROOT the caller is in (the chat page's `.chat`, which carries its theme, else the document's body, or the shadow root the panel draws in), where nothing can
 // sit between it and the viewport. The portal is Preact's own `render` into that host, not `preact/compat`'s
 // `createPortal`, for the reason `panel-head.tsx` gives; context does not cross it, and no dialog's content uses any.
 
@@ -44,7 +44,9 @@ export function Dialog(props: DialogProps) {
         if (!at) return;
         if (!host.current) {
             const root = at.getRootNode();
-            const into = root instanceof ShadowRoot ? root : (at.ownerDocument.body ?? at.parentNode!);
+            // The chat page scopes its look (`--fs`, the calm sizes) to `.chat`, so the host goes inside that when there is one:
+            // out of the prose and the transcript, but not out of the theme.
+            const into = root instanceof ShadowRoot ? root : (at.closest(".chat") ?? at.ownerDocument.body ?? at.parentNode!);
             const div = at.ownerDocument.createElement("div");
             div.style.display = "contents";
             into.appendChild(div);

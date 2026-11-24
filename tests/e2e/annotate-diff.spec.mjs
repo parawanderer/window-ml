@@ -47,7 +47,7 @@ const notesFor = (numbered, pairs) => ({
     }).filter(Boolean),
 });
 
-const setup = async () => {
+const setup = async ({ chatPage = false } = {}) => {
     const fake = await startFakeLlm({ model: "fake-model" });
     let asked = 0;
     fake.setSide((body) => {
@@ -88,7 +88,16 @@ const setup = async () => {
             approvalRouting: "both", extraTools: [window.ml.pythonTool()], toolTokens: true,
         });
     });
-    const frame = await openRunInSidebar(page, { task: "total the quarters" });
+    // The sidebar's frame, or (chatPage) the chat page in its default CALM view, where the run is a row to open.
+    let frame;
+    if (chatPage) {
+        frame = await ext.context.newPage();
+        await frame.setViewportSize({ width: 1200, height: 950 });
+        await frame.goto(`chrome-extension://${ext.extensionId}/chat.html`);
+        await frame.locator(".chat").waitFor();
+        await frame.bringToFront();
+        await frame.locator(".chat-row", { hasText: "total the quarters" }).click();
+    } else frame = await openRunInSidebar(page, { task: "total the quarters" });
     // APPROVAL IS NOT A LOOP WITH A BUDGET. The old `for (i < 60) { approve; if finished break; sleep(400) }`
     // stopped resolving gates when its 24s ran out, and a gate that opened after that stayed open forever: the
     // run never finished and every later `.r-diff` wait was waiting on a diff that would never be drawn. On
@@ -401,5 +410,43 @@ test("the maximised revises view fits the panel, starts at its title, and its ti
         await frame.locator(".r-max-head .r-diff-segbtn", { hasText: "code" }).click();
         await expect(frame.locator(".r-max-head .r-diff-segbtn.on")).toHaveText("code");
         await expect(step.locator(".r-diff-segbtn.on")).toHaveText("code");
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// THE SAME IN THE CALM CHAT PAGE, where the tool block sits inside the prose (`.md`): `.chat.calm .md h2` gives every heading under
+// it a 1.1em top margin, and a popout mounted there put that above its title. The card must keep its own look wherever it is drawn.
+test("calm chat: the maximised revises view's title is flush at the card's top and the card keeps the page's look", async () => {
+    test.setTimeout(120_000);
+    const { fake, ext, frame } = await setup({ chatPage: true });
+    try {
+        await expect(frame.locator("html[data-calm]")).toHaveCount(1);
+        const step = frame.locator(".astep").nth(1);
+        if (!(await step.locator(".r-py-in").count())) await step.locator(".astep-head").click();
+        await expect(step.locator(".r-diff-max")).toBeVisible({ timeout: 30000 });
+        const look = (sel) => frame.locator(sel).first().evaluate((el) => { const c = getComputedStyle(el); return { panel: c.getPropertyValue("--panel").trim(), font: c.fontFamily, size: c.fontSize, bg: c.backgroundColor }; });
+        // A tool block in calm can sit inside the prose, where `.chat.calm .md h2` gives a heading 1.1em above it: make this one's
+        // ancestor prose, in place (a class the render does not rewrite), so a card mounted there would inherit it.
+        await step.evaluate((el) => el.classList.add("md"));
+        await step.locator(".r-diff-max").click();
+        const card = frame.locator(".chat-dialog:has(.r-max)");
+        await expect(card).toBeVisible();
+        const m = await frame.locator("body").evaluate(() => {
+            const card = document.querySelector(".chat-dialog:has(.r-max)"), h2 = card.querySelector(".r-max-head h2");
+            const cs = getComputedStyle(card), hs = getComputedStyle(h2);
+            const c = card.getBoundingClientRect(), h = h2.getBoundingClientRect();
+            return { marginTop: hs.marginTop, titleTop: Math.round(h.top - c.top), card: [c.left, c.top, c.right, c.bottom].map(Math.round), vw: innerWidth, vh: innerHeight,
+                     inProse: !!card.closest(".md"), panel: cs.getPropertyValue("--panel").trim(), font: cs.fontFamily, size: cs.fontSize, bg: cs.backgroundColor };
+        });
+        console.log("CALM", JSON.stringify(m), JSON.stringify(await look(".chat-transcript")));
+        await frame.screenshot({ path: process.env.MAX_SHOT || "test-results/maximised-calm.png" });
+        expect(m.inProse, "the card is not inside the prose").toBe(false);
+        expect(m.marginTop).toBe("0px");
+        expect(m.titleTop).toBeLessThanOrEqual(20);
+        expect(m.card[0]).toBeGreaterThanOrEqual(0);
+        expect(m.card[2]).toBeLessThanOrEqual(m.vw);
+        const page = await look(".chat-transcript");
+        expect(m.panel, "the card keeps the page's --panel").toBe(page.panel);
+        expect(m.font, "the card keeps the page's font").toBe(page.font);
+        expect(m.size, "the card keeps the calm page's text size").toBe(page.size);
     } finally { await ext.context.close(); await fake.stop(); }
 });
