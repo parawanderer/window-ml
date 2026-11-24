@@ -1187,7 +1187,9 @@ dotenv files. The six points, as confirmed:
 
 The rest of this section is the coordinator's calls under the ruling, each surfaced to Shane. Nothing here is built.
 It builds on rulings 100 and 101 (the section above), which already rule the fake and the write-back for a REGISTERED
-value; this section extends both to a value nobody registered, by reading the file's own grammar.
+value; this section extends both to a value nobody registered, by reading the file's own grammar. AMENDED 2026-11-24
+after the files-host lane read it against window-ml-host main (9f99501) and window-ml-host#58: sixteen sentences about
+the host were wrong or incomplete, and the host paragraphs below are the corrected ones.
 
 **What it is for.** The person's project has a `.env`. The model should know it is there, read which keys it has, add
 a key that is no secret, and start the person's web server, which loads the real values. The model should never read a
@@ -1201,7 +1203,7 @@ limits stated at the end.
 | State | Name listed | The model's own read | A mediated write | A program not allowed for it | A program allowed for it |
 | --- | --- | --- | --- | --- | --- |
 | shown | yes | the bytes, registered values scrubbed | lands | reads and writes | the same |
-| masked | yes | keys as written, each value replaced | lands, real values put back | reads the masked copy or is refused; never writes | reads and writes the real file |
+| masked | yes | keys as written, each value replaced | lands, real values put back | reads the masked copy or is refused; never writes | reads the real file, and writes it in place |
 | hidden | yes | refused | refused | refused | not offered: a `show` or a `mask` is the way |
 
 **The entry.** `mask <pattern>` is a third effect of the `files` consumer, beside `hide` and `show`
@@ -1235,38 +1237,82 @@ which is `hide` with the line count showing.
   `@file:` reference, and a described tool run by the host.
 
 **The write-back, by key.** A mediated write is the one of rulings 100 and 101: an `ml.fs` write member, a Python
-file's close, and the host's `put`, `write` and `commit` (so `stdoutTo`). For a masked file the splice is by KEY, not
-by occurrence of a form. The new content is read with the grammar. For the k-th line of a key `K`, if the value's
-bytes equal what a read shows for the k-th `K` of the current file (its fake, or its `*` run), the current value's raw
-bytes take their place. Any other value lands as written: that is the model setting a key, which the write's own
-policy judged. A key not in the new content is removed; a new key lands. A k past the file's last `K` takes the first
-`K`'s value, the default of ruling 100's open point. Bytes are restored only into the file they came from, resolved by
-the holder: a fake written to any other path stays a fake, so a copy of a masked file made from a read is a file of
-fakes. The holder does it: the offscreen document's store inside its commit, and the host inside its `put`, which
-reads the file itself, so no value crosses to the worker for a write. The host is sent the session's fake key with the
-call (it is not the person's secret) and declares `mask` in `hello`. A write of `K=***` meant literally, over a
-three-byte value, restores the value instead: a stated limit.
+file's close, and the host's `put`, `write` and `commit`. For a masked file the splice is by KEY, not by occurrence of
+a form. The new content is read with the grammar. For the k-th line of a key `K`, the current file's k-th value of `K`
+is restored when the written value is a well-formed fake of `K` at the written value's own length, or a run of 1 to 7
+`*`. The test is on the written value alone, never "equal to what a read shows now": the person may have changed the
+value, and its length, between the model's read and its write, and a stale fake must still restore the person's new
+value instead of landing over it. `K` is in the derivation, so a fake moved to another key lands as a fake. Any other
+value lands as written: that is the model setting a key, which the write's own policy judged. A key not in the new
+content is removed; a new key lands. A k past the file's last `K` takes the first `K`'s value, the default of ruling
+100's open point. Bytes are restored only into the file they came from, resolved by the holder: a fake written to any
+other path stays a fake, so a copy of a masked file made from a read is a file of fakes. A write of `K=***` meant
+literally restores the value instead: a stated limit.
+
+- *The offscreen document as holder* splices inside the store's commit, as under rulings 100 and 101.
+- *The host as holder* splices at `commit`, not at `put`: `put` only resolves the target and holds the parent
+  directory, and the bytes arrive in `write` chunks. At `commit` the host reads the current file through the held
+  parent descriptor (no symlink followed), splices, and renames the result over it. A read at `put` would race the
+  person's own edit. No value crosses to the worker.
+- *The protocol change.* Today `put` refuses a dotenv target outright (`Protected`, with no verdict that allows it). A
+  by-key write says so (`mask: true` on the `put`), and the host accepts the flag only when a `mask` entry of that
+  `put` decides the target; without the flag a dotenv target stays refused. The host declares `mask` in `hello`.
+- *What the commit keeps.* The by-key commit keeps the target's mode, and its owner where it can; a plain commit's
+  mode (0666 less the umask) would turn a 0600 `.env` world-readable. Extended attributes and ACLs are copied where
+  the platform allows. A hard link to the file is broken by the rename, as for any commit. `commit`'s `size` and
+  `sha256` describe the bytes that LANDED, which differ from the bytes sent; the worker does not compare them with
+  what it sent.
+- *Overwriting asks as any overwrite does.* A by-key write is to an existing file, so it carries `replace: true`,
+  which the worker sends after the person approved the overwrite or a policy allowed it. A masked file gets no freedom
+  here that another file under the root lacks, and no extra gate. (For Shane to override: a session that edits `.env`
+  often wants an `allow` for that write.)
+- *The fake key.* The session's fake key goes to the host on a `put` (for the write-back) and on a `spawn` (for the
+  masked copy). It is no secret of the person's: a fake has no value as input, and a restore is bound to the file and
+  the key's name. Over the hub a `put` is refused (reason `scope`), so there is no by-key write over the hub; a
+  relayed `spawn` carries the key sealed. So the fake key does reach a host on both transports.
+- *`stdoutTo` is not a mediated write.* It is not built. When it is, the host redirects the program's output to the
+  file itself, nothing crosses `put`, and a masked target is refused.
 
 **What a program reads.**
 
 | Program | macOS (Seatbelt) | Linux (bubblewrap) |
 | --- | --- | --- |
-| A described call that NAMES the file in a path argument (`cat .env`, `grep KEY .env`) | the host writes the masked copy to a private directory and rewrites the argument to it | the masked copy is bound read-only over the path |
-| A program that walks to the file or loads it without naming it | read refused (EPERM), as a hidden file is today: Seatbelt cannot substitute bytes | reads the masked copy, bound when the call starts |
-| Any write by a program not allowed for the file | denied | EROFS |
-| A program allowed for the file | reads and writes the real file | the same |
+| A described call that NAMES the file in an operand its manifest marks as a path (`cat .env`, `grep KEY .env`) | the host writes the masked copy to a private directory, under a name the dotenv denies do not match, and rewrites the operand to it | the masked copy is bound read-only over the path |
+| A call with no manifest, a path inside a flag the manifest does not split (`--env-file=.env`), or a program that walks to the file | read refused (EPERM), as a hidden file is today: Seatbelt cannot substitute bytes | reads the masked copy, bound when the call starts |
+| Any write by a program not allowed for the file | denied | fails (EROFS; EBUSY for a rename over it or a remove, since the path is a mount point) |
+| A program allowed for the file | reads the real file and writes it IN PLACE | the same |
 
-The masked copy is made when the call starts and removed when it ends. On Linux a `mask` entry, the default included,
-is walked to every depth when the call starts, which closes the gap where `root/app/.env` is readable; the walk's cost
-on a large tree, and its bound (the hide list's, past which the spawn fails naming the entry), are measured by the
-files-host lane before the default is switched. A file made after the call starts, or renamed over the path, is not
-covered for that call (the hide list's stated limit). `host-plain` is bound by nothing, as today.
+The masked copy is made when the call starts and removed when it ends.
+
+- *The rewritten operand shows.* On macOS `grep KEY .env other` prints the copy's path as the file's name, and a
+  program that branches on the basename sees another name. Stated, not repaired.
+- *An allowed program's writes.* The default holds deny writes too (Seatbelt's `file-write*` on the dotenv names; on
+  Linux a read-only bind, and Landlock). An allowed program's call is exempted from them for the files its entry
+  names, for a write in place. A writer that makes a temporary file and renames it over the original fails at a root's
+  top under `write: "roots"`, where names directly under a root cannot be created, removed or renamed. That is a
+  stated limit of this version.
+- *Finding the files: one walk per root.* `default:dotenv` as a `mask` needs a pattern kind the hide list lacks, a
+  BASENAME at any depth under a root (a hide pattern is absolute, with a fixed number of segments and no `**`). The
+  host walks each root once per call for all such entries together, not once per entry, without following symlinks.
+  Both platforms walk: Linux to bind the copies, and both to read the values the scrub holds. The found set is cached
+  per directory, keyed by the directory's modification time, so an unchanged directory costs one `stat`; that keeps
+  the second walk at `start` (window-ml-host#58) cheap. No directory is skipped by name: a `node_modules` or `.git`
+  left out would be where a planted `.env` goes.
+- *The walk's bound is entries, not matches.* The cap is 1,000,000 directory entries a root for this walk (the hide
+  list's is 100,000 an entry, which a `node_modules` passes). The files-host lane's measurement, warm, macOS, in
+  Python: 24,186 entries in 30 ms; 1,927,407 entries (a folder of every clone) in 12.7 s, about 0.65 s per 100,000.
+  Past the cap, on Linux the spawn fails naming the root and the count, since nothing else holds the files; on macOS
+  the call runs with every masked file treated as hidden for that call (the name denies need no walk), no allowed-
+  program entry honoured, and the scrub holding what the walk found, and the run log records it. The remedy on both is
+  a narrower root. The 256-match bound stays as the hide list's.
+- *A file made after the call starts*, or renamed over the path, is not covered for that call (the hide list's stated
+  limit). `host-plain` is bound by nothing, as today.
 
 **An allowed program.** The entry is a `show` scoped to a call: `show <pattern> for <program>`, where `<program>` is
 the resolved executable and, when the person pins it, a list of files with their SHA-256 (the script, a lock file,
 whatever the card listed). The model proposes it on a card that says "let `<program>` read the real `<file>`", or the
-person writes it. With it, a call of that program gets the real file, readable and writable, and does not ask on its
-account. Nothing else changes for the call: its own policy still judges whether it runs.
+person writes it. With it, a call of that program reads the real file and may write it in place, and does not ask on
+its account. Nothing else changes for the call: its own policy still judges whether it runs.
 
 - *The pin.* The host hashes each pinned file when the call starts. A mismatch makes the call ASK, on a card that
   names the file that changed since the person allowed it and offers "allow and update the pin". No `allow` policy
@@ -1277,12 +1323,32 @@ account. Nothing else changes for the call: its own policy still judges whether 
 
 **The scrub of what a program prints.**
 
-- *By the host, for every call.* When a call starts, the host reads the session's masked files under the call's roots
-  and holds their values of 8 or more bytes, but for the common-settings list, in memory for that call. Every byte the
-  call sends back (stdout, stderr, a `stdoutTo` head, a later `read` range) crosses the host's scrub, the masker
-  crate's, in the registry's forms (as written, JSON, percent, base64, shell). A match reads `[REDACTED:<KEY>]`,
-  naming the dotenv key, which is not secret. This covers the allowed program and every other program alike: a `docker
-  inspect` that prints the same value is scrubbed though it never opened the file. No value leaves the host for this.
+- *By the host, for every call.* When a call starts, the host holds the values of the masked files its walk found
+  under the call's roots, those of 8 or more bytes but for the common-settings list, in memory for that call. The
+  call's output is scrubbed as it is WRITTEN to the host's store, by the masker crate, in the registry's forms (as
+  written, JSON, percent, base64, shell). A match reads `[REDACTED:<KEY>]`, naming the dotenv key, which is not
+  secret. This covers the allowed program and every other program alike: a `docker inspect` that prints the same value
+  is scrubbed though it never opened the file. No value leaves the host for this.
+- *Every channel, by enumeration:* stdout, stderr, each pipe stage's stderr, a head, a later `read` range, `peek`, and
+  the `diff` body. The `diff` shows a changed file's content before and after, so it also WITHHOLDS every path a
+  `mask` decides, as it withholds a secret-looking name today, and the blob rule that catches `cp .env notes.txt`
+  extends to masked paths. A value an allowed program writes during the call (a rotated key) was not held at the start
+  and is not scrubbed from that call's output: a stated limit, which the withheld `diff` narrows.
+- *At write time, with a holdback.* The scrub keeps back the longest form's length less one byte, so a value split
+  across two chunks is caught. A scrub at `read` time would miss a value cut by a range's edge, and two overlapping
+  ranges would disagree. What follows: `done`'s `size` and `sha256` describe the scrubbed stream and `read` offsets
+  index it; `outputCap` counts raw bytes, the kept part is scrubbed, and a partial match at the cut is dropped, never
+  shown; `peek` trails the program by up to the holdback.
+- *What it costs* (the files-host lane's measurement, 2026-11-24: aho-corasick 1.1.5, one thread, an Apple M5 Pro, 256
+  MiB inputs, a value straddling every chunk boundary caught, chunked output identical to one pass). With 256 values
+  (1,088 patterns, the longest 158 bytes) an explicit DFA scrubs about 700 MiB/s with no match and about 280 MiB/s
+  with a match every 4 KiB; its heap is 39 MiB and it builds in 32 ms. Only kept bytes are scrubbed, so the worst case
+  at the default 64 MiB `outputCap` is about 0.23 s of one core. The automaton is built once a call, as a DFA by name:
+  the library's automatic choice falls to an NFA past about 100 patterns, three to four times slower. `peek`'s lag is
+  the holdback, up to about 360 bytes for a 120-byte value whose percent form is long. The holdback is flushed only at
+  the end of the stream, never on a timer, since a timed flush on a stalled stream lets a split value through.
+- *The values in the host's memory* are kept out of a core dump (`RLIMIT_CORE` 0 or `MADV_DONTDUMP`) and zeroed at
+  `done`.
 - *By the reader, for the browser's copy.* A masked file in the browser's copy of a session's files is parsed by the
   `/files` reader, and its values become `session` entries of the registry ("A masked answer" defines the origin):
   kept in `chrome.storage.session`, gone with the session, never in Settings, a backup or an export. They have their
@@ -1305,16 +1371,20 @@ account. Nothing else changes for the call: its own policy still judges whether 
 - A value under 8 bytes, or on the common-settings list, is masked on read and not scrubbed from output.
 - A guess that comes back redacted confirms itself. A model can print candidates and see which is replaced. The 8-byte
   floor and the common-settings list bound it to values that are hard to guess.
-- On macOS a program that loads `.env` without naming it must be an allowed program, or its read fails.
+- On macOS a program that loads `.env` without naming it in a marked path operand must be an allowed program, or its
+  read fails.
+- A hard link to a masked file under another name reads the real values (the red team's shape D on window-ml-host#59),
+  as before this ruling.
 - A secret outside a masked file (a container's environment, an application's database) is covered only when its value
   is also in a masked file under the call's roots, or registered.
 - A value's length is shown.
 
-**Slices, in order.** (1) The masker crate, with the grammar's vectors, native and WebAssembly. (2) The reader: `mask`
-in the `files` consumer, the masked read and the by-key write-back in the store, session registration, the default
-switched in the browser's copy. (3) The host: the `mask` entries on a spawn, the masked copy on both platforms, the
-by-key `put`, the output scrub, the default switched. (4) The scoped `show`, its card and the pin. Owners are assigned
-when the lanes' queues reach it; the red team gets this section as its target before slice 2 opens.
+**Slices, in order.** (1) The masker crate, with the grammar's vectors, native and WebAssembly (the files-host lane,
+on window-ml-host#57's pattern). (2) The reader: `mask` in the `files` consumer, the masked read and the by-key
+write-back in the store, session registration, the default switched in the browser's copy (the session-store lane's
+reader). (3) The host: the basename pattern kind and the one walk, the masked copy on both platforms, `mask: true` on
+`put` and the splice at `commit`, the output scrub, the default switched (the files-host lane). (4) The scoped `show`,
+its card and the pin. None is scheduled; the red team gets this section as its target before slice 2 opens.
 
 **Rows, for whoever builds it.** Each is a test that fails first.
 
@@ -1327,10 +1397,12 @@ when the lanes' queues reach it; the red team gets this section as its target be
    value at its old spelling and the new line. The same for modes `a` and `r+`, for `pathlib`, for `ml.fs` and for
    `ml.sh.put`.
 4. A changed value lands; a removed key is removed; a duplicated key maps by position; `K=***` over a three-byte value
-   restores it.
+   restores it; a fake read BEFORE the person changed the value's length restores the new value; a fake of `K` written
+   under another key lands as a fake.
 5. A fake written to another file, a renamed or symlinked path included, stays a fake, in the store and on the host.
-6. A program not allowed for the file cannot write it, on each platform; on Linux it reads the masked copy at any
-   depth; on macOS an unnamed read is refused.
+6. A program not allowed for the file cannot write, truncate, append to, rename over or remove it, on each platform;
+   on Linux it reads the masked copy at any depth; on macOS a read by a call with no manifest, by a path inside an
+   unsplit flag, and by a walk is refused.
 7. An allowed program reads the real value, and a value it prints reaches the model as `[REDACTED:<KEY>]` in each of
    the registry's forms, in stdout, stderr, a head and a later range. A program that never opened the file and prints
    the value is scrubbed the same.
@@ -1344,6 +1416,17 @@ when the lanes' queues reach it; the red team gets this section as its target be
     by the new code, show the default as `mask` and keep the `show`.
 13. Nothing of a value, a fake's derivation input or the fake key in the run log, the export, the backup or an error's
     text.
+
+14. The host's `put`: without `mask: true` a dotenv target is refused as today; with it and no `mask` entry deciding
+    the target, refused; a 0600 file is 0600 after a by-key commit; the file changed between `put` and `commit` is
+    spliced against its content at `commit`.
+15. The scrub's channels, one row each: stdout, stderr, a pipe stage's stderr, a head, a `read` range, `peek`, the
+    `diff` body (a masked path withheld). A value split across two chunks at every offset is scrubbed; `outputCap`
+    cutting a value shows no part of it; two overlapping `read` ranges agree.
+16. The walk: a root past the cap fails the spawn on Linux naming it, and on macOS runs with the files hidden and the
+    record written; a `.env` under `node_modules` and under `.git` is found; an unchanged tree's second walk reads no
+    directory.
+17. The held values are absent from a core dump of the host taken during a call.
 
 The red team's properties are rows 5 and 8, that a page-started caller reaches none of it, and that no reader of a
 masked file exists outside the list in row 2.
