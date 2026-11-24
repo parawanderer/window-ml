@@ -143,7 +143,7 @@ test("a broken ask asks the same way, and the model reads the sentence in the re
     await untilCalls(b, 2);
     assert.equal(b.cards[0]?.askWhy?.cause, "broken-policy");
     assert.equal(b.fetched(), 1, "approved once: it ran");
-    assert.match(b.results().join("\n"), /the policy "ask on other\.example", which asks about calls like it, does not run \(it reads a field the call does not have \('urll'\)\), so it could not be checked/);
+    assert.match(b.results().join("\n"), /Asked the person because the policy "ask on other\.example" is broken \(it reads a field the call does not have \('urll'\)\) and could not be checked\. Nothing is wrong with the call\./);
 });
 
 // --- an exec's "Keep" would remember an allow the ask overrides ---

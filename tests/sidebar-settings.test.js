@@ -1044,7 +1044,7 @@ test("policy page: Add sends op add with the effect, label and source typed", as
 
 const BROKEN_WHY = {
     line: 'Asking because the policy "label a" is broken: it reads a field the call does not have (\'hostt\'). It may have been meant to refuse calls like this. Edit it to fix it.',
-    detail: 'This call needed approval because the policy "label a", which refuses calls like it, does not run (it reads a field the call does not have (\'hostt\')), so it could not be checked; the call itself did not change.',
+    detail: 'Asked the person because the policy "label a" is broken (it reads a field the call does not have (\'hostt\')) and could not be checked. Nothing is wrong with the call.',
     cause: "broken-policy", policy: "label a", policyId: "a",
 };
 

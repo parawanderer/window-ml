@@ -555,7 +555,7 @@ export function brokenPhrase(reason: string): string {
     if (/^returned /.test(reason)) return "it returned something that is not true or false";
     if (field && !/a (?:string|number|list|boolean) has no field/.test(reason)) return `it reads a field the call does not have ('${speakable(field[1])}')`;
     if (/too much work|over \d+ steps/.test(reason)) return "it ran out of steps";
-    if (/nests too deeply|nested too deeply|Maximum call stack/.test(reason)) return "it is nested too deep";
+    if (/nests too deeply|nested too deep|nested more than \d+ deep|Maximum call stack/.test(reason)) return "it is nested too deep";
     if (/^unexpected token|^not allowed in a policy: unexpected token/.test(reason)) return "its source does not parse";
     const na = /^not allowed in a policy: (.*)$/s.exec(reason);
     if (na) return `not allowed in a policy: ${speakable(na[1]).slice(0, 80)}`;
@@ -571,7 +571,7 @@ export function brokenPhrase(reason: string): string {
 export function brokenPolicyWhy(p: StoredPolicy, reason: string): AskWhy {
     const label = speakable(p.label), phrase = brokenPhrase(reason);
     return { line: `Asking because the policy "${label}" is broken: ${phrase}. It may have been meant to ${p.effect === "deny" ? "refuse" : "ask about"} calls like this. Edit it to fix it.`,
-        detail: `This call needed approval because the policy "${label}", which ${p.effect === "deny" ? "refuses" : "asks about"} calls like it, does not run (${phrase}), so it could not be checked; the call itself did not change.`,
+        detail: `Asked the person because the policy "${label}" is broken (${phrase}) and could not be checked. Nothing is wrong with the call.`,
         cause: BROKEN_POLICY_CAUSE, policy: label, policyId: p.id };
 }
 

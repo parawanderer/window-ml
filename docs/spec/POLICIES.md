@@ -151,7 +151,10 @@ card shows the call's resolved facts, not the script.
      that policy as the reason; a broken `allow` stays no opinion; a `deny` that evaluates cleanly still wins. The
      card says inline why the call escalated and what to do (Shane): it names the policy, gives the break in plain
      words, carries an action that opens the policy for editing, and offers no "remember". The cause slug is
-     `broken-policy`. Not built; small-fixes builds it. Two more findings of the same audit: the dialect's
+     `broken-policy`. Built. A policy is judged per call, so a broken `deny` or `ask` makes every call of its consumer
+     (among the run's and the global policies) that it breaks on ask until it is fixed or removed; one that does not
+     parse, or that the language refuses, breaks on every such call. When a clean `ask` also matches, the card names
+     the broken one, since it is the one the person can act on. Two more findings of the same audit: the dialect's
      `try`/`catch` catches the host's stack overflow, below `MAX_CALL_DEPTH`, so a policy can return the opposite
      answer with nothing recorded, and the outcome depends on the caller's stack depth (small-fixes repairs it for
      both realms: the overflow becomes a stop no script catches and the depth limit moves below the host's); and
