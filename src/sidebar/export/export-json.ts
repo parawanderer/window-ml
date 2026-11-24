@@ -91,6 +91,7 @@ function stepToJson(st: AgentStep): ExportStep {
         reused: st.reused?.length ? st.reused : undefined,
         asks: st.asks?.length ? exportedAsks(st.asks) : undefined,
         shCalls: st.shCalls?.length ? st.shCalls : undefined,
+        cell: st.cell,
 
         elements: st.elements,
         renderIn: st.renderIn,

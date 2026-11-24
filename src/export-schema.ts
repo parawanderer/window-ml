@@ -40,6 +40,7 @@ import type { TokenUsage } from "./contract/contract-chat";
 import type { PersistGrant, ReusedGrant, ShCallSpan } from "./contract/contract-agent";
 import type { RenderDescriptor, ToolFeedback } from "./contract/contract-render";
 import type { SubcallUsage, DebugAgentConfig, DebugSessionConfig, StepAsk, AskWhy } from "./contract/contract-debug";
+import type { CellFacts } from "./agent/cell-facts";
 import type { PromptDisplay } from "./contract/contract-run";
 
 /** Bumped only on a BREAKING change. Adding an optional field is not breaking. */
@@ -385,6 +386,10 @@ export interface ExportStep {
     /** The `ml.sh` calls this step made, in the order they finished: what the host measured of each, and for a call no
      *  one was asked about, what allowed it, the argv the host got and what it reported (`unasked`). */
     shCalls?: ShCallSpan[];
+    /** What the cell (exec / python_exec) did, recorded by the worker: where it ran, why it was not inside the dialect,
+     *  the step meter, the functions it called. Never model-facing. Absent means unknown, never inside nor outside
+     *  (docs/spec/CELL_FACTS.md). */
+    cell?: CellFacts;
 
     /** A COUNT of matched DOM elements. Never the nodes: they cannot cross the bus. */
     elements?: number;

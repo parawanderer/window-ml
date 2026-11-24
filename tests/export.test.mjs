@@ -348,3 +348,21 @@ test("control: a whole table says nothing about a prefix", () => {
         steps: [{ step: 1, seq: 1, tool: "python_exec", arguments: { code: "df" }, result: "a frame", renderOut: { type: "python-out", df: { columns: ["a"], rows: [[1], [2]], rowCount: 2 } } }] };
     assert.doesNotMatch(serializeSession(s).md, /the first \d+ of/);
 });
+
+// --- a step's `cell` (docs/spec/CELL_FACTS.md) ---
+
+test("a step carrying `cell` exports one `cell:` line in the Markdown", () => {
+    const cell = { lang: "js", ran: "inside", realm: "worker", steps: { used: 12, budget: 1000 } };
+    const s = { hash: "abc", kind: "agent", model: "m", tag: "session", createdTs: 1, lastTs: 2, status: "ok", turns: [], task: "t",
+        steps: [{ step: 1, seq: 1, ts: 1, tool: "exec", arguments: { js: "x" }, result: "0", approval: "readonly", cell }], answers: [] };
+    const { md } = serializeSession(s);
+    assert.equal(md.match(/cell: /g).length, 1);
+    assert.match(md, /cell: js · inside · worker · steps 12\/1000/);
+});
+
+test("UPGRADE: a step stored before `cell` existed prints no cell line (absent is unknown, never inside or outside)", () => {
+    const s = { hash: "abc", kind: "agent", model: "m", tag: "session", createdTs: 1, lastTs: 2, status: "ok", turns: [], task: "t",
+        steps: [{ step: 1, seq: 1, ts: 1, tool: "exec", arguments: { js: "x" }, result: "0", approval: "user" }], answers: [] };
+    const { md } = serializeSession(s);
+    assert.doesNotMatch(md, /cell:|inside|outside/);
+});

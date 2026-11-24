@@ -118,3 +118,16 @@ test("the same replay reduced twice is the same session: a step with no seq is n
     for (const e of evs) onDebug(e);
     assert.equal(sessionMap.get(hash).steps.length, once.length, `rows after a second replay: ${sessionMap.get(hash).steps.map((s) => s.thought ? "thought" : s.seq).join(",")}`);
 });
+
+// --- a step's `cell` ---
+
+test("the DONE event's `cell` lands on the step; a DONE without it leaves none", () => {
+    const hash = "cellfacts1";
+    const cell = { lang: "js", ran: "inside", realm: "worker" };
+    const evs = [start(hash), pending(hash, 1, 1), { ...done(hash, 1, 1), cell }, pending(hash, 2, 2), done(hash, 2, 2)];
+    const { batchReduce: _b } = { batchReduce };
+    for (const ev of evs) onDebug(ev);
+    const steps = sessionMap.get(hash).steps;
+    assert.deepEqual(steps.find((x) => x.seq === 1).cell, cell);
+    assert.equal(steps.find((x) => x.seq === 2).cell, undefined);
+});

@@ -1115,6 +1115,10 @@
             "$ref": "#/$defs/ShCallSpan"
           }
         },
+        "cell": {
+          "description": "What the cell (exec / python_exec) did, recorded by the worker: where it ran, why it was not inside the dialect, the step meter, the functions it called. Never model-facing. Absent means unknown, never inside nor outside (docs/spec/CELL_FACTS.md).",
+          "$ref": "#/$defs/CellFacts"
+        },
         "elements": {
           "description": "A COUNT of matched DOM elements. Never the nodes: they cannot cross the bus.",
           "type": "number"
@@ -2957,6 +2961,154 @@
         "by",
         "argv",
         "outcome"
+      ],
+      "additionalProperties": true
+    },
+    "CellFacts": {
+      "type": "object",
+      "description": "What a cell did, as the export and the execution log carry it. Every field but `lang` and `ran` may be absent.",
+      "properties": {
+        "lang": {
+          "type": "string",
+          "enum": [
+            "js",
+            "python"
+          ]
+        },
+        "ran": {
+          "type": "string",
+          "enum": [
+            "inside",
+            "outside",
+            "not-run"
+          ]
+        },
+        "realm": {
+          "description": "JS only: where its dialect evaluator ran.",
+          "type": "string",
+          "enum": [
+            "worker",
+            "page"
+          ]
+        },
+        "class": {
+          "description": "Python only: the ladder's class of the worker when the cell started (ruling 102); absent for `not-run`.",
+          "type": "string",
+          "enum": [
+            "A",
+            "B"
+          ]
+        },
+        "why": {
+          "description": "For `outside` and `not-run`: why it was not inside. `name` is the first refused name, an identifier.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "not-in-dialect",
+                "denied",
+                "budget",
+                "marked",
+                "argument",
+                "routing"
+              ]
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": true
+        },
+        "steps": {
+          "description": "JS only: the step meter at the cell's end, for an inside cell and for one that tripped the budget.",
+          "type": "object",
+          "properties": {
+            "used": {
+              "type": "number"
+            },
+            "budget": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "used",
+            "budget"
+          ],
+          "additionalProperties": true
+        },
+        "lifted": {
+          "description": "JS inside cells: the host functions called, largest charge first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CellLifted"
+          }
+        },
+        "liftedMore": {
+          "description": "Rows of `lifted` cut by the row cap or the size bound.",
+          "type": "number"
+        },
+        "wire": {
+          "description": "JS inside cells and every Python cell: the `ml` members called over the wire.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CellWire"
+          }
+        },
+        "wireMore": {
+          "description": "Rows of `wire` cut by the row cap or the size bound.",
+          "type": "number"
+        },
+        "marked": {
+          "description": "Python: this cell set the outside mark on its worker.",
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "lang",
+        "ran"
+      ],
+      "additionalProperties": true
+    },
+    "CellLifted": {
+      "type": "object",
+      "description": "One lifted or host function the cell called, and the steps charged for it (its callbacks' steps are the cell's own).",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "calls": {
+          "type": "number"
+        },
+        "charged": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "name",
+        "calls",
+        "charged"
+      ],
+      "additionalProperties": true
+    },
+    "CellWire": {
+      "type": "object",
+      "description": "One `ml` wire member the cell called.",
+      "properties": {
+        "member": {
+          "type": "string"
+        },
+        "calls": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "member",
+        "calls"
       ],
       "additionalProperties": true
     },

@@ -206,6 +206,12 @@ same three places every time (spans run BACKWARDS from a finish stamp; a tool st
 `phases`, not three; a model load is its own event). If you are asking "where did the time go", that is the
 file. If you are asking "what did it say", it is `run.md`.
 
+A tool step's `cell` object is what the worker recorded about the cell (`exec` or `python_exec`): the evaluator, whether it ran
+inside the dialect, outside it or was refused, and the step meter and the functions it called. It is in `run.json` as
+is and in `run.md` as one `cell:` line (`cellFactsLine`). It is never model-facing and nothing reads it back. It is
+absent on exports written before it landed and on page-hosted runs, and a reader treats absent as unknown, never as
+inside or outside. `docs/spec/CELL_FACTS.md`.
+
 ## Traps
 
 - **Diff two runs with `run.json`**, after stripping `VOLATILE_FIELDS` and running `canonicalizeText()`.
