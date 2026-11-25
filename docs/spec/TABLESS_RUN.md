@@ -1,7 +1,7 @@
 # A run that starts with no tab
 
-**Status: Order item 2 partly built (2026-11-22): a closed tab's worker run goes on with no tab (§As built, part 1);
-the rest is a proposal (2026-11-14, from Shane's idea in the window-ml-9b session; the tab invariant read
+**Status: Order item 2 built (2026-11-23): a closed tab's worker run goes on with no tab (§As built, part 1), and a
+run can start with none, "No tab" in the start form (§As built, part 2); the rest is a proposal (2026-11-14, from Shane's idea in the window-ml-9b session; the tab invariant read
 by the `[window-ml move-run]` lane on move-run-b 0e0b6707; the build is that lane's, after MOVE_RUN slice 2, by the
 coordinator's ruling of 2026-11-16).** It changes a decision in [`CHAT_PAGE.md`](CHAT_PAGE.md) ("an agent chat needs a
 primary page") and extends [`MOVE_RUN.md`](MOVE_RUN.md) shape (a). It waits on that shape, not on shape (b). Resuming a
@@ -181,7 +181,7 @@ is not in those words is the lane's proposal.
   draws its "No tab" and the chip; the hub relays the sealed command unread and has nothing to agree. The phone and
   other clients then resume the same way. The tab pick is `session.resume` with a tab target, as today.
   The target lands first as a [`SESSION_CONTRACT.md`](SESSION_CONTRACT.md) diff, read before the build, and the
-  build PR carries `@hub-compat`. That diff is SESSION_CONTRACT.md §Resuming, "Proposed: a detached target"
+  build PR carries `@hub-compat`. That diff is SESSION_CONTRACT.md §Resuming, "A detached target"
   (2026-11-22), which also adds `capabilities.detached`.
 - **"Still held with no tab" in the session list is async's `background.noTab`** (`TaskBackground`, #2082), not a
   field of this spec's own. The two lanes agreed one shape on 2026-11-22: `{ running, waiting, noTab?, releaseAt? }`,
@@ -237,6 +237,27 @@ lane's), and everything in §Resuming with no page after a worker eviction.
 - **A tab again**: "bring a session here" (`moveRun`) from no tab skips the leave note, adds no `leftTabs` entry,
   rebuilds the destination's card from the run's own ring, and clears `background.noTab`.
 
+## As built, part 2 (2026-11-23): "No tab" in the start form
+
+Shane asked for it by name (2026-11-23, through the coordinator), ahead of steps 3 and 4.
+
+- **The contract**: `AgentTarget` `{ kind: "detached" }` on `agent.start`, offered where `capabilities.detached` is
+  true (SESSION_CONTRACT.md, "A detached target"). A runtime without it answers `unsupported`. `session.resume` with
+  it answers `unsupported` until step 4 builds it. The hub needed no change: it names neither the target nor the
+  capability.
+- **The runtime**: `agent.start` calls `startDetached`, which is `startUserRun` on `NO_TAB`. No tab is opened and no
+  page is adopted. The run carries no `pageOrigin`, `pageUrl` or `pageTitle`, and its page context is one line
+  saying it has no page. Its session row has no `page`, and `background.noTab` is set from the start.
+- **The form**: the start page's tab picker offers "No tab" after "New tab" where the runtime has the capability. The
+  resume dialog does not offer it (step 4). A line under the row says what the run can and cannot do, and that
+  `ml.sh` works only from a Python cell, which asks on every call. The pick is remembered per runtime like any other.
+  A remembered "No tab" on a runtime that no longer offers it falls back to the usual first guess. The phone's
+  start sheet does not offer it yet.
+- **Three gaps e3's red team found on #2106, closed here**: `chat_metadata` is answered by the loop, so it no
+  longer reads as needing a page. A highlight or a screenshot of a session held with no tab is refused before
+  anything is sent to the sentinel. `senderOwnsRun` takes a sender with no tab only when its URL is this
+  extension's, and its id where the browser gives one.
+
 ## Order
 
 1. MOVE_RUN shape (a) on main.
@@ -246,6 +267,9 @@ lane's), and everything in §Resuming with no page after a worker eviction.
 4. Resuming with no page: the closed-tab bar goes, the composer resumes detached, the kernel line, the person's tab
    pick. It needs 2 and the async lane's release; the pick needs only 2.
 5. The `ml.sh` bench, and a worker `exec` world only if it says so.
+
+Deferred by the coordinator (2026-11-23), unless Shane asks for them: item 5 whole, and the kernel line in item 4.
+Item 2's start-form choice was deferred too, then brought back the same day at Shane's word (§As built, part 2).
 
 ## Open
 

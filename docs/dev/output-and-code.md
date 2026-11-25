@@ -321,8 +321,20 @@ context menu. The in-cell find walks text nodes and a link is one, so a match ma
   (docs/spec/ASYNC_CALLS.md, "Sign-in prompts"), a `task` tail and a `dereference` view of it (`{ type: "exec-out" }`,
   `derefRender`) both reach `ValueOut` or the inline value, so the link is an anchor; `tests/sidebar-answer.test.js`
   checks both with a `gh auth login` tail.
-- **Not covered:** output drawn by another path (`ExecError`, a retry's diff, a live call's code being written, the
-  locate step's prompt and output) is still inert text.
+- **Highlighted code is linked too** (`src/sidebar/code-links.ts`, `linkifyHtml`). A code block (`Code`/`CodeBlock`), a
+  retry's diff and split (`DiffLines`/`SplitLines`) and a reply's raw Markdown view take the same rules, because the
+  addresses come from `outputLinks`, never a second matcher. The link is cut out of hljs's token HTML INSIDE the span it sits
+  in, so it keeps the token's colour (a URL in a string is string-coloured, in a comment comment-coloured); an address
+  across several tokens is one anchor per token, all carrying the whole address in `data-raw`. It is linkified per line
+  after `htmlLines`, since an anchor would break that splitter. Click and tip are delegated on the `code` element
+  (`codeLinkHandlers`) and re-check the anchor through `outputLinks`/the run, so markup that did not come from here opens
+  nothing. `@tool:<id>` links to its step (`panelCodeLinks(hash)`: `resolveTokenStep`, `scrollToStepSeq`); an id naming no step
+  stays text, and with no `hash` no pointer is linked. A page with no panel (the bench's) passes no `links` and draws none.
+  In the raw view an `hljs-link` token holding no link we draw (relative path, `data:`, a refused address, a missing
+  pointer) gets `hljs-link-dead`, which removes the theme's underline. Text in a `tt-pop` tooltip is never linked.
+  `tests/code-links.test.mjs`.
+- **Not covered:** output drawn by another path (`ExecError`, a live call's code being written, the locate step's prompt
+  and output) is still inert text.
 
 **A retry's DIFF against the call it revises (`src/diff.ts`, `CodeDiff`).** The commonest loop in a run is:
 a code tool fails, the model retries with a tweak, and the reader diffs two twenty-line blocks BY EYE to

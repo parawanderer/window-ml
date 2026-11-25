@@ -20,7 +20,7 @@ import { detachedCapMs, detachTask, type TailAnswer, type TaskOutcome } from "./
 import { toolToken } from "../util";
 import { defineState } from "../state-registry";
 import { binaryKind } from "./body-read";
-import { judgeCall, askWhyOf, askedByPolicy, revealsAskWhy } from "./sw-policies";
+import { judgeCall, askWhyOf, askedByPolicy, revealsAskWhy, BROKEN_POLICY_CAUSE } from "./sw-policies";
 import { getConfig } from "./sw-llm";
 import { base64Of, parseShPut, putFacts, putRefusalText, putTooLargeText, type PutFacts } from "../shell/sh-put";
 import { readStoredBytes, storeText } from "./sw-values";
@@ -32,6 +32,7 @@ import { forModel } from "./sw-scrub";
 import { registryReady, registrySubsNow } from "./sw-secret-registry";
 import { heldTail, margin, scrubRange, type RegistrySub } from "../secret-registry";
 import { holdOutput, shellHost, ShellUnavailable, withShell, type ShellHost } from "./sw-shell";
+import { hideRuleWords, spawnBound } from "./sw-spawn";
 import { manifestsReady, storedManifests } from "./sw-manifests";
 import { flavourOf, revealingName, type ProgramManifest } from "../shell/program-manifest";
 import { operandArgs, operandChanges, type RanCall } from "../shell/manifest-proposal";
@@ -146,11 +147,11 @@ export function ranCalls(runId: string): RanCall[] {
  * @param h the host
  * @param facts the call's facts
  */
-async function readOperands(h: ShellHost, facts: HostFacts): Promise<HostFacts["paths"] | undefined> {
+async function readOperands(h: ShellHost, session: string, facts: HostFacts): Promise<HostFacts["paths"] | undefined> {
     const pathArgs = operandArgs(facts.argv);
     if (!pathArgs.length) return [];
     try {
-        const r = await h.client.spawn({ argv: facts.argv, cwd: facts.cwd.path, env: {}, mode: "host", pathArgs });
+        const r = await spawnBound(h, session, { argv: facts.argv, cwd: facts.cwd.path, env: {}, mode: "host", pathArgs });
         void h.client.discard(r.id).catch(() => { /* expired or gone */ });
         return r.paths;
     } catch { return undefined; }
@@ -317,12 +318,12 @@ async function runCall(ctx: ShCallContext, req: ShRunRequest, started: (h: Shell
             // No session mounts an uploads folder yet (FILE_ATTACHMENTS.md H16), so no call passes `files` and `/files`
             // stays the browser sandbox's; once one does, `hostMapsFiles(h.hello)` gates it.
             const session = { cwd, roots, stored, tilde: h.hello.tilde === true };
-            const place = { roots, stored, platform: h.hello.platform, revealsAllow };
+            const place = { roots, stored, platform: h.hello.platform, revealsAllow, hideRules: hideRuleWords(ctx.runId) };
             let plan = planSpawn(req, session);
             if (plan.filesRefusal) return refuse("Refused", plan.filesRefusal);
             // A credential the host injects, only when its hello lists the provider (an older host would ignore it).
             const credential = await credentialFor(plan, h);
-            const spawn = () => h.client.spawn({ ...plan.spawn, owner: ownerOf(ctx), ...(credential ? { credential } : {}) });
+            const spawn = () => spawnBound(h, ctx.runId, { ...plan.spawn, owner: ownerOf(ctx), ...(credential ? { credential } : {}) });
             let facts = await spawn();
             let f: ShFacts;
             let verdict: { by: string; policy?: string; waitedMs?: number; askId?: string };
@@ -370,7 +371,7 @@ async function runCall(ctx: ShCallContext, req: ShRunRequest, started: (h: Shell
                 asked = f.placement === "host-sandbox" && hostTakesEnvelope(h.hello) ? envelopeFor(f) : undefined;
                 // An undescribed call's operands, read around it: what a draft that later calls it a reader is checked
                 // against, since its evidence run under `write: none` cannot see a write the program swallows.
-                const before = f.described ? undefined : await readOperands(h, facts);
+                const before = f.described ? undefined : await readOperands(h, ctx.runId, facts);
                 try {
                     try { await h.client.start(id, asked); }
                     catch (e) {
@@ -391,7 +392,7 @@ async function runCall(ctx: ShCallContext, req: ShRunRequest, started: (h: Shell
                     if (ctx.signal.aborted) onAbort();
                     started(h, id, () => ctx.signal.removeEventListener("abort", onAbort));
                     done = await h.client.waitDone(id);
-                    if (before) noteOperands(ctx.runId, id, before, await readOperands(h, facts));
+                    if (before) noteOperands(ctx.runId, id, before, await readOperands(h, ctx.runId, facts));
                 } finally { ctx.signal.removeEventListener("abort", onAbort); }
                 break;
             }
@@ -450,7 +451,7 @@ async function decide(ctx: ShCallContext, f: ShFacts): Promise<{ by: string; pol
     // yet: the person does, on a card inside the running step. The card offers no "remember" (an ask's card never does).
     // A call that asks only because its program reveals other processes says so, and its card offers "Always allow".
     const why = askWhyOf(j) ?? revealsAskWhy(j, ctx.runId, "sh", asPolicyFacts(f), f.placement);
-    if (why) recordRunLog(ctx.runId, { subsystem: "policy", kind: askedByPolicy(why) ? "ask" : why.cause === REVEALS_CAUSE ? "reveals" : "lapsed", reason: why.cause, detail: { tool: "sh", policy: why.policy ?? "" } });
+    if (why) recordRunLog(ctx.runId, { subsystem: "policy", kind: why.cause === BROKEN_POLICY_CAUSE ? BROKEN_POLICY_CAUSE : askedByPolicy(why) ? "ask" : why.cause === REVEALS_CAUSE ? "reveals" : "lapsed", reason: why.cause, detail: { tool: "sh", policy: why.policy ?? "" } });
     const o = await raiseAsk(ctx.runId, ctx.seq, { kind: "sh", consumer: "sh", facts: asPolicyFacts(f), placement: f.placement, ...(why ? { why } : {}) });
     if (!o.allowed) return { refused: `ml.sh: ${o.state === "denied" ? "the person declined" : o.note || o.state}${o.state === "denied" && o.note ? ` (${o.note})` : ""}${why ? `. ${why.detail}` : ""}` };
     return { by: "person", waitedMs: o.waitedMs, ...(o.askId ? { askId: o.askId } : {}) };
@@ -508,7 +509,7 @@ export async function versionOf(ctx: Pick<ShCallContext, "runId" | "seq" | "sign
     if (versions.has(fp)) return versions.get(fp) ?? null;
     // Nothing starts after a cancel, the probe included (finding B).
     if (ctx.signal.aborted) return null;
-    const probe = await h.client.spawn({ argv: [facts.program.path, ...spec.args], cwd: facts.cwd.path, mode: "host", timeoutMs: PROBE_TIMEOUT_MS, owner: ownerOf(ctx) });
+    const probe = await spawnBound(h, ctx.runId, { argv: [facts.program.path, ...spec.args], cwd: facts.cwd.path, mode: "host", timeoutMs: PROBE_TIMEOUT_MS, owner: ownerOf(ctx) });
     const drop = () => h.client.discard(probe.id).catch(() => { /* gone */ });
     // The same file the call resolved, under the same enforcer: otherwise its answer is not this program's.
     if (probe.program.fingerprint !== fp || probe.placement !== "host-sandbox") { await drop(); log("changed"); return null; }

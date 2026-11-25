@@ -302,10 +302,15 @@ export const KEEP_HINT = (typeof navigator !== "undefined" && /Mac/i.test(naviga
 /** WHY A CALL IS ASKING when a policy that used to allow it is gone (archived, removed, edited) or an `ask` policy matched it: one line on the approval
  *  card, the sentence the model read in the tooltip. Text only: it never changed the decision.
  * @gallery gone policy {"why":{"line":"Asking because the policy \"fetch https://example.com/a\" was removed when this session was archived.","detail":"This call needed approval because the policy was removed when this session was archived; the call itself did not change.","cause":"archived","policy":"fetch https://example.com/a"}}
+ * @gallery broken policy {"why":{"line":"Asking because the policy \"never reach tracker.example\" is broken: it reads a field the call does not have ('hostt'). It may have been meant to refuse calls like this. Edit it to fix it.","detail":"Asked the person because the policy \"never reach tracker.example\" is broken (it reads a field the call does not have ('hostt')) and could not be checked. Nothing is wrong with the call.","cause":"broken-policy","policy":"never reach tracker.example","policyId":"p4d5e6f"}}
  * @gallery ask policy {"why":{"line":"Asking because the policy \"ask before any rm\" asks about calls like this.","detail":"This call needed approval because the policy \"ask before any rm\" asks the person about calls like it; the call itself did not change.","cause":"ask-policy","policy":"ask before any rm"}}
  * @group card */
 export function AskWhyLine({ why }: { why: import("../../contract").AskWhy }) {
-    return <div class="appr-note appr-askwhy" {...cursorTipOn(why.detail)}><IconWarn /><span>{why.line}</span></div>;
+    // A broken policy: the card says which and offers to open it for editing. It never offers "remember" (askedByPolicy).
+    const edit = why.cause === "broken-policy" && why.policyId ? why.policyId : undefined;
+    return <div class="appr-note appr-askwhy" {...cursorTipOn(why.detail)}><IconWarn /><span>{why.line}</span>
+        {edit ? <button class="test-btn appr-askwhy-edit" onClick={() => services().openAddress?.({ tab: "permissions", section: "policies", policy: edit })} {...cursorTipOn("Open this policy in Settings, Permissions, Policies, ready to edit")}>Edit policy</button> : null}
+    </div>;
 }
 /** What approving this call also GRANTS for the rest of the session — a host you will not be asked
  *  about again. Shown before you decide, because a one-shot approval and a session grant are different

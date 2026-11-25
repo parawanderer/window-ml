@@ -126,6 +126,9 @@ export interface RuntimeCapabilities {
     switchModel?: boolean;
     /** `device.*`: this runtime holds paired devices and can list, renew, revoke and re-scope them */
     devices?: boolean;
+    /** `agent.start` with a `detached` target: a run that starts with no tab (docs/spec/TABLESS_RUN.md). It needs `agent`,
+     *  not `tabs`. Absent means no, and a client offers no "No tab" choice. */
+    detached?: boolean;
     /** RESERVED: `agent.start` with a headless target. False on every runtime today. */
     headless?: boolean;
     /** RESERVED: accepts `agent.start` with `lineage` (a subagent started by another agent). False today. */
@@ -407,6 +410,9 @@ export type SessionStreamMessage =
 export type AgentTarget =
     | { kind: "tab"; tabId: number }
     | { kind: "blank"; url?: string }
+    /** No tab at all (docs/spec/TABLESS_RUN.md): the run's page tools are answered with how it gets a page, and the tools
+     *  that need none run. Requires `capabilities.detached`; on `agent.start` only, so far. */
+    | { kind: "detached" }
     /** RESERVED: requires `capabilities.headless` */
     | { kind: "headless" };
 

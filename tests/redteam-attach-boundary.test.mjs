@@ -166,7 +166,7 @@ test("ML_SESSION_REMOTE with a PDF for a run the worker built holds it as that t
     await sendSoon(w.bg, { type: "ML_SESSION_REMOTE", tabId: 7, action: "send", hash: w.hash, text: "and this one", files: [pdf("q3.pdf", "%PDF-1.7 q3")], surface: "devtools" }, EXT);
     for (let i = 0; i < 100 && w.chats().length <= before; i++) await flush(4);
     await flush(40);
-    assert.match(w.chats().at(-1).body.messages.at(-1).content, /^and this one\n\n<file name="q3\.pdf" type="application\/pdf" bytes="11" pages="1" pointer="@file:/);
+    assert.match(w.chats().at(-1).body.messages.at(-1).content, /^and this one\n\n<file name="q3\.pdf" type="application\/pdf" bytes="11" pages="1" pointer="@file:([^"]+)" path="\/files\/attached\/\1\/q3\.pdf">/);
     assert.deepEqual((await w.files(w.hash)).map((f) => [f.name, f.turn]), [["report.pdf", 1], ["q3.pdf", 2]]);
     assert.ok(!w.bg.tabMessages.some(([, m]) => m?.type === "ML_SESSION_TO_PAGE"), "the page never carried the message");
 });

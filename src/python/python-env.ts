@@ -78,6 +78,33 @@ export const PY_PACKAGE_LOADS: string[] = PY_PACKAGES.filter(p => !p.lazy).map(p
 export function pyodideLoadOptions(indexURL: string): { indexURL: string; packageBaseUrl: string } {
     return { indexURL, packageBaseUrl: indexURL };
 }
+
+/** The environment every interpreter starts with, and all of it ({@link pinEnvironment}): a cell inside the dialect
+ *  reads `os.environ` unasked. Emscripten's defaults, less the two the runtime adds itself (`_`, the executable's
+ *  name, and Pyodide's `PYTHONINSPECT`, read only at start-up). */
+export const PYTHON_ENV: Readonly<Record<string, string>> = {
+    HOME: "/home/pyodide",
+    LANG: "en_US.UTF-8",
+    LD_LIBRARY_PATH: "/usr/lib:/lib/python3.14/site-packages",
+    LOGNAME: "web_user",
+    PATH: "/",
+    PWD: "/",
+    USER: "web_user",
+};
+
+/**
+ * Make a fresh interpreter's environment exactly {@link PYTHON_ENV}, before any cell runs. The load options cannot: the
+ * runtime adds its own variables after reading them.
+ * @param py the interpreter
+ */
+export function pinEnvironment(py: { runPython(code: string): unknown }): void {
+    py.runPython(`import os as _os
+_pin = ${JSON.stringify(PYTHON_ENV)}
+for _k in [_k for _k in _os.environ if _k not in _pin]:
+    del _os.environ[_k]
+_os.environ.update(_pin)
+del _os, _pin, _k`);
+}
 /** Fetched with the rest but loaded on first use — the bench editor's completion engine. */
 export const PY_LAZY_LOADS: string[] = PY_PACKAGES.filter(p => p.lazy).map(p => p.load);
 /** The start-up packages' `prepare` code, joined: run once, unhardened, right after they load. */
