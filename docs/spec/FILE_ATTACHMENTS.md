@@ -1022,7 +1022,7 @@ RULED 2026-11-17 (Shane's idea, the details the coordinator's calls, in the coor
    a request names one directory and gets one page, and file bytes never ride a listing. A page is bounded so its
    sealed message fits the hub's `max_payload_bytes` (1 MiB less the envelope, `docs/dev/hub-client.md`): at most 500
    entries and 256 KiB of JSON, with a cursor for the next page.
-   AMENDED 2026-11-25 (accepted by the coordinator, 2026-11-24): the listing is the `files.list` COMMAND's answer, as
+   AMENDED 2026-11-25 (accepted by the coordinator, 2026-11-25): the listing is the `files.list` COMMAND's answer, as
    `session.backfill`'s pages are, not an event, since an event is kept in the session's history and replayed into
    every backfill and export. The one live hint is `files-changed`, a stream message beside `gone` that names the
    directories to list again and carries no entries (SESSION_CONTRACT.md, "Session events").
