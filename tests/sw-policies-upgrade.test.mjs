@@ -80,3 +80,22 @@ test("a record with an effect nobody defined is still dropped, never read as an 
     await R.policiesReady;
     assert.ok(!R.globalPolicies().some((p) => p.id === "pol-junk"));
 });
+
+// --- a stored broken deny, from before a broken deny asked (ruling 108) ---
+
+test("a deny a person saved with a typo'd field, which the build before ignored and the free tier ran past, now asks", async () => {
+    // As the store holds it: a well-formed record whose source reads a field no call has.
+    const typo = { id: "pol-typo-deny", scope: "global", consumer: "sh", effect: "deny", source: "(c) => c.argvv[0] === \"cat\"", label: "never cat", origin: "person", created: 1760000000005 };
+    stored.ml_policies_global.push(typo);
+    resetStateRegistry();
+    const R = await import("../src/sw/sw-policies.ts?reload=3");
+    await R.policiesReady;
+    const cat = { kind: "sh", argv: ["cat", "notes.txt"], program: "cat", effects: [{ op: "read", res: { kind: "fs", inRoot: true, path: "/r/notes.txt" } }] };
+    const j = R.judgeCall("h-x", "sh", cat, "host-sandbox");
+    assert.equal(j.decision, "ask", "it was allow/builtin: the free tier ran the call the refusal was written for");
+    assert.equal(R.askWhyOf(j).cause, "broken-policy");
+    assert.equal(R.askWhyOf(j).policy, "never cat");
+    assert.deepEqual(R.globalPolicies().find((p) => p.id === typo.id), typo, "the record is read unchanged");
+    // It breaks on every call of its consumer, so it cannot say which calls it meant: every free sh call asks.
+    assert.equal(R.judgeCall("h-x", "sh", { ...cat, argv: ["ls"] }, "host-sandbox").decision, "ask");
+});

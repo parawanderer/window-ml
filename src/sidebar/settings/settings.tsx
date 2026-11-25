@@ -637,7 +637,7 @@ export function openSettingsAt(tab: SettingsTab, section: string): void {
  * `target`, scroll that element into view once it is drawn: an element id (the chat page's
  * `#/settings/extension/backup`), or a setting's row by its config key, which is also marked (`set-marked`).
  */
-export function showSettingsSection(tab: SettingsTab, section?: string, target?: string | { setting: string }): void {
+export function showSettingsSection(tab: SettingsTab, section?: string, target?: string | { setting: string } | { policy: string }): void {
     settingsQuery.value = "";   // a shortcut lands on its tab, not on a filtered view of every tab
     settingsTab.value = tab;
     if (section) {
@@ -650,6 +650,7 @@ export function showSettingsSection(tab: SettingsTab, section?: string, target?:
     const look = () => {
         const el = typeof target === "string"
             ? document.getElementById(target) ?? panelBody?.querySelector(`#${target}`)
+            : "policy" in target ? panelBody?.querySelector(`[data-policy-id="${CSS.escape(target.policy)}"]`)
             : panelBody?.querySelector(`[data-setting~="${target.setting}"]`);
         if (!el) { if (++tries < 20) setTimeout(look, 50); return; }
         el.scrollIntoView?.({ block: typeof target === "string" ? "start" : "center" });
@@ -657,6 +658,9 @@ export function showSettingsSection(tab: SettingsTab, section?: string, target?:
     };
     setTimeout(look, 0);
 }
+
+/** The policy a broken-policy card asked to edit: its row opens its editor when drawn, then clears this. */
+const policyToEdit = signal<string | undefined>(undefined);   // state: ui
 
 /** The Settings body on screen, for a link's target: the sidebar draws it in a shadow root `document` cannot see. */
 let panelBody: HTMLElement | null = null;   // state: ui
@@ -674,7 +678,8 @@ function markRow(el: Element): void {
  * @param r the resolved view
  */
 export function openPanelRoute(r: PanelRoute): void {
-    showSettingsSection(r.tab, r.section, r.setting ? { setting: r.setting } : r.target);
+    if (r.policy) policyToEdit.value = r.policy;
+    showSettingsSection(r.tab, r.section, r.policy ? { policy: r.policy } : r.setting ? { setting: r.setting } : r.target);
     markReturn();
     view.value = { name: "settings" };
 }
@@ -1186,6 +1191,8 @@ export function PolicyRow({ policy, broken, onEdit, onRemove }: { policy: Policy
     const [label, setLabel] = useState(policy.label);
     const [source, setSource] = useState(policy.source);
     const open = (): void => { setEffect(policy.effect); setLabel(policy.label); setSource(policy.source); setEditing(true); };
+    // A broken-policy card's "Edit policy" lands here with the editor already open.
+    useEffect(() => { if (policyToEdit.value === policy.id) { policyToEdit.value = undefined; open(); } }, [policyToEdit.value, policy.id]);
     const save = (): void => {
         const patch: PolicyPatch = {};
         if (effect !== policy.effect) patch.effect = effect;

@@ -195,8 +195,12 @@ on the machine. `background.test.js` (22s) and `cdp-stream.test.mjs` (20s) are t
 **A file that has grown past ~800 lines gets a REMINDER** (`node scripts/check-file-size.mjs`) — in the
 pre-commit hook and in CI's `tools` job suggesting it be split into logical modules, with per-module tests where that follows. It never
 fails a build — size is a judgement, and a long LIST is not a long module. It is RATCHETED:
-fifteen files are already over the line, so it speaks only when a change makes an oversized file bigger,
-which is the moment the advice is actionable. `--all` lists every one of them when you do want the survey.
+twenty-two files are already over the line, so it speaks only when a change makes an oversized file bigger,
+which is the moment the advice is actionable. Even that was ten times too often (a 2,000-line file gaining five
+lines in half the PRs), so a file already over the line speaks only when it grew by 25 lines or more, or carries
+5% or more of the repo's edit cost (the `--cost` share; two files on 2026-11-25). A file that crosses the line
+in this change, or arrives over it, always speaks. The rest are named on one plain line, never annotated.
+`--all` lists every oversized file when you do want the survey.
 
 **To decide WHERE to spend a refactor, use `--cost`, not `--all`.** `--all` sorts by length, which answers "what
 is big" — the wrong question, because a long file nobody opens costs nothing while a shorter one edited weekly
