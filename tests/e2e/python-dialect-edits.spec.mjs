@@ -29,7 +29,7 @@ const CELLS = [
     { name: "inside makes", code: "kept = [1, 2]\nlen(kept)", asks: null },
     { name: "inside edits what inside made", code: "kept.append(3)\nkept[0] = 9\nkept", asks: null },
     { name: "edits the injected table", code: "df['flag'] = 1\nlen(df)", tables: true, asks: "item assignment to a value the cell does not own: on DataFrame" },
-    { name: "asked cell makes", code: "import os\nmade = [1]\nlen(made)", asks: MARKED_CARD_LINE },
+    { name: "asked cell makes", code: "import subprocess\nmade = [1]\nlen(made)", asks: MARKED_CARD_LINE },
     { name: "edits what an asked cell made", code: "made.append(2)\nmade", asks: MARKED_CARD_LINE },
 ];
 

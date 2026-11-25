@@ -54,6 +54,7 @@ import { importTestCode } from "./python/pkg-install-test";
 import { attachFiles, detachFiles, filesMessage, setFilesReader } from "./python/files-host";
 import { createFilesSource } from "./python/files-source";
 import { RangedReader } from "./session/ranged-reader";
+import { AgentFiles } from "./session/agent-files";
 import { fsServer } from "./session/fs-serve";
 import { scanCode } from "./python/pkg-scan";
 import { readScan, type ScanResult } from "./python/pkg-scan-note";
@@ -74,10 +75,25 @@ const store = (): ValueStore => values ??= new ValueStore({
 });
 
 // `/files` in Python (files-host.ts) and `ml.fs`: the reader over this document's value store and the shelf the worker holds,
-// bound by the session's hiding rules (POLICIES.md, "Hiding files", ruling 34), which the worker resolves.
+// bound by the session's hiding rules (POLICIES.md, "Hiding files", ruling 34), which the worker resolves; and the store of
+// what a session's runs write under `agent/` (agent-files.ts), its quota asked of the worker at each file opened for
+// writing. A file discarded unwritten is noted in the store and in the run log.
 const filesHide = makeHideRule(async (session) => ((await chrome.runtime.sendMessage({ type: "FILES_HIDE_LIST", session })) as { entries?: HideEntry[] | null } | undefined)?.entries ?? null);   // state: plumbing — one rule for the one reader
 chrome.runtime.onMessage.addListener((msg: { type?: unknown } | undefined) => { if (msg?.type === "FILES_HIDE_CHANGED") filesHide.forget(); return false; });
-const filesReader = new RangedReader({ source: createFilesSource({ store, send: (m) => chrome.runtime.sendMessage(m) }), hidden: filesHide.rule });   // state: plumbing — the one reader, a channel per worker
+const agentFiles = new AgentFiles();   // state: plumbing — a handle to the ml-agent-files database, declared as session.files
+const filesReader = new RangedReader({ hidden: filesHide.rule,   // state: plumbing — the one reader, a channel per worker
+    source: createFilesSource({ store, send: (m) => chrome.runtime.sendMessage(m) }),
+    agent: agentFiles,
+    quotaBytes: async (session) => {
+        const bytes = (await chrome.runtime.sendMessage({ type: "FILES_QUOTA", session }) as { bytes?: unknown } | undefined)?.bytes;
+        if (typeof bytes !== "number" || !Number.isSafeInteger(bytes) || bytes <= 0) throw new Error("the quota could not be read");
+        return bytes;
+    },
+    onLost: (rec) => {
+        void agentFiles.noteLost(rec).catch(() => { /* the run log still has it */ });
+        try { chrome.runtime.sendMessage({ type: "FILES_LOST", ...rec }).catch(() => { /* no worker listening */ }); } catch { /* context gone */ }
+    },
+});
 setFilesReader(() => filesReader.openChannel("files"));
 // ml.fs (fs-serve.ts): a channel per isolated exec on the same reader, read ops only, its session the worker's word.
 const fsChannels = fsServer(() => filesReader.openChannel("files"));   // state: plumbing — an exec's channel, closed with it

@@ -2112,6 +2112,426 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     is wrong with the call.`; (f) a file block of a worker-built run carries `path` only when it opens the file as
     written. Shane approved the bench's forms proposal (2026-11-24): read rerun B first, replace the two closed-form
     tasks with ones whose stopping depends on state, and score by whether the invited form ran.
+  - **RULING 113 (Shane, 2026-11-24, in the coordinator's session): a masked file.** "Your 6 point list is fine", and
+    "Your writes has to handle python `open` etc". A file has a third state between hidden and shown, the default for
+    dotenv files: the model's own reads get the keys with each value replaced by a same-length fake derived from the
+    key's name; a program the person allowed reads the real bytes and its output is scrubbed, with no card at each
+    run; writes land only through the extension's or the host's own code (`ml.fs`, `ml.sh.put`, `stdoutTo`, Python's
+    `open` through the mount), a written fake restoring the real value, and every other program sees the file
+    read-only; reading a masked file registers its values of 8 or more characters but for a common-settings list,
+    which the person can switch off per file; a policy can pin an allowed program by hash, moved only by the person's
+    approval; the host keeps no backup. The spec is SECRET_HANDLES.md, "A masked file", with the coordinator's calls
+    under it, each for Shane to override: `mask` as a third effect of the `files` consumer and `default:dotenv`
+    switched to it, the credential files and key files staying hidden; one dotenv grammar in one Rust masker built
+    native and to WebAssembly, an unreadable line masked whole; values under 8 bytes read as `*`; the write-back by
+    key, made by the holder; the output scrub made by the HOST for every call, so no value crosses to the worker in
+    the first build, and the crossing that would also scrub web content left to a later slice on Shane's word; a
+    256-value bound a session; four slices (masker, reader, host, scoped `show` and pin), owners assigned when queues
+    reach it, the red team given the section as its target first. Also since the last entry, the coordinator's calls:
+    `cell`/`facts` records get their own per-run cap of 200 in the run log, apart from the mechanics records' cap,
+    with a dropped count in the export (to async); #2129 needs no red-team pass, since it adds no tool, member or
+    page-started message type, and merges under ruling 98 on its reviewer's comment; in the classifier's rules a JS
+    read of `ml.current.files` or `ml.current.attachments` is `list` only, not also `probe` (#2138).
+  - **Ruling 113's host half, corrected (2026-11-24, the coordinator's calls on the files-host lane's review of the
+    merged section against window-ml-host main and window-ml-host#58).** The by-key splice is made at `commit` through
+    the held parent descriptor, not at `put`; a by-key `put` carries `mask: true`, accepted only under a `mask` entry;
+    the commit keeps the file's mode; an overwrite asks unless a policy allows it, which is RULING 115 (below); the restore test is "a well-formed fake
+    of this key at its own length", so a fake read before the person changed a value still restores it; `stdoutTo` is
+    not a mediated write; an allowed program writes in place only; `default:dotenv` as a mask is a basename pattern
+    found by ONE walk a root, cached by directory inode and change time, capped at 1,000,000 entries, with no directory
+    skipped by name; past the cap a Linux spawn fails and a macOS call runs with the files hidden; the output scrub
+    runs when output is written to the host's store, with a holdback, over every channel by enumeration, and the
+    `diff` withholds a masked path; the held values are kept out of core dumps. The files-host lane takes slices 1 and
+    3 when scheduled. The lane's walk measurements are its account (30 ms for 24,186 entries; 12.7 s for 1,927,407).
+  - **RULING 114 (Shane, 2026-11-24, in the coordinator's session): `ml.image` replaces `python_exec`'s `image` and
+    `cast` parameters.** "Yeah I agree with this image topic and cutting down the slop arguments from the two exec
+    tools." The packages lane's shape: `img = ml.image(src, margin=0)` returns an image that carries its page
+    transform; `img.pt(x, y)` and `img.box(...)` return a point or box in image pixels, and the worker mints
+    `@pt`/`@box` from any found in the cell's return value, inside a list or dict too; a derived image has no `.pt`;
+    the `cast` parameter, its hints and `CAST_NO_TRANSFORM` go. One PR after the `tables` removal. The coordinator's
+    conditions, sent to packages: a spec section first; only the exact point and box types mint, at a bounded depth
+    and count, and the transform is worker-side state a cell cannot set; a capture is charged by pixel count before it
+    is taken (ruling 105), with a hard bound; it is inside the dialect only if the capture has no page-visible effect
+    and crosses `look`'s masks (ruling 30); file sources go through the readers and their hide rule; a stored session
+    replays as stored and an old-style call gets one sentence naming `ml.image`; the description text comes to the
+    coordinator, and its bench run needs Shane's yes in bench's own session. The ruling's second half, fewer arguments
+    on BOTH exec tools, has no list yet: packages (Python) and small-fixes (JS) each propose which arguments go. NOT
+    ruled, recorded as Shane's thought of the same message: "really tempted to delete a lot of the top-level tools we
+    have in general and move them to functions so that they can be arbitrarily composed". Nothing is scheduled on it.
+  - **RULING 115 (Shane, 2026-11-24, in the coordinator's session): a policy may allow the model's edits to a masked
+    file.** "This call is fine", on the coordinator's recommendation. Today an existing file always asks before it is
+    overwritten, whatever a policy allows (`decidePut`). For a by-key write to a path a `mask` entry decides, and for
+    nothing else, an `allow` policy may answer that ask; the splice only adds, changes or removes keys and exposes no
+    value, and a card on every edit would be a click-through. Every other overwrite keeps asking. Also Shane, the same
+    day, on ruling 114's second half: `verify` stays a `python_exec` argument "until you can queue image reads using a
+    function in a script", and goes then; the `ml.image` PR removes `image`, `cast` and `margin` only; JS `exec` keeps
+    its eight arguments; `keep` as `ml.keep()` is not answered and stays an argument. Moving top-level tools to
+    functions is NOT taken up now ("refactoring busywork, more of a question for later"); `answer` and the
+    consent-shaped tools stay tools in any case.
+  - **RULING 116 (Shane, 2026-11-24, in the coordinator's session): Python-only members go under one namespace, and a
+    cell can find out what `ml` has.** "I think all the python-only functions should start to get grouped under a
+    'python namespace'", the kernel control commands with them, `ml.image` left out since it could have a JS analogue;
+    then, on the coordinator's proposals, "Sure your call is fine. I think being able to list the packages while the
+    kernel is dead is useful". The spec is ML_PYTHON.md, which is also the restart command's spec the coordinator
+    owed. The calls in it: the name is `ml.python` (not `ml.py`, which reads as a file's name); `ml.python.restart()`
+    runs unasked from a JS cell and from a Python cell, resets integrity only, reaches the run's own kernel only, ends
+    a detached cell with a named reason and is bounded to one a step; `keep` becomes `ml.python.keep()`;
+    `ml.python.packages()` answers from outside the kernel, so with it dead too (Shane's word, reversing the
+    coordinator's no); `ml.python.names()` is wanted and not scheduled; the mark is never a member. Discovery, on the
+    packages lane's finding that a model is told of `ml.table` and nothing else: one `ML_MEMBERS` table with each
+    member's languages, from which `dir(ml)`, `help(ml)`, `agent_api_docs` and the unknown-member error all answer,
+    and one description line whose bench run needs Shane's yes in the bench lane's session. The packages lane builds
+    it after the `tables` removal and `ml.image`.
+  - **Ruling 116's mechanisms, corrected (2026-11-24, the coordinator's calls on the packages lane's read of
+    ML_PYTHON.md against main).** A restart also forgets the run's bridged mark, which a new Worker does not clear; it
+    is one message from the service worker (`PY_RESTART`), which the offscreen document refuses for any principal but
+    the calling run's; the one-a-step bound is counted in the service worker and a client with no step is refused; the
+    kill reason `restart` is added and no second housekeeping record is written; `ml.python.keep()` is a wire member
+    armed at the cell's result, never a flag in the worker's own result; `ml.python.packages()` is a service-worker
+    read of the shipped set and `ml_pkginstalls`, with `from` in place of `source` and no `loaded`; the names a cell's
+    `dir(ml)` shows are sent with the cell and are a snapshot from its start.
+  - **Ruling 117 (Shane, 2026-11-24): the policy measure tries every `to` value of an integer range only up to 256
+    wide.** `SETTING_ENUMERATE_MAX` goes from 2048 to 256, on #2107, and the pairing is not changed. The async lane's
+    `closedRunGraceMin` (an integer, 0 to 1440) was the first range wider than 60 the measure tried whole, and the
+    janitor's review of #2107 found the cost: each value a rule names is paired with every `to` tried, so a rule
+    naming 40 numbers (120 values with their neighbours) made 120 x 1,441 pairs against the measure's 1M steps
+    (`SETTING_MEASURE_STEPS`), and the proposal was refused as too costly. The cap bounds the pairs, not the steps: a
+    rule's steps an evaluation grow with its length (about 80 for 40 numbers, not the 8 to 16 the coordinator first
+    assumed), so the cost is quadratic in the numbers named. Measured by the async lane on #2107: the 40-number rule
+    spends 816,478 steps on the 60-wide key and 498,946 on the sampled one. So 256 is not a width the budget
+    guarantees; no key is 61 to 256 wide, and a row over every bounded integer key fails for the first one that would
+    exhaust the budget. A wider range is sampled: both ends, the default, four random values, and each number the rule
+    names with its neighbours. The card does not change, since such a key already reads as sampled for its `from`.
+    What is lost, on that key only: a `to` condition whose boundary the rule does not name can read "none". Not
+    decided, recorded: named values are never paired with each other, so a rule fixing `from` and a `to` window
+    between unnamed ends is missed on every sampled number key; pairing them when a rule names few is a later question
+    for Shane. The same day, the coordinator's calls: main's two red rows could not be repaired apart (#2140 and #2146
+    were each red on the other's row), so #2146 carries both and #2140 is closed after it; #2124 merged (964e2745).
+  - **Ruling 118 (Shane, 2026-11-24): one wall for now.** A cell inside the Python dialect may run unasked with
+    the lockdown step as the only separation between it and the extension, on three conditions.
+    `autoApprovePython` stays off by default, and that default stays Shane's decision. The red team (e4) measures
+    whether a READONLY worker, after the strip, can recover the network or the extension origin's stores; it does
+    so after its passes on #2131, #2154 and #2158. The opaque-origin second wall (the worker in a sandboxed frame)
+    is built before the default ever turns on, or at once if that probe finds a route back. What the decision
+    rests on is e4's probe (#2157, the lane's account, measured from a FULL worker whose global was never
+    stripped, so an upper bound): a bypass reaches the extension origin's IndexedDB (drafts, the hub keyring,
+    saved sessions, values), its OPFS root and any host over `fetch`; it reaches no `chrome` API, cannot compile a
+    string (the CSP refuses `eval`), and loads a script only from the extension's own files. The second wall's
+    known cost, from packages' sandbox-page measurement: no SharedArrayBuffer, so the interrupt buffer and the
+    files mount are rebuilt. The shipped sandbox CSP does not change under this ruling.
+  - **A secret value in a file NAME is masked at listing (coordinator, 2026-11-24; a security repair of #2026).**
+    session-store builds it after #2121 merges, from main, and e4 writes the rows. The rule, in session-store's
+    six points: a listing and the opendir cursor show `[REDACTED:<NAME>]` in place of a registered value; a folder
+    is sorted by the names shown; a path segment resolves to the exact raw name, else to the one child with that
+    shown name, and the hide rule runs on the raw path; two raw names that share a shown name are both listed, and
+    naming that shown name is `EACCES` saying it is ambiguous and how many files; an error's text carries the path
+    as the cell wrote it; a raw name the cell already knows opens. The coordinator's additions: (A) an exact raw
+    match wins, and `EACCES` is only for a segment that matches no raw name and two or more shown names; (B) ties
+    are ordered by a key not derived from the raw name; (C) one resolver serves open, stat, unlink, rename (both
+    ends), create, exclusive create and opendir; (D) every path that hands a name to a cell or the model is
+    enumerated in the rows (opendir, stat of the parent, errors, `os.walk`, `scandir`, `glob`, `pathlib`, the JS
+    listing, `ml.current.files`, the file block, cell facts, both exports, the run log); (E) the in-cell scrub is
+    a full-value membership test no stronger than the byte mask, with no partial or prefix match and no length;
+    (F) the cursor is positional (the shown name plus its ordinal among equals), and `EACCES` applies to path
+    segments only; (G) `[REDACTED:` is reserved in a created or renamed-to name under `/files/agent/` unless the
+    segment resolves to an existing child. Accepted cost: two files under one shown name open only by raw name,
+    which arises only from an attached file's own name or a value registered after the file was written. The PR
+    also edits FILE_ATTACHMENTS.md's `path` paragraph (#2141), whose third case gives "the mount lists the stored
+    name" as its reason.
+  - **Bench rerun A, and the gate of rerun B (2026-11-24).** Rerun A is the lane's account, not verified by the
+    coordinator: build 882b3098, qwen3.8, 38 tasks, 3 repeats. Right answers 97 to 108 of 114; runs finished 112
+    to 114; `python_exec` calls not run 39.1% to 4.7%; runs that load data in Python 44 to 108; JS `exec` calls a
+    run 3.02 to 0.93; `dereference` calls a run 0.94 to 0.18. The first refusal of a run was `import os` in 82 of
+    113 runs, `read_csv` in 17, `try` in 3, `glob` in 3, other 8, and it fell on the run's first cell in 98; 414
+    of 527 asked cells were asked only because of the outside mark. Rerun B's gate (coordinator): #2131, #2141,
+    #2154 and #2158, on main at the first commit that holds all four, reporting counts by cause from the logs (the
+    first refusal of a run, cells importing `os`, cells listing a folder, cells opening a `/files/attached/` path
+    from the file block, cells calling `ml.table`) and the change per task with its spread. A real-model run
+    starts only on Shane's yes in bench's own session. Queue calls made for the gate: e4 passes #2131, #2154, then
+    #2158's rows, before anything else; janitor-3 reads #2154, #2131, #2158 before #2138, #2117, #2127, #2119.
+  - **Calls on #2158 and #2159 (coordinator, 2026-11-24).** #2158 (packages: `tables` removed, the Python
+    `ml.table` built, synchronous) merges only with e4's rows for the new facade member on its branch, among them
+    a facade object kept from an earlier cell and called in a later inside cell. A charge is a bound only where a
+    row measures the steps the cell spent: #2158's first charge on a rows or HTML answer was made inside the
+    harness's `run_sync`, on the event loop, where the dialect counts nothing, and two answers at the page-table
+    cap cost about 4,400 steps where the rule says about 16,000,000; it now charges after the wait, on the cell's
+    stack. move-run's account is that #2154's three charges run on the cell's stack and each has such a row. A
+    Google Sheet's body is read whole in the service worker today; packages caps it at the fetch cap in its own PR
+    after #2158. #2159 (Chat Page: `read_pages`, a worker chat's one tool) is accepted in shape: a chat turn's
+    tool calls are `agent-step` events with an optional `turn`, no new event kind, `step` and `seq` counting the
+    session's tool calls, and a step whose turn is not held kept as an orphan. It is a new builtin tool, so it
+    merges with e3's rows on its branch, among them that a result holding a registered secret is scrubbed for the
+    model, the page and both exports, and that a page-started chat cannot have a step reduced into a session it
+    does not own.
+  - **Merged since ruling 117, verified with `gh`:** #2129 (2829c59b), #2130 (d1301709), #2111 (018fdad6), and
+    #2146 (aee3e8cc), which repaired both rows that were red on main (#2129 meeting #2130, and #2111 merged on a
+    head that predated #2106); #2140 was closed unmerged, its change carried by #2146.
+  - **Ruling 119 (Shane, 2026-11-24): what goes first for `/files`, and the dump is deferred.** Shane took the
+    coordinator's order on condition that each item stays tracked here. (1) session-store builds `ml.fs`'s write
+    members after its PR that masks secret values in file names; this ends the coordinator's deferral of
+    2026-11-23 for those members. The write rules are decided once, in that PR; its spec sentences come to the
+    coordinator before push, and it needs a red-team pass (new `ml.*` members). (2) files-host builds `/files` on
+    the person's disk (ruling 91) after #2155 and its PR C, AHEAD of ruling 113's slices 1 and 3, which stay
+    tracked behind it: H16 to H18 in window-ml-host, then the extension calling mount at session start, then
+    Python's mount backed by the folder (red-team pass). The lane sends a slice list first. (3) Dumping a `@tool:`
+    value into `agent/` (ruling 36, `ml.fs.cp` of a pointer) is DEFERRED. Shane's reason: the direction is two
+    REPLs and few traditional tools, and then a cell writes a tool's result to disk itself. Not built and not
+    scheduled after this ruling: backup and the archive carrying the files, the file browser, the sweep of files
+    no session holds, and the check that the session's folder stays usable (Shane's idea of 2026-11-21).
+  - **Move-run's order (Shane, 2026-11-24, the coordinator's recommendation kept):** #2154 (the `os` subset), then
+    #2125 ("No tab"), then `navigate` from no tab, then resuming with no page. The coordinator's call under it:
+    attach from no tab (`moveRun` with a detached source) ships with the `navigate` step and needs e3's pass;
+    MOVE_RUN.md's third open item is marked built there. The shell bench step and the kernel line stay deferred.
+    #2125's repair (192c87a9): `senderOwnsRun` takes a sender with no tab only when it carries the extension's own
+    URL and id, which enables the red-team row that was `todo`; the old harness sender `{}` no longer answers a
+    gate, and that was the hang.
+  - **Hand-listing a builtin kind's method (the coordinator, 2026-11-24, on #2162).** A method is listed by hand
+    in `BUILTIN_LISTED`, whatever its corpus count, only when it is read-only, takes the arguments a listed method
+    takes, and a replay found cells refused for it alone. `str.endswith` is the first: no counted cell, and
+    refused alone in 7 replayed bench cells (the lane's account; the replay and the cells are named above
+    `BUILTIN_LISTED`, with no pinned extract). No red-team pass. If more follow, the threshold goes to Shane.
+  - **The routes back from a stripped worker (e4's account, 2026-11-24, under ruling 118; no new probe yet).**
+    Closed: `eval` and `Function` (CSP, measured in a full worker) and the `ml` wire (`postMessage` stripped; the
+    host judges by the pending entry's wire stamp). Unknown: references Pyodide or Emscripten keeps in closures, a
+    kept `postMessage` or `MessagePort` closure behind the files mount, and wasm imports (IDBFS, sockets). e4
+    probes them in that order; each shape ends as a committed row or a one-line reason, and a working route goes
+    to Shane at once. #2157's sentence that its figure is an upper bound is accepted (7736798a).
+  - **Merged since the last list, verified with `gh`:** #2160 (71a2ef1a), #2148 (b83e26fc, the page-payload
+    strip), #2121 (2747ad2a, Python's writes under `/files/agent/`), and in window-ml-host #57 (b5cadac7, the
+    describer) and #58 (e5fb12c3, `hide` and `show` in both sandboxes). SECRET_HANDLES.md's row saying a `hide`
+    binds no shell program is corrected when #2155, the extension's half, merges.
+  - **Ruling 120 (Shane, 2026-11-24): the direction is two layers, and `@tool:` pointers are not legacy.** The
+    direction is two REPLs and few traditional tools. A REPL is how values are COMPUTED and combined: tools become
+    functions, and joining two of them is function composition inside one cell, where tool calling needed a round
+    trip through the context for each join. A pointer is what a cell's output IS: typed (a table, text, an image,
+    a file), addressed, and persisted with the session in the value store. Shane's statement of why the REPL does
+    not replace it: a pointer gives pass by reference, in the model's own output, on typed objects, and those
+    objects are what is stored, so the context can be worked on later; they are the output of the cell. A
+    namespace variable does none of that: it lives in worker memory and dies with the worker, only a later cell's
+    code can name it, the host does not know its type, and the context holds only what was printed. So the context
+    holds the reference and the store holds the whole, which is what lets a view be cut, held back, compacted and
+    read again. The join between the layers is two operations: a cell's result becomes a pointer, and a cell takes
+    a pointer as input. With fewer tools, more values are born in a cell, so pointers carry more, not less. No
+    lane removes or bypasses a pointer path on the ground that a REPL covers it. To check under ruling 119: the
+    dump's deferral assumes a cell can read any pointer's whole value; Python reads a table pointer (`ml.table`),
+    and whether it reads a text or image pointer whole is asked of packages. A gap there is repaired by a general
+    read of a pointer in Python, not by the dump.
+  - **The file browser is scheduled (Shane, 2026-11-24: it is needed to understand what is going on; Chat Page
+    hands the build to a Sonnet subagent).** This amends ruling 119, which left it unscheduled. Slice 1, the
+    coordinator's cut: a read-only tree over `/files/` (name, size, kind, hidden state), listed one directory at a
+    time, in the panel FILE_ATTACHMENTS.md describes; out of it are the menu commands, shell roots, `/history/`,
+    the phone's view and previews. The contract, accepted: `files.list` is a command whose ANSWER carries the page
+    (as `session.backfill`'s does), at most 500 entries and 256 KiB, and the stream carries only `files-changed`,
+    at most once per commit or attach, naming at most 16 changed directories and no entry. This amends item 5 of
+    "The file browser shows the mounts", which made the listing an event: an event is kept in history and
+    replayed, so each opened folder would have written a directory into it. It is a new message type, so e3's rows
+    land on the branch: a page-started sender, or one that does not own the session, gets no listing.
+  - **Names under `/files` (the coordinator, 2026-11-24; session-store's branch at 0c2cc780, no PR yet).** A name
+    is masked with every form the bytes are masked with, each with its marker. A folder sorts by its shown names,
+    ties by creation time and then a salted hash of the stored name. A create of a name that is a marker is
+    refused. The person's listing gets the SHOWN names too: one listing for every caller, since a panel listing
+    reaches a paired device over the hub; the human-only state inspector on the extension's own pages is the one
+    exception. Cost, stated: two files sharing a shown name look alike in the panel. Surfaced to Shane, who may
+    want the real names locally.
+  - **Merged, verified with `gh`:** #2164 (337b8cd3), this plan's ruling 119.
+  - **Ruling 121 (Shane, 2026-11-24, said in packages' session and confirmed in the coordinator's): a pointer
+    points at the object, and an image is an object.** Five statements. (1) The preview is the model-facing text
+    view of a value, like a notebook's `str` cut off; the pointer points at the underlying object.
+    POINTER_VALUES.md's reader table already gives `python_exec` the value, so a cell that gets only the text view
+    of an image is a gap. (2) An image gets a stored type: its bytes go in the value store under the same budget,
+    least-recently-read eviction and tombstones as a table. Today the pixels ride in the token as a data URL and
+    nothing is stored. One budget for images and tables is the coordinator's call, with the cost named: a run of
+    many screenshots can evict a table the model still needs; they are split only if that is seen. (3) An image
+    the current page has already loaded can be read in the REPL. (4) The fetch gate stays in fetch: `ml.image` has
+    no http(s) source and makes no request, and a download is `ml.image(await ml.fetch(url))`. (5) A URL is
+    accepted by both calls and means two things, and the spec says why: in `ml.image(url)` it is a NAME for a file
+    the page loaded, read without a request; in `ml.fetch(url)` it is an ADDRESS, a request under the fetch gate
+    whatever page it came from.
+  - **What ruling 121 schedules, for packages, in this order after #2158:** the stored image format (its spec in
+    POINTER_VALUES.md: what the panel and both exports show, the vision turn unchanged, sessions written before
+    it, what an image is charged, the tombstone, `res.outputs` giving a page no read of the store); then
+    `ml.fetch` and `fetch_url` storing an image body (raster only, fetch's own cap, a truncated image not stored,
+    a page-started fetch unchanged; red-team rows under rule 10); then `ml.image` (ruling 114). `ml.image` reads
+    an element's capture, a loaded image, a data URL (inside the dialect: raster, SVG refused, a byte cap, the
+    pixel charge before the decode) and a stored value. Each PR's spec text comes to the coordinator before a
+    push.
+  - **The loaded-image read, as accepted (coordinator, 2026-11-24).** It reads the browser's own copy over the
+    debugger attach the extension already makes, only for a URL in the current page's resource tree at the time of
+    the call, and never falls back to a fetch; with the debugger setting off, or the copy gone, the read is the
+    element's crop. Conditions: "makes no request" is UNVERIFIED until requests are counted at a server in a real
+    browser (memory-cached, evicted, `no-store`, cross-origin, subframe, redirected, a `srcset` variant), and a
+    case that sends one fails closed; the bytes never reach a page, by `res.outputs`, a main-world `exec` or a
+    page-started cell, since a page cannot read a cross-origin image itself; file metadata is kept byte for byte
+    and never printed in the text view. Refused: re-fetching a loaded image unasked. A hostile page embeds N
+    images, and which of them a cell re-fetches is a message of about N bits to that page's server.
+  - **Names under `/files`, amended by Shane (2026-11-24): more is shown locally.** This replaces the sentence
+    above that gives the person's listing the shown names only. An entry's `name` is always the shown name. An
+    optional `realName` goes with it only when the two differ and only to the extension's own pages on this
+    device: never to the hub, an event, an export, the run log, `ml.fs` or the Python mount. The panel shows the
+    real name, marked with an icon whose tip says "The model sees this as <name>". The mask is #2166 (open); the
+    `realName` option is session-store's next PR. In the worker it is sent only when the command came from this
+    browser, a fact the transport sets, with e3's rows: a hub client, a page-started sender and an export never
+    get it.
+  - **The file browser's design principle (Shane, 2026-11-24): "build a normal file browser and then add the
+    weirdness of our crap on top of it".** The base is an ordinary tree; hidden state, masked names and mounts are
+    annotations that could be removed without changing the tree. Chat Page's slice 1 renders `realName` from the
+    fake host; slice 1b is the worker's half. The root listing also answers a count per mount, from
+    session-store's `AgentFiles.stats` (#2167, open); while the `agent` count is absent the header does not
+    present `attached` as the total.
+  - **`/files` on the person's disk (ruling 119), files-host's slices as accepted (coordinator, 2026-11-24).**
+    First a docs-only PR with eleven corrections to FILE_ATTACHMENTS.md. Then: (1) the host creates the session's
+    folder, keeps it out of git and takes uploads into the call's snapshot; (2) the host refuses another session's
+    folder, cell and spawn side; (3) the sandbox profile on both platforms; (4) the extension mounts it at session
+    start; (5) the Python mount on the folder. Rulings: the two new plan fields are additive and tolerated absent;
+    macOS denies reading the sessions folder itself, a stated platform difference with a row per platform. Cut:
+    "sync and backup read the folder", and the folder watch with its `notify` dependency, deferred whole.
+  - **Merged, verified with `gh`:** #2165 (0129ae8d), ruling 120; #2154 (1eb4bfe4), move-run's `os` subset.
+  - **Ruling 122 (Shane, 2026-11-24, said in packages' session and confirmed in the coordinator's): reading an
+    image the current page loaded needs no approval, and how it is read is an implementation detail.** Shane: "the
+    CDP rules were there previously because it was doing escalated actions like clicking in an external origin
+    iframe. For images I think it's just a stupid implementation detail", and "The model can literally `look` at
+    that page and see the image". So the spec states a contract and not a mechanism: a cell gets the image at the
+    best quality the browser hands over (the file, else the decoded pixels at natural size, else the pixels as
+    drawn) and can tell which it got. Four rules bind any route: no request (UNVERIFIED until counted at a server,
+    and a case that sends one is not used); nothing in the page changes; no ask; the size is bounded before
+    anything is allocated. The conditions of the entry above stand, except that the debugger route attaches
+    without asking, so Chrome's "is debugging" banner can flash for a read: the setting's JSDoc, CDP_CLICK.md and
+    detection-surface.md each gain a sentence. A hidden image is read too, which is more than `look` shows; it is
+    accepted because the bytes never reach a page. The coordinator's rule of earlier the same day, to ask when no
+    attach exists, is withdrawn.
+  - **Ruling 122, second part (Shane, the same message): "if the bytes are loaded in the context you should be
+    able to read them and inspect them in JS like you can the page".** The coordinator's reading: the JS REPL
+    (`exec`) reads a loaded image as Python does, under the same contract and four rules. The coordinator's
+    conditions: it runs only in an isolated world, as an `exec` naming `ml.current`, `ml.sh` or `ml.fs` does, and
+    is refused where there is none; never in a page-started call. It is a new `ml.*` member for `exec`, so it gets
+    a red-team pass. Not scheduled yet: it follows Python's `ml.image`, and its owner is named then.
+  - **Merged, verified with `gh`:** #2168 (828160fa), this plan's ruling 121.
+  - **Ruling 123 (Shane, 2026-11-24): the model reads an image as text until it looks.** "Returning an image just
+    gives you a pointer. It doesn't give you the full object. If the model wants to look at that pointer in detail
+    it uses the `look` call or it uses `verify` which is just an inline-chained look call. By default it gets just
+    the summarised text view. We can make it more detailed than a generic "an image" by providing metadata like we
+    do for tables." So reading or computing on an image in a cell puts no pixels before the model, and neither
+    does returning one: the person sees it, the model gets the pointer and the text view. That is what the code
+    does today, so nothing changes there. What changes is the text view: "Returned an image." becomes one line of
+    facts (kind, dimensions, size and the like, nothing from the file's metadata), stated in the stored image
+    format's spec as the preview of an image. A fetched image body follows the same rule. Shane's reason is cost;
+    it is also the rule a table already follows, and it is ruling 121 (1) applied to a picture. This answers the
+    question the entry above left open, which is removed.
+  - **Merged, verified with `gh`:** #2169 (8aeeef22), this plan's ruling 122.
+  - **Ruling 124 (Shane, 2026-11-24): the model can write an image to disk, or to the virtual file system, after
+    editing it.** No new member. A cell saves under `/files/agent/`: `img.save(path)` re-encodes, and
+    `ml.fs.writeFile(path, img.bytes)` writes the bytes as held, so a JPEG is not re-encoded and its metadata goes
+    with it (`img.bytes` exists for a file read and a fetched image, and is `None` for decoded or drawn pixels).
+    From a pointer the route is `ml.image("@tool:…")` and then a write, the composed route ruling 119 chose;
+    `ml.fs.cp` of a pointer stays deferred. Once `/files` is the person's folder (ruling 119 (2)) the file is on
+    their disk. A JS cell writes bytes it holds with `ml.fs`'s write members (session-store), which take bytes as
+    well as text. Not yet run: `img.save` to a path through the mount; the PR runs it first.
+  - **Ruling 125 (Shane, 2026-11-24): "writing to `/files/agents/` should be free and not require an approval".**
+    This confirms ruling 86 and ML_TABLE.md, "The model's writable folder", which already list the writers that
+    run unasked (the pandas, numpy, Pillow and pyarrow writers that take a path, and `ml.fs`'s `writeFile`,
+    `rename` and `rm`), the path checker and the rollback; only the build was missing, so today a cell that writes
+    asks every time. Ruling 125 schedules that build, for packages. The coordinator's rulings on it: `open` for
+    writing stays refused inside until its own PR lands (below, "`open` for writing"), and its message names
+    the routes that do not ask; `Path.write_text` and `write_bytes` are added if
+    the checker can admit them; `ml.fs.mkdir` is one more row; `ml.fs.cp` of a pointer is marked deferred there
+    (ruling 119 (3)); no fork commit or pin bump before it comes to the coordinator. The JS side is
+    session-store's `ml.fs` write members: free within `/files/agent/`, with the quota, the name mask and path
+    resolution as the stated bounds. `/files/attached/` stays read-only.
+  - **Packages' order, as of 2026-11-24 (superseded the same night, below):** #2158; the `/files/agent/` writers;
+    the stored image format; `ml.fetch` storing image bodies; `ml.image`.
+  - **Ruling 126 (Shane, 2026-11-24, on the coordinator's recommendation, "for now"): binary bytes are not exempt
+    from the secret mask on a read.** One rule for all bytes. An exemption decided from a file's content is a
+    bypass, since whoever writes the file chooses its content: a program writes an image header followed by a
+    secret. A chance match in a real image is negligible for a form of 8 bytes or more: against 64 MiB of compressed
+    data, about 4e-12 per form. CORRECTED 2026-11-25: that figure does not hold for every form. A URL host form
+    can be 4 bytes and is matched without regard to case, which gives about 0.25 expected false matches per 64
+    MiB (session-store's account of the floors; the coordinator's arithmetic). Such short forms exist only for a
+    dotted host with no port and a short bare model filter. The read is silent about a match today. Ruling 127
+    is the answer. What would reopen it: a measured false match, or a format the mask breaks with no secret
+    in it.
+  - **The text view of an image (ruling 123), as accepted for the stored image format's spec:** one line in place
+    of "Returned an image.", with the media type, width and height, colour mode, size through the existing byte
+    formatter, the frame count when above one, `source=` for an `ml.image` value, and "from the first 6 of 9 open
+    figures" when figures were stacked and some dropped. Nothing from the file's metadata. How to see the pixels
+    is said once, in `verify`'s description.
+  - **Merged, verified with `gh`:** #2170 (8808cb4e), this plan's ruling 123.
+  - **Ruling 127 (Shane, 2026-11-24 night: "Sure if you still think this is the best option now?", taken as assent
+    to the coordinator's current recommendation; Shane to say if the older pair was meant): a read reports how
+    many matches the secret mask replaced, and there is no length floor on URL forms for now.** The reader returns
+    the count with the bytes; `ml.fs.read` carries `scrubbed: <n>`; a Python cell's result ends with one line when
+    a read through the mount was scrubbed (packages traces the mount's path). A floor on URL forms would leave a
+    short host unmasked, so it waits on a reported damaged image. Owner: session-store, with ruling 125's write
+    members.
+  - **`open` for writing (Shane, 2026-11-24 night: "I am 100% sure models will keep writing standard `open()` in
+    the cells"; its own PR, third in packages' order).** The earlier reason for the refusal was wrong: Shane's
+    objection holds, a path that was fine to write stays fine. Packages' assessment names the two real obstacles.
+    (1) Rollback: a refused attempt's dropped handle is closed by the finalizer, and a close commits (ruling 75),
+    so a half-written file would be saved; the cure is to track writers per attempt, abort them on a refusal and
+    close and commit them at success, so no inside handle outlives its attempt. The cost is named: a handle no
+    longer spans cells, and a later cell reopens in append mode. (2) A handle the cell cannot tamper with: a new
+    pure-Python type can be patched by an approved outside cell (ML_WIRE.md, Step 1). The coordinator's
+    hypothesis, unmeasured and to be tested first: the `_io` handle types are static C types whose methods cannot
+    be rebound, so ownership of a handle opened in this attempt on an admitted path may suffice with no fork
+    change. No fork commit or pin bump before it comes to the coordinator.
+  - **Packages' order (Shane approved, 2026-11-24 night):** #2158; the `/files/agent/` writers; `open` for
+    writing; the stored image format; `ml.fetch` storing image bodies; `ml.image`.
+  - **The pause, and what has resumed (Shane).** All builders were paused on 2026-11-24 night. On 2026-11-25 Shane
+    resumed the reviewer sessions (janitor-2, janitor-3, flaky-ci) and the two red-team sessions, in the
+    coordinator's session. Builders stay paused until Shane resumes each. Ruled for the pause: a builder's
+    "paused, do not merge" does not bind a reviewer under ruling 98, except #2172 (review only).
+  - **A logged need, not scheduled: reviewing what a cell wrote instead of its code (Shane, 2026-11-25).** By
+    folder or file, a policy makes a writing cell run without a code approval and show the rendered DIFF before
+    the write is saved. Accepted by Shane so far. It gets its own spec, and it is a policy overriding a default
+    ("prompt me with a diff any time you edit CSV files in this folder"). A text diff is the default; a renderer
+    per parsed file type replaces it where one exists, a table first (rows matched by a discovered unique key
+    column, else by alignment, the card saying which), with the text diff always reachable and bytes that are not
+    text shown as facts only. A large change shows counts and a bounded sample. One card per cell with a tab per
+    reviewed file and ONE decision for the cell; a refusal rolls back the cell's free writes too; a write that
+    meets a `deny` refuses the cell with no card. The coordinator's proposals, unruled: a fourth policy answer
+    `review`, ordered `deny`, `ask`, `review`, `allow`; the thing judged is each held write at the end of the
+    cell, since a Python cell's paths are not known before it runs. For a Python cell and `ml.fs` the write is
+    held in memory. For an `ml.sh` program the write goes to the kernel, so Shane's mechanism is a before copy:
+    run the program at the real path and keep a copy-on-write copy elsewhere, restored on a refusal; this gives up
+    isolation only. The copies live outside every workspace, in a configurable place (the host's scratch store by
+    default), unreachable by the program's sandbox. What is copied is bounded: only files that exist before the
+    call, the manifest's declared write set first, else the root with large subtrees made read-only for the call;
+    on Linux an overlay copies nothing. All of the host part is unmeasured; the host lane times a clone and
+    verifies the mechanisms before the spec commits. It is built after packages' writers and `open` for writing,
+    on their rollback.
+  - **Ruling 128 (Shane, 2026-11-25: "I think this is fine, and it would block the cell and flag it to the
+    user?"): a call whose outgoing arguments hold a secret's value is blocked and flagged.** SECRET_HANDLES.md
+    states the gap as a known limit: the model's own tool arguments are not scrubbed, so a model that holds a
+    value can write it into a fetch, and the gates judge only the destination (the page a run is on is free in
+    every fetch mode). From this ruling a fetch's URL, body or headers, typed text, and an `ml.sh` argv or stdin
+    are checked against the values held (the worker for registered values, the host for a masked file's). On a
+    match nothing is sent, the cell or call stops there, and the person gets a flagged card naming the key; the
+    run log records it. Shane's remedy for a compromised session: read the log and start a new session. The
+    coordinator's calls: the card offers "send anyway" for a false match, and no policy answers it; a value
+    encoded or split first passes, the scrub's own limit; a match confirms a guess, which echoing already does.
+    Owners after the resume: session-store (worker) and files-host (host), with a red-team pass.
+  - **The guessing limit is accepted (Shane, 2026-11-25).** A guess that comes back redacted confirms itself, and
+    attempts are unbounded: one call can test millions of candidates, so a low-entropy value falls and a random
+    key does not. A cap on redactions does not see it (one hit). Shane: this is solved as attacks usually are, by
+    watching for suspicious behaviour; the defences are the cost of finding the value and the gates on sending it.
+    Detection is not designed. IDEA (Shane, same day, not scheduled): the secrets UI flags a weak value, as a
+    warning and never a block; the coordinator's shape is an estimate of guesses, not of character entropy, with
+    the threshold Shane's to set.
+  - **Red-team e3's design attack on ruling 113's section (2026-11-25, on paper).** Twenty-three claims against "A
+    masked file", read at the version before #2145, which already answers five. Fifteen are accepted as spec
+    corrections owed by files-host at its resume and before slice 1 starts. The gravest: a line the grammar cannot
+    read is shown as one fake and a write-back would save that fake over the line, so it becomes a slot keyed on
+    its ordinal. The others narrow claims: ruling 101's re-derivation is stated for masked fakes; the output
+    scrub's holdback is per stream and catches a direct print in the listed forms only; a pin covers the listed
+    files and "changed since the hash"; a show on an interpreter says it is a show on the model's own code; an
+    allowed program may change a masked file's content and may not rename, remove or link it. Two properties held:
+    no value moves between files, and the write-back is no second oracle.
+  - **#2166's two open red-team rows are the echo oracle (ruled 2026-11-25, session-store agreeing).** A stat of
+    an exact stored name, and a create confirmed by the next listing's mask, each confirm a guess the cell already
+    holds, whole value per try (e4 checked there is no prefix, length or per-character answer). No code change;
+    session-store owes one pointer line in FILE_ATTACHMENTS.md. A shape that beats guessing the whole value
+    blocks.
+  - **Merged, verified with `gh`:** #2171 (bf95ebbf), this plan's rulings 124 to 126; #2154 (1eb4bfe4), the `os`
+    subset of ruling 112; #2138 (f8d7874b); #2155 (7c8e5774), ruling 34's PR B; window-ml-host#57 (b5cadac7).
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
   `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks
