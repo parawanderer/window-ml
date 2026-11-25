@@ -372,15 +372,19 @@ export function policyView(): { global: StoredPolicy[]; runs: { hash: string; po
     };
 }
 
-/** One session's effective policies as rows (sw-policy-view.ts), computed here beside {@link judgeCall} from the same lists. */
-export function sessionPolicies(hash: string): { rows: PolicyRow[]; builtin: typeof BUILTIN_POLICY } {
+/**
+ * One session's effective policies as rows (sw-policy-view.ts), computed here beside {@link judgeCall} from the same lists.
+ * @param hash the session's hash
+ * @param platform the connected host's `hello.platform`, which decides the limit lines of a `hide` row's label
+ */
+export function sessionPolicies(hash: string, platform?: string): { rows: PolicyRow[]; builtin: typeof BUILTIN_POLICY } {
     const input = (l: StoredPolicy[]): PolicyInput[] => l.map((p) => ({ id: p.id, consumer: p.consumer, label: p.label, source: p.source, effect: p.effect, origin: p.origin, created: p.created, ...(brokenWhy.has(p.id) ? { broken: brokenWhy.get(p.id) } : {}) }));
     const scripts = (l: StoredPolicy[]): StoredPolicy[] => l.filter((p) => p.consumer !== "files");
     const session = byRun.get(hash) ?? [];
     const viewed = (l: StoredPolicy[], layer: HideEntry["layer"]) => hideEntries(l, layer).map((e) => { const p = l.find((q) => q.id === e.id)!; return { ...e, label: p.label, origin: p.origin, created: p.created }; });
     // As for every consumer, a `files` default row is shown only once the consumer has a rule (`effectiveRows`'s convention).
     const g = viewed(globals, "global"), s = viewed(session, "session");
-    return { rows: [...effectiveRows(input(scripts(globals)), input(scripts(session)), BUILTIN_POLICY), ...(g.length || s.length ? filesViewRows(g, s) : [])], builtin: BUILTIN_POLICY };
+    return { rows: [...effectiveRows(input(scripts(globals)), input(scripts(session)), BUILTIN_POLICY), ...(g.length || s.length ? filesViewRows(g, s, platform) : [])], builtin: BUILTIN_POLICY };
 }
 
 /** A list's `files` rules as the hide rule reads them, tagged with their layer. */
@@ -455,6 +459,9 @@ export function judgeCall(runId: string | undefined, consumer: PolicyConsumer, f
     // A call the host sends the person's credential with ALWAYS asks: no allow policy and no free tier answers it
     // (SHELL.md, "GH UNDER THE SANDBOX RULED"). A deny or an ask policy above still does.
     if (isCredentialed(facts)) return { decision: undefined, broken };
+    // A path argument a hiding rule holds ALWAYS asks: no allow policy and no free tier frees it, and the durable way to
+    // read the file is to remove the `hide` (POLICIES.md, "What the host gets").
+    if (namesHidden(facts)) return { decision: undefined, broken };
     // A call to a program that reveals other processes asks unless the person listed it: no allow policy and no free tier
     // answers it, since a policy can be the model's proposal and the list is a gate key (PROGRAM_MANIFEST.md, ruling 31).
     if (revealsUnlisted(facts)) return { decision: undefined, broken };
@@ -467,6 +474,10 @@ export function judgeCall(runId: string | undefined, consumer: PolicyConsumer, f
 /** Whether a call's facts say the host will inject a credential into it (`ShFacts.credential.held`). */
 const isCredentialed = (facts: Record<string, unknown>): boolean =>
     typeof facts.credential === "object" && facts.credential !== null && (facts.credential as { held?: unknown }).held === true;
+
+/** Whether a call's facts name a path a hiding rule holds (`ShFacts.paths[].hiddenBy`, from the host's `paths[].hiddenBy`). */
+const namesHidden = (facts: Record<string, unknown>): boolean =>
+    Array.isArray(facts.paths) && facts.paths.some((p) => typeof p === "object" && p !== null && typeof (p as { hiddenBy?: unknown }).hiddenBy === "string");
 
 /** Whether a call's facts say its program reveals other processes and is not in `shellRevealsAllow`
  *  (`ShFacts.reveals.allowed` false). */
