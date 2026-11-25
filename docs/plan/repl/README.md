@@ -2431,20 +2431,23 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     run unasked (the pandas, numpy, Pillow and pyarrow writers that take a path, and `ml.fs`'s `writeFile`,
     `rename` and `rm`), the path checker and the rollback; only the build was missing, so today a cell that writes
     asks every time. Ruling 125 schedules that build, for packages. The coordinator's rulings on it: `open` for
-    writing stays refused inside, for the section's reason (a handle kept under a name writes later with no path
-    to check), and its message names the routes that do not ask; `Path.write_text` and `write_bytes` are added if
+    writing stays refused inside until its own PR lands (below, "`open` for writing"), and its message names
+    the routes that do not ask; `Path.write_text` and `write_bytes` are added if
     the checker can admit them; `ml.fs.mkdir` is one more row; `ml.fs.cp` of a pointer is marked deferred there
     (ruling 119 (3)); no fork commit or pin bump before it comes to the coordinator. The JS side is
     session-store's `ml.fs` write members: free within `/files/agent/`, with the quota, the name mask and path
     resolution as the stated bounds. `/files/attached/` stays read-only.
-  - **Packages' order, as of 2026-11-24:** #2158; the `/files/agent/` writers; the stored image format; `ml.fetch`
-    storing image bodies; `ml.image`. The writers moved ahead because they do not depend on the image work.
+  - **Packages' order, as of 2026-11-24 (superseded the same night, below):** #2158; the `/files/agent/` writers;
+    the stored image format; `ml.fetch` storing image bodies; `ml.image`.
   - **Ruling 126 (Shane, 2026-11-24, on the coordinator's recommendation, "for now"): binary bytes are not exempt
     from the secret mask on a read.** One rule for all bytes. An exemption decided from a file's content is a
     bypass, since whoever writes the file chooses its content: a program writes an image header followed by a
-    secret. A chance match in a real image is not a practical concern: a form is at least 8 bytes, so against 64
-    MB of compressed data it is about 4e-12 per form (the coordinator's arithmetic; session-store states its own
-    figure in the spec). What would reopen it: a measured false match, or a format the mask breaks with no secret
+    secret. A chance match in a real image is negligible for a form of 8 bytes or more: against 64 MiB of compressed
+    data, about 4e-12 per form. CORRECTED 2026-11-25: that figure does not hold for every form. A URL host form
+    can be 4 bytes and is matched without regard to case, which gives about 0.25 expected false matches per 64
+    MiB (session-store's account of the floors; the coordinator's arithmetic). Such short forms exist only for a
+    dotted host with no port and a short bare model filter. The read is silent about a match today. Ruling 127
+    is the answer. What would reopen it: a measured false match, or a format the mask breaks with no secret
     in it.
   - **The text view of an image (ruling 123), as accepted for the stored image format's spec:** one line in place
     of "Returned an image.", with the media type, width and height, colour mode, size through the existing byte
@@ -2452,6 +2455,83 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     figures" when figures were stacked and some dropped. Nothing from the file's metadata. How to see the pixels
     is said once, in `verify`'s description.
   - **Merged, verified with `gh`:** #2170 (8808cb4e), this plan's ruling 123.
+  - **Ruling 127 (Shane, 2026-11-24 night: "Sure if you still think this is the best option now?", taken as assent
+    to the coordinator's current recommendation; Shane to say if the older pair was meant): a read reports how
+    many matches the secret mask replaced, and there is no length floor on URL forms for now.** The reader returns
+    the count with the bytes; `ml.fs.read` carries `scrubbed: <n>`; a Python cell's result ends with one line when
+    a read through the mount was scrubbed (packages traces the mount's path). A floor on URL forms would leave a
+    short host unmasked, so it waits on a reported damaged image. Owner: session-store, with ruling 125's write
+    members.
+  - **`open` for writing (Shane, 2026-11-24 night: "I am 100% sure models will keep writing standard `open()` in
+    the cells"; its own PR, third in packages' order).** The earlier reason for the refusal was wrong: Shane's
+    objection holds, a path that was fine to write stays fine. Packages' assessment names the two real obstacles.
+    (1) Rollback: a refused attempt's dropped handle is closed by the finalizer, and a close commits (ruling 75),
+    so a half-written file would be saved; the cure is to track writers per attempt, abort them on a refusal and
+    close and commit them at success, so no inside handle outlives its attempt. The cost is named: a handle no
+    longer spans cells, and a later cell reopens in append mode. (2) A handle the cell cannot tamper with: a new
+    pure-Python type can be patched by an approved outside cell (ML_WIRE.md, Step 1). The coordinator's
+    hypothesis, unmeasured and to be tested first: the `_io` handle types are static C types whose methods cannot
+    be rebound, so ownership of a handle opened in this attempt on an admitted path may suffice with no fork
+    change. No fork commit or pin bump before it comes to the coordinator.
+  - **Packages' order (Shane approved, 2026-11-24 night):** #2158; the `/files/agent/` writers; `open` for
+    writing; the stored image format; `ml.fetch` storing image bodies; `ml.image`.
+  - **The pause, and what has resumed (Shane).** All builders were paused on 2026-11-24 night. On 2026-11-25 Shane
+    resumed the reviewer sessions (janitor-2, janitor-3, flaky-ci) and the two red-team sessions, in the
+    coordinator's session. Builders stay paused until Shane resumes each. Ruled for the pause: a builder's
+    "paused, do not merge" does not bind a reviewer under ruling 98, except #2172 (review only).
+  - **A logged need, not scheduled: reviewing what a cell wrote instead of its code (Shane, 2026-11-25).** By
+    folder or file, a policy makes a writing cell run without a code approval and show the rendered DIFF before
+    the write is saved. Accepted by Shane so far. It gets its own spec, and it is a policy overriding a default
+    ("prompt me with a diff any time you edit CSV files in this folder"). A text diff is the default; a renderer
+    per parsed file type replaces it where one exists, a table first (rows matched by a discovered unique key
+    column, else by alignment, the card saying which), with the text diff always reachable and bytes that are not
+    text shown as facts only. A large change shows counts and a bounded sample. One card per cell with a tab per
+    reviewed file and ONE decision for the cell; a refusal rolls back the cell's free writes too; a write that
+    meets a `deny` refuses the cell with no card. The coordinator's proposals, unruled: a fourth policy answer
+    `review`, ordered `deny`, `ask`, `review`, `allow`; the thing judged is each held write at the end of the
+    cell, since a Python cell's paths are not known before it runs. For a Python cell and `ml.fs` the write is
+    held in memory. For an `ml.sh` program the write goes to the kernel, so Shane's mechanism is a before copy:
+    run the program at the real path and keep a copy-on-write copy elsewhere, restored on a refusal; this gives up
+    isolation only. The copies live outside every workspace, in a configurable place (the host's scratch store by
+    default), unreachable by the program's sandbox. What is copied is bounded: only files that exist before the
+    call, the manifest's declared write set first, else the root with large subtrees made read-only for the call;
+    on Linux an overlay copies nothing. All of the host part is unmeasured; the host lane times a clone and
+    verifies the mechanisms before the spec commits. It is built after packages' writers and `open` for writing,
+    on their rollback.
+  - **Ruling 128 (Shane, 2026-11-25: "I think this is fine, and it would block the cell and flag it to the
+    user?"): a call whose outgoing arguments hold a secret's value is blocked and flagged.** SECRET_HANDLES.md
+    states the gap as a known limit: the model's own tool arguments are not scrubbed, so a model that holds a
+    value can write it into a fetch, and the gates judge only the destination (the page a run is on is free in
+    every fetch mode). From this ruling a fetch's URL, body or headers, typed text, and an `ml.sh` argv or stdin
+    are checked against the values held (the worker for registered values, the host for a masked file's). On a
+    match nothing is sent, the cell or call stops there, and the person gets a flagged card naming the key; the
+    run log records it. Shane's remedy for a compromised session: read the log and start a new session. The
+    coordinator's calls: the card offers "send anyway" for a false match, and no policy answers it; a value
+    encoded or split first passes, the scrub's own limit; a match confirms a guess, which echoing already does.
+    Owners after the resume: session-store (worker) and files-host (host), with a red-team pass.
+  - **The guessing limit is accepted (Shane, 2026-11-25).** A guess that comes back redacted confirms itself, and
+    attempts are unbounded: one call can test millions of candidates, so a low-entropy value falls and a random
+    key does not. A cap on redactions does not see it (one hit). Shane: this is solved as attacks usually are, by
+    watching for suspicious behaviour; the defences are the cost of finding the value and the gates on sending it.
+    Detection is not designed. IDEA (Shane, same day, not scheduled): the secrets UI flags a weak value, as a
+    warning and never a block; the coordinator's shape is an estimate of guesses, not of character entropy, with
+    the threshold Shane's to set.
+  - **Red-team e3's design attack on ruling 113's section (2026-11-25, on paper).** Twenty-three claims against "A
+    masked file", read at the version before #2145, which already answers five. Fifteen are accepted as spec
+    corrections owed by files-host at its resume and before slice 1 starts. The gravest: a line the grammar cannot
+    read is shown as one fake and a write-back would save that fake over the line, so it becomes a slot keyed on
+    its ordinal. The others narrow claims: ruling 101's re-derivation is stated for masked fakes; the output
+    scrub's holdback is per stream and catches a direct print in the listed forms only; a pin covers the listed
+    files and "changed since the hash"; a show on an interpreter says it is a show on the model's own code; an
+    allowed program may change a masked file's content and may not rename, remove or link it. Two properties held:
+    no value moves between files, and the write-back is no second oracle.
+  - **#2166's two open red-team rows are the echo oracle (ruled 2026-11-25, session-store agreeing).** A stat of
+    an exact stored name, and a create confirmed by the next listing's mask, each confirm a guess the cell already
+    holds, whole value per try (e4 checked there is no prefix, length or per-character answer). No code change;
+    session-store owes one pointer line in FILE_ATTACHMENTS.md. A shape that beats guessing the whole value
+    blocks.
+  - **Merged, verified with `gh`:** #2171 (bf95ebbf), this plan's rulings 124 to 126; #2154 (1eb4bfe4), the `os`
+    subset of ruling 112; #2138 (f8d7874b); #2155 (7c8e5774), ruling 34's PR B; window-ml-host#57 (b5cadac7).
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
   `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks
