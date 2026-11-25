@@ -10,6 +10,14 @@ export const FILES_AT = "/files";
 /** Read chunks the mount keeps, in fixed slots of one chunk each (32 × 512 KiB = 16 MiB, #1999 "The bounds"). */
 export const READ_CACHE_SLOTS = 32;
 
+/** The most names one directory page holds: the reader's own cap (ranged-reader.ts `DIR_PAGE_MAX`, which a test holds
+ *  this to), so the page the mount asks for is the page it is charged for. */
+export const DIR_PAGE = 500;
+
+/** The names the FIRST page of a listing asks for: most directories fit in it, so a walk over many small ones pays
+ *  for this page and not for `DIR_PAGE` each; a longer directory continues in pages of `DIR_PAGE`. */
+export const DIR_FIRST_PAGE = 50;
+
 /** The open(2) flag bits the mount reads (Emscripten's values, the Linux ones). */
 const O_ACCMODE = 3, O_TRUNC = 0o1000, O_APPEND = 0o2000;
 const S_IFDIR = 0o40000, S_IFREG = 0o100000;
@@ -29,13 +37,17 @@ export interface FilesMountDeps {
     Interrupted: new (...a: any[]) => Error;
     /** When a file's commit or a txn's abort fails after the stream is gone: the cell's log, never the model's reply. */
     onLost?: (path: string, why: string) => void;
+    /** Pay for a directory page of `names` names before it is asked for (listing-charge.ts): false when the running
+     *  cell's budget cannot, and the listing fails with EIO. Unset, nothing is charged. */
+    chargeListing?: (names: number) => boolean;
 }
 
 /**
  * Python's half of a refusal's words: `open`, `io.open` and `os.open` wrapped so a `PermissionError` under `/files`
  * gets the reader's message as its `strerror` (so `str(e)` and the traceback say why), read through `take(path)`.
  * Defined at boot by our own code. `switch(on)` puts the wrappers in for a cell outside the dialect and the originals
- * back for one inside, which cannot reach the mount, so the dialect's gate only ever judges the real `open`.
+ * back for one inside, so the dialect's gate only ever judges the real `open` (an inside cell's refusal under `/files`
+ * then says only "Permission denied").
  * (`sys.monitoring` is not free for this: the cancel's spend owns it and refuses a cell that leaves a tool registered.)
  */
 export const FILES_OPEN_WORDS = `
@@ -236,7 +248,11 @@ export function makeFilesMount(deps: FilesMountDeps) {
                 const kids = new Map<string, Stat>();
                 let cursor: string | undefined;
                 do {
-                    const page = req("opendir", [p, { limit: 1000, ...(cursor ? { cursor } : {}) }]) as { entries: Array<{ name: string } & Stat>; next?: string };
+                    // Charged for a full page before asking, since the count is not known first; nothing gives back
+                    // what a shorter page did not use (the fork's charge cannot credit). The first page is short.
+                    const limit = cursor ? DIR_PAGE : DIR_FIRST_PAGE;
+                    if (deps.chargeListing && !deps.chargeListing(limit)) throw new FS.ErrnoError(ERRNO_CODES.EIO);
+                    const page = req("opendir", [p, { limit, ...(cursor ? { cursor } : {}) }]) as { entries: Array<{ name: string } & Stat>; next?: string };
                     for (const e of page.entries) kids.set(e.name, e);
                     cursor = page.next;
                 } while (cursor);

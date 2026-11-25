@@ -446,7 +446,7 @@ test("RED TEAM: every guarded and gate key ml.config() does not return is HELD, 
     assert.deepEqual(heldKeys.sort(), [
         "agentSeesFocus", "agentStartPage", "execDefaultWorld", "exportToolDefs", "listPageSessions", "persistUiRuns",
         "scrubPersonInput", "sessionArchive", "sessionRetentionDays", "sessionStoreBudgetMB", "shellEnabled", "shellPath",
-        "shellRevealsAllow", "shellRoots", "shellSandbox", "siteRequests", "taskNotifyOnly", "taskTurnChainMax",
+        "filesQuotaMB", "shellRevealsAllow", "shellRoots", "shellSandbox", "siteRequests", "taskNotifyOnly", "taskTurnChainMax",
         "valueStoreBudgetMB",
     ].sort(), `the held set changed: ${JSON.stringify(heldKeys.sort())}`);
     // Positive controls: each branch was reached, so a table that silently emptied cannot pass this row.

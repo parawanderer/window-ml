@@ -14,6 +14,7 @@ import { pythonLibrary } from "./sw-python";
 import { recordRunLog } from "./sw-run-log";
 import { shRun, type ShCallContext } from "./sw-shell-call";
 import { withShell } from "./sw-shell";
+import { spawnBound } from "./sw-spawn";
 import type { ShResult } from "../shell/sh-call";
 
 export { isLibraryDraft };
@@ -40,12 +41,12 @@ async function resolveFile(step: { runId: string; seq: number }, d: LibraryDraft
         return await withShell(async (h) => {
             const roots = h.configured.roots.map((r) => r.path);
             if (!roots.length) return { error: "Error: no workspace folder is configured for ml.sh." };
-            const facts = await h.client.spawn({ argv: ["cat", d.path], cwd: roots[0], mode: "host", pathArgs: [{ arg: 1, hash: true }], owner: { run: step.runId, seq: step.seq } });
+            const facts = await spawnBound(h, step.runId, { argv: ["cat", d.path], cwd: roots[0], mode: "host", pathArgs: [{ arg: 1, hash: true }], owner: { run: step.runId, seq: step.seq } });
             await h.client.discard(facts.id).catch(() => { /* expired: nothing to start either way */ });
             const p = facts.paths.find((x) => x.arg === 1);
             if (!p || !p.exists) return { error: `Error: ${d.path} does not exist.` };
             if (!p.inRoot) return { error: `Error: ${d.path} is outside every configured workspace folder.` };
-            if (p.secret || p.containsSecret) return { error: `Error: ${d.path} is a secret path, which is never read for a library.` };
+            if (p.secret || p.containsSecret || p.hiddenBy !== undefined) return { error: `Error: ${d.path} is a secret path, which is never read for a library.` };
             if (typeof p.sha256 !== "string") return { error: `Error: ${d.path} is not a regular file the host can hash.` };
             const root = roots.filter((r) => p.path === r || p.path.startsWith(r.endsWith("/") ? r : r + "/")).sort((a, b) => b.length - a.length)[0];
             if (!root) return { error: `Error: ${d.path} is outside every configured workspace folder.` };

@@ -491,7 +491,7 @@ test("python_exec tells a worker-hosted run its names persist, and a page-hosted
     assert.doesNotMatch(worker + page, / {2}/, "no padding in model-facing text");
 });
 
-test("python_exec tells a worker-hosted run its attached files are under /files/attached/ and read-only, and a page-hosted one it has no filesystem", T, async () => {
+test("python_exec tells a worker-hosted run its attached files are under /files/attached/, read-only, and that it writes in /files/agent/; a page-hosted one that it has no filesystem", T, async () => {
     const { buildPythonTool } = await import("../src/python/python-tool.ts");
     const { defineTool } = await import("../src/ml/ml-tool-factories.ts");
     const failed = { ok: false, error: "FileNotFoundError: [Errno 44] No such file or directory: 'data.csv'", inputImage: "data:image/png;base64,AA" };
@@ -499,9 +499,9 @@ test("python_exec tells a worker-hosted run its attached files are under /files/
     const build = (ml) => buildPythonTool({ defineTool, _queryAll: () => [], pythonExec: async () => { executed++; return failed; }, ...ml });
     const worker = build({ _mintToken: async () => "@pt:abcdef12" });
     const page = build({});
-    assert.match(worker.description, /Files the person attached to this session are under \/files\/attached\/ \(list it with os\.listdir\); \/files is read-only\./);
+    assert.match(worker.description, /Files the person attached to this session are under \/files\/attached\/ \(read-only; list it with os\.listdir\); write yours in \/files\/agent\/, the working directory\./);
     assert.doesNotMatch(worker.description, /filesystem/, "the worker's sandbox has a filesystem");
-    assert.doesNotMatch(worker.description, /writ/i, "no write is promised: the reader answers EROFS to each");
+    assert.doesNotMatch(worker.description, /\/files is read-only/, "agent/ is written since the reader's write side (#2121)");
     assert.match(page.description, /No network or filesystem here/, "a page-hosted run's worker mounts no /files");
     assert.doesNotMatch(page.description, /\/files/);
     const said = async (tool) => { const r = await tool.run({ code: "open('data.csv')" }); return typeof r === "string" ? r : JSON.stringify(r); };
