@@ -15,6 +15,9 @@ export interface PanelRoute {
     setting?: keyof MlConfig;
     /** an element id to scroll to (the Backup block) */
     target?: string;
+    /** a policy (by id) to open for editing on the Policies section. Never part of an address: a surface that cannot open
+     *  the panel (the HUD card) opens the section only. */
+    policy?: string;
 }
 
 /** Settings → Storage → Backup and restore: what the `settings/extension/backup` alias opens. Mirrors

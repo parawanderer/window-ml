@@ -13,6 +13,7 @@ import { fsCallFor, FS_CALL_FAILED } from "../src/sw/sw-fs-call.ts";
 import { routeExec, execNames, surveyMayEnterPage, EXEC_REASONS } from "../src/sw/exec-routing.ts";
 import { isolatedWrapper, isolatedMembers } from "../src/sw/sw-isolated-exec.ts";
 import { evalReadonly, NotInDialect, Denied } from "../src/readonly-exec.ts";
+import { runOn } from "./isolated-harness.mjs";
 
 const T = { timeout: 10000 };
 const SECRET = "sk-live-0123456789abcdef";
@@ -400,6 +401,25 @@ test("the read-only dialect has no ml.fs, even when one is handed to it: no read
     const { fs } = files();
     assert.equal((await evalReadonly("typeof ml.fs", null, { getModel: async () => "m", fs })).value, "undefined");
     await assert.rejects(evalReadonly("ml.fs.readFile('/files/attached/h1/notes.txt', 'utf8')", null, { getModel: async () => "m", fs }), (e) => !(e instanceof NotInDialect || e instanceof Denied) && /undefined/.test(e.message));
+});
+
+test("the other spellings a model reaches for are inert in a page's exec: ml.file, ml.files, ml.read and fetch('/files/…') reach no session's files", { timeout: 60000 }, async () => {
+    // Each is what a model writes when it guesses at the files API. None is a member: the script names no ml.fs, so it
+    // runs in the page's world, where they are undefined, and a relative fetch is the page's own origin, never ours.
+    const PROBES = {
+        members: 'return [typeof ml.file, typeof ml.files, typeof ml.read].join(",")',
+        call: 'return String(await ml.read("/files/attached"))',
+        fetch: 'const r = await fetch("/files/attached/"); return String(r.status)',
+    };
+    for (const [k, js] of Object.entries(PROBES)) assert.equal(execNames(js).fs, false, `${k}: read as naming ml.fs`);
+    const r = await runOn("readonly", Object.values(PROBES).map((js) => () => js), {});
+    assert.equal(r.results[0], "value: undefined,undefined,undefined");
+    assert.match(r.results[1], /ml\.read is not a function/);
+    assert.doesNotMatch(r.results[2], /^value: 200/, "a fetch of /files/ was answered");
+    assert.deepEqual(r.log.filter((e) => e.kind.startsWith("exec-")).map((e) => e.kind), ["exec-main", "exec-main", "exec-main"]);
+    assert.deepEqual(r.bg.runtimeSent.filter((m) => m.type === "FS_CALL"), [], "a channel to a session's files was opened");
+    // Nor does the isolated world hand them out to a script that names ml.fs beside them.
+    for (const m of ["file", "files", "read"]) assert.equal(isolatedMembers({ reads: [], fs: true }).includes(m), false, `isolated world has ml.${m}`);
 });
 
 // --- the isolated world's binding ---

@@ -176,6 +176,40 @@ test("a PDF attached to a chat is read by the runtime: its text in <page> sectio
     } finally { await ext.context.close(); await fake.stop(); }
 });
 
+test("a chat's PDF past the text a message takes: the note names read_pages, a call reads the page, and the turn shows it", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    // The model says it takes tools (`/api/show`), which is what offers read_pages (FILE_ATTACHMENTS.md).
+    fake.setCapabilities(["completion", "tools"]);
+    const ext = await launchExtension();
+    const fixture = (name) => path.join(import.meta.dirname, "..", "fixtures", "pdf", name);
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off" });
+        fake.setScript([{ tool: "read_pages", args: { file: "large-text.pdf", pages: "1" } }, { content: "read the held page" }]);
+        const { page: chat, errors } = await openChatPage(ext);
+        await chat.getByRole("button", { name: /^Kind:/ }).click();
+        await chat.getByRole("listbox", { name: "Kind" }).getByRole("option", { name: /^Chat/ }).click();
+        // One page of more than 40,000 characters: past the 32,000 a message takes when the context is not known.
+        await chat.locator('.chat-start-box input[type="file"]').setInputFiles([fixture("large-text.pdf")]);
+        await expect(chat.locator(".chat-start-box .cfiles .file-pill")).toHaveCount(1);
+        await chat.locator(".chat-start-box textarea").fill("what does it say?");
+        await chat.locator(".chat-start-box textarea").press("Enter");
+
+        await expect(chat.locator(".chat-main")).toContainText("read the held page");
+        const [first, second] = fake.calls();
+        expect(JSON.stringify(first.messages.at(-1))).toContain("page 1 was not sent: past the text a message takes. Read them with read_pages.");
+        expect(first.tools.map((t) => t.function.name)).toEqual(["read_pages"]);
+        // The call's result is the page, cut where one call's text ends, and it is what the next request carries.
+        const result = second.messages.at(-1);
+        expect(result.role).toBe("tool");
+        expect(result.content).toContain('<file name="large-text.pdf" pages="1">');
+        expect(result.content).toMatch(/\(page 1 is cut here: its text runs past what one call returns, 32000 of \d+ characters\)/);
+        // The turn draws the call between the question and the answer.
+        await expect(chat.locator(".chat-main .chat-tools")).toHaveCount(1);
+        await expect(chat.locator(".chat-main .chat-tools")).toContainText("read_pages");
+        expect(errors).toEqual([]);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
 /** A two-card box for the fake backend to report, so the resource panel has something to draw. */
 const GiB = 1024 ** 3;
 const card = (id, free) => ({ gpu_id: String(id), name: `CUDA${id}`, runner: "CUDA", compute: "12.0", driver: "13.2", total_memory: 101972967424, physical_memory: 102641958912, free_memory: free });

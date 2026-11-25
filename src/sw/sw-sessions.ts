@@ -10,7 +10,7 @@ import { FilesRefused, isPdfFile, pdfToPageRun, textFiles } from "../attached-fi
 import { type MlDebugEvent } from "../contract/contract-debug";
 import { createCommandHandler, THIS_BROWSER, type CommandDeps, type PageOutcome } from "../session/session-commands";
 import { cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, isBackgroundChat, releaseEvictedChatFiles, sendBackgroundChat, setBackgroundChatModel, startBackgroundChat } from "./sw-chat";
-import { releaseSessionValues, storeHeld } from "./sw-values";
+import { readStoredText, releaseSessionValues, storeHeld } from "./sw-values";
 import { type StoredSession } from "../contract/contract-messages";
 import { SESSION_CONTRACT_VERSION, type Command, type CommandFrom, type CommandResult, type CommandType, type ArchiveCapability, type BlankStartCapability, type RuntimeInfo, type SessionSummary, type TabGroupInfo, type TabInfo } from "../session/session-host";
 import { FaviconCache, stripOrder } from "./tab-favicons";
@@ -29,12 +29,13 @@ import { moveRun } from "./move-run";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { isExtensionSender } from "./sw-site-access";
 import { fileChunks } from "./sw-file-chunks";
-import { fetchLLM, streamLLM, getConfig, listAvailableModels, modelCapabilitiesBatch, residentContextLength } from "./sw-llm";
-import { forModelMessages, forTurn } from "./sw-scrub";
+import { fetchLLM, streamLLM, streamAgentTurn, getConfig, listAvailableModels, modelCapabilities, modelCapabilitiesBatch, residentContextLength } from "./sw-llm";
+import { forModel, forModelMessages, forTurn, redactedNote } from "./sw-scrub";
 import { workerMl } from "./worker-ml";
 import { ocrRequest } from "../ml/ml-vision";
 import { planImages } from "../image-gate";
 import { ensureOffscreen } from "./sw-offscreen";
+import { forgetAgentFiles } from "./sw-agent-files";
 import { readPdfOffscreen } from "./sw-attach";
 import type { PdfMessage } from "../pdf/pdf-wire";
 import { pythonBundlePresent, deletePythonRun } from "./sw-python";
@@ -50,7 +51,7 @@ import { shellCapabilities, refreshShell, onShellStatus, hostMissing, hostIsOutd
 import { keptEvent } from "./sw-asks";
 import { forRow, forRowText } from "./sw-scrub";
 import { onRegistryChanged } from "./sw-secret-registry";
-import { isNoTab } from "./no-tab";
+import { isNoTab, NO_TAB } from "./no-tab";
 
 /**
  * Ask a tab's page something, PUTTING THE CONTENT SCRIPT BACK if it is not there.
@@ -144,7 +145,7 @@ function localRuntime(): RuntimeInfo {
         // backend behind it); `pythonBench` is MEASURED, because a checkout without the wheels builds a bundle whose
         // bench would fail at run time. `localSettings`: this browser's pages may edit its settings, which only the
         // extension's own pages can (a phone over the hub reports the capability and holds nothing to edit with).
-        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: pythonBundled, localSettings: true, switchModel: true, attachFiles: true, attachPdf: true, ...archiveCapability(), ...blankStartCapability(), ...shellCapabilities(), ...(attentionCodes().length ? { attention: attentionCodes() } : {}) },
+        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: pythonBundled, localSettings: true, switchModel: true, detached: true, attachFiles: true, attachPdf: true, ...archiveCapability(), ...blankStartCapability(), ...shellCapabilities(), ...(attentionCodes().length ? { attention: attentionCodes() } : {}) },
         // This browser's own pages hold every scope.
         grants: [{ scope: "view" }, { scope: "drive" }, { scope: "approve" }, { scope: "screen" }],
     };
@@ -345,6 +346,19 @@ export function configureSessionCommands(run: RunDeps): void {
             return String((r as { content?: string | null }).content || "").trim();
         },
         scrub: (asIs) => forTurn(asIs ? { asIs } : {}),
+        // `read_pages` (FILE_ATTACHMENTS.md, "Reading the pages held back"): offered only to a model whose capabilities
+        // say it takes tools, its held rows read for the chat's own session, its results scrubbed as an agent run's are.
+        takesTools: async (model) => {
+            const config = await getConfig();
+            const target = model || config.model;
+            const caps = target ? await modelCapabilities(config, target) : null;
+            return Array.isArray(caps) && caps.includes("tools");
+        },
+        callTools: async (req, onLive, signal) => await streamAgentTurn(
+            { messages: req.messages, ...(req.tools ? { tools: req.tools } : {}), model: req.model, think: req.think, hint: req.hint },
+            (acc) => onLive({ content: acc.content, reasoning: acc.reasoning }), signal),
+        readHeld: (key, session) => readStoredText(key, session),
+        scrubResult: async (text) => { const r = await forModel(text); return r.text + redactedNote(r.counts); },
     });
     handler = createCommandHandler({
         runtime: localRuntimeId(),
@@ -402,6 +416,7 @@ export function configureSessionCommands(run: RunDeps): void {
             run.forgetRun(hash);
             forgetBackgroundChat(hash);
             await sessionStore?.forget([hash]);
+            await forgetAgentFiles(hash);   // the files its runs wrote (sw-agent-files.ts)
             // A session is in the live store OR the archive; deleting it means from both. Only when the archive is on:
             // otherwise nothing was ever moved there, and asking would start SQLite for every delete.
             if (archiveOn) {
@@ -436,6 +451,13 @@ export function configureSessionCommands(run: RunDeps): void {
         startAgent: async (tabId, opts, origin) => {
             try {
                 const { hash } = await run.startUserRun(tabId, { ...opts, surface: "chat" }, origin ? { sender: origin } : {});
+                return { outcome: "started", hash };
+            } catch (e) { return { outcome: "none", error: (e as Error)?.message || String(e) }; }
+        },
+        // A run with no tab is a run on the no-tab sentinel (no-tab.ts): `startUserRun` opens and adopts nothing for it.
+        startDetached: async (opts, origin) => {
+            try {
+                const { hash } = await run.startUserRun(NO_TAB, { ...opts, surface: "chat" }, origin ? { sender: origin } : {});
                 return { outcome: "started", hash };
             } catch (e) { return { outcome: "none", error: (e as Error)?.message || String(e) }; }
         },
@@ -597,6 +619,7 @@ export const sessionStore = (() => {
                 // Deleted, or moved to the archive: its run policies go with it (POLICIES.md, "Scopes"). An archived
                 // session that comes back starts with none. `kept` (the move failed) leaves them.
                 if (e.outcome === "deleted" || e.outcome === "archived") { forgetRunPolicies(e.hash, e.outcome); deletePythonRun(e.hash); void endTasks(e.hash, e.outcome); }   // and its Python namespace and its detached tasks
+                if (e.outcome === "deleted") void forgetAgentFiles(e.hash);   // the files its runs wrote: an archived session keeps them
                 recordHousekeeping({
                     subsystem: "sessions", kind: e.outcome === "kept" ? "archive-failed" : "evict", reason: e.reason, key: e.hash, bytes: e.bytes,
                     detail: { outcome: e.outcome, idleDays: Math.floor(e.idleMs / DAY_MS), ...(e.error ? { error: e.error } : {}) },

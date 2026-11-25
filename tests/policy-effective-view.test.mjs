@@ -138,7 +138,8 @@ test("a policy whose script breaks is still read by strictness and shown as brok
     const ok = P.addRunPolicy(hash, { consumer: "fetch", effect: "allow", source: ALWAYS, label: "ok allow", origin: "person" });
     try {
         const j = P.judgeCall(hash, "fetch", call);
-        assert.equal(j.decision, "allow", "judgeCall skips the broken deny, so the allow decides this call");
+        assert.equal(j.decision, "ask", "a broken deny asks (ruling 108): the allow does not decide this call");
+        assert.equal(j.brokenAsk?.policy.id, bad.id);
         assert.equal(j.broken.length, 1);
         const rows = P.sessionPolicies(hash).rows;
         const deny = rows.find((r) => r.entry.id === bad.id), allow = rows.find((r) => r.entry.id === ok.id);
