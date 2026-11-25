@@ -1,6 +1,6 @@
 // redteam-resolved-calls.test.mjs — what the describePre/resolvePre split must not give a call: a description that differs from the one the corpus recorded before the split, a resolver that fails and leaves a weaker description behind instead, or an unresolved path that stops counting.
 //
-// The corpus under tests/fixtures/program-calls/ predates the split (its last change is 0fd67ebd, #1951; 175d0aef
+// The corpus under tests/fixtures/program-calls/ predates the split (its last change is f304734d, #1989; 175d0aef
 // added only tests/fixtures/program-calls-resolved/), so its recorded `described` and `effects` are what the
 // unsplit describeCall said. The split is describeCall = describePre then resolvePre (program-manifest.ts:435), and
 // the rows below hold that composition to the old answer, to the failure of a resolver, and to the undescribed call.
