@@ -192,6 +192,37 @@ const segmentOf = (step: number, breaks: readonly number[]): number => {
     return n;
 };
 
+/** The fewest thinking tokens worth lifting out of a group: a block under this stays inside it, where a reader
+ *  would not open it anyway. Counted tokens when the turn has them, else the same chars/4 estimate `ThoughtBlock` shows. */
+export const MOVE_THINKING_MIN_TOKENS = 20;
+
+/** How many tokens a turn's thinking is, as the row says it. */
+const thinkingTokens = (t: AgentTurnGroup): number =>
+    t.reasoningTokens ?? Math.round((t.reasoning ?? "").length / 4);
+
+/**
+ * Which of a group's turns stay inside it, and which thinking moves out to sit before the final message.
+ *
+ * Only thinking AFTER the group's last tool call moves (a turn with no calls of its own and a reasoning block, which
+ * is the model thinking about its answer), and only when a final message follows the group, so a reader can open it
+ * without opening the group. A block under {@link MOVE_THINKING_MIN_TOKENS}, or with no text, stays in. Thinking
+ * between calls stays in. A run with no final answer (stopped, failed, still going) keeps everything in.
+ * @param turns the group's members, in order
+ * @param finalFollows does a final answer come right after the group?
+ * @returns `kept` for the group and `moved` for outside it, each in order
+ */
+export function splitTrailingThinking(turns: AgentTurnGroup[], finalFollows: boolean): { kept: AgentTurnGroup[]; moved: AgentTurnGroup[] } {
+    if (!finalFollows) return { kept: turns, moved: [] };
+    let cut = turns.length;
+    while (cut > 0 && !turns[cut - 1].tools.length && !turns[cut - 1].thought) cut--;
+    const trailing = turns.slice(cut);
+    // The tail is lifted whole or not at all, so what stays inside never reads out of order: the short blocks that
+    // lead it stay, and the first block worth lifting starts what moves.
+    const first = trailing.findIndex(t => !!t.reasoning?.trim() && thinkingTokens(t) >= MOVE_THINKING_MIN_TOKENS);
+    if (first < 0) return { kept: turns, moved: [] };
+    return { kept: turns.slice(0, cut + first), moved: trailing.slice(first) };
+}
+
 /** The distinct tool names in a run of turns, in the order they first appear. */
 const toolsIn = (turns: AgentTurnGroup[]): string[] => {
     const seen: string[] = [];
@@ -218,8 +249,22 @@ const revisionOf = (st: AgentStep): unknown =>
  * @param breaks step positions a fold may not span: where an answer or one of the reader's own messages sits
  * @param settling steps that are not to be grouped yet (step-settle.ts): one still open under the person who decided it
  */
-export function foldStreaks(groups: AgentTurnGroup[], opts: { live?: boolean; all?: boolean; breaks?: readonly number[]; settling?: (st: AgentStep) => boolean } = {}): (AgentTurnGroup | ToolStreak)[] {
-    return rejoin(foldHalves(splitProse(groups), opts));
+export function foldStreaks(groups: AgentTurnGroup[], opts: { live?: boolean; all?: boolean; breaks?: readonly number[]; finals?: readonly number[]; settling?: (st: AgentStep) => boolean } = {}): (AgentTurnGroup | ToolStreak)[] {
+    return liftTrailingThinking(rejoin(foldHalves(splitProse(groups), opts)), opts.finals ?? [], opts.breaks ?? []);
+}
+
+/** Lift each group's trailing thinking out, after it, when a final answer (`finals`: the steps final answers sit at)
+ *  is the very next thing: the first boundary at or past the group's last step is one, with no turn between. */
+function liftTrailingThinking(items: (AgentTurnGroup | ToolStreak)[], finals: readonly number[], breaks: readonly number[]): (AgentTurnGroup | ToolStreak)[] {
+    if (!finals.length) return items;
+    const stepsAfter = (step: number, upTo: number): boolean => items.some(it => it.step > step && it.step <= upTo);
+    return items.flatMap(it => {
+        if (!("kind" in it)) return [it];
+        const last = it.turns[it.turns.length - 1].step;
+        const next = Math.min(...[...breaks, ...finals].filter(b => b >= last));
+        const { kept, moved } = splitTrailingThinking(it.turns, finals.includes(next) && !stepsAfter(last, next));
+        return moved.length ? [{ ...it, turns: kept }, ...moved] : [it];
+    });
 }
 
 /**

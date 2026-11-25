@@ -632,7 +632,9 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         // A page sender's origin is APPROVED first unless the test asked for the real gate (`siteGate: true`): the
         // tests here predate the origin gate (docs/spec/SITE_ACCESS.md) and are about what a handler does for a page
         // that may use it. tests/site-access-gate.test.mjs is where the gate itself is tested.
-        send: (message, sender = {}) => {
+        // A SET_APPROVAL with no sender comes from the extension's own page, the only place a person answers a gate:
+        // `senderOwnsRun` asks a tabless sender to prove it is one, and a bare `{}` is no sender Chrome delivers.
+        send: (message, sender = message?.type === "SET_APPROVAL" ? { url: "chrome-extension://test/sidebar.html" } : {}) => {
             if (!siteGate) approveSender(sender);
             return new Promise((resolve) => {
                 // The gate answers asynchronously, and a fire-and-forget handler answers `undefined`; both resolve here.

@@ -4,6 +4,13 @@
 
 import type { DiffRow } from "../diff";
 import { highlight } from "./format";
+import { linkifyHtml, codeLinkHandlers, type CodeLinks } from "./code-links";
+
+/** One diff row's text as highlighted HTML, with its links cut out when the surface lends them. */
+const rowHtml = (text: string, lang: string | undefined, links?: CodeLinks): string => {
+    const h = highlight(text, lang);
+    return (links ? linkifyHtml(h, (id) => !!links.step(id)) : h) || "&nbsp;";
+};
 
 /**
  * The rows of a diff (diff.ts `codeDiff`), highlighted as `lang`. With `numbers` the gutter carries both line numbers,
@@ -11,9 +18,9 @@ import { highlight } from "./format";
  * is added to the `pre`, for the surface's own frame. It is a code block's `pre.code`, so it draws on the code theme's
  * surface wherever it appears, as the block beside it does.
  */
-export function DiffLines({ rows, lang, numbers = true, class: cls = "" }: { rows: DiffRow[]; lang?: string; numbers?: boolean; class?: string }) {
+export function DiffLines({ rows, lang, numbers = true, class: cls = "", links }: { rows: DiffRow[]; lang?: string; numbers?: boolean; class?: string; links?: CodeLinks }) {
     return (
-        <pre class={`code dlines${cls ? ` ${cls}` : ""}${numbers ? " numbered" : ""}`}><code class="hljs">{rows.map((r, i) => r.kind === "gap"
+        <pre class={`code dlines${cls ? ` ${cls}` : ""}${numbers ? " numbered" : ""}`}><code class="hljs" {...(links ? codeLinkHandlers(links) : {})}>{rows.map((r, i) => r.kind === "gap"
             ? <span class="dline dline-gap" key={i}>{numbers ? <><span class="dno" /><span class="dno" /></> : null}<span class="dsign" />
                 <span class="dtext">{`⋮ ${r.skipped} unchanged line${r.skipped === 1 ? "" : "s"}`}</span>{"\n"}</span>
             : <span class={`dline dline-${r.kind}`} key={i}>
@@ -22,7 +29,7 @@ export function DiffLines({ rows, lang, numbers = true, class: cls = "" }: { row
                     <span class="dno">{r.kind === "del" ? "" : r.b}</span>
                 </> : null}
                 <span class="dsign">{r.kind === "add" ? "+" : r.kind === "del" ? "−" : " "}</span>
-                <span class="dtext" dangerouslySetInnerHTML={{ __html: highlight(r.text, lang) || "&nbsp;" }} />
+                <span class="dtext" dangerouslySetInnerHTML={{ __html: rowHtml(r.text, lang, links) }} />
                 {"\n"}
             </span>)}</code></pre>
     );
@@ -64,16 +71,16 @@ export function splitRows(rows: DiffRow[]): SplitRow[] {
  * shorter side. The same surface, gutter and highlighting as `DiffLines`; it needs the width of two code columns, so a
  * caller below that width draws `DiffLines` instead.
  */
-export function SplitLines({ rows, lang, numbers = true, class: cls = "" }: { rows: DiffRow[]; lang?: string; numbers?: boolean; class?: string }) {
+export function SplitLines({ rows, lang, numbers = true, class: cls = "", links }: { rows: DiffRow[]; lang?: string; numbers?: boolean; class?: string; links?: CodeLinks }) {
     const cell = (side: "old" | "new", same: boolean, c: { text: string; a?: number; b?: number } | null) => c === null
         ? <span class={`scell scell-${side} scell-fill`} aria-hidden="true">{numbers ? <span class="dno" /> : null}<span class="dsign" /><span class="dtext" /></span>
         : <span class={`scell scell-${side}${same ? "" : side === "old" ? " scell-del" : " scell-add"}`}>
             {numbers ? <span class="dno">{side === "old" ? c.a : c.b}</span> : null}
             <span class="dsign">{same ? " " : side === "old" ? "−" : "+"}</span>
-            <span class="dtext" dangerouslySetInnerHTML={{ __html: highlight(c.text, lang) || "&nbsp;" }} />
+            <span class="dtext" dangerouslySetInnerHTML={{ __html: rowHtml(c.text, lang, links) }} />
         </span>;
     return (
-        <pre class={`code dlines dsplit${cls ? ` ${cls}` : ""}${numbers ? " numbered" : ""}`}><code class="hljs">{splitRows(rows).map((r, i) => r.kind === "gap"
+        <pre class={`code dlines dsplit${cls ? ` ${cls}` : ""}${numbers ? " numbered" : ""}`}><code class="hljs" {...(links ? codeLinkHandlers(links) : {})}>{splitRows(rows).map((r, i) => r.kind === "gap"
             ? <span class="sline sline-gap" key={i}>{`⋮ ${r.skipped} unchanged line${r.skipped === 1 ? "" : "s"}`}{"\n"}</span>
             : <span class="sline" key={i}>
                 {cell("old", r.same, r.old)}{cell("new", r.same, r.new)}

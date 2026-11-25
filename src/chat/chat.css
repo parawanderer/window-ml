@@ -118,6 +118,9 @@ html, body, #root { height: 100%; }
 /* The page host and the runtime name are what a narrow list can spare: they are the only things here that can be
    guessed from context, and the next tap says both in full. */
 .chat-row-meta > .chat-row-rt, .chat-row-meta > .chat-page { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A session's background tasks on its list row ("1 running in background"): quiet on purpose, dim text with no dot and no
+   accent fill, so it is not read as the running mark or the idle one. Both views draw it; the words are `taskMarkText`'s. */
+.chat-task-mark { color: var(--fg-dim); }
 .chat-status.st-waiting { color: var(--notice); }
 .chat-status.st-error, .chat-status.st-cancelled, .chat-status.st-interrupted { color: var(--err); }
 /* Open approvals on a session in the list: the one thing on a phone that is waiting on the person holding it. */
@@ -226,6 +229,18 @@ html, body, #root { height: 100%; }
 .chat-resume-go { flex: 0 0 auto; color: var(--fg); font-weight: 600; padding: 6px 14px; border-radius: 999px;
     background: var(--panel-2); }
 .chat-resume:hover .chat-resume-go { background: var(--panel-2-hover); }
+/* The banner for a run that has NO TAB, where the composer would be: the composer's own box like `.chat-resume`, but a
+   status line and not a button. The action sits in a group at the end so a later Stop can join it. */
+.chat-notab {
+    display: flex; align-items: center; gap: 12px; color: var(--fg-dim);
+    max-width: var(--read); width: 100%; margin: 4px auto calc(16px + env(safe-area-inset-bottom));
+    min-height: 47px; box-sizing: border-box; font-size: 15px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 24px; padding: 4px 9px 4px 18px;
+}
+.chat-notab-what { flex: 1; min-width: 0; }
+.chat-notab-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.chat-notab .chat-resume-go { font: inherit; font-weight: 600; border: 0; cursor: pointer; }
+.chat-notab .chat-resume-go:hover { background: var(--panel-2-hover); }
 /* What a resume will NOT carry over, said in the form BEFORE it happens rather than in the transcript after. */
 .chat-resume-lost { margin: 2px 0 0; color: var(--fg-faint); font-size: .92em; line-height: 1.45; }
 
@@ -1745,6 +1760,8 @@ html[data-calm]:not([data-theme="light"]), html[data-calm]:not([data-theme="ligh
    pill's text ellipsizes (`.tp-pill-text`) with the whole of it one tap away in its popover. */
 .chat-start-row { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
 /* Send must stay whole: it is an icon, and an icon that shrinks is a smudge. */
+/* What a run with no tab can and cannot do, under the row where "No tab" is chosen: quiet text, as wide as the row. */
+.chat-pick-note { margin: 2px 4px 0; font-size: .82em; line-height: 1.4; color: var(--fg-dim); }
 .chat-start-send { flex: 0 0 auto; }
 /* NARROW: the choices sit above the box — outside it, across the full width — and send below the text, on a line of
    its own at the end. The shape the phone app's own start screen has. */

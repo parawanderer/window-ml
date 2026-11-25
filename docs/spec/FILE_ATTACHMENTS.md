@@ -5,8 +5,11 @@ verb, attaching a PDF to an agent run, and every attachment to a worker-built ru
 pointers, `ml.dereference` of `@file:`, `look` at a document and upload progress are built; Python's `files` and the
 files panel are next (Shane and the calm-chat-motion session). A session's files as a directory, `/files/`, is
 ruled and PARTLY BUILT (2026-11-22): the ranged reader's read side (#2048), its wiring in the offscreen document and its
-scrub (#2058), and Python's mount in a worker-hosted run (#2026). Not built: `ml.fs`, the write side (every write
-answers EROFS, `agent/` included), the quota, the file browser, and the folder on the person's disk (ruling 91).** The
+scrub (#2058), Python's mount in a worker-hosted run (#2026), `ml.fs`'s read members (#2083), and the write side
+under `agent/` with its quota, `filesQuotaMB`: Python's writes land ("Writes", #2121). NEXT (ruling 119, Shane,
+2026-11-24): `ml.fs`'s write members (session-store), then the folder on the person's disk (ruling 91, files-host).
+DEFERRED: `cp("@tool:…")` (ruling 119), the turn-start line naming a file not written and a sweep of files no
+session holds (the coordinator, 2026-11-23, "Writes", "Deferred"). Not built: the file browser.** The
 current design of `/files` is in "`/files`: the layout, `ml.fs`, Python's mounts and the backup" and "`/files/` read
 by range, and `ml.fs`"; the older sections below it name what they lost, and to which ruling. The order is
 three slices, each landing on its own: text files, then PDFs, then documents as `@file:` pointers in agent runs. Slice
@@ -236,7 +239,8 @@ unknown vision used to get it, unread.
 person pasted count first, then the pages that need one, in page order. A page past the cap goes to the reader model
 when one is set, and otherwise is named in the block with what can get it: "pages 9-48 are scans not sent as images.
 This chat cannot show them." Once slice 3's `look` on a page exists, an agent run's note names it as the recovery;
-until then the note says there is none, since a recovery named must be callable now.
+until then the note says there is none, since a recovery named must be callable now. A worker chat's note says "Read
+them with read_pages." on a turn that offers the tool (below, "`read_pages`, as built").
 
 **Built for worker chats (2026-10-29).** A runtime listing `capabilities.attachPdf` takes `{ name, type, data }` in
 `files` on `chat.start` and on `session.send` to a chat, `data` the bytes as base64 (the extension's channel is JSON),
@@ -445,8 +449,9 @@ that rule for attachments and should reuse the `@tool:` value path, not a parall
   lets a model weigh an instruction found inside it.
 - **Lifetime.** A fetch can be repeated, so its value is evicted like any other; an attachment cannot, so it is held for
   the session ("Eviction differs by producer", slice 3).
-- **The recovery a held-back note names.** A worker chat has no tools ("This chat cannot show them."); an agent run
-  names the call that gets the page.
+- **The recovery a held-back note names.** A worker chat has one tool, `read_pages`, and names it on a turn that
+  offers it ("Read them with read_pages."), otherwise "This chat cannot show them."; an agent run names the call that
+  gets the page.
 
 Where there are no tools (a worker chat), "past the cap" cannot become a pointer. Decided (Shane, 2026-10-29): a PDF
 past the cap is no longer refused whole. Its pages go in order while they fit and the rest are named ("pages 12-30
@@ -461,7 +466,7 @@ Giving worker chats the read-only dialect instead would be a far larger surface 
 an agent run instead ("start a run to read them") leaves the model stuck, which is the thing the note is there to
 prevent. `read_pages` is a new agent-facing call, so it gets the red-team pass.
 
-**Where a worker chat keeps its PDFs (ruled 2026-11-17; built, the tool not yet).** In the value store, held for the
+**Where a worker chat keeps its PDFs (ruled 2026-11-17; built, the tool since 2026-11-24).** In the value store, held for the
 chat's session through `storeHeld`, as an agent run's attached files are: two rows per PDF, its bytes (`bytes`) and
 its read document (`paged`). One store, so the files panel lists from it. A PDF is held once its message is
 answered; a failed turn holds nothing, since its message is not kept either. A text file is not held: it is sent
@@ -487,6 +492,32 @@ whole or refused, so no page of it is held back.
 - The tool is offered only when the model's capabilities say it takes tools (`MODEL_CAPS` `tools: true`). Unknown and
   no keep "This chat cannot show them.", because a backend refuses a whole request that lists tools to a model without
   them. Named cost: a model that takes tools but does not say so never gets `read_pages`.
+
+**`read_pages`, as built (2026-11-24, `src/tools/read-pages-tool.ts`, `toolLoop` in sw-chat.ts).**
+
+- Offered on a turn only while the chat holds a PDF with a page no message sent (a PDF listed with no rows does not
+  count) and the model's capabilities say `tools`. The PDFs it reads are the chat's held ones, read back from their
+  `paged` row for the chat's own session (`readHeld`, the one function the session store's ranged reader replaces),
+  and this message's, from the document the message was framed from. Both are as the model read them, scrubbed.
+- Arguments `{ file, pages }`: `file` is the name the `<file>` block gives; two PDFs with one name are `name#1` and
+  `name#2`, in the order sent, and the bare name is refused listing both. `pages` is the `pages` verb's grammar, at
+  most 50 pages a call.
+- The answer is a `<file name pages>` block of `<page n>` sections, text only, escaped as a message's are. A page
+  with a figure says the figure is not returned; a scan with no text says it has none. Pages past one call's text
+  (`pdfTextBudget`, as a message's) are named, to read in another call; a first page alone past it comes cut where the
+  budget ends and says so, since named it could never be read. Every refusal (no such file, no such page, a
+  bad page list, no longer held) is a sentence the model reads, never an error that ends the turn.
+- At most 4 calls a turn. The 4th result says it was the last; a 5th call in the same reply is answered "Not read",
+  and the next model call is made with no tools, so the turn ends in an answer. A cancel ends the loop.
+- Each result goes through the scrub an agent run's tool results go through (`forModel` and the line naming what was
+  taken) before the model reads it, and the same text is the step's `result`, so the transcript and both exports show
+  what the model read.
+- Each call is an `agent-step` in the chat's session with `turn` (SESSION_CONTRACT.md, "Session events"), drawn
+  between the turn's message and its answer, and written raw under the turn in the Markdown export.
+- Only the question and the answer stay in the chat's history; a later turn that needs a page reads it again. Named
+  cost: a later turn does not see what an earlier one read.
+- Not built: a re-read of a scan or figure page as an image (the vision path for a re-read); the answer names it as
+  not returned.
 
 Built (2026-10-29, `pdfTextBudget` and `fitPages`):
 
@@ -820,11 +851,10 @@ branch of `mlFacade`, beside `ml.fetch` (policy.ts:520-531 copies functions only
 
 **Hidden and secret-looking files.** Every front end of the reader (`ml.fs`, the Python mount, the file browser)
 applies the hide list (ruling 34: hide and show entries, the most specific wins, a tie hides) BEFORE it answers. The
-rule's text and the answer's shape (listed by name or absent, the error code a read gets) are files-host's hide-list
-spec's (POLICIES.md, "Hiding files"), and this spec only references them. Slice 2 does not land `readFile` or any other
-read member in the read-only dialect before that rule exists. The invariant Python already has carries over: as a
-cell's `open()` of a file that looks like a secret asks, a dialect read of such a file through an `ml.fs` read member
-asks, and is never answered free.
+rule's text is POLICIES.md's, "Hiding files"; the answer's shape (the name is listed, a read is refused) is the one
+table in SECRET_HANDLES.md, "What the model can see of a secret", and this spec only references them. Slice 2 does not land `readFile` or any other
+read member in the read-only dialect before that rule exists. A read of a HIDDEN file is refused, by every front end, in the dialect or out of it; it does not ask. A file that
+only looks like a secret and is not hidden is read like any other under `/files`.
 
 **The extra columns.** `ml.files.list()`'s rows (who made it, last read, whether a transcript cites it) become extra
 fields on the stat result, under one key that cannot be mistaken for Node's: `stat.ml = { madeBy, lastReadMs, cited }`.
@@ -909,12 +939,17 @@ preview, like any other exec value.
 - **The quota** (this spec's open question): with nothing loaded at start, the quota is no longer a start-time budget.
   It bounds what a session's runs keep on disk: the person's attachments do not count, run-made files do, at their
   stored size (not three times). Its value is the DevTools Settings flag `filesQuotaMB` (the coordinator's call,
-  2026-11-19; owned by the session-store lane), default 1024 MiB per session, below the value store's budget; a stored
+  2026-11-19; owned by the session-store lane), default 1024 MiB per session (a default awaiting Shane's word; it is
+  the one `filesQuotaMB` line of `DEFAULT_CONFIG` in `contract-config.ts`), below the value store's budget; a stored
   value that is not a positive whole number reads as the default, and a larger number widens it. The model may propose
   a change to it (ruling 76, Shane, 2026-11-19) through `change_setting` (MODEL_SETTINGS.md, "The surface"), as for
   `taskTurnChainMax`: the key is guarded, so a change always asks the person. Over the quota, a write rejects with
-  `ENOSPC`, and the message names `ml.fs.rm`, the files panel, and proposing a larger `filesQuotaMB` with
-  `change_setting`. It is checked on every chunk written, not only at the commit.
+  `ENOSPC`, and the message names the quota in MiB, removing files under `/files/agent/` (`os.remove` in Python; it
+  names `ml.fs.rm` and the files panel once they are built), and asking the person to raise `filesQuotaMB` with
+  `change_setting`. It is checked on every chunk written and every truncate, and again at the commit, against what the
+  session has stored plus every pending file of the session on any channel. BUILT: the offscreen document cannot read
+  the settings, so it asks the service worker at each file opened for writing (`FILES_QUOTA`, answered to the offscreen
+  document only); an ask that fails refuses the open with `EIO`.
 - **The commit point, for now** (ruling 75, Shane, 2026-11-19, accepting the coordinator's call): a file commits when
   it is CLOSED, in both modes, as Python's and Node's own files do; each file is atomic on its own, and a cell that
   fails keeps the files it already closed. An `ml.fs` write member is a transaction of one (`writeFile` commits at its
@@ -922,7 +957,26 @@ preview, like any other exec value.
   its files, so committing every write of a cell together when it succeeds stays one switch away.
 - **A worker evicted mid-file.** A commit is atomic: an uncommitted file's pending part is discarded when its writer
   goes (a worker evicted, a kernel killed, a tab closed), the previous version stands, and the next turn's start
-  message says which file was not written. Nothing is half-written.
+  message says which file was not written (NOT BUILT). Nothing is half-written. BUILT: each discard is a run log record
+  (`files` `discarded`, its path) and a stored note of the path and the time, the newest 50 per session, which the state
+  inspector reads (`session.files`).
+- **Where they are kept.** BUILT: in their own IndexedDB database, `ml-agent-files`, not the value store: its budget
+  and eviction are not a session's files' lifetime, and its `sha256` would read a whole file into memory. A file's
+  version is minted at each commit. A transaction commits as ONE IndexedDB transaction over the files' nodes and bytes.
+  A session's files are deleted with the session (the person deletes it, or the store evicts it with nothing archived),
+  kept when it is archived, and never at a run's end.
+- **Two writers of one path: the last commit wins.** A commit applies its writes and name changes in order against
+  what is stored when it commits, not when its files were opened. So two channels writing one path each replace it in
+  turn, and the later commit's bytes stand; a pending write whose path another transaction renames or unlinks first
+  lands at that path when it commits, recreating it, while the renamed file keeps the bytes it had. A commit whose
+  folder another transaction removed first fails whole (`ENOENT`).
+- **Deferred** (the coordinator's call, 2026-11-23, to free reviewers for the `ml.fs` dialect entry; not built and not
+  scheduled until Shane asks). (1) `ml.fs`'s write members and their parity rows; until they land, `ml.fs` only reads.
+  (2) `cp("@tool:…")`, a `@tool:` value written to a file. (3) The turn-start line naming a file not written: the
+  discard is recorded (above) but no message tells the model. (4) A sweep of files no session holds. It is not built
+  on `liveHeldSessions`, because that counts an archived session as ended, so a sweep built on it would delete the
+  files an archived session keeps; it needs a check against the archive first. Until then a session's files go only
+  when the session is deleted or evicted with nothing archived (`forgetAgentFiles`).
 
 #### `ml.files` is superseded
 
@@ -997,21 +1051,25 @@ are what the model reads.
    the async lane) on the `files` volume; a volume is a tree resolved one path at a time, so `/history/` is a second
    volume beside it. The shelf reaches it through a `FilesSource`: a session's attachments and a stored Blob by key,
    neither of which loads bytes; a read slices one range of the Blob into the caller's buffer. The hide rule is a
-   function the reader asks at every open and every read, and lists nothing until the hide-list rule lands. Every
+   function the reader asks at every open and every read; it is the resolved hide list since #2088
+   (`src/session/files-hide-rule.ts`). Every
    byte read is masked by the length-preserving scrub of "Python's view: one mount type over the reader" (below), so
    slice 2's `ml.fs` reads get it too, text and binary alike (the coordinator, 2026-11-20 to 22, "The scrub"; the
    `[REDACTED:<NAME>]` window, `scrubRange` in `src/secret-scrub-range.ts`, is not used for them). The write verbs
    check the transaction and the path
-   and then answer `EROFS` everywhere, `agent/` included, until slice 3 lands the write side; `begin`, `commitTx` and
-   `abortTx` of an empty transaction succeed, so a front end that opens one per cell works read-only. The offscreen
+   and then answer `EROFS` at the root and in `attached/`; under `agent/` they write ("Writes"), and with no store of
+   run-made files (a reader built without one) they answer `EROFS` there too. `begin`, `commitTx` and `abortTx` of an
+   empty transaction succeed, so a front end that opens one per cell works read-only. The offscreen
    document's wiring has landed: `setFilesReader` over one `RangedReader` whose source (`src/python/files-source.ts`)
    asks the service worker for a session's files with `FILES_ATTACHED`, answered from the offscreen document only,
    and reads the bytes from the offscreen document's own value store, held rows of that session only.
 2. `ml.fs` read members in the isolated world, the routing, the red-team pass, and the Node parity corpus for the
    read members, landing with every exec that names `ml.fs` asking; the dialect entry with its tests follows the hide
-   rule (ruling 34, "The gate"). Must not break: `ml.current`'s and `ml.sh`'s routing rows. In flight
-   (session-store, 2026-11-22), not built.
-3. `ml.fs` write members, the quota setting, and the parity corpus extended to them.
+   rule (ruling 34, "The gate"). Must not break: `ml.current`'s and `ml.sh`'s routing rows. BUILT (#2083), but for
+   the dialect entry.
+3. `ml.fs` write members, the quota setting, and the parity corpus extended to them. BUILT: the reader's write side,
+   the store of run-made files and the quota setting, so Python's writes land. Not built: the `ml.fs` write members
+   and their parity rows, then `cp("@tool:…")`, both DEFERRED ("Writes", "Deferred").
 4. The Python mount on route A's type over the reader, slice 3's `files` as paths, the restart's remount. Must not
    break: route A's Stop rows, rerun on this server. BUILT (#2026, the async lane): the mount, remounted at every
    cell; its design was fixed by ruling 75's one store, not by the packages measurement. Not built: slice 3's `files`
@@ -1411,8 +1469,8 @@ tell the person what it cannot, for example in the inbox. The shape, for whoever
   ignored file, or a tracked one with uncommitted changes); deleting the person's own uploads (`attached/`); anything
   that leaves the mounts; network access; git operations that rewrite history or reach a remote.
 - Secrets: a cell's `open()` through a mount goes through the same check as an `ml.sh` path argument (`SHELL.md`, "The
-  free tier narrows to the roots"), so the defaults and the person's policies are one list: a file that looks like a
-  secret asks by default wherever it is, and a workspace policy overrides that either way.
+  free tier narrows to the roots"), so the defaults and the person's policies are one list. AS BUILT for the browser copy: a hidden file's
+  read is refused, not asked, and a `show` entry is the override (SECRET_HANDLES.md, the table at the top).
 - How it is enforced: a cell's writes and deletes go through the host's per-request check (above), so each is judged
   as it is made. An `ml.sh` process is judged before it starts, by its manifest's `effects` (`docs/spec/SHELL.md`),
   since the host cannot stop a running process mid-write; its writes are then shown in its diff. That bounds only a
@@ -1990,9 +2048,11 @@ Fetched values stay out.
 ## `/files`: the layout, `ml.fs`, Python's mounts and the backup (rulings 22, 23, 35, 36; proposed 2026-11-18)
 
 Shane's rulings 22, 23, 35 and 36 (2026-11-17 and 2026-11-18, in the coordinator's session), with the coordinator's
-calls under 22 to 25 (docs/plan/repl/README.md). BUILT (2026-11-22): Python's mount (#2026) and the reader's read side
-(#2048, #2058). Not built: `ml.fs`, every write, the dump, and backup and the archive carrying files. This section
-SUPERSEDES three things in "A session's files as a directory" above: its layout (`/files/` itself writable), its mount
+calls under 22 to 25 (docs/plan/repl/README.md). BUILT (2026-11-24): Python's mount (#2026), the reader's read side
+(#2048, #2058), `ml.fs`'s read members (#2083) and Python's writes under `agent/` (#2121). Not built: `ml.fs`'s
+write members (next, ruling 119), the dump (deferred, ruling 119), and backup and the archive carrying files.
+This section SUPERSEDES three things in "A session's files as a directory" above: its layout (`/files/` itself
+writable), its mount
 (an eager MEMFS that loads the whole directory into the worker) and its quota multiplier (the three times measured for
 that MEMFS). The rest of that section stands: the handle folders under `attached/`, provenance as a field, frozen when
 cited, the kernel-death message, and the host's disk never aliasing `/files` while no session folder is mounted. AMENDED
@@ -2025,8 +2085,8 @@ JavaScript gets Node's `fs`, as `ml.fs`.
 - **The quota is per session** ("Writes", `filesQuotaMB`). **No restorable rm:** a delete is final, except that a cited
   file keeps its frozen version ("Mutable, frozen when cited").
 - AS BUILT (#2026, #2048, #2058): the reader lists the root as `agent/` and `attached/`, and `attached/<handle>/<name>`
-  from the session's attachments; `agent/` is listed empty and every write, there too, answers EROFS until the write
-  side lands (slice 3 of "What it owes"). The Python mount enters `/files/agent/` at every cell.
+  from the session's attachments, and `agent/` from the session's run-made files (`ml-agent-files`, "Writes"). The
+  Python mount enters `/files/agent/` at every cell.
 
 ### `/files/notes/` and `/shared/notes/`: the agent's notes (IDEA, Shane, 2026-11-22; nothing assigned, nothing built)
 
@@ -2116,7 +2176,7 @@ The surface (its members with `opendir` and `createReadStream`, its paths, the g
 home: "`ml.fs`: Node's `fs/promises`, with a session's files as its disk" above, over the one ranged reader, offered to
 worker-built runs only, in the isolated world, never page-started; the `python_install` candidate worker gets neither
 it nor the mount. AMENDED 2026-11-22: this section restated it, with reading, listing and writing rules that the home
-now carries. Not built; session-store's read members are in flight. What this section keeps:
+now carries. The read members are built (#2083); the write members are next (ruling 119). What this section keeps:
 
 - **A hidden file.** "Hidden" is the effective list of [POLICIES.md](POLICIES.md), "Hiding files", which binds every
   reader of `/files`, the mounts and `ml.fs` included: a path is hidden when a default holds it (a dotenv name, a
@@ -2126,6 +2186,9 @@ now carries. Not built; session-store's read members are in flight. What this se
   a global `hide`, by that section's layers) releases it for that session's reads, and only those.
 
 ### Dumping a `@tool:` value into `agent/` (ruling 36)
+
+DEFERRED 2026-11-24 (Shane, ruling 119): not built and not scheduled. As tools move into the two REPLs, a cell
+writes a tool's result to disk itself. The design below is kept for when it is taken up.
 
 The model may write a pointer's value in full: `ml.fs.cp("@tool:a1b2c3f", "/files/agent/sales.csv")`. It is a copy
 through `ml.fs`, streamed from the STORED WHOLE behind the pointer (the value store), never from the truncated view
@@ -2162,8 +2225,8 @@ value; dump then reload equals the stored table, its values and its declared dty
 ### Python's view: one mount type over the reader (ruling 36, as amended under ruling 75)
 
 BUILT, the mount only (#2026, docs/dev/python-sandbox.md, "`/files` in Python"): route A's type over the ranged
-reader for both folders, as below, switched on in the offscreen document by `setFilesReader` (#2058). Writes answer
-EROFS until the reader's write side lands. Ruling 36 named two mounts (WORKERFS for `attached/`, a custom mount over
+reader for both folders, as below, switched on in the offscreen document by `setFilesReader` (#2058). Writes under
+`agent/` land; elsewhere they answer EROFS. Ruling 36 named two mounts (WORKERFS for `attached/`, a custom mount over
 OPFS for `agent/`); the coordinator's call of 2026-11-19 under ruling 75 replaced them with this one type.
 
 Python sees `/files` through Emscripten mounts, never a mount that loads whole files. ONE store, the shelf, holds
@@ -2447,6 +2510,17 @@ otherwise it is refused (`PAGE_GONE`). Only a top frame can build a run (`granta
 is the top frame's and the comparison is exact; the composers (sidebar, DevTools) take files for an agent session. The
 `dereference` tool reads a text pointer as its text through the pipe ("Text, N lines" in the header); the inventory,
 the shelf's refusals and the `run.files` state row say lines for text and pages for a PDF. Images wait, as ruled.
+
+**Built (2026-11-24): where a cell opens it.** On a run the worker built, each block also names the file's path under
+the mount, after `pointer`: `path="/files/attached/<handle>/<name>"`, the handle being the pointer's id and the name the
+stored one, as the mount lists it (sw-attach.ts `openablePath`). It is there only when it opens the file as written: a
+name holding `/` (the mount reads it as a folder), a name that is `.` or `..` (the mount refuses the segment) and a name
+the turn's scrub changes (the framed task is scrubbed whole, the mount lists the stored name) get none. Only the
+attribute is absent: the file is still attached, its block still names its pointer, and its folder
+`/files/attached/<handle>/` is listed, so the model lists the folder. A `"` in a name is written `&quot;`, as in `name`;
+the attribute's decoded value is the path. A hidden attachment carries its path, since its name is listed; the read is
+refused by the hide rule. A message stored before this is replayed as stored. It costs 32 characters and the name per
+attached file.
 
 ## Open
 

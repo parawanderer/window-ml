@@ -21,8 +21,8 @@ export const isNoTab = (tabId: number | undefined): boolean => tabId === NO_TAB;
 /**
  * Whether a tool call needs the run's page: every page-realm builtin and every tool a site registered (an undeclared
  * name), and `look`/`locate` unless they look at an attached file's pages, which the worker drew. The worker's own
- * tools (`python_exec`, `fetch_url`, `task`, ...) and a server's remote tools need none, and nor does `navigate`, which from
- * no tab opens the tab the run moves onto (no-tab-nav.ts).
+ * tools (`python_exec`, `fetch_url`, `task`, ...), a server's remote tools and `chat_metadata`, which the loop answers,
+ * need none, and nor does `navigate`, which from no tab opens the tab the run moves onto (no-tab-nav.ts).
  * @param name the tool's name
  * @param args the call's arguments
  * @param remote whether the run's tool of that name is a server's remote tool
@@ -30,6 +30,8 @@ export const isNoTab = (tabId: number | undefined): boolean => tabId === NO_TAB;
  */
 export function needsPage(name: string, args?: Record<string, unknown>, remote = false): boolean {
     if (remote) return false;
+    // The loop answers chat_metadata itself (agent-loop.ts, the `meta` capability), above the dispatch: no page is involved.
+    if (name === "chat_metadata") return false;
     if (name === "navigate") return false;
     if (name === "look" || name === "locate") return !Array.isArray(args?._images);
     const realm = builtinTool(name)?.realm;

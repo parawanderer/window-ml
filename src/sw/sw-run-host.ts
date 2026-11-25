@@ -37,14 +37,14 @@ import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
 import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, grantOnceFetch, consentFetch, fetchConsent, resolveApproval } from "./sw-consent";
 import { settingBeforeCard, settingCard, settingFacts, settingMeasureDeps, holdSettingChange, releaseSettingChange, noteSettingDeclined, watchSetting, settingEntries, surveySettings, settingChangedElsewhere, type SettingChange } from "./sw-change-setting";
-import { ASK_POLICY_CAUSE, navOnlyWhy, startLeftWhy, judgeCall, fetchFacts, navigateFacts, actFacts, noteAct, dropActs, actsOf, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
+import { ASK_POLICY_CAUSE, BROKEN_POLICY_CAUSE, navOnlyWhy, startLeftWhy, judgeCall, fetchFacts, navigateFacts, actFacts, noteAct, dropActs, actsOf, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
 import { checkProposals, recordedFetches, measureBreadth, breadthNote, measureActBreadth, actBreadthNote, measureSettingBreadth, measureSettingRows, settingBreadthNote, recordedSettingKeys, type PolicyProposal, type SettingBreadth } from "./policy-proposal";
 import { approveManifest, checkManifestProposal, draftCardNote, type CheckedManifest } from "./sw-manifest-proposal";
 import { approveLibrary, checkLibraryProposal, isLibraryDraft, precheckLibrary, type CheckedLibrary } from "./sw-library-proposal";
 import { isExtensionSender, senderSelfApproves } from "./sw-site-access";
 import { relayDebugEvent } from "./sw-debug";
 import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels, fetchOllamaInfo } from "./sw-llm";
-import { ensureLocalTools, noteLocalStep, runLocalTool, runsInWorker } from "./sw-local-tools";
+import { ensureLocalTools, noteLocalStep, runLocalTool, runsInWorker, workerFacing } from "./sw-local-tools";
 import { lookPreviewArgs, workerLook } from "./worker-look";
 import { workerLocate } from "./worker-locate";
 import { runVision, workerWroteVision, type RunVision } from "./run-vision";
@@ -353,8 +353,25 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
 export const GATED_TOOL_NAMES: ReadonlySet<string> = GATED_BUILTINS;
 
 /**
+ * The keys a page's START_RUN may not set, at the payload's top level and inside its `rebuild` alike: the person's
+ * fields and the sender's (`pageStartPayload`). One list for both levels, so a key added here is stripped at each.
+ */
+export const PAGE_STRIPPED_KEYS = ["builtBy", "display", "files", "sends", "origin", "pageOrigin", "pageUrl", "inputScrubbed"] as const;
+
+/**
+ * A shallow copy of `o` without any of `PAGE_STRIPPED_KEYS`.
+ * @param o a page's payload, or its `rebuild`
+ * @returns the copy
+ */
+function withoutPersonFields<T extends object>(o: T): T {
+    const copy = { ...o } as Record<string, unknown>;
+    for (const k of PAGE_STRIPPED_KEYS) delete copy[k];
+    return copy as T;
+}
+
+/**
  * A page's START_RUN payload as the worker may trust it. A page's payload may ask for MORE gating, never less.
- * - Removed, the worker's to set: `builtBy`, `rebuild.builtBy`, `display`, `files` (pointers naming value-store rows), `sends`,
+ * - Removed, the worker's to set, at the top level and inside `rebuild` alike (`PAGE_STRIPPED_KEYS`): `builtBy`, `display`, `files` (pointers naming value-store rows), `sends`,
  *   `inputScrubbed` (a page's claim would spare a stored session's raw user turns the scrub on resume)
  *   and `origin` (the PromptOrigin: a page could stamp its prompt as typed on an extension surface). Only the worker's own `hostRun` call
  *   (sw-run-start.ts) marks a run worker-built, and `makeWorkerRun` hands one over; a page's claim would give its run the
@@ -375,14 +392,11 @@ export const GATED_TOOL_NAMES: ReadonlySet<string> = GATED_BUILTINS;
  */
 export function pageStartPayload(payload: unknown, sender: chrome.runtime.MessageSender, cfg: Pick<MlConfig, "autoApprovePython" | "autoApproveReadonly" | "autoApproveSelfSource" | "selfIntrospection">): unknown {
     if (!payload || typeof payload !== "object") return payload;
-    const { builtBy: _b, display: _d, files: _f, sends: _n, origin: _p, pageOrigin: _o, pageUrl: _u, inputScrubbed: _i, ...rest } = payload as StartRunPayload;
+    const rest = withoutPersonFields(payload as StartRunPayload);
     // The budget RESUME_RUN honours, so a page cannot ask for an unbounded run; an invalid one is no budget, and the loop's default applies.
     const budget = stepBudget(rest.maxSteps);
     if (budget) rest.maxSteps = budget; else delete (rest as { maxSteps?: number }).maxSteps;
-    if (rest.rebuild && typeof rest.rebuild === "object") {
-        const { builtBy: _rb, ...rebuild } = rest.rebuild;
-        rest.rebuild = rebuild;
-    }
+    if (rest.rebuild && typeof rest.rebuild === "object") rest.rebuild = withoutPersonFields(rest.rebuild);
     rest.autoApprovePython = !!rest.autoApprovePython && !!cfg.autoApprovePython;
     rest.autoApproveReadonly = !!rest.autoApproveReadonly && !!cfg.autoApproveReadonly;
     delete (rest as { autoApproveSameOriginAuth?: unknown }).autoApproveSameOriginAuth;
@@ -643,7 +657,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         const j = judgeCall(runId, "act", actFacts(url, name, element));
         for (const b of j.broken) recordRunLog(runId, { level: "warn", subsystem: "policy", kind: "broken", reason: b.reason, detail: { policy: b.policy.id, tool: name } });
         if (j.decision && j.by && j.by !== "builtin") {
-            recordRunLog(runId, { subsystem: "policy", kind: j.decision, reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: name, url, element: element.name ?? "" } });
+            recordRunLog(runId, { subsystem: "policy", kind: j.brokenAsk ? BROKEN_POLICY_CAUSE : j.decision, reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: name, url, element: element.name ?? "" } });
             return { decision: j.decision, label: j.by.label };
         }
         if (!j.decision && url && await senderSelfApproves({ url }).catch(() => false)) return { decision: "allow" as const, label: "this site is on the self-approval list" };
@@ -824,7 +838,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // exec runs in its page's world and nowhere else. The start event below carries the same list, so the export holds
         // what the model was sent.
         const offerWorld = byWorker();
-        const modelTools = offerWorld ? withExecWorld(p.tools) : p.tools;
+        // A run the worker built and drives reads its worker tools' texts from the tools that run (workerFacing).
+        const shown = p.builtBy === "worker" && offerWorld ? workerFacing(runId, p) : p.tools;
+        const modelTools = offerWorld ? withExecWorld(shown) : shown;
         const toolDefs = modelTools.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
         const approvedSheets = new Set<string>();   // external sheets approved this run (isSheetApproved)
         // state: plumbing — why this run's python_exec cell was not run inside the dialect, by its exact source: written by the
@@ -1008,7 +1024,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             if (askAnswer || seq === undefined) return askAnswer;
             const line = arrivalLine(h);
             const answered = (a: { allowed: boolean; text: string }) => { unreadAnswer = a.text || undefined; return a; };
-            askAnswer = raiseAsk(runId, seq, { kind: ARRIVAL_ASK, facts: { url: h.url }, why: { line, detail: line, cause: h.label !== undefined ? ASK_POLICY_CAUSE : "policies-unread", ...(h.label !== undefined ? { policy: h.label } : {}) } }).then(async (o) => {
+            askAnswer = raiseAsk(runId, seq, { kind: ARRIVAL_ASK, facts: { url: h.url }, why: { line, detail: line, cause: h.broken ? BROKEN_POLICY_CAUSE : h.label !== undefined ? ASK_POLICY_CAUSE : "policies-unread", ...(h.label !== undefined ? { policy: h.label } : {}), ...(h.broken ? { policyId: h.broken.id } : {}) } }).then(async (o) => {
                 if (arrivalHold(runId) !== h) return { allowed: true, text: "" };   // judged again meanwhile: the new judgement holds or not
                 if (o.allowed) {
                     // A person on a card: the origin is consented, and as the person for a fetch the worker runs.
@@ -2005,7 +2021,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // A cell outside the dialect in a run whose earlier cell ran with the bridges lifted: its card says what that
                     // cell may have kept. Read here, where a wait is allowed: the mark outlives an evicted worker (sw-python.ts).
                     if (tool === "python_exec" && askWhy?.cause === "outside-dialect" && await pythonRunBridged(runId)) askWhy = { ...askWhy, bridged: true };
-                    if (askWhy?.policy !== undefined && !askedByPolicy(askWhy)) recordRunLog(runId, { subsystem: "policy", kind: "lapsed", reason: askWhy.cause, detail: { tool, policy: askWhy.policy, ...(tool === "fetch_url" ? { url: String((args as { url?: unknown }).url ?? "") } : {}) } });
+                    if (askWhy?.cause === BROKEN_POLICY_CAUSE) recordRunLog(runId, { subsystem: "policy", kind: BROKEN_POLICY_CAUSE, reason: askWhy.cause, detail: { tool, policy: askWhy.policy ?? "", id: askWhy.policyId ?? "" } });
+                    else if (askWhy?.policy !== undefined && !askedByPolicy(askWhy)) recordRunLog(runId, { subsystem: "policy", kind: "lapsed", reason: askWhy.cause, detail: { tool, policy: askWhy.policy, ...(tool === "fetch_url" ? { url: String((args as { url?: unknown }).url ?? "") } : {}) } });
                     // A worker tool's approval is granted to the run's state in this worker (worker-tools.ts), rebuilt here
                     // if an eviction took it, so the decision below has somewhere to put it.
                     if (byWorker() && runsInWorker(p, tool)) await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "", pyMedia).catch(() => { /* nothing granted: fails closed */ });
@@ -2151,7 +2168,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     if (j.decision === "ask" && !j.by) return "unknown";
                     for (const b of j.broken) recordRunLog(runId, { level: "warn", subsystem: "policy", kind: "broken", reason: b.reason, detail: { policy: b.policy.id, tool: "navigate" } });
                     if (!j.decision || !j.by || j.by === "builtin") return undefined;
-                    recordRunLog(runId, { subsystem: "policy", kind: j.decision, reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: "navigate", url: dest.href } });
+                    if (!j.brokenAsk) recordRunLog(runId, { subsystem: "policy", kind: j.decision, reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: "navigate", url: dest.href } });
                     return { decision: j.decision, label: j.by.label };
                 },
                 fetchNeedsConsent: (spelled) => { const url = fetchJudgedAs(spelled); return !(runFetchConsented(runId, url) ?? fetchConsent.get(tabId)?.has(url)); },   // a NEW url → gate; an already-approved one → auto
@@ -2189,7 +2206,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // An `ask` policy puts the call to the person where a free tier or a remembered consent would run it; it
                     // judges any run the loop gates, as a `deny` does.
                     if (j.decision === "allow" && !(byWorker() && runsInWorker(p, "fetch_url"))) return undefined;
-                    recordRunLog(runId, { subsystem: "policy", kind: j.decision, reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: "fetch_url", url } });
+                    if (!j.brokenAsk) recordRunLog(runId, { subsystem: "policy", kind: j.decision, reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: "fetch_url", url } });
                     return { decision: j.decision, label: j.by.label };
                 },
                 // An UNCREDENTIALED fetch to an origin the run is at / has been consented to (relative, or in

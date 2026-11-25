@@ -3,7 +3,7 @@
 // server JSON is genuinely opaque, so it's typed `any`; our own data uses the
 // shared contract types.
 import { PageGone, forgetPageBuilt, forgetPageBuiltTab, movePageBuiltTab, notePageBuilt } from "./sw/page-route";
-import { dropAllLocalTools } from "./sw/sw-local-tools";
+import { dropAllLocalTools, localToolTexts } from "./sw/sw-local-tools";
 import { invocationInfo } from "./sw/sw-invocation";
 import { onIsolatedMessage, pageApproved } from "./sw/sw-isolated-exec";
 import { onMlCall } from "./sw/sw-ml-wire";
@@ -31,8 +31,9 @@ import { workerLook } from "./sw/worker-look";
 import { workerLocate } from "./sw/worker-locate";
 import { fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw/sw-fetch";   // outbound fetch layer (ml.fetch, rendered fetch, credentialed Google Sheets CSV)
 import { executeServerTool, serverToolResult } from "./sw/sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
-import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw/sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
+import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, observeRequests, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw/sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw/sw-events";
+import { energyRequest, cutOpenStretches, watchPower } from "./sw/sw-energy";
 import { configureSessionCommands, handleSessionTitle, ingestSessionEvent, sessionPageMoved, sessionPageGone, keepSession, liveHeldSessions, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw/sw-sessions";   // the cross-tab session index the chat page reads
 import { backupAction, backupFailure } from "./sw/sw-backup";   // backup and restore, for Settings
 import { folderAction } from "./sw/sw-archive";   // the session archive's folder, for Settings
@@ -74,7 +75,7 @@ import { asIsTokens, forBackendFromPage, forPage, forTurn, scanTurn } from "./sw
 import { TurnUnreadable } from "./secret-registry";
 import { secretRegistryOp } from "./sw/sw-secret-registry";
 import { filesHideList, signalFilesHideChanges } from "./sw/sw-files-hide";
-import { pythonPrewarm, pythonExec, pythonInterrupt, relayPyStdout, deletePythonRun, dropPythonLibraries, pythonReaped, filesAttached, filesSecretForms, pythonStarted, pythonDone } from "./sw/sw-python";
+import { pythonPrewarm, pythonExec, pythonInterrupt, relayPyStdout, deletePythonRun, dropPythonLibraries, pythonReaped, filesAttached, filesSecretForms, filesQuota, filesLost, pythonStarted, pythonDone } from "./sw/sw-python";
 import { focusLineFor } from "./sw/sw-focus";
 import { chatHashFor, openChatPage } from "./sw/sw-open-chat";
 import { eventSession, pageMayWrite, withoutPageWhy, WORKER_ONLY_KINDS, type WorkerClaim } from "./event-admission";   // what a page may add to a session the worker speaks for
@@ -83,7 +84,7 @@ import { watchRedirects } from "./sw/sw-redirects";
 import { fetchImageDataUrl } from "./sw/sw-image-fetch";
 import { approvalKey } from "./approval-key";
 import { raiseAsk } from "./sw/sw-asks";
-import { probeShell, refreshShell, shellStatusRead } from "./sw/sw-shell";
+import { probeShell, refreshShell, shellStatus, shellStatusRead } from "./sw/sw-shell";
 import { toPageUi, notePage, forgetTab, syncAllPanels, servePanelPort, startGesture, tabHidden, cuePanel, panelOpen, HL_POSITIONS } from "./sw/sw-side-panel";
 import { checkReadPlan } from "./table/table-plan";
 
@@ -117,6 +118,11 @@ const inflight = new Map<string, AbortController>();
 // respawn doesn't miss the in-flight run (the respawn race).
 // Logs this worker's start, and infers the previous one's eviction from a heartbeat it left in storage.session.
 void housekeeping.start();
+// The energy hold (sw-energy.ts): a record a dead worker left open is marked cut first, then every session's model
+// call is heard, so a local runtime's draw is watched while it generates; every stream says whether its box reports power.
+void cutOpenStretches();
+watchPower();
+observeRequests(energyRequest);
 // A worker evicted mid-run leaves its tabs pinned against discard with nobody left who knows why. After the
 // rehydrate — so a run that came back keeps its own tab — release the ones that did not.
 void hydrationDone.then(() => reconcileTabPins());
@@ -169,6 +175,8 @@ startValueSweeps(liveHeldSessions);   // its first pass releases held rows no se
 // the cancel path are tested against before any consumer exists.
 (globalThis as unknown as { __mlRaiseAskForTest?: unknown }).__mlRaiseAskForTest = (runId: string, seq: number, kind: string, facts: Record<string, unknown>) => raiseAsk(runId, seq, { kind, facts });
 (globalThis as unknown as { __mlKeepSessionForTest?: unknown }).__mlKeepSessionForTest = (hash: string): void => keepSession(hash);
+// The texts of the tools a worker-built run registered to run in the worker: what the model must read of them.
+(globalThis as unknown as { __mlLocalToolTextsForTest?: unknown }).__mlLocalToolTextsForTest = (runId: string) => localToolTexts(runId);
 // TEST-ONLY (SW realm only): start a run as the HUD Commander's Send does (sw-run-start.ts). The real route is the
 // extension's own frame through the content-script shell, which a spec cannot click without driving the whole
 // composer; a page cannot reach this, so it is no way in for one.
@@ -802,7 +810,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
                 // One session's effective view (docs/spec/POLICIES.md, "The effective view"): a read, so no change to answer with.
                 const hash = str(p.hash, 100);
                 if (!hash) { sendResponse({ error: "a session hash is needed" }); return; }
-                sendResponse({ data: sessionPolicies(hash) });
+                sendResponse({ data: sessionPolicies(hash, shellStatus().host?.platform) });
                 return;
             } else if (p.op === "removeChecked") {
                 // A removal from a session's view: a widening one needs `confirm: true`, and refuses with the entry and what it would expose.
@@ -810,7 +818,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
                 if (!hash || !id) { sendResponse({ error: "a session hash and a policy id are needed" }); return; }
                 const r = removeFromSession(hash, id, p.confirm === true);
                 if (!r.removed) { sendResponse(r.why === "confirm" ? { error: "confirm", data: { row: r.row } } : { error: "no such policy" }); return; }
-                sendResponse({ data: sessionPolicies(hash) });
+                sendResponse({ data: sessionPolicies(hash, shellStatus().host?.platform) });
                 return;
             } else if (p.op !== undefined && p.op !== "list") { sendResponse({ error: "unknown op" }); return; }
             sendResponse({ data: policyView() });
@@ -1058,6 +1066,8 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     if (message.type === "PY_REAPED") { pythonReaped(message, sender, noteRunLine); return false; }
     if (message.type === "FILES_ATTACHED") { sendResponse(filesAttached(message, sender)); return false; }
     if (message.type === "FILES_SECRET_FORMS") { void filesSecretForms(sender).then(sendResponse); return true; }
+    if (message.type === "FILES_QUOTA") { void filesQuota(sender).then(sendResponse); return true; }
+    if (message.type === "FILES_LOST") { filesLost(message, sender); return false; }
     if (message.type === "FILES_HIDE_LIST") { void filesHideList(message, sender).then(sendResponse); return true; }
     if (message.type === "SERVER_TOOL_EXEC") {
         // Run ONE OpenWebUI-configured tool. CHOKE POINT, and a real one: the fetch spends the user's API

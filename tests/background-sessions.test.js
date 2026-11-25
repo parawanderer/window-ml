@@ -129,7 +129,8 @@ test("an unknown command is answered unsupported", T, async () => {
     assert.deepEqual(caps.blankStart, {
         url: "https://parawanderer.github.io/window-ml/agent-start.html", granted: true, browser: caps.blankStart.browser,
     });
-    assert.deepEqual({ ...caps, blankStart: undefined }, { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: false, persistence: false, resourcePanel: true, pythonBench: false, localSettings: true, switchModel: true, attachFiles: true, attachPdf: true, blankStart: undefined });
+    // `detached`: `agent.start` takes a target with no tab at all (TABLESS_RUN.md), which needs nothing of the harness.
+    assert.deepEqual({ ...caps, blankStart: undefined }, { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: false, persistence: false, resourcePanel: true, pythonBench: false, localSettings: true, switchModel: true, detached: true, attachFiles: true, attachPdf: true, blankStart: undefined });
 });
 
 test("a live background run, driven from the chat page: steered while its gate is open, then approved through approval.answer", T, async () => {

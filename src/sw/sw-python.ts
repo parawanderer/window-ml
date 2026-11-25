@@ -23,7 +23,7 @@ import type { DialectLibrary } from "../python/python-dialect-run";
 import type { CellCancel } from "../python/py-lease";
 import { sessionArea } from "./sw-housekeeping";
 import { defineState } from "../state-registry";
-import { DEFAULT_CONFIG } from "../contract/contract-config";
+import { DEFAULT_CONFIG, filesQuotaBytes } from "../contract/contract-config";
 import { idleMinutes } from "../python/py-reap";
 import { dropRunInstalls, runInstalls } from "./sw-pkg-installs";
 
@@ -315,6 +315,8 @@ export async function runPython(payload: any, requestId: string | undefined, cal
         // Callbacks an earlier cell of this run handed to JavaScript fired after its result and ran nothing (cell-gate.ts).
         const dropped = (res as { dropped?: { count: number; afterCell: number } } | undefined)?.dropped;
         if (dropped && caller.wireRun) recordRunLog(caller.wireRun, { subsystem: "python", kind: "dropped", reason: "after-result", detail: { count: dropped.count, afterCell: dropped.afterCell } });
+        // The offscreen document marked this cell's worker before posting it (py-mark.ts): no later cell there runs inside.
+        if ((res as { markSet?: unknown } | undefined)?.markSet === true && caller.wireRun) recordRunLog(caller.wireRun, { subsystem: "python", kind: "outside-mark", reason: "outside-cell", detail: { principal } });
         if (key && caller.disclose && caller.tabId != null) claimValue(key, pageValueSession(caller.tabId));
         return { data: res };
     } catch (err) {
@@ -441,6 +443,30 @@ export function filesAttached(message: any, sender: chrome.runtime.MessageSender
 export async function filesSecretForms(sender: chrome.runtime.MessageSender): Promise<{ forms: SecretForm[] | null }> {
     if (!isOffscreenSender(sender)) return { forms: null };
     try { return { forms: await secretFormsNow() }; } catch { return { forms: null }; }
+}
+
+/**
+ * FILES_QUOTA: the offscreen document asks how many bytes a session's run-made files may take (`filesQuotaMB`), at each
+ * file it opens for writing; it cannot read the settings itself. Only the offscreen document is answered, like
+ * FILES_ATTACHED; anyone else, and a setting that cannot be read, gets `{ bytes: null }`, which refuses the open.
+ * @param sender the message's sender
+ * @returns the quota in bytes, or null
+ */
+export async function filesQuota(sender: chrome.runtime.MessageSender): Promise<{ bytes: number | null }> {
+    if (!isOffscreenSender(sender)) return { bytes: null };
+    try { return { bytes: filesQuotaBytes((await chrome.storage.sync.get({ filesQuotaMB: DEFAULT_CONFIG.filesQuotaMB }))?.filesQuotaMB) }; } catch { return { bytes: null }; }
+}
+
+/**
+ * FILES_LOST: the offscreen document discarded a file a run was writing, because the channel it came over ended with
+ * the file still open (FILE_ATTACHMENTS.md, "A worker evicted mid-file"). Recorded in the session's run log; the
+ * document keeps the readable note itself (agent-files.ts). Only from the offscreen document.
+ * @param message `{ session, path, at, reason }`
+ * @param sender who sent it
+ */
+export function filesLost(message: any, sender: chrome.runtime.MessageSender): void {
+    if (!isOffscreenSender(sender) || typeof message?.session !== "string" || !message.session || typeof message.path !== "string") return;
+    recordRunLog(message.session, { subsystem: "files", kind: "discarded", level: "error", reason: "channel-ended", detail: { path: message.path.slice(0, 512) } });
 }
 
 /** The leased cells this worker sent and is still waiting on, and the last ones it settled: a `PY_DONE` naming neither

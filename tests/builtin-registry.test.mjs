@@ -21,17 +21,18 @@ const reg = await import("../src/tools/tool-registry.ts");
 // each gated and run in the worker; `task` (ASYNC_CALLS.md mode 1) is new, run in the worker and NOT gated: it acts only
 // on the run's own detached calls, by the run id the loop holds; `python_install` (PACKAGES_INSTALL.md slice 2) is new,
 // gated and run in the worker, a proposal like the two before it; `change_setting` (MODEL_SETTINGS.md) is new, gated and
-// run in the worker: it writes only the change a card or a policy answered.
+// run in the worker: it writes only the change a card or a policy answered. `read_pages` (FILE_ATTACHMENTS.md, a worker
+// chat's one tool) is new, run in the worker, NOT gated and NOT citable: it reads only the chat's own attached PDFs.
 const OLD = {
     /** src/sw/sw-run-host.ts `GATED_TOOL_NAMES` */
     gated: ["exec", "python_exec", "fetch_url", "navigate", "click", "type", "propose_policy", "propose_manifest", "python_install", "change_setting"],
     /** src/tools/tool-params.ts `CITABLE_TOOLS` */
     citable: ["exec", "python_exec", "look", "locate", "fetch_url", "agent_api_docs"],
     /** src/sw/worker-tools.ts `WORKER_TOOL_NAMES` */
-    worker: ["fetch_url", "python_exec", "agent_api_docs", "answer", "look", "locate", "propose_policy", "propose_manifest", "python_install", "task", "change_setting"],
+    worker: ["fetch_url", "python_exec", "agent_api_docs", "answer", "look", "locate", "propose_policy", "propose_manifest", "python_install", "task", "change_setting", "read_pages"],
     /** Every tool a factory under src/ built (`node scripts/check-tools.mjs --list` at that commit). */
     builtins: ["agent_api_docs", "ancestors", "answer", "change_setting", "chat_metadata", "click", "countMatches", "dereference", "describeElement",
-        "exec", "fetch_url", "findByText", "interactives", "locate", "look", "navigate", "pageInfo", "propose_manifest", "propose_policy", "python_exec", "python_install", "sampleText",
+        "exec", "fetch_url", "findByText", "interactives", "locate", "look", "navigate", "pageInfo", "propose_manifest", "propose_policy", "python_exec", "python_install", "read_pages", "sampleText",
         "scroll", "task", "type", "wait"],
 };
 
@@ -136,6 +137,8 @@ test("every builtin's card line is the spec's wording, or none for a tool that r
         change_setting: null,
         // task acts only on the run's own detached calls: it reaches nothing a start card would name.
         task: null,
+        // read_pages reads only the chat's own attached PDFs, in a chat that has no page: nothing a start card would name.
+        read_pages: null,
         navigate: "Open other pages of this site in this tab",
     };
     for (const name of OLD.builtins) assert.equal(reg.cardLine(name), want[name], name);
@@ -209,7 +212,7 @@ const registryText = readFileSync(path.join(ROOT, check.REGISTRY), "utf8");
 
 test("check-tools passes on the repo as it is", () => {
     const out = execFileSync(process.execPath, [path.join(ROOT, "scripts/check-tools.mjs")], { encoding: "utf8" });
-    assert.match(out, /26 builtin tools, each declared/);
+    assert.match(out, /27 builtin tools, each declared/);
 });
 
 const decl = (name, factories) => `defineBuiltinTool({ name: "${name}", factories: [${factories.map((f) => `"${f}"`).join(", ")}], gated: false, citable: false, realm: "page", cardLine: null });\n`;

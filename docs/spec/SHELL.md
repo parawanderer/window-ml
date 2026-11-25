@@ -172,10 +172,12 @@ never a page. The model learns which mode a call ran in from the call's result, 
   the call asks), and the default policy requires it false. A `.env` in the tree asks; a person whose dotenv test suite
   needs it free writes a WORKSPACE policy saying so. In the baseline host-mode sandbox (`v0.2.0`), Seatbelt hides
   credential STORES (`~/.ssh`, `~/.aws`) at any depth and relies on `containsSecret` / `pathArgs` for project `.env`
-  files; under Root K's effect-compiled sandbox `Plan` ([`EFFECTS.md`](EFFECTS.md)), workspace secret files found by the
-  host's walk are also denied at the kernel level unless the call explicitly named them and was approved (`allow_read`
-  in `sandbox.rs`), so an interpreted script (`node scripts/tool.mjs`, `python3 scripts/tool.py`) cannot read `.env`
-  behind its declared `argv` operands.
+  files. AS BUILT since (window-ml-host 0.10.0): dotenv files and the three credential files are denied at the kernel
+  level unless the call named them and was approved, at any depth on macOS and at each root's top on Linux, so an
+  interpreted script (`node scripts/tool.mjs`, `python3 scripts/tool.py`) cannot read a root's `.env` behind its
+  declared `argv` operands. `*.pem` and `id_*` inside a root are not denied, and on Linux neither is a deeper `.env`.
+  The durable override is a `show` entry, not a workspace `allow` policy. The table by platform:
+  [`SECRET_HANDLES.md`](SECRET_HANDLES.md), "What the model can see of a secret".
 - **Mounts, `/files` in an argv and a call's diff** are stated as requirements on the host in
   [`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md), "What window-ml-host must do for mounts, `/files` and `ml.sh` diffs"
   (ruled 2026-11-13), with the table of what runs free, what asks and what is refused.
@@ -494,9 +496,11 @@ Without a manifest `effects` is `unknown` and the call asks.
 
 ## What the model sees
 
-- **The prompt names `ml.sh` when the person has turned it on and the run has `exec`** (`shellClause`, prompts.ts: that it may
-  exist, the call shape, that each call is decided by policy or asked, and where to read more); `agent_api_docs` carries the
-  detail, as it does for every `ml` member.
+- **The prompt names `ml.sh` when the person has turned it on, a process host answered at the run's start, and the run
+  has `exec`** (`shellClause`, prompts.ts: that it may exist, the call shape, that each call is decided by policy or
+  asked, and where to read more); `agent_api_docs` carries the detail, as it does for every `ml` member. The host's
+  presence is read once, at the start (`shellOffered`, sw-shell.ts, at most 3 s): one that appears later is offered to
+  the next run, and one that dies mid-run leaves the clause in place, each call answering `ShellUnavailable`.
 - **Whether it exists, and in which modes** (decided 2026-10-13): three boolean capabilities in `RuntimeCapabilities`,
   which the projection rule passes with no edit (`current-runtime.ts`): `shellContainer` (a container is available),
   `shellHost` (the real filesystem is), `shellSandboxed` (host mode runs under the OS sandbox). Booleans rather than one

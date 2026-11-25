@@ -98,6 +98,27 @@ test("the chrome of a session this device may drive: it can send and switch, and
     assert.equal(sessionChrome("laptop:7b21", summary({ ...ended, status: "running" }), rt(), self).canResume, false, "still going");
     assert.equal(sessionChrome("laptop:7b21", summary({ ...ended, kind: "chat" }), rt(), self).canResume, false, "a chat has no page");
     assert.equal(sessionChrome("laptop:7b21", summary(ended), rt({ grants: [{ scope: "view" }] }), self).canResume, false, "a watcher");
+    // A run with no tab (the worker's `background.noTab`): the banner's words, and whether this device may bring it to a page.
+    const noTab = { kind: "agent", status: "running", saved: true, background: { running: 1, waiting: 0, noTab: true } };
+    const nt = sessionChrome("laptop:7b21", summary(noTab), rt(), self);
+    assert.equal(nt.noTabText, "This run has no tab. 1 running in background. A result is read at its next turn. A message sent here starts its next turn, with no page.", "running, so not resumable: the composer is drawn");
+    assert.equal(nt.canBringHere, true);
+    // The composer sentence follows whether the composer is drawn: `canSend && !canResume`. No page recorded means no tab to close, so it is drawn.
+    const withTab = sessionChrome("laptop:7b21", summary({ ...noTab, page: { url: "https://example.com", title: "Example", tabId: 3 } }), rt(), self);
+    assert.equal(withTab.canResume, false);
+    assert.match(withTab.noTabText, /A message sent here starts its next turn, with no page\.$/);
+    // Ended with its tab closed: `resumableHere` refuses a noTab run, so there is no resume bar and the composer is drawn.
+    const noPage = sessionChrome("laptop:7b21", summary({ ...noTab, status: "done", page: { url: "https://example.com", title: "Example" } }), rt(), self);
+    assert.equal(noPage.canResume, false, "a run with no tab is not resumed: the composer reaches it");
+    assert.match(noPage.noTabText, /A message sent here starts its next turn, with no page\.$/);
+    assert.doesNotMatch(sessionChrome("laptop:7b21", summary(noTab), rt({ grants: [{ scope: "view" }] }), self).noTabText, /A message sent here/, "a watcher has no composer");
+    assert.equal(sessionChrome("laptop:7b21", summary(noTab), rt({ grants: [{ scope: "view" }] }), self).canBringHere, false, "a watcher");
+    assert.equal(sessionChrome("laptop:7b21", summary({ ...noTab, background: { running: 0, waiting: 0, noTab: true } }), rt(), self).noTabText, "This run has no tab. A message sent here starts its next turn, with no page.");
+    // Absent (a summary the index wrote before the field existed): no banner, nothing to bring, and the old resume bar unchanged.
+    assert.equal("noTabText" in sessionChrome("laptop:7b21", summary(ended), rt(), self), false);
+    assert.equal(sessionChrome("laptop:7b21", summary(ended), rt(), self).canBringHere, false);
+    assert.equal(sessionChrome("laptop:7b21", summary(ended), rt(), self).canResume, true);
+    assert.equal(sessionChrome("laptop:7b21", summary({ ...noTab, background: { running: 1, waiting: 0 } }), rt(), self).noTabText, undefined, "counts without noTab: no banner");
     // The app's bar is for an approval the reader cannot see; while the card is on screen, the card speaks for itself.
     assert.equal(c.approvalOffscreen, false);
     assert.equal(sessionChrome("laptop:7b21", summary(), rt(), self, { pending: false, gateAway: true }).approvalOffscreen, true);

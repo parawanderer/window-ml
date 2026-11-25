@@ -59,7 +59,8 @@ background-hosted paths with no page round-trip and no approval.
   A file reaches the shelf when it is sent with any message to an agent run the worker built (sw-attach.ts
   `attachFiles`): a PDF read once, its bytes and its read document stored as held rows of the run's session, a
   text file as a `text` row, each pointer noted with the message's turn, and the message given each one under
-  `pointer="@file:…"`: a PDF and a text past `FILE_INLINE_MAX` as their outline, a short text whole. A typed message
+  `pointer="@file:…"`: a PDF and a text past `FILE_INLINE_MAX` as their outline, a short text whole, each with
+  `path="/files/attached/<handle>/<name>"` after it when that opens the file as written (`openablePath`). A typed message
   of `FETCH_PREVIEW_CHARS` or more is held too, as `@file:"pasted text"`. A text pointer has `lines` (a PDF's has
   none, which is how an older pointer reads as a PDF) and is read as its text, not by pages. The pointers ride the
   run's payload (`StartRunPayload.files`, worker-built runs only), so a store made after a worker eviction, or after

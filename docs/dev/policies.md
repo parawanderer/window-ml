@@ -70,11 +70,13 @@ dropped.
 1. Before the saved policies are read after a worker wake, return `"ask"` and do nothing else (see Traps).
    Otherwise collect the global policies and the run's, and keep those of the call's `consumer`.
 2. Evaluate each with `evalPolicy(source, facts, effect)`. A policy that breaks (does not parse, falls out of the
-   dialect, throws, returns something that is not a boolean) is NO OPINION. It is recorded: `brokenReason(id)` for the
-   policy page, and the caller writes a `policy`/`broken` run log record with the policy id. An `allow` that held
+   dialect, throws, returns something that is not a boolean) is recorded: `brokenReason(id)` for the
+   policy page, and the caller writes a `policy`/`broken` run log record with the policy id. A broken `allow` is NO
+   OPINION; a broken `deny` or `ask` makes the call ASK (ruling 108, "A broken deny or ask asks" below). An `allow` that held
    after reading a fact that is `null` is no opinion too, with `unknown` naming the fact, and is not broken (see
    "A null fact is unknown" below).
-3. A `deny` from any policy, in either scope, returns at once. Deny wins across scopes.
+3. A `deny` that evaluates cleanly, from any policy, in either scope, returns at once. Deny wins across scopes; the
+   loop goes on past a broken policy, so a clean `deny` after it still wins.
 4. Otherwise the first `ask` returns `decision: "ask"` with the policy in `by`, ahead of any `allow` and of the built-in
    default ("The `ask` answer" below). Otherwise the first `allow` returns, with the policy that gave it in `by`.
 5. With no answer from the person, the built-in default applies: `free(facts.effects, boundFor(placement))` from
@@ -143,13 +145,22 @@ policy decides"). It never refuses and never runs a call; it only takes away the
   consumer treats both the same (the card, no free tier answering) and says which only for the second (`askWhyOf`).
 - **The realm** needs nothing new: `evalPolicy` suppresses only an `allow` over a `null` read, so an `ask` fires over
   one, like a `deny`. Over `effects: "unknown"` an `ask` that needs a resource's field is silent and one that asks the
-  set (`has`, `unknown`) or tests an absence (`every(...)`) fires. A broken `ask` is no opinion, recorded as broken.
+  set (`has`, `unknown`) or tests an absence (`every(...)`) fires. A broken `ask` asks, as a broken `deny` does (below).
 - **Consumers.** `sh`: `decide` and the version probe (`sw-shell-call.ts`); the nested ask carries `why` with cause
   `ask-policy`. `fetch_url`: `fetchPolicy` returns `{ decision: "ask", label }` and `autoApprove` returns `null` right
   after the `deny` check, before the current page, same origin, self-source, the remembered approval and an `allow`.
   The choke point is unchanged: a card the person approved mints the consent that lets that one fetch through, and the
   next call asks again. `rejudgePending` leaves a pending card alone for an `ask`, and an `ask` stored beside an `allow`
   keeps the `allow` from answering it.
+- **A broken deny or ask asks (ruling 108).** `judgeCall` keeps evaluating after a broken `deny` or `ask` (a clean `deny`
+  further on still wins), then returns `decision: "ask"` with `by` and `brokenAsk: { policy, reason }` set to the first
+  broken one, ahead of a clean `ask` and of every `allow` and free tier. `askWhyOf` gives it cause `broken-policy`
+  (`brokenPolicyWhy`: the label, `brokenPhrase` of the reason in plain words, `policyId`); the card's `AskWhyLine` adds
+  "Edit policy", which opens the policy's editor in Settings (`PanelRoute.policy`; the HUD card, which draws no
+  Settings, opens the Policies section on the chat page). `askedByPolicy` is true for it, so no "remember". Run log:
+  `policy`/`broken-policy` at the gate (`sw-run-host.ts`, `sw-shell-call.ts`); the model reads the same sentence as
+  `detail`. The arrival hold carries `broken` and says the same. Not covered: a `click`/`type` ask has no card reason
+  of any kind (`askWhy` is not built for `act`), so its card does not say the policy is broken.
 - **No "remember" on its card.** `askedByPolicy(why)` empties the grants of a gate an `ask` raised, and `withoutAsked`
   drops the fetch URLs an `ask` matches from an exec card's "Keep" (and names the policy), so no `allow` is made that
   the `ask` would override. The nested `sh` ask card never offers one.
@@ -217,8 +228,9 @@ reached the tab's ledger for a worker-hosted run. The remember button never help
   whatever script runs on that page.
 - Consult `deny` BEFORE the free tiers. Putting the policy after the same-origin and current-page checks makes a deny a
   rule that applies only to cross-origin fetches.
-- A broken policy fails closed in both directions: a broken `allow` does not allow, a broken `deny` does not deny, and
-  the call asks. Nothing breaks silently, but nothing breaks loudly either: look for `policy`/`broken` in the run log.
+- A broken policy fails closed in both directions: a broken `allow` does not allow, and a broken `deny` or `ask` makes the
+  call ASK (it used to be no opinion, so a typo'd `deny` fell through to an `allow` or the free tier: ruling 108).
+  The break is in the run log as `policy`/`broken`; the ask is `policy`/`broken-policy`.
 - Storage is read asynchronously when the worker starts (`policiesReady`). Until it resolves, `judgeCall` returns
   `"ask"` (`POLICIES.md`, "A store not yet loaded means ASK, free tiers included"), and the consumer must ask WITHOUT
   letting its own free tiers answer: `fetchPolicy` maps it to `"unknown"`, on which `autoApprove` returns before the
@@ -435,6 +447,15 @@ four defaults, and `resolveHidden` (session, then global, then the defaults; the
   prefix.
 - **A new reader** of a session's files must be built with `hidden:`; `tests/files-hide-policies.test.mjs` pins the list
   of `RangedReader`s in `src/` and fails on one built without it.
+- **A spawn goes through `spawnBound`** (`src/sw/sw-spawn.ts`), never `h.client.spawn` directly:
+  `tests/spawn-hide-list.test.mjs` enumerates every `.client.spawn(` in `src/` and pins its callers. It reads the rules
+  at each call and sends them as the host's `hideList` in ascending precedence (`hostHideList`, which sorts by
+  `resolveHidden`'s own order, so the host's last match is the entry `resolveHidden` names). A host without
+  `hello.hideList` gets no call while a `hide` applies.
+- **A path the host reports `hiddenBy` asks** before any `allow` (`namesHidden` in `judgeCall`), and the card names the
+  rule from `ShFactsPlace.hideRules`. A library proposal refuses such a path, as it refuses a secret one.
+- **A `hide` row's label ends with its limits** (`hideLimits`): the hard-link line always, the late-file line only when
+  `shellStatus().host.platform` is `linux`. In the label, since e3's view test allows a row no other key.
 
 ## The act consumer
 

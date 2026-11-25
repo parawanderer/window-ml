@@ -126,17 +126,40 @@ is not what bounds a cell. Recursion to depth d with two self-calls is a tree of
 and never in practice, so the budget is already the only bound that binds, and it is a proof of its own. The counter
 is a natural number, it falls on every backward jump and every call, and no cell code can read or reset it, so every
 run ends within the budget by well-founded induction, whatever the program. That argument needs no restriction on loop
-forms; its one premise is that no single step does unbounded work, which is the obligation the cost rows already carry
-(a C leaf's cost over its input, the regex bound). So `while` joins the dialect, with these points ruled beside it.
-(1) A budget trip is an ERROR THE MODEL READS, with the steps spent, never an approval card: asking a person about a
-loop that does not end is the wrong question, and so is running it unbounded outside. (2) A static refusal that costs
-nothing stays: `while True` (or any constant true test) with no `break`, `return` or `raise` in its body is refused
-before the run. (3) A trip is not a kill: it lands at the eval breaker, the cell's attempt is discarded whole as any
-refused try is, and the same cell trips at the same step on every run. (4) Generators and `yield` stay out, for a
-different reason: a suspended frame is code that outlives its cell. (5) Before it is built, packages states what a
-lifted leaf is charged, since a loop multiplies an undercharged step by its trip count exactly as a `for` over a large
-`range` does today. `class` is excluded for no halting reason either: its methods are cell code a library calls, which
-"Code from elsewhere runs under the same gate" covers; that is noted, not ruled.
+forms; its one premise is that no single step does unbounded work, which is the obligation the cost rows are meant to
+carry (a C leaf's cost over its input, the regex bound; see point 5). So `while` joins the dialect, with these points
+ruled beside it. (1) A budget trip is an ERROR THE MODEL READS, with the steps spent, never an approval card: asking a
+person about a loop that does not end is the wrong question, and so is running it unbounded outside. (2) A static
+refusal that costs nothing stays: `while True` (or any constant true test) with no `break`, `return` or `raise` in its
+body is refused before the run. (3) A trip is not a kill: it lands at the eval breaker, the cell's attempt is
+discarded whole as any refused try is, and the same cell trips at the same step on every run. (4) Generators and
+`yield` stay out, for a different reason: a suspended frame is code that outlives its cell. (5) The premise does NOT
+hold as built: a C leaf spends one step whatever its input (packages, read from the fork), so `while` is not built
+before ruling 105's charge is ([`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md), "Cost: three tiers");
+the gap is there today with a `for` over a large `range`, with or without `while`. `class` is excluded for no halting
+reason either: its methods are cell code a library calls, which "Code from elsewhere runs under the same gate" covers;
+that is noted, not ruled.
+
+**RULED 2026-11-23 (Shane, ruling 106): the property is BOUNDED COST PER SYNCHRONOUS STEP, not totality.** The agent
+loop is a program whose steps are tool calls. The loop need not end; what it needs is that every step returns, so that
+it always makes progress (productivity, as in a synchronous reactive language where each reaction is bounded and the
+system runs for ever, or a stream whose every element arrives in finite time). Three things follow, and each differs
+from what a total language asks. (1) WEAKER than totality: a cell does not have to return its answer, only SOMETHING.
+A budget trip is a result the model reads, so every cell is a partial function made total by an error value, and
+nothing has to be proven before the run. (2) STRONGER than totality: halting with no bound on when is worth nothing
+here (a total cell can run for days), so the property is a bound on cost, which the step budget gives only once every
+step's cost is charged (ruling 105). (3) The usual price is not paid: work with no bound known in advance (a
+simulation, a search, a script meant to run until it is killed) is not refused, it leaves the loop. The model writes a
+script and starts it detached through `ml.sh`; starting it is a step that returns at once, the process is a concurrent
+thing the run observes, and it is judged as any message leaving the worker is, by its effect under policies. So the
+dialect has to be complete for the synchronous steps only. The tiers are named by where the bound comes from: an
+EXPLICIT bound in the source (a `for` over data or a range; no `while`, no recursion), the IMPLICIT bound of the
+budget (`while`, recursion; ruling 104), and NO bound, detached. Between the first two the difference is not safety,
+since the budget bounds both: the explicit tier is refused before it runs instead of after the budget is spent,
+discards no attempt, and shows the model its bound in its own source. Intended beside it, not built: the budget trip's
+text names the two ways on (bound the loop, or run a script detached); that text is prompt-budget work. Being
+measured, not assumed (bench's rewrite test): how many cells outside the dialect have a rewrite inside it, how many
+budget-tier cells have a rewrite with an explicit bound, and whether that bound is derived from the data or guessed.
 
 **What the corpus count changed (2026-10-15, lane 3 of the plan: 1,714 unique cells from 18 models).** The Starlark set
 admits 89.4% of cells whole; no cell uses `while` or `class`, which confirms their static refusal. Three rulings on
@@ -268,7 +291,7 @@ generator or coroutine defined inside had its body CHECKED for membership but ne
 back hands a later cell unjudged code, and a builtin the gate never allowed (`f = open`) is a capability under a plain
 name. The red team showed both: `def f(): import os; return os.listdir('/')` admitted unasked, then an approved cell's
 `f()` listed the filesystem; `def f(): return ml.config()` the same way sent a wire call, a write reaching `ml` from an
-inside run. The rule has two layers, and one is not the other's substitute:
+inside run. The rule has three layers, and none is another's substitute:
 
 1. **The fork honours `CO_RESTRICTED` wherever the code runs**, not only under `_restricted.run`: a `CO_RESTRICTED`
    frame entered while no run is active is REFUSED with `NotInDialect` ("restricted code runs only inside the
@@ -322,6 +345,34 @@ inside run. The rule has two layers, and one is not the other's substitute:
    The RETURN value is a third channel with no name and no import, so it admits data only: `return ml` and `return
    [ml]` make the cell outside (the red team's reading question, 2026-10-20; its P2-alias pins eight shapes). Once layer 1 holds, a cell-defined function may cross back, since outside a run it refuses; a captured builtin
    never does, because it is not cell code and layer 1 never sees it.
+3. **No cell is tried inside in a worker that ran a cell outside** (the outside mark, ruled 2026-11-22; `py-mark.ts`).
+   Layer 1's stated residual covers the approved cell itself. It does not cover the cells AFTER it, which nobody is
+   asked about. An approved cell is full Python in the interpreter a later inside cell runs in. The gate admits a lifted
+   function by its identity, and a lifted call runs its Python callees ungated, so an approved cell can plant code that
+   a later inside cell runs with no gate at all (the packages lane, 2026-11-22, on the pinned core; both shapes are
+   `tests/python-outside-plant.test.mjs`):
+   - **The admitted function's own code.** `pd.DataFrame.head.__code__ = _p.__code__` keeps the function's identity, so
+     it stays admitted, and a later inside `df.head(1)` runs `_p`, which ran `import os` and `os.listdir('/')`.
+   - **A callee, with no admitted function touched.** `_iLocIndexer.__getitem__` replaced by a wrapper that imports
+     `os`. A later inside `df.head(2)` answers 2 as before, and the wrapper ran ungated under it. This is why a fork
+     change that snapshots each registered function's `__code__`, defaults and closure is not enough: the plant can be
+     anywhere in the lifted call's graph (class attributes, module globals, a callable kept in library state).
+   - **The rule.** Once a cell of a run has STARTED outside the dialect in a worker, no later cell in that worker is
+     tried inside it, and each asks exactly as an outside cell asks. The mark lives in the offscreen document, keyed by
+     the Worker object, and is set before the outside cell is posted. A fresh worker (reap, kill, restart) is unmarked.
+     An inside post to a marked worker is answered by the document and never sent, the readiness probe included. A cell
+     the person refused never ran and marks nothing. Which posts mark is an enumeration with "marks" as the default for
+     an unlisted kind (`docs/dev/python-sandbox.md`, "The outside mark").
+   - **What a person and the model see.** The card says "Asks because an earlier approved cell could have changed what
+     this one runs". The model reads, once per worker, "An earlier cell ran outside the read-only Python dialect in
+     this sandbox, so every later cell asks until it restarts."
+   - **What it costs.** In the cell-replay corpus (`notebooks/python-dialect/data/cell-replay`), 21 of 58 runs have an
+     outside cell before an inside one, and 27 of their 44 inside cells would ask (`replay.json`, 8d910442). With
+     `read_csv` served (`replay-read-csv-served.json`, 1fda7dec) it is 11 runs and 16 of 80 inside cells. These are
+     UPPER bounds: the replay's outside cells were never approved and run, and only an approved, started cell marks.
+   - **Not in this layer.** Clearing the mark by restarting the worker is ruled and specified, not built:
+     `ml.python.restart()` ([ML_PYTHON.md](ML_PYTHON.md), ruling 116). Carrying a namespace's data into a fresh
+     worker is later work and Shane's to want.
 
 A refused try leaves no output either: its captured stdout is discarded with its env, and whether text the tee already
 wrote to the real stdout reaches the model in a streamed call is measured before it is called closed (rule 8), not
@@ -330,6 +381,33 @@ inferred. Each part is mutation-checked alone: revert it and the red team's test
 A cell inside the dialect that makes a gated `ml` call (`ml.fetch` on a new URL, `ml.sh`) does not fall out of it: the
 call SUSPENDS on an `ask` and continues when answered ([`ML_WIRE.md`](ML_WIRE.md), "Per-call asking"), which the JS
 survey could not do and which answers the manifest spec's "granularity of a refusal".
+
+### The `os` subset (ruling 112, Shane's yes, 2026-11-24)
+
+Unasked inside: reads and scans in `os`, `os.path`, `glob` and `pathlib`; `os.chdir` and `os.getcwd`; reading and
+writing `os.environ`. Still asking: anything that removes, renames or writes a file, `os.system`, `os.exec*`, process
+and fd calls, and every name of `os` not listed (`DIALECT_OS_READS`, `python-dialect-run.ts`; the test enumerates the
+core's own `os` against it). A hidden file under `/files` stays listed, and reading it raises `PermissionError`.
+
+- **Cost.** A listing is charged before it is built, in the file system's readdir, which every listing reaches (glob,
+  `os.walk` and `Path.iterdir` list from inside a lifted call): `DIR_LISTING_STEPS` (512) a listing plus
+  `DIR_ENTRY_STEPS` (128) a name, from a MEMFS directory's own count, and a whole page of names
+  before each page the `/files` mount asks for: `DIR_FIRST_PAGE` (50) first, then `DIR_PAGE` (500). The figures are set
+  on the strict basis, the cheapest step's time, as the regex charge is: `Path.iterdir` takes about 89 steps' time a
+  name. The fork cannot credit, so a short page keeps its full charge: a `/files` directory of up to 50 names costs
+  6,912 steps (about 2,170 directories in a 15M budget), and each further page 64,512. A read (`Path.read_text`,
+  `read_bytes`) is charged `512 + ceil(size / 2)` before it reads, and only a regular file is read. The figures and
+  the overcharge's effect: `notebooks/python-dialect/os-cost.ipynb`.
+- **State outside the namespace.** The working directory and the environment are put back when the cell is refused, so
+  an approved rerun starts from what was there; a finished cell keeps what it changed, and a later inside cell reads
+  it. Changing them does not set the outside mark: only a post that runs cell code ungated marks the worker
+  (`WORKER_POSTS`, `py-mark.ts`), and an inside cell runs under the gate. A fresh interpreter's environment is exactly
+  `PYTHON_ENV` (`python-env.ts`).
+- **What the fork leaves asking, each for its own reason:** builtin `open` (a dropped file is finalized under the gate;
+  a kept one is not data; `with` is not in the node list); `Path.glob`/`rglob` (each maps a `Path` method that sets an
+  attribute, from C, under the gate; `glob.glob` reads the same names); `os.environ[k] = v` and `del os.environ[k]`
+  (an item is written only on a value the cell owns; `update`, `setdefault` and `pop` run); `dict(os.environ)` (it
+  calls the mapping's Python `keys()` from C; `os.environ.copy()` runs); a `walk` that prunes its list.
 
 ### Code from elsewhere runs under the same gate (intended design; Shane, 2026-11-23; the dynamic case is not built)
 
@@ -483,7 +561,8 @@ running a Python script via `ml.sh.run(["python3", "script.py", ...])` do not sh
 
 - **In-kernel (`python_exec`, or `import helper` inside a cell):** Runs inside the persistent per-run `dict` under
   `CO_RESTRICTED` (tier 3 by default for pure-Python functions, [`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md)
-  for native leaves). It has no `open()`, `os`, `sys`, `argparse` or `subprocess`, and halts within the step budget with
+  for native leaves). It has no `open()`, `sys`, `argparse` or `subprocess`, of `os` only the reads "The `os` subset"
+  admits, and halts within the step budget with
   write-barrier rollback on failure. RULED 2026-10-28 (for `FILE_ATTACHMENTS.md` slice 3): an attached file reaches a cell
   the way a stored table does, as an injected value (`files: { name: "@file:…" }` giving the bytes; a tabular one through
   `ml.table`, [`ML_TABLE.md`](ML_TABLE.md)), never as a path under a mounted directory (superseded for `ml.table` and the served `read_csv`, which read a
