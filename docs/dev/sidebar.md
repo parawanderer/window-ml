@@ -315,7 +315,7 @@ only after that; the worker refuses a widening removal without it. Nothing in th
 
 ## Traps
 
-- **A `Dialog` is drawn OUT of the tree that opened it** (`dialog.tsx`): its card renders into a host appended to the caller's root (the body, or the shadow root), so no transform, `contain` or clip above the caller can offset a `position: fixed` card. Context does not cross it; a tip (`.rc-tip`) stacks above every modal, so a new layer must stay under it. `tests/e2e/annotate-diff.spec.mjs` holds the maximised revises view to it.
+- **A `Dialog` is drawn OUT of the tree that opened it** (`dialog.tsx`): its card renders into a host appended to the caller's shadow root, to `.chat` on the chat page (for its theme), or else to the body, so no transform, `contain` or clip above the caller can offset a `position: fixed` card; on the chat page that holds only while `.chat` and its ancestors carry none of those. Context does not cross it; a tip (`.rc-tip`) stacks above every modal, so a new layer must stay under it. `tests/e2e/annotate-diff.spec.mjs` holds the maximised revises view to it.
 - **`scopedHash()` is not only the open view.** It answers `scopeOverride` first (`holdScope(hash)` in `store.ts`), which a
   mounted resource panel sets for a session that is not the view's (the summary page's resources tab, via `BoxPanel`).
   Release it on unmount; code that wants "the open session" reads `view`, not `scopedHash()`.
