@@ -166,6 +166,17 @@ test("every name the emitters pass survives the sanitizer — a bad slug would d
         assert.ok(sanitizeRunReport({ run: "abc123", subsystem: "page", kind: "x", reason })?.reason, `reason "${reason}"`);
 });
 
+test("the broken-policy record (ruling 108) survives the sanitizer: its kind and reason are slugs, and its detail is flat", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const BROKEN_POLICY_CAUSE = (await readFile(new URL("../src/sw/sw-policies.ts", import.meta.url), "utf8")).match(/BROKEN_POLICY_CAUSE = "([^"]*)"/)?.[1];
+    assert.equal(BROKEN_POLICY_CAUSE, "broken-policy");
+    // The emitters pass the constant, which the literal scan above cannot see, so the slug is checked here.
+    const r = sanitizeRunReport({ run: "abc123", subsystem: "policy", kind: BROKEN_POLICY_CAUSE, reason: BROKEN_POLICY_CAUSE, detail: { tool: "fetch_url", policy: "never cat", id: "pid9" } });
+    assert.equal(r?.kind, "broken-policy");
+    assert.equal(r?.reason, "broken-policy");
+    assert.deepEqual(r?.detail, { tool: "fetch_url", policy: "never cat", id: "pid9" });
+});
+
 test("the kinds and reasons the module's own map documents are the ones the emitters emit", async () => {
     const { readFile } = await import("node:fs/promises");
     const doc = await readFile(new URL("../src/log/run-log.ts", import.meta.url), "utf8");

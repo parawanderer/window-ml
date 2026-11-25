@@ -950,6 +950,7 @@ three, a tail still growing, a revision's header. Two do not, and neither is abo
   one. (An ANSWERED gate is ordinary work again and folds with the rest: the refusal is about the decision, not
   about the tool or about it having needed approval.)
 - **prose is never grouped.** What the model SAID is the thing this view exists to show. A turn that said something AND called tools is split (`splitProse`, `step-streak.tsx`): the remark stays where it is and its calls fold with the neighbouring run; a split whose calls folded with nothing is rejoined, so an unfolded turn looks as it always did.
+- **the thinking after a group's last call comes out of it.** With a final answer directly after the group, the thinking turns after its last tool call lift to just before that answer (`splitTrailingThinking`, `step-streak.tsx`), so they open without opening the group; a block under `MOVE_THINKING_MIN_TOKENS` (20) or with no text stays in, thinking between calls stays in, and a run with no final answer (stopped, failed, running) keeps all of it in the group.
 
 Two consequences worth knowing before changing it. The minimum is counted in CALLS, not turns, which is the only
 counting that answers both halves of the question — one lone step is not a group, while ONE turn whose model call
