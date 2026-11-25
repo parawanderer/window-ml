@@ -269,10 +269,10 @@ Shane asked for it by name (2026-11-23, through the coordinator), ahead of steps
   The move is made at the turn's next step boundary (`applyLiveMove`), or after the turn when the navigate was its last
   step (`moveAfterTurn`), as a person's move is. The model reads a note that its navigate put it there, not that the
   person moved it. A tab that does not load, or will not take the run's tools, leaves the run with no tab, and the
-  model is told so; a person's dropped move is the log's only.
-- **It always asks**: `navNeedsConsent` is true on `NO_TAB`, whatever `crossOrigin` says, and the closed tab's site is
-  not one it can be the same as. The post-navigate commit wait (`navStalled`, `passArrival`) is skipped there: no tab of
-  the run's navigated.
+  model is told so. A person's move that could not be made is written to the run log, and the model is not told.
+- **It always asks**: `navNeedsConsent` is true on `NO_TAB`, whatever `crossOrigin` says: with no tab there is no
+  current site, so no navigation is same-site. The post-navigate commit wait (`navStalled`, `passArrival`) is
+  skipped there: no tab of the run's navigated.
 - **Only an absolute http(s) URL** (`noTabNavTarget`: a spelled `http://` or `https://`, then `new URL`): a relative,
   scheme-relative, `https:host` or `https:\\host` spelling and every other scheme are refused by the loop's
   `unrunnable`, before any card, and open nothing.
