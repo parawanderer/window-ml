@@ -9,7 +9,7 @@
 //
 // No `chrome` and no DOM: the local host, the hub host and the fake host all come through here unchanged.
 import { signal, type ReadonlySignal } from "@preact/signals";
-import type { Command, CommandError, CommandResult, HostStatus, RuntimeId, RuntimeInfo, SendOptions, SessionHost, SessionId, SessionIndexUpdate, SessionKey, SessionSummary, Unsubscribe } from "../session/session-host";
+import type { Command, CommandError, CommandResult, FilesListing, HostStatus, RuntimeId, RuntimeInfo, SendOptions, SessionHost, SessionId, SessionIndexUpdate, SessionKey, SessionSummary, Unsubscribe } from "../session/session-host";
 import { parseSessionKey, sessionKey } from "../session/session-host";
 import { awaitingStart, batchReduce, forgetSessionReduced, onDebug, titleTried } from "../sidebar/debug-reducer";
 import { rev, sessionMap, view } from "../sidebar/store";
@@ -82,6 +82,12 @@ export class ChatStore {
      * answer and user message a second time.
      */
     private readonly deferred = new Map<SessionKey, { feed: SessionFeed; epoch: string; from: number; pages: { pos?: number; event: MlDebugEvent }[][] }>();
+    /** How many files each session holds, as the root `files.list` last said (`count`); absent until asked, and after a
+     *  runtime that answered `unsupported`: the files button is drawn only for a session with an entry. */
+    private readonly _filesCount = signal<ReadonlyMap<SessionKey, NonNullable<FilesListing["count"]>>>(new Map());
+    /** Sessions whose root count is being asked now, and those that changed again meanwhile (asked once more after). */
+    private readonly countAsking = new Map<SessionKey, boolean>();
+    private readonly filesListeners = new Set<(key: SessionKey, change: { dirs?: string[] }) => void>();
     /** notices to show, oldest first */
     readonly notices = signal<Notice[]>([]);
     /** the session whose events are subscribed, if any */
@@ -121,6 +127,8 @@ export class ChatStore {
      * draws the session once.
      */
     get loaded(): ReadonlySignal<ReadonlySet<SessionKey>> { return this._loaded; }
+    /** The session's file count, as the runtime last reported it (`files.list`'s root answer). */
+    get filesCount(): ReadonlySignal<ReadonlyMap<SessionKey, NonNullable<FilesListing["count"]>>> { return this._filesCount; }
     /** Where each open session's transcript begins, for one that could page back. Absent: nothing to page. */
     get earlier(): ReadonlySignal<ReadonlyMap<SessionKey, EarlierState>> { return this._earlier; }
 
@@ -151,6 +159,7 @@ export class ChatStore {
         const id = parseSessionKey(key);
         if (!id) return;
         this.openKey.value = key;
+        void this.refreshFilesCount(key);
         const feed = this.feeds.get(key);
         // Not seen this launch, and there is a cache: replay what the phone kept, THEN subscribe from where it left off.
         if (!feed && this.cache) { void this.openFromCache(key, id); return; }
@@ -264,6 +273,9 @@ export class ChatStore {
                     this.removeSession(key, true);
                     this.seen.delete(key);
                     void this.cache?.drop(key).catch(() => undefined);
+                    break;
+                case "files-changed":
+                    this.filesChanged(key, act.dirs ? { dirs: act.dirs } : {});
                     break;
                 case "drop":
                     break;
@@ -406,6 +418,56 @@ export class ChatStore {
         const next = new Map(this._earlier.value);
         if (state) next.set(key, state); else next.delete(key);
         this._earlier.value = next;
+    }
+
+    /**
+     * One page of one directory under a session's `/files/`. A failure is the caller's to show (it is quiet here: a
+     * panel says "could not list" where the rows would have been), and the ROOT's answer also keeps the count.
+     */
+    async listFiles(key: SessionKey, path: string, cursor?: string): Promise<CommandResult<"files.list">> {
+        const id = parseSessionKey(key);
+        if (!id) return { ok: false, error: { code: "not-found", message: "no such session" } };
+        const r = await this.send({ type: "files.list", session: id, path, ...(cursor ? { cursor } : {}) }, { quiet: true });
+        if (path === "" && !cursor) this.takeCount(key, r);
+        return r;
+    }
+
+    /** Ask the root for the count alone (one entry's worth). Asks that overlap run once more after, never in parallel. */
+    async refreshFilesCount(key: SessionKey): Promise<void> {
+        const id = parseSessionKey(key);
+        if (!id) return;
+        if (this.countAsking.has(key)) { this.countAsking.set(key, true); return; }
+        this.countAsking.set(key, false);
+        try {
+            this.takeCount(key, await this.send({ type: "files.list", session: id, path: "", limit: 1 }, { quiet: true }));
+        } finally {
+            const again = this.countAsking.get(key);
+            this.countAsking.delete(key);
+            if (again) void this.refreshFilesCount(key);
+        }
+    }
+
+    private takeCount(key: SessionKey, r: CommandResult<"files.list">): void {
+        const next = new Map(this._filesCount.value);
+        if (r.ok && r.data.count) next.set(key, r.data.count);
+        else if (!r.ok && (r.error.code === "unsupported" || r.error.code === "not-found" || r.error.code === "forbidden")) next.delete(key);
+        else return;   // unavailable and the like: what was known stays
+        this._filesCount.value = next;
+    }
+
+    /**
+     * A session's files changed (the stream's `files-changed`, no cursor and never kept in history): re-ask the root
+     * count, and tell whoever shows directories to list the named ones again, or every open one when `dirs` is absent.
+     */
+    filesChanged(key: SessionKey, change: { dirs?: string[] } = {}): void {
+        void this.refreshFilesCount(key);
+        for (const fn of [...this.filesListeners]) fn(key, change);
+    }
+
+    /** Be told of every {@link filesChanged}. */
+    onFilesChanged(fn: (key: SessionKey, change: { dirs?: string[] }) => void): Unsubscribe {
+        this.filesListeners.add(fn);
+        return () => { this.filesListeners.delete(fn); };
     }
 
     /** Stop following the open session. What it showed stays reduced, for a quick return. */
