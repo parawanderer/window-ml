@@ -1024,8 +1024,8 @@ RULED 2026-11-17 (Shane's idea, the details the coordinator's calls, in the coor
    entries and 256 KiB of JSON, with a cursor for the next page.
    AMENDED 2026-11-25 (accepted by the coordinator, 2026-11-24): the listing is the `files.list` COMMAND's answer, as
    `session.backfill`'s pages are, not an event, since an event is kept in the session's history and replayed into
-   every backfill and export. The one event is `files-changed`, which names the directories to list again and carries
-   no entries (SESSION_CONTRACT.md, "Session events").
+   every backfill and export. The one live hint is `files-changed`, a stream message beside `gone` that names the
+   directories to list again and carries no entries (SESSION_CONTRACT.md, "Session events").
 6. **window-ml-hub needs no change.** The hub relays sealed payloads it cannot read (window-ml-hub's README and
    its `PROTOCOL.md`), so a new command and a new event kind pass through it as opaque bytes. The change is to the
    session contract only (SESSION_CONTRACT.md: the listing command, its event, and the hide-list command by reference),
