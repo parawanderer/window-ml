@@ -261,8 +261,9 @@ released at <ISO time>]`), an `await` and a `tail` of that row say so. Running t
 keep nothing.
 
 The session row's `releaseAt` is `setReleaseAtReader(releaseAtOf)` (`background.ts`); `armRelease` and `cancelRelease`
-refresh the row. The Stop button's command is `session.release` (`session-commands.ts`): this browser's own pages only
-(`from.via`; a hub device is `forbidden`), `conflict` while a turn runs, reason `person`. Tests: `tests/release.test.mjs`
+refresh the row. The person's release is the `session.release` command (`session-commands.ts`), which no page sends
+yet (the chat page's Stop sends `session.cancel`): this browser's own pages only (`from.via`; a hub device is
+`forbidden`), `conflict` while a turn runs, reason `person`. Tests: `tests/release.test.mjs`
 (the bundle, with `loadBackground({ alarms: true })`), `tests/session-commands.test.mjs`.
 
 ## Traps
