@@ -183,6 +183,22 @@ export const pageContext = (hasTool?: (name: string) => boolean): string => {
  */
 export const settle = (ms: number): Promise<void> => new Promise(r => (typeof setTimeout === "function" ? setTimeout(r, ms) : r()));
 
+/**
+ * Settle with `p`, or reject with `what` once `ms` have passed. For a wait on something that may never answer (a worker
+ * that is not there, a message nobody replies to): the original promise is left running, its late result ignored.
+ *
+ * @param p The promise to wait for.
+ * @param ms How long to wait, in milliseconds.
+ * @param what What was waited for, for the rejection's message ("<what> did not answer in <n> s").
+ * @returns The promise's value, or a rejection.
+ */
+export function withinMs<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error(`${what} did not answer in ${Math.max(1, Math.round(ms / 1000))} s`)), ms);
+        p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+    });
+}
+
 // The largest array `ml.range` will build. A range is a FINITE list you then `.map`/`.reduce` over — the
 // terminate-by-construction counter loop for read-only `exec` (no `for`/`while` needed). The cap extends
 // that guarantee to allocation: `range(1e12)` can't OOM the page — over the cap it throws instead.

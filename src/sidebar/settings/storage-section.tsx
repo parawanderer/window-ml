@@ -44,17 +44,26 @@ function HistoryChart({ history }: { history: StorageSnapshot[] }) {
     );
 }
 
+/** How long the Storage section waits for its report: past the worker's own bounds on its parts (sw-sessions.ts), so a report that is only slow is still shown. */
+const READ_MS = 30_000;
+
 /**
  * The Storage section's body. `load` fetches the report; injectable so a test needs no worker. `measure` reads every
  * saved session from disk, which only this browser can do, so without it (a remote runtime) there is no button.
  * `emptyText` is what a null report says, for a runtime that is not this browser. `onOpen` opens a session by its hash,
  * and turns each of the largest sessions into a button that does; without it they are plain rows.
  */
-export function StorageBody({ load, measure, emptyText = "This browser keeps no saved sessions.", onOpen }: { load: () => Promise<StorageReport | null>; measure?: () => Promise<StoreBytes | null>; emptyText?: string; onOpen?: (hash: string) => void }) {
+export function StorageBody({ load, measure, emptyText = "This browser keeps no saved sessions.", onOpen, readMs = READ_MS }: { load: () => Promise<StorageReport | null>; readMs?: number; measure?: () => Promise<StoreBytes | null>; emptyText?: string; onOpen?: (hash: string) => void }) {
     const [report, setReport] = useState<StorageReport | null | undefined>(undefined);
     const [exact, setExact] = useState<StoreBytes | null | "loading">(null);
     const [err, setErr] = useState("");
-    useEffect(() => { load().then(setReport, (e) => { setErr(String(e?.message || e)); setReport(null); }); }, []);
+    useEffect(() => {
+        // A report is never waited for forever: past `readMs` the section says it could not read it, and a late answer is dropped.
+        let over = false;
+        const t = setTimeout(() => { over = true; setErr("Could not read the storage report: no answer from the extension's background."); setReport(null); }, readMs);
+        load().then((r) => { if (!over) { clearTimeout(t); setReport(r); } }, (e) => { if (!over) { clearTimeout(t); setErr(String(e?.message || e)); setReport(null); } });
+        return () => clearTimeout(t);
+    }, []);
     if (report === undefined) return <div class="set-hint">Reading…</div>;
     if (!report) return <div class="set-hint">{err || emptyText}</div>;
     const s = report.now;
