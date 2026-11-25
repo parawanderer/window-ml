@@ -721,7 +721,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // stays in the tool list so the model learns there is one (TABLESS_RUN.md). The worker's own tools run as ever.
         if (isNoTab(tabId) && needsPage(payload.name, payload.args, p.tools.some((t) => t.name === payload.name && !!t.remote))) {
             if (payload.renderOnly || payload.precheck || payload.readonlyTry) throw new Error("the run has no page");
-            return { result: noPageText(payload.name) };
+            return { result: noPageText(payload.name, p.tools.some((t) => t.name === "navigate")) };
         }
         // A call built for the page-built run, whose run is the worker's now: built again (`againIfHandedOver`).
         const handedSince = (): void => { if (pageRouted && byWorker()) throw new HandedOverMidCall(); };
@@ -1517,7 +1517,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         // webNavigation.onCommitted, which can lose the race to the loop's next (fast, local)
                         // model call + tool delegation, letting the next tool fire into the dying document.
                         // The next delegateSend then waits for the new page to re-adopt. Skip an errored nav.
-                        if (name === "navigate" && !String(env?.result || "").startsWith("Error")) {
+                        // From NO tab the worker opened the tab and waited for its load (no-tab-nav.ts): no tab of the run's navigates.
+                        if (name === "navigate" && !isNoTab(tabId) && !String(env?.result || "").startsWith("Error")) {
                             navBarrier.noteNavigating(tabId, sentTo); hasNavigated = true;
                             // Orient-on-nav: WAIT for the new document to re-adopt, then fold its pageInfo into
                             // THIS tool's result — so the model's next turn already knows where it landed instead
@@ -1913,7 +1914,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 },
                 // A page tool of a run with no tab: answered before the gate, which would ask on a card no tab shows.
                 unrunnable: (name, args) => (!isNoTab(tabId) ? null
-                    : needsPage(name, args, p.tools.some((t) => t.name === name && !!t.remote)) ? noPageText(name)
+                    : needsPage(name, args, p.tools.some((t) => t.name === name && !!t.remote)) ? noPageText(name, p.tools.some((t) => t.name === "navigate"))
                     // A navigate from no tab to a URL it cannot go to (a relative one) is refused before any card (no-tab-nav.ts).
                     : name === "navigate" && !noTabNavTarget(String(args.url ?? "")) ? NO_TAB_RELATIVE : null),
                 approve: async ({ tool, arguments: args, seq, step, askWhy: gateWhy }) => {

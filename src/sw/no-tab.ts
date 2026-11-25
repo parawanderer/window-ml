@@ -42,7 +42,9 @@ export function needsPage(name: string, args?: Record<string, unknown>, remote =
  * What the model reads for a page tool called by a run with no tab: the tool stays listed, and the result says why it
  * did not run and how the run gets a page.
  * @param name the tool's name
+ * @param canNavigate whether the run has `navigate`, which from no tab opens a tab (no-tab-nav.ts)
  * @returns the tool result's text
  */
-export const noPageText = (name: string): string =>
-    `Error: "${name}" needs a page, and this run has no tab. The tools that need no page still work. The person can bring this session to a tab.`;
+export const noPageText = (name: string, canNavigate = false): string =>
+    `Error: "${name}" needs a page, and this run has no tab. The tools that need no page still work. ` +
+    (canNavigate ? "A `navigate` to an absolute http(s) URL opens a tab once the person approves, or the person can bring this session to a tab." : "The person can bring this session to a tab.");

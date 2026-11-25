@@ -30,10 +30,12 @@ const shellOn = (tabId) => ({ tab: { id: tabId, url: SITE_URL }, url: SITE_URL, 
  * @returns the worker, the run id, `script`, `turns()`, `pageCalls()` (every RUN_TOOL_IN_PAGE call that is not a
  *  preview), `bodies()` (every model request), `rows()` (the session list as a chat page sees it)
  */
-async function run({ first = [exec], onExec, indexedDB, keep = false, detached = false } = {}) {
+async function run({ first = [exec], onExec, indexedDB, keep = false, detached = false, openCreated = false, deniedOrigins = [], holdFirst, onAdopt, req = {} } = {}) {
     const script = [...first];
     let bg;
+    let modelCalls = 0;
     bg = loadBackground({
+        openCreated, deniedOrigins,
         config: { chatUrl: "http://host/api/chat/completions", apiKey: "k", model: "m", apiFormat: "openai", debugMode: "off" },
         ...(indexedDB ? { indexedDB } : {}),
         openTabs: [
@@ -43,12 +45,13 @@ async function run({ first = [exec], onExec, indexedDB, keep = false, detached =
         onFetch: async (call) => {
             if (call.url.endsWith("/api/models")) return jsonResponse({ data: [{ id: "m" }] });
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            if (modelCalls++ === 0 && holdFirst) await holdFirst;
             const step = script.shift();
             if (!step) return jsonResponse({ choices: [{ message: { content: "done" } }] });
             return jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: `c${Math.random()}`, type: "function", function: { name: step.name, arguments: JSON.stringify(step.args) } }] } }] });
         },
         onTabMessage: async (t, msg) => {
-            if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
+            if (msg.type === "ADOPT_RUN_NOW") return onAdopt ? onAdopt(t) : { pageInfo: "" };
             if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } }, shellOn(t));
             if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
             if (msg.payload.finish || msg.payload.renderOnly || msg.payload.precheck || msg.payload.readonlyTry) return {};
@@ -71,7 +74,7 @@ async function run({ first = [exec], onExec, indexedDB, keep = false, detached =
         return map;
     };
     // `detached`: started the chat page's way with "No tab" (`agent.start`, a `detached` target), not on tab 7.
-    const { hash } = detached ? await startDetached(port) : await bg.context.__mlStartUserRunForTest(7, { task: "probe", surface: "hud", maxSteps: 6 }, keep ? { keep: true } : undefined);
+    const { hash } = detached ? await startDetached(port) : await bg.context.__mlStartUserRunForTest(7, { task: "probe", surface: "hud", maxSteps: 6, ...req }, keep ? { keep: true } : undefined);
     const turns = () => bg.tabMessages.map((a) => a[1]).filter((m) => m?.type === "ML_DEBUG_TO_PAGE" && m.event?.kind === "agent-result" && m.event.id === hash).length
         + port.messages.filter((m) => m.type === "event" && m.event?.kind === "agent-result" && m.event.id === hash).length;
     const pageCalls = () => bg.tabMessages.filter(([, m]) => m?.type === "RUN_TOOL_IN_PAGE" && m.payload?.name && !m.payload.precheck && !m.payload.readonlyTry && !m.payload.renderOnly && !m.payload.finish);
@@ -242,6 +245,175 @@ test("session.resume with no tab is refused as unsupported until it is built", T
     r.port.send({ type: "cmd", id: 5, command: { type: "session.resume", session: { runtime: "local", hash: r.hash }, target: { kind: "detached" } } });
     assert.ok(await until(() => r.port.messages.some((m) => m.type === "result" && m.id === 5)));
     assert.equal(r.port.messages.find((m) => m.type === "result" && m.id === 5).result.error?.code, "unsupported");
+});
+
+// --- navigate from no tab: the worker opens the tab, and the run moves onto it at its next step ---
+
+const NEWS = "https://news.example/today";
+const nav = (url = NEWS) => ({ name: "navigate", args: { url } });
+/** The approval cards the session channel showed for the run, by tool. */
+const cards = (r, tool) => r.port.messages.filter((m) => m.type === "stream" && m.message?.type === "event").map((m) => m.message.event)
+    .filter((e) => e?.awaitingApproval && e.tool === tool);
+/** Waits for the run's card for `tool` and answers it the chat page's way. */
+async function answerCard(r, tool, decision, id = 50) {
+    // The session's events reach a chat page only once it subscribes to that session.
+    if (!r.port.messages.some((m) => m.type === "stream")) r.port.send({ type: "events", sub: 1, hash: r.hash });
+    assert.ok(await until(() => cards(r, tool).length > 0), `the ${tool} card is shown`);
+    const card = cards(r, tool).at(-1);
+    r.port.send({ type: "cmd", id, command: { type: "approval.answer", session: { runtime: "local", hash: r.hash }, seq: card.seq, decision } });
+    assert.ok(await until(() => r.port.messages.some((m) => m.type === "result" && m.id === id)), "the answer is taken");
+    return card;
+}
+/** Every message of a model request, as the text the model read. */
+const readText = (body) => (body?.messages ?? []).map((m) => String(m.content ?? "")).join("\n");
+/** The run's `tab` records in the execution log. */
+const tabLog = async (r) => (await r.bg.context.__mlRunLog.all()).filter((e) => e.run === r.hash && e.subsystem === "tab");
+
+test("navigate from no tab asks, opens the tab once approved, and the next step runs on it: the model is told it is there", T, async () => {
+    const r = await run({ detached: true, first: [nav(), exec], openCreated: true });
+    const card = await answerCard(r, "navigate", "approve");
+    assert.equal(card.renderIn?.target, NEWS, "the card names where the tab opens");
+    assert.equal(card.renderIn?.note, undefined, "and says nothing of site access the browser grants");
+    assert.ok(await until(() => !r.live()), "the turn ends");
+    assert.deepEqual(r.bg.tabsCreated.map((t) => t.url), [NEWS], "one tab was opened, at the URL");
+    const opened = 4243;
+    assert.ok(r.bg.tabMessages.some(([t, m]) => t === opened && m?.type === "ADOPT_RUN_NOW"), "the opened tab was given the run's tools");
+    // news.example may not use window.ml, so the exec runs in an isolated world: its precheck is the page message.
+    assert.ok(r.bg.tabMessages.some(([t, m]) => t === opened && m?.type === "RUN_TOOL_IN_PAGE" && m.payload?.name === "exec"), "the next step's exec went to the opened tab");
+    assert.match(readText(r.bodies().at(-1)), /this run had no tab; its navigate opened tab "news\.example" \(https:\/\/news\.example\/today\), and the run is on it now/);
+    assert.ok(!toolResults(r.bodies().at(-1)).some((t) => /needs a page/.test(t)), "the exec was not answered as having no page");
+    const moved = (await tabLog(r)).filter((e) => e.kind === "moved");
+    assert.deepEqual(moved.map((e) => [e.detail.from, e.detail.to, e.reason]), [[-1, opened, "navigate"]]);
+    assert.ok(await until(() => r.rows().get(r.hash)?.background === undefined), "the row no longer says no tab");
+});
+
+test("navigate from no tab with a relative or malformed URL is refused before any card, and opens nothing", T, async () => {
+    const r = await run({ detached: true, first: [nav("/inbox"), nav("https:news.example"), nav("https:\\\\news.example"), nav("chrome-extension://test/sidebar.html"), nav("javascript:alert(1)")], openCreated: true });
+    assert.ok(await until(() => !r.live() && r.bodies().length >= 6), "the turn ends");
+    r.port.send({ type: "events", sub: 1, hash: r.hash });
+    assert.ok(await until(() => r.port.messages.some((m) => m.type === "stream")));
+    assert.equal(cards(r, "navigate").length, 0, "no card was shown on the chat page");
+    assert.equal(r.bg.tabMessages.filter(([, m]) => m?.event?.awaitingApproval).length, 0, "nor on any tab");
+    assert.equal(r.bg.tabMessages.filter(([, m]) => m?.type === "RUN_TOOL_IN_PAGE" && m.payload?.name === "navigate").length, 0, "and no page was asked to draw one");
+    assert.equal(r.bg.tabsCreated.length, 0, "no tab was opened");
+    const read = toolResults(r.bodies().at(-1));
+    assert.equal(read.filter((t) => /^Error: this run has no tab, so navigate needs an absolute http\(s\) URL: there is no page to resolve this one against\.(\n|$)/.test(t)).length, 5, read.join("\n"));
+    assert.equal(r.rows().get(r.hash)?.background?.noTab, true, "the run still has no tab");
+});
+
+test("a navigate from no tab the person refuses opens no tab", T, async () => {
+    const r = await run({ detached: true, first: [nav()], openCreated: true });
+    await answerCard(r, "navigate", "deny");
+    assert.ok(await until(() => !r.live()), "the turn ends");
+    assert.equal(r.bg.tabsCreated.length, 0, "no tab was opened");
+    assert.equal((await tabLog(r)).filter((e) => e.kind === "moved" || e.kind === "nav-opened").length, 0);
+    assert.equal(r.rows().get(r.hash)?.background?.noTab, true, "the run still has no tab");
+});
+
+test("navigate from no tab asks even where a same-site navigate would not: the closed tab's site is not the run's", T, async () => {
+    // A run on site.example whose tab closed: a navigate back to site.example has no site to be the same as.
+    const r = await run({ first: [], openCreated: true });
+    assert.ok(await until(() => r.turns() >= 1 && !r.live()));
+    r.bg.closeTab(7);
+    assert.ok(await until(() => r.rows().get(r.hash)?.background?.noTab === true));
+    r.script.push(nav(SITE_URL));
+    r.port.send({ type: "cmd", id: 3, command: { type: "session.send", session: { runtime: "local", hash: r.hash }, text: "back" } });
+    await answerCard(r, "navigate", "deny");
+    assert.ok(await until(() => !r.live()), "the turn ends");
+    assert.equal(r.bg.tabsCreated.length, 0, "refused, so nothing opened");
+});
+
+test("navigate from no tab to a site this browser keeps the extension off: the card says so, and approving opens nothing", T, async () => {
+    const r = await run({ detached: true, first: [nav()], openCreated: true, deniedOrigins: ["https://news.example/*"] });
+    const card = await answerCard(r, "navigate", "approve");
+    assert.match(card.renderIn?.note ?? "", /does not let window\.ml run on https:\/\/news\.example/);
+    assert.ok(await until(() => !r.live()), "the turn ends");
+    assert.equal(r.bg.tabsCreated.length, 0, "no tab was opened");
+    assert.ok(toolResults(r.bodies().at(-1)).some((t) => /No tab was opened/.test(t)));
+    assert.equal(r.rows().get(r.hash)?.background?.noTab, true);
+});
+
+test("a tab the navigate opened that does not load: the model is told, and the run keeps no tab", T, async () => {
+    // Not `openCreated`: the browser answers no such tab, as for one closed before it loaded.
+    const r = await run({ detached: true, first: [nav(), exec] });
+    await answerCard(r, "navigate", "approve");
+    assert.ok(await until(() => !r.live()), "the turn ends");
+    assert.equal(r.bg.tabsCreated.length, 1);
+    const read = toolResults(r.bodies().at(-1));
+    assert.ok(read.some((t) => /did not finish loading\. The run still has no tab/.test(t)), read.join("\n"));
+    assert.ok(read.some((t) => /"exec" needs a page, and this run has no tab/.test(t)), "and its next page tool still needs one");
+    assert.ok((await tabLog(r)).some((e) => e.kind === "nav-open-failed"));
+});
+
+test("a tab the navigate opened that will not take the run's tools: the model is told the move did not happen", T, async () => {
+    const r = await run({ detached: true, first: [nav(), exec], openCreated: true, onAdopt: (t) => (t === 4243 ? { error: "no tools here" } : { pageInfo: "" }) });
+    await answerCard(r, "navigate", "approve");
+    assert.ok(await until(() => !r.live()), "the turn ends");
+    assert.match(readText(r.bodies().at(-1)), /the tab your navigate opened could not take this run \(no-adopt\); the run still has no tab/);
+    assert.ok(toolResults(r.bodies().at(-1)).some((t) => /"exec" needs a page/.test(t)), "its next page tool went to no tab");
+    assert.equal(r.rows().get(r.hash)?.background?.noTab, true);
+});
+
+test("navigate as the turn's last step: the run moves onto the opened tab after the turn, and its next turn is told", T, async () => {
+    const r = await run({ detached: true, first: [nav()], openCreated: true });
+    await answerCard(r, "navigate", "approve");
+    assert.ok(await until(() => !r.live()), "the turn ends");
+    assert.ok(await until(() => r.rows().get(r.hash)?.background === undefined), "moved after the turn: the row no longer says no tab");
+    r.script.push(exec);
+    assert.deepEqual(await send(r, "go on", 2), { ok: true, data: { mode: "turn" } });
+    assert.ok(r.bg.tabMessages.some(([t, m]) => t === 4243 && m?.type === "RUN_TOOL_IN_PAGE" && m.payload?.name === "exec"), "the next turn runs on the opened tab");
+    assert.match(readText(r.bodies().at(-1)), /its navigate opened tab "news\.example"/);
+});
+
+test("a run with no tab that has navigate is told how it gets a page: at its start, and when a page tool needs one", T, async () => {
+    const r = await run({ detached: true, first: [exec] });
+    assert.ok(await until(() => !r.live() && r.bodies().length >= 2), "the turn ends");
+    assert.match(readText(r.bodies()[0]), /This run has no tab: it started with no page\. .* `navigate` to an absolute http\(s\) URL opens a tab there once the person approves, and the run goes on there\./);
+    assert.ok(toolResults(r.bodies().at(-1)).includes('Error: "exec" needs a page, and this run has no tab. The tools that need no page still work. A `navigate` to an absolute http(s) URL opens a tab once the person approves, or the person can bring this session to a tab.'));
+});
+
+test("a run with no tab and no navigate keeps the page tool's answer as it was: only the person can bring it to a tab", T, async () => {
+    // Every run the worker builds has navigate (run-assembly.ts `userRunOptions`), and a run a page built ends with its page,
+    // so no such run reaches here today: the answer is held to its old text for when one does.
+    const { noPageText } = await import("../src/sw/no-tab.ts");
+    assert.equal(noPageText("exec"), 'Error: "exec" needs a page, and this run has no tab. The tools that need no page still work. The person can bring this session to a tab.');
+    assert.equal(noPageText("exec", false), noPageText("exec"));
+    assert.match(noPageText("exec", true), /A `navigate` to an absolute http\(s\) URL opens a tab once the person approves, or the person can bring this session to a tab\.$/);
+});
+
+// --- a FIRST turn moved while it runs: queued, not refused as a resume (bring-here.ts; a tab run's first turn too) ---
+
+test("a tab run's first turn brought to another tab while it runs is queued and moves at its next step, not refused as still going", T, async () => {
+    let release;
+    const holdFirst = new Promise((res) => { release = res; });
+    const r = await run({ first: [{ name: "agent_api_docs", args: {} }, exec], holdFirst });
+    assert.ok(await until(() => r.live() && r.bodies().length === 1), "the first turn's first model call is out");
+    const answer = await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudOn(8));
+    assert.ok("queued" in (answer.data ?? {}), `queued: ${JSON.stringify(answer)}`);
+    release();
+    assert.ok(await until(() => !r.live()), "the turn ends");
+    assert.ok(r.bg.tabMessages.some(([t, m]) => t === 8 && m?.type === "RUN_TOOL_IN_PAGE" && m.payload?.name === "exec"), "the exec after the move went to tab 8");
+    const moved = (await tabLog(r)).filter((e) => e.kind === "moved");
+    assert.deepEqual(moved.map((e) => [e.detail.from, e.detail.to, e.detail.live]), [[7, 8, true]]);
+});
+
+// --- a running turn with no tab, brought to a tab by the person (MOVE_RUN.md, shape (b) from no tab) ---
+
+test("a running turn with no tab, brought to a tab: it moves at its next step, nothing is sent to no tab, and no tab it left is recorded", T, async () => {
+    let release;
+    const holdFirst = new Promise((res) => { release = res; });
+    const r = await run({ detached: true, first: [{ name: "agent_api_docs", args: {} }, exec], holdFirst });
+    assert.ok(await until(() => r.live() && r.bodies().length === 1), "the turn's first model call is out");
+    assert.ok("queued" in ((await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudOn(8))).data ?? {}), "a first turn's move is queued, not refused as a resume");
+    assert.ok((await tabLog(r)).some((e) => e.kind === "move-queued"), "queued for its next step");
+    release();
+    assert.ok(await until(() => !r.live()), "the turn ends");
+    assert.ok(r.bg.tabMessages.some(([t, m]) => t === 8 && m?.type === "RUN_TOOL_IN_PAGE" && m.payload?.name === "exec"), "the exec after the move went to tab 8");
+    assert.equal(r.bg.tabMessages.filter(([t]) => t === -1).length, 0, "nothing was sent to the sentinel: no leave note, no finish");
+    const moved = (await tabLog(r)).filter((e) => e.kind === "moved");
+    assert.deepEqual(moved.map((e) => [e.detail.from, e.detail.to, e.detail.live]), [[-1, 8, true]]);
+    assert.match(readText(r.bodies().at(-1)), /the person moved this run from tab "unknown" to tab "Other"/);
+    assert.ok(await until(() => r.rows().get(r.hash)?.background === undefined), "the row no longer says no tab");
 });
 
 // --- a run with no tab across a worker eviction ---

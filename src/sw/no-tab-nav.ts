@@ -8,8 +8,8 @@ import { recordRunLog } from "./sw-run-log";
 /** How long the opened tab may take to load before the navigate reports it did not. */
 const NAV_LOAD_MS = 15000;
 
-/** What the model reads for a relative URL from no tab: there is no page to resolve it against. */
-export const NO_TAB_RELATIVE = "Error: this run has no tab, so there is no page to resolve a relative URL against. Give an absolute http(s) URL.";
+/** What the model reads for a URL a navigate from no tab cannot go to: a relative one, or any but an absolute http(s) one. */
+export const NO_TAB_RELATIVE = "Error: this run has no tab, so navigate needs an absolute http(s) URL: there is no page to resolve this one against.";
 
 /**
  * Where a navigate from no tab goes: an absolute http(s) URL only. A relative or scheme-relative one has no page to
