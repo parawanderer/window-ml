@@ -125,3 +125,139 @@ test("a dead mark is added only to an hljs-link span, in any language", () => {
     const html = '<span class="hljs-string">x</span>';
     assert.equal(linkifyHtml(html), html);
 });
+
+// --- the real components draw the links (wiring: each surface must pass `links`) ---
+
+import { before } from "node:test";
+import { readFileSync } from "node:fs";
+import { JSDOM } from "jsdom";
+import { createRequire } from "node:module";
+const require_ = createRequire(import.meta.url);
+
+let h, render, doc, CodeRender, CodeDiff, ReplyBubble, DiffLines, SplitLines;
+
+before(async () => {
+    const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", { pretendToBeVisual: true });
+    globalThis.window = dom.window;
+    globalThis.document = dom.window.document;
+    globalThis.Node = dom.window.Node;
+    globalThis.NodeFilter = dom.window.NodeFilter;
+    globalThis.getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
+    doc = dom.window.document;
+    // preact through require, so it is the same instance the tsx components compile against
+    ({ h, render } = require_("preact"));
+    ({ CodeRender, CodeDiff } = await import("../src/sidebar/transcript/render-panel.tsx"));
+    ({ ReplyBubble } = await import("../src/sidebar/transcript/reply.tsx"));
+    ({ DiffLines, SplitLines } = await import("../src/sidebar/code-diff.tsx"));
+});
+
+// The gallery examples are the fixtures, read from the doc comments that define them, so the test and the screenshot
+// cannot drift apart.
+const galleryProps = (file, name) => {
+    const line = readFileSync(new URL(`../src/sidebar/${file}`, import.meta.url), "utf8").split("\n").find((l) => l.includes(`@gallery ${name} {`));
+    assert.ok(line, `@gallery ${name} exists in ${file}`);
+    return JSON.parse(line.slice(line.indexOf("{", line.indexOf(`@gallery ${name}`))));
+};
+const mountEl = async (vnode) => {
+    const host = doc.getElementById("root");
+    render(null, host);
+    render(vnode, host);
+    await new Promise((r) => setTimeout(r, 40));
+    return host;
+};
+const aText = (host) => [...host.querySelectorAll("a.out-link")].map((a) => a.textContent);
+const inToken = (host, url) => [...host.querySelectorAll("a.out-link")].filter((a) => a.textContent === url).every((a) => a.parentElement.matches('span[class^="hljs-"]'));
+
+const CODE = galleryProps("transcript/render-panel.tsx", "links in code");
+const DIFF = galleryProps("transcript/render-panel.tsx", "diff view with links");
+
+test("a code block links the address in a comment and in a string, inside their tokens, and nothing else", async () => {
+    const host = await mountEl(h(CodeRender, CODE));
+    assert.deepEqual(aText(host), ["https://example.com/docs/api", "https://example.com/v1/items?page=2"]);
+    assert.ok(inToken(host, "https://example.com/docs/api") && host.querySelector(".hljs-comment a.out-link"));
+    assert.ok(host.querySelector(".hljs-string a.out-link"));
+    assert.match(host.textContent, /good\.com@evil\.com\/login/);
+    assert.match(host.textContent, /javascript:alert\(1\)/);
+});
+
+for (const [name, comp] of [["unified diff", "diff"], ["split diff", "split"]]) {
+    test(`a ${name} links the addresses of both sides and not javascript:`, async () => {
+        const host = await mountEl(h(CodeDiff, { ...DIFF, view: comp, splitMinPx: 0 }));
+        assert.ok(host.querySelector(comp === "split" ? ".dsplit" : ".dlines:not(.dsplit)"), `the ${comp} view is what drew`);
+        const got = aText(host);
+        assert.ok(got.includes("https://example.com/old") && got.includes("https://example.com/new"), JSON.stringify(got));
+        assert.ok(host.querySelector(".hljs-comment a.out-link"));
+        assert.ok(!got.some((t) => t.includes("javascript:")));
+    });
+}
+
+test("DiffLines and SplitLines draw links only when lent them", async () => {
+    const rows = [{ kind: "add", text: "// https://a.example/x", a: 0, b: 1 }];
+    const links = { step: () => null, open() {}, jump() {}, tip: () => ({}) };
+    for (const C of [DiffLines, SplitLines]) {
+        assert.equal((await mountEl(h(C, { rows, lang: "javascript", links }))).querySelectorAll("a.out-link").length, 1, C.name);
+        assert.equal((await mountEl(h(C, { rows, lang: "javascript" }))).querySelectorAll("a.out-link").length, 0, C.name);
+    }
+});
+
+// --- the raw view of an answer ---
+
+test("the raw answer view links an image's address and strips the underline of a relative link target", async () => {
+    const host = await mountEl(h(ReplyBubble, { content: "![label](https://a.example/i.png)\n\n[x](docs/readme.md)", status: "ok", model: "m", profile: null, ts: 1760000000000, initialRaw: true }));
+    assert.deepEqual(aText(host), ["https://a.example/i.png"]);
+    const spans = [...host.querySelectorAll(".hljs-link")];
+    const dead = spans.filter((s) => s.classList.contains("hljs-link-dead"));
+    assert.deepEqual(dead.map((s) => s.textContent), ["docs/readme.md"]);
+    assert.ok(spans.some((s) => s.querySelector("a.out-link")), "the live target is not dead");
+});
+
+// --- the delegated click and key handlers ---
+
+const { codeLinkHandlers } = await import("../src/sidebar/code-links.ts");
+const fake = () => {
+    const calls = [];
+    return { calls, links: {
+        step: (id) => id === "abc1234" ? { seq: 7, tip: "step 7" } : null,
+        open: (u) => calls.push(["open", u]), jump: (s, slot) => calls.push(["jump", s, slot]), tip: () => ({}),
+    } };
+};
+const anchorOf = (html) => { const el = doc.createElement("div"); el.innerHTML = html; return el.querySelector("a"); };
+const fire = (handler, a, init = {}) => { let prevented = false; handler({ target: a, key: init.key, preventDefault: () => { prevented = true; } }); return prevented; };
+
+test("a click on a linkified address opens the decoded address once; on a pointer it jumps to the step and slot", () => {
+    const { calls, links } = fake();
+    const on = codeLinkHandlers(links);
+    const [url] = [anchorOf(linkifyHtml("see https://a.example/?q=1&amp;r=2 now"))];
+    assert.equal(fire(on.onClick, url), true);
+    assert.deepEqual(calls, [["open", "https://a.example/?q=1&r=2"]]);
+    calls.length = 0;
+    const ptr = anchorOf(linkifyHtml("@tool:abc1234:in", (id) => id === "abc1234"));
+    fire(on.onClick, ptr);
+    assert.deepEqual(calls, [["jump", 7, "in"]]);
+});
+
+test("a hand-made anchor opens nothing: a look-alike address, a pointer naming no step, a non-anchor", () => {
+    const { calls, links } = fake();
+    const on = codeLinkHandlers(links);
+    for (const html of ['<a class="out-link" data-raw="https://good.com@evil.com/">x</a>', '<a class="out-link" data-raw="javascript:alert(1)">x</a>',
+        '<a class="out-link" data-raw="https://a.example/ https://b.example/">x</a>', '<a class="out-link" data-ptr="zzzzzzz">x</a>', '<a class="out-link">x</a>']) {
+        fire(on.onClick, anchorOf(html));   // a pointer anchor may swallow the click; what matters is that nothing was called
+        fire(on.onKeyDown, anchorOf(html), { key: "Enter" });
+    }
+    assert.deepEqual(calls, []);
+    fire(on.onClick, doc.createElement("span"));
+    assert.deepEqual(calls, []);
+});
+
+test("Enter on a pointer anchor jumps; another key, and Enter on an address anchor, do nothing", () => {
+    const { calls, links } = fake();
+    const on = codeLinkHandlers(links);
+    const ptr = anchorOf(linkifyHtml("@tool:abc1234", (id) => id === "abc1234"));
+    fire(on.onKeyDown, ptr, { key: "a" });
+    assert.deepEqual(calls, []);
+    fire(on.onKeyDown, ptr, { key: "Enter" });
+    assert.deepEqual(calls, [["jump", 7, undefined]]);
+    calls.length = 0;
+    fire(on.onKeyDown, anchorOf(linkifyHtml("https://a.example/")), { key: "Enter" });
+    assert.deepEqual(calls, []);
+});
