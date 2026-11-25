@@ -139,6 +139,9 @@ export interface RuntimeCapabilities {
     /** `files` may carry a PDF's bytes (`{ name, type, data }`) on `chat.start` and on `session.send` to a chat: the
      *  runtime reads it page by page. A runtime without it refuses the field as malformed. */
     attachPdf?: boolean;
+    /** `files.list`: a session's `/files/` listed one directory a page, for the file browser. Absent means the client
+     *  shows no browser. */
+    listFiles?: boolean;
     /** the boxes this runtime uses */
     boxes?: BoxRef[];
     /** the long-term session archive, present while it is switched on (`sessionArchive`). Reachable through
