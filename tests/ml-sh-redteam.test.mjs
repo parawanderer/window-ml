@@ -518,7 +518,10 @@ const gitDone = (_id, spawn) => (spawn?.argv?.[1] === "--version" ? { out: "git 
 test("the version probe never runs while the policy store is not loaded (then, once it is, it does)", T, async () => {
     const host = useHost(fakeNativeHost({ facts: gitFacts(false, "5:5:5:5"), done: gitDone }));
     const r = await shRun(ctxFor("run-unloaded"), [["git", "status"]]);
-    assert.equal(r.code, "Denied", `no one to ask, so refused: ${JSON.stringify(r)}`);
+    // Not loaded, the hiding rules are not known, so the call is refused before it is spawned (sw-spawn.ts).
+    const { HIDE_LIST_LOADING } = await import("../src/sw/sw-spawn.ts");
+    assert.equal(r.code, "Refused", `refused while the store loads: ${JSON.stringify(r)}`);
+    assert.match(r.error, new RegExp(HIDE_LIST_LOADING.slice(0, 30)));
     try {
         assert.deepEqual(host.calls.filter((c) => c.call === "start"), [], "the probe (or the call) started while the store was not loaded");
     } finally { releasePolicies(); }

@@ -75,6 +75,19 @@ test("after an outside cell, an inside cell is never posted: the document refuse
     assert.equal(out2.answer.markSet, undefined);
 });
 
+test("an outside cell that grows MEMFS (10,000 files in /tmp) leaves the next inside cell asking (ruling 112's charge)", async () => {
+    // The os subset charges a MEMFS listing from the directory's own count (listing-charge.ts); the mark is why a tree
+    // only an approved cell could grow never meets an unasked listing in the same worker.
+    const answer = send({ type: "PY_RUN", principal: "run:m10k", code: "import os\nfor i in range(10_000):\n    open('/tmp/f%d' % i, 'w').close()", hardened: true, tables: null });
+    await settle();
+    const w = workers.find((x) => cellPosts(x).some((p) => p.code.includes("10_000")));
+    w.reply({ id: cellPosts(w).at(-1).id, ok: true, stdout: "" });
+    assert.equal((await answer).markSet, true);
+    const next = await cell("m10k", { inside: true });
+    assert.equal(next.w, undefined, "the listing cell never reached the worker");
+    assert.equal(next.answer.notInDialect, MARKED_FIRST);
+});
+
 test("the mark is set BEFORE the outside cell runs: an inside post while it is still running is refused", async () => {
     const running = send({ type: "PY_RUN", principal: "run:m3", code: "import os", hardened: true, tables: null });
     await settle();

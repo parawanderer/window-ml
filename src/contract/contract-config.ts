@@ -142,6 +142,10 @@ export interface MlConfig {
     /** The most turns finished tasks start in a row, with no message from the person between them. 1..20; a value outside
      *  reads as the default, 5. At the cap a finished task parks and says so, as with `taskNotifyOnly`. */
     taskTurnChainMax: number;
+    /** How many MiB of files a session's runs may keep under `/files/agent/` (the person's attachments do not count;
+     *  run-made files count at their stored size). A value that is not a positive whole number reads as the default,
+     *  1024; there is no upper cap. DevTools Settings only. */
+    filesQuotaMB: number;
     /** Move a session the store evicts (by retention or by the budget) into the long-term SQLite archive instead of
      *  deleting it. Off by default: it changes what "delete after N days" means. */
     sessionArchive: boolean;
@@ -341,6 +345,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     detachedTaskMaxMin: 60,
     taskNotifyOnly: false,
     taskTurnChainMax: 5,
+    filesQuotaMB: 1024,
     sessionArchive: false,
     agentStartPage: "",
     priceSnapshotUrl: "",
@@ -439,6 +444,7 @@ export const SETTING_PLACES: Readonly<Partial<Record<keyof MlConfig, SettingPlac
     detachedTaskMaxMin: { tab: "advanced", section: "python" },
     taskNotifyOnly: { tab: "advanced", section: "python" },
     taskTurnChainMax: { tab: "advanced", section: "python" },
+    filesQuotaMB: { tab: "advanced", section: "python" },
     autoApproveSelfSource: { tab: "advanced", section: "fetch" },
     agentSeesFocus: { tab: "advanced", section: "focus" },
     shellEnabled: { tab: "advanced", section: "shell" },
@@ -454,6 +460,12 @@ export const SETTING_PLACES: Readonly<Partial<Record<keyof MlConfig, SettingPlac
     execDefaultWorld: { tab: "advanced", section: "cdp" },
     siteRequests: { tab: "permissions", section: "siteapprovals" },
 };
+
+/** The files quota in bytes: the `filesQuotaMB` setting when it is a positive safe integer, else the default, times 1 MiB. */
+export function filesQuotaBytes(raw: unknown): number {
+    const mb = typeof raw === "number" && Number.isSafeInteger(raw) && raw > 0 ? raw : DEFAULT_CONFIG.filesQuotaMB;
+    return mb * 1024 * 1024;
+}
 
 /** The world an exec asks for with its `world` argument, or the default one. */
 export type ExecWorld = "page" | "isolated";
