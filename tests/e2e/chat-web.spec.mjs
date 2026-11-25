@@ -358,7 +358,7 @@ test("desktop: with nothing open the page is a start box; an agent run picks a t
     const options = list.getByRole("option");
     await expect(options.first()).toHaveText("New tab");
     await expect(list.locator(".tp-rule")).toHaveCount(1);
-    await expect(options).toHaveText([/New tab/, /The front page.*news\.example/, /Tables — API reference/, /Pointers — the pipe dialect/, /Your cart/, /Inbox \(3\)/, /Flights AMS → LIS/]);
+    await expect(options).toHaveText([/New tab/, /No tab/, /The front page.*news\.example/, /Tables — API reference/, /Pointers — the pipe dialect/, /Your cart/, /Inbox \(3\)/, /Flights AMS → LIS/]);
     await expect(list.locator(".tp-window")).toHaveCount(3);
     // A group the runtime can name has a coloured heading; one it cannot (no tabGroups grant) is a plain rule. Both
     // indent their tabs. A runtime-made icon is drawn; a tab without one gets its site's letter.
@@ -457,6 +457,37 @@ test("the start page picks a device before a model, and starts the run on the on
     await page.locator(".chat-start-box textarea").fill("check the build");
     await page.locator(".chat-start-box textarea").press("Enter");
     await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({ type: "agent.start", runtime: "desk-pc", task: "check the build" });
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("No tab is offered where the runtime starts runs with no page, says what such a run cannot do, and starts one", async () => {
+    const { page, errors } = await open(DESKTOP);
+    await expect(page.locator(".chat-start-box")).toBeVisible();
+    const where = page.getByRole("button", { name: /^Where it runs:/ });
+    await where.click();
+    await page.getByRole("option", { name: /^No tab/ }).click();
+    await expect(where).toHaveAccessibleName("Where it runs: no tab");
+    // Said in the form, not only in a tip: what it cannot do, and that ml.sh asks on every call.
+    const note = page.locator('[data-field="no-tab"]');
+    await expect(note).toContainText("cannot read or act on a page");
+    await expect(note).toContainText("asks you on every call");
+    await page.locator(".chat-start-box textarea").fill("sum the logs");
+    await page.locator(".chat-start-box textarea").press("Enter");
+    await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({ type: "agent.start", runtime: "laptop", task: "sum the logs", target: { kind: "detached" } });
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("No tab is not offered by a runtime without capabilities.detached", async () => {
+    const { page, errors } = await open(DESKTOP);
+    await page.getByRole("button", { name: /^Device:/ }).click();
+    await page.getByRole("listbox", { name: "Device" }).getByRole("option", { name: /^Desk PC/ }).click();
+    const where = page.getByRole("button", { name: /^Where it runs:/ });
+    await where.click();
+    await expect(page.getByRole("option", { name: /^New tab/ })).toBeVisible();
+    await expect(page.getByRole("option", { name: /^No tab/ })).toHaveCount(0);
+    await expect(page.locator('[data-field="no-tab"]')).toHaveCount(0);
     expect(errors).toEqual([]);
     await page.close();
 });
@@ -1803,7 +1834,7 @@ test("tabs the runtime could not list are counted in a warning at the top of the
     await expect(warn).toContainText("Allowed in that browser's extension settings");
     await expect(warn.getByRole("button")).toHaveCount(0);
     // It is about the whole list: filtering hides it, and the listed tabs are all still there.
-    await expect(list.getByRole("option")).toHaveCount(7);
+    await expect(list.getByRole("option")).toHaveCount(8);
     await list.getByRole("searchbox", { name: "Filter tabs" }).fill("cart");
     await expect(warn).toHaveCount(0);
     await list.getByRole("searchbox", { name: "Filter tabs" }).fill("");

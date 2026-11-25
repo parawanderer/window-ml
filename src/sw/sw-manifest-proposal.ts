@@ -18,6 +18,7 @@ import { judgeCall } from "./sw-policies";
 import { recordRunLog } from "./sw-run-log";
 import { PROBE_TIMEOUT_MS, ranCalls, revealsAllowList, versionOf } from "./sw-shell-call";
 import { withShell, type ShellHost } from "./sw-shell";
+import { hideRuleWords, spawnBound } from "./sw-spawn";
 
 /** A draft the worker checked: the entry it would store, and why B3 forced its scope, when it did. */
 export interface CheckedManifest {
@@ -30,8 +31,8 @@ export interface ProposalStep { runId: string; seq: number; signal: AbortSignal 
 
 /** The facts of `argv` in `cwd`, resolved and discarded: the host starts nothing. A step's resolve names it as owner;
  *  the registration page's has none. */
-async function resolveOnly(h: ShellHost, step: Pick<ProposalStep, "runId" | "seq"> | undefined, spawn: Parameters<ShellHost["client"]["spawn"]>[0]): Promise<HostFacts> {
-    const facts = await h.client.spawn({ ...spawn, ...(step ? { owner: { run: step.runId, seq: step.seq } } : {}) });
+async function resolveOnly(h: ShellHost, step: Pick<ProposalStep, "runId" | "seq"> | undefined, spawn: Parameters<typeof spawnBound>[2]): Promise<HostFacts> {
+    const facts = await spawnBound(h, step?.runId, { ...spawn, ...(step ? { owner: { run: step.runId, seq: step.seq } } : {}) });
     await h.client.discard(facts.id).catch(() => { /* expired: nothing to start either way */ });
     return facts;
 }
@@ -171,9 +172,9 @@ export async function evidenceRun(step: ProposalStep, entry: StoredManifest): Pr
                 if (step.signal.aborted) { log("cancelled"); return "The run was cancelled before its evidence run finished: it describes calls only under the sandbox."; }
                 const req = { argv: call.argv, cwd: call.cwd.path, env: {} };
                 const session = { cwd: call.cwd.path, roots, stored: [entry] };
-                const place = { roots, stored: [entry], platform: h.hello.platform, revealsAllow };
+                const place = { roots, stored: [entry], platform: h.hello.platform, revealsAllow, hideRules: hideRuleWords(step.runId) };
                 let plan = planSpawn(req, session);
-                const spawn = () => h.client.spawn({ ...plan.spawn, timeoutMs: PROBE_TIMEOUT_MS, owner: { run: step.runId, seq: step.seq } });
+                const spawn = () => spawnBound(h, step.runId, { ...plan.spawn, timeoutMs: PROBE_TIMEOUT_MS, owner: { run: step.runId, seq: step.seq } });
                 let facts = await spawn();
                 const drop = () => h.client.discard(facts.id).catch(() => { /* gone */ });
                 const version = await versionOf(step, h, facts, list, revealsAllow);

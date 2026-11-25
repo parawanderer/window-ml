@@ -206,6 +206,16 @@ test("the coerced Array chains filter → map (all allowed) like a normal array"
     assert.deepEqual((await run(`document.querySelectorAll('input').filter(el => el.id === 'd').map(el => el.placeholder)`)).value, ["other"]);
 });
 
+test("the copy of a DOM collection is charged its length before it is made: a huge querySelectorAll or .children is not one step", async () => {
+    // 128 elements a step (HOST_COPY_ELEMENTS_PER_STEP): 25,600 children cost 200 steps to copy, over a budget of 150 that
+    // the read itself fits in many times over. Before, the copy came after the new-array charge and cost nothing.
+    const big = new JSDOM(`<body>${"<i></i>".repeat(25_600)}</body>`).window.document;
+    for (const js of [`document.querySelectorAll('i').length`, `document.body.children.length`, `document.getElementsByTagName('i').length`])
+        await assert.rejects(evalReadonly(js, big, ML, undefined, { stepBudget: 150 }), (e) => e instanceof NotInDialect && /over 150 steps/.test(e.message), js);
+    // A small collection still costs next to nothing.
+    assert.equal((await evalReadonly(`document.querySelectorAll('input').length`, world(), ML, undefined, { stepBudget: 150 })).value, 2);
+});
+
 // --- regex literals: pure matching, in-dialect (a whitespace-collapse survey shouldn't need approval) ---
 
 test("regex literal + String.replace runs in-dialect (the common whitespace-normalize survey)", async () => {

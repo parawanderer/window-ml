@@ -627,6 +627,21 @@ test("agent.start on a blank tab opens one, at the command's url or the browser'
     assert.equal(bad.named("openTab").length, 0);
 });
 
+test("agent.start with no tab (a detached target) starts through startDetached, opening and naming no tab; a runtime without it refuses", async () => {
+    const detached = [];
+    const w = world({ startDetached: async (...a) => { detached.push(a); return { outcome: "started", hash: "ab120002" }; } });
+    const r = await w.run({ type: "agent.start", runtime: "local", task: "sum the logs", target: { kind: "detached" }, maxSteps: 3 });
+    assert.deepEqual(r, { ok: true, data: { session: sid("ab120002") } });
+    assert.deepEqual(detached, [[{ task: "sum the logs", maxSteps: 3 }, { surface: "chat" }]]);
+    assert.equal(w.named("startAgent").length, 0, "not started on any tab");
+    assert.equal(w.named("openTab").length, 0, "and no tab opened for it");
+    // A runtime that offers no detached start (no `capabilities.detached`) says so, as for any target kind it does not offer.
+    const older = world();
+    const refused = await older.run({ type: "agent.start", runtime: "local", task: "go", target: { kind: "detached" } });
+    assert.equal(refused.error.code, "unsupported");
+    assert.equal(older.named("startAgent").length + older.named("openTab").length, 0, "nothing started or opened in its place");
+});
+
 test("agent.start on a tab that has closed is refused, and nothing starts anywhere else", async () => {
     const w = world();
     const r = await w.run({ type: "agent.start", runtime: "local", task: "go", target: { kind: "tab", tabId: 999 } });

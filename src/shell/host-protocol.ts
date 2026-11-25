@@ -47,6 +47,14 @@ export interface HostHello {
     /** That `spawn` takes `files` and maps a `/files` path argument and cwd to the uploads folder of that mount
      *  (FILE_ATTACHMENTS.md H9): true on a native connection. Absent from an older host, which would ignore `files`. */
     filesArgv?: boolean;
+    /** That `spawn` takes `hideList` and binds the call by it (window-ml-host PROTOCOL.md, "The hide list"). Absent from
+     *  an older host, which would ignore the field: the worker then refuses a call with a `hide` to apply. */
+    hideList?: boolean;
+}
+
+/** Whether this host binds a spawn by its `hideList`: `hello.hideList` is exactly `true`. */
+export function hostTakesHideList(hello: Pick<HostHello, "hideList"> | null | undefined): boolean {
+    return hello?.hideList === true;
 }
 
 /** Whether this host maps `/files` in a spawn's argv (`spawn.files`): `hello.filesArgv` is exactly `true`. */
@@ -125,7 +133,13 @@ export interface HostSpawn {
     /** The mount whose uploads folder `/files` names for this call (`hello.filesArgv`, FILE_ATTACHMENTS.md H9): the host
      *  maps a path argument and the cwd that are `/files` or start with `/files/` to that folder's real path. */
     files?: { mount: string; session: string };
+    /** The person's hiding rules for this call, in ASCENDING precedence: on a path two entries match, the later decides
+     *  (`hostHideList`). Sent only when `hello.hideList` is true. */
+    hideList?: HostHideEntry[];
 }
+
+/** One hiding rule as the host takes it: the worker's id, named back in `paths[].hiddenBy` and in a refusal. */
+export interface HostHideEntry { id: string; effect: "hide" | "show"; pattern: string }
 
 /** One resolved path argument. `containsSecret` only for a walked one: null past the walk's cap. */
 export interface HostPathFact {
@@ -142,6 +156,8 @@ export interface HostPathFact {
     /** For a `hash` argument (host 0.4.0): the sha256 of the resolved file after symlinks, null for anything but a
      *  regular file of at most 16 MiB. `start` refuses with `PinChanged` once it changes. */
     sha256?: string | null;
+    /** The id of the `hide` that holds this path (`spawn.hideList`); absent when none does. The call then asks, naming it. */
+    hiddenBy?: string;
 }
 
 /** The enforcer whose bound applies to a call (docs/spec/EFFECTS.md): the OS sandbox, nothing, or a container. */

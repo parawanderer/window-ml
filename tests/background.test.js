@@ -887,6 +887,39 @@ test("CDP_CLICK reports the missing debugger permission (never attaches)", async
     assert.equal(bg.debuggerCalls.length, 0, "never attached without the permission");
 });
 
+// --- who answers a run's gate: a sender with no tab proves it is the extension's page ---
+
+// Bounded: a gate no one may answer leaves its run waiting forever, which is how ten rows here once hung the suite.
+test("a run's gate is not answered by a sender with no tab and no extension URL; the extension's page answers it", { timeout: 10000 }, async () => {
+    let n = 0, bg, gate = null;
+    bg = loadBackground({
+        config: baseConfig(),
+        openTabs: [{ id: 8, url: "https://page.test/", title: "Page" }],
+        onFetch: () => (++n === 1
+            ? jsonResponse({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "exec", arguments: JSON.stringify({ js: "1" }) } }] } }] })
+            : jsonResponse({ choices: [{ message: { content: "done" } }] })),
+        onTabMessage: async (tabId, msg) => {
+            if (msg?.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) gate = msg.event;
+            if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.name === "exec" && !msg.payload?.renderOnly && !msg.payload?.readonlyTry && !msg.payload?.precheck) return { result: "ran" };
+            return undefined;
+        },
+    });
+    const done = bg.send({ type: "START_RUN", payload: {
+        runId: "gate-who", task: "t", systemPrompt: "S",
+        tools: [{ name: "exec", requiresApproval: true, description: "", parameters: { type: "object", properties: { js: { type: "string" } } }, capabilities: [] }],
+        model: "m", think: null, maxSteps: 3, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
+    } }, { tab: { id: 8 } });
+    for (let i = 0; i < 200 && !gate; i++) await new Promise((r) => setTimeout(r, 10));
+    assert.ok(gate, "positive control: the exec asked");
+    const answer = (sender) => bg.send({ type: "SET_APPROVAL", payload: { runId: gate.id, seq: gate.seq, decision: true } }, sender);
+    void answer({});
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(n, 1, "a bare sender with no tab answered the gate");
+    void answer({ url: "chrome-extension://test/sidebar.html" });
+    await done;
+    assert.equal(n, 2, "the extension page's answer let the run go on");
+});
+
 // CDP EXEC routing (strict-CSP / Trusted-Types pages). Drive a full background run: the model calls exec, the
 // human approves it (via the fanned gate), the delegated page-side eval is CSP-BLOCKED and hands back a
 // cdpExec signal, and the background re-runs it via the debugger. The page echoes a DECOY source to prove the

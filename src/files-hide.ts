@@ -255,6 +255,23 @@ export function beats(a: HideEntry | DefaultRef, b: HideEntry | DefaultRef): boo
     return a.effect === "hide" && b.effect === "show";
 }
 
+/**
+ * The entries as the host takes them (`spawn.hideList`, window-ml-host PROTOCOL.md "The hide list"): one array in ASCENDING
+ * precedence, where the last entry that matches a path decides. Sorted by `resolveHidden`'s own order (global under session,
+ * then less specific under more, then `show` under `hide`), and among entries equal on all three the one stored first goes
+ * last, as `resolveHidden` keeps the first it meets; so the host's last match is the entry `resolveHidden` names. A refused
+ * entry decides nothing here and is left out, as the host would refuse the whole spawn on it.
+ * @param entries a session's resolved entries, as `filesHideEntries` gives them
+ */
+export function hostHideList(entries: readonly HideEntry[]): { id: string; effect: HideEffect; pattern: string }[] {
+    const key = (e: HideEntry): number[] => [e.layer === "session" ? 1 : 0, ...specificity(e.source), e.effect === "hide" ? 1 : 0];
+    return entries
+        .map((e, i) => ({ e, i, k: key(e) }))
+        .filter(({ e }) => patternRefusal(e.source, e.effect) === undefined)
+        .sort((a, b) => { for (let j = 0; j < a.k.length; j++) if (a.k[j] !== b.k[j]) return a.k[j] - b.k[j]; return b.i - a.i; })
+        .map(({ e }) => ({ id: e.id, effect: e.effect, pattern: e.source }));
+}
+
 // --- overlap ---
 
 /** Whether two single-character tokens could accept a common character; two classes count as overlapping unless provably disjoint. */

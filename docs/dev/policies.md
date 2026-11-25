@@ -438,6 +438,15 @@ four defaults, and `resolveHidden` (session, then global, then the defaults; the
   prefix.
 - **A new reader** of a session's files must be built with `hidden:`; `tests/files-hide-policies.test.mjs` pins the list
   of `RangedReader`s in `src/` and fails on one built without it.
+- **A spawn goes through `spawnBound`** (`src/sw/sw-spawn.ts`), never `h.client.spawn` directly:
+  `tests/spawn-hide-list.test.mjs` enumerates every `.client.spawn(` in `src/` and pins its callers. It reads the rules
+  at each call and sends them as the host's `hideList` in ascending precedence (`hostHideList`, which sorts by
+  `resolveHidden`'s own order, so the host's last match is the entry `resolveHidden` names). A host without
+  `hello.hideList` gets no call while a `hide` applies.
+- **A path the host reports `hiddenBy` asks** before any `allow` (`namesHidden` in `judgeCall`), and the card names the
+  rule from `ShFactsPlace.hideRules`. A library proposal refuses such a path, as it refuses a secret one.
+- **A `hide` row's label ends with its limits** (`hideLimits`): the hard-link line always, the late-file line only when
+  `shellStatus().host.platform` is `linux`. In the label, since e3's view test allows a row no other key.
 
 ## The act consumer
 
