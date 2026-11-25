@@ -85,6 +85,14 @@ function currentVariant(item: GalleryItem, s: GalleryState): GalleryVariant {
     return item.variants.find((v) => v.name === s.variant) ?? item.variants[0];
 }
 
+/** Take down the cursor-tip layer `mountTipLayer` mounted: the gallery drives every item in ONE page, so a flow's page-level mount must not outlive its tile. */
+function unmountTipLayer(): void {
+    const host = document.getElementById("gl-tip-layer");
+    if (!host) return;
+    render(null, host);
+    host.remove();
+}
+
 /** The theme on `<html>`, and the calm view through the chat page's own switch. */
 function useSurface(s: GalleryState): void {
     useEffect(() => {
@@ -98,6 +106,8 @@ function useSurface(s: GalleryState): void {
         return () => mq.removeEventListener("change", apply);
     }, [s.theme]);
     useEffect(() => { setCalm(s.view === "calm"); }, [s.view]);
+    // Leaving an item (or its variant) takes down what its flow mounted at page level.
+    useEffect(() => unmountTipLayer, [s.id, s.variant]);
 }
 
 /** Every CSS custom property the stylesheets define on `:root`, in order of first appearance. */
@@ -338,12 +348,7 @@ function Gallery() {
         render(<CursorTipLayer />, host);
     },
     /** Take down what `mountTipLayer` mounted, so the next flow on the shared page starts without it. */
-    unmountTipLayer: () => {
-        const host = document.getElementById("gl-tip-layer");
-        if (!host) return;
-        render(null, host);
-        host.remove();
-    },
+    unmountTipLayer,
     status: (id: string, variant: string) => statuses.peek()[statusKey(id, variant)] ?? null,
     statuses: () => statuses.peek(),
     log: () => entryLog.peek(),
