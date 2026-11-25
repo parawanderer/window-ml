@@ -71,9 +71,11 @@ what a previous exec can leave behind.
 
 Finding (rule 9), for the owner of `src/sw/sw-isolated-exec.ts` and of the spec's part 4: `docs/spec/SITE_ACCESS.md:539`
 ("a CDP isolated world created per call") and `:559` ("`state` persists across calls in the user-script world, not in a
-CDP world (a new one per call)") are false on current Chrome. Both mechanisms persist for a run on a document. Two ways
-to close it, the owner's to choose: correct the sentences, or make them true by naming the CDP world per call
-(`wml-${runId}-${nonce}`), which costs a fresh world per exec and makes `state` there a one-call object as the spec says.
+CDP world (a new one per call)") were false on current Chrome; both mechanisms persist for a run on a document. The
+coordinator ruled the first of the two ways to close it: correct the sentences and state the limit they imply (the
+approval is per call, the realm per run), with the CDP world NOT named per call. That landed in #2178 (`SITE_ACCESS.md`
+part 4, and the same claim in `docs/dev/state.md`'s table), so the line numbers above are the pre-correction ones; the
+reuse's e2e row is a builder's repair, not this document's.
 
 The suite cannot catch the reuse today: its CDP stand-in answers every `Page.createIsolatedWorld` with the fixed
 `contextId` 11 (`tests/isolated-exec.test.mjs:397`), so a fresh world and a reused one are indistinguishable to it. The
