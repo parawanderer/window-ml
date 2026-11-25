@@ -88,22 +88,30 @@ async function inside(code) {
 // neighbours are replaced too, and if the module objects' dunders (`__dict__`, a computed `getattr`) are not. The
 // backend module (`posix`) and `sys.modules` are the same door one level further down. Positive control: the admitted
 // names of those very modules run inside, so a refusal is about the unlisted name, not the import.
+//
+// Each door is probed by CONSUMING an admitted name through it, never by `repr(<module>)`: repr inside the gate
+// refuses a module object whether or not its names are admitted, so a repr probe is green whether the door is shut or
+// open. `posixpath.os.listdir('/data/t')` is the shape that returns 3 the moment `os` is admitted on os.path.
 test("RED TEAM (os subset): the module objects around os hold no door to a name the subset took away", { timeout: 60000 }, async (t) => {
     if (skip) return t.skip(skip);
     const ok = await inside("import os, glob\nreturn len(os.listdir('/data/t')) + len(glob.glob('/data/t/*.csv'))");
     assert.strictEqual(ok, 4, "positive control: the admitted names of those modules run inside (3 names, 1 csv)");
-    for (const code of [
-        "import posix\nreturn repr(posix.remove)",
-        "import posixpath\nreturn repr(posixpath.os)",
-        "import glob\nreturn repr(glob.os)",
-        "import pathlib\nreturn repr(pathlib.os)",
-        "import os\nreturn repr(os.__dict__.get('remove'))",
-        "import os\nreturn repr(getattr(os, 're' + 'move'))",
-        "import os\nreturn repr(vars(os)['system'])",
+    for (const [code, door] of [
+        ["import posixpath\nreturn len(posixpath.os.listdir('/data/t'))", /attribute 'os' of module/],
+        ["import glob\nreturn len(glob.os.listdir('/data/t'))", /attribute 'os' of module/],
+        ["import pathlib\nreturn len(pathlib.os.listdir('/data/t'))", /attribute 'os' of module/],
+        ["import glob\nimport posixpath\nreturn len(posixpath.os.listdir('/data/t'))", /attribute 'os' of module/],
+        ["import posixpath\nreturn len(posixpath.listdir('/data/t'))", /attribute 'listdir' of module/],
+        ["import glob\nreturn len(glob.listdir('/data/t'))", /attribute 'listdir' of module/],
+        // The backend module is not importable, so `posix` is not a door even one level down.
+        ["import posix\nreturn len(posix.listdir('/data/t'))", /import 'posix'/],
+        // os's own replaced namespace: no dunder, no computed name.
+        ["import os\nreturn repr(os.__dict__.get('remove'))", /attribute __dict__/],
+        ["import os\nreturn repr(getattr(os, 're' + 'move'))", /call on builtin_function_or_method/],
+        ["import os\nreturn repr(vars(os)['system'])", /call on builtin_function_or_method/],
         // `sys` itself is outside the dialect, so `sys.modules` is not even a door to try the deeper one through.
-        "import sys\nreturn repr(sys.modules['posix'].remove)",
-        "import glob\nimport posixpath\nreturn repr(posixpath.os.remove)",
-    ]) await asks(code);
+        ["import sys\nreturn len(sys.modules['posix'].listdir('/data/t'))", /import 'sys'/],
+    ]) await asks(code, door);
 });
 
 // --- no uncharged open: a read or a write through a constructor that is not the charged Path read ----------
@@ -116,23 +124,29 @@ test("RED TEAM (os subset): every open-shaped call but the charged Path read ask
     if (skip) return t.skip(skip);
     const value = await inside("from pathlib import Path\nreturn len(Path('/data/t/b/z.txt').read_text())");
     assert.strictEqual(value, 1000, "positive control: the admitted read returns the file");
-    for (const code of [
-        "import io\nreturn len(io.open('/data/t/b/z.txt').read())",
-        "import _io\nreturn len(_io.open('/data/t/b/z.txt').read())",
-        "import codecs\nreturn len(codecs.open('/data/t/b/z.txt').read())",
-        "import os\nreturn len(os.fdopen(3).read())",
-        "from pathlib import Path\nreturn len(Path('/data/t/b/z.txt').open().read())",
-        "from pathlib import Path\nreturn repr(Path.open)",
-        "from pathlib import Path\nreturn repr(Path.read_text)",
-        "import builtins\nreturn len(builtins.open('/data/t/b/z.txt').read())",
-    ]) await asks(code);
-    // And nothing the cell did made a file: the write side of the same family asks too.
-    for (const code of [
-        "import io\nf = io.open('/data/t/w.txt', 'w')\nf.write('x')\nf.close()\nreturn 1",
-        "from pathlib import Path\nPath('/data/t/w.txt').write_text('x')\nreturn 1",
-        "from pathlib import Path\nPath('/data/t/b/z.txt').open('w').write('x')\nreturn 1",
-    ]) await asks(code);
+    // Each probe asserts the refusal lands ON THE DOOR (`open`, `fdopen`, `write_text`), not merely somewhere after
+    // it: an open that ran and then refused at `.read` or `.write` has already opened what it named.
+    for (const [code, door] of [
+        ["import io\nreturn len(io.open('/data/t/b/z.txt').read())", /attribute 'open' of module/],
+        ["import _io\nreturn len(_io.open('/data/t/b/z.txt').read())", /import '_io'/],
+        ["import codecs\nreturn len(codecs.open('/data/t/b/z.txt').read())", /import 'codecs'/],
+        ["import os\nreturn len(os.fdopen(3).read())", /attribute 'fdopen' of module/],
+        ["from pathlib import Path\nreturn len(Path('/data/t/b/z.txt').open().read())", /attribute 'open' of PosixPath/],
+        ["from pathlib import Path\nreturn repr(Path.open)", /attribute 'open' of type/],
+        ["from pathlib import Path\nreturn repr(Path.read_text)", /attribute 'read_text' of type/],
+        ["import builtins\nreturn len(builtins.open('/data/t/b/z.txt').read())", /import 'builtins'/],
+    ]) await asks(code, door);
+    // And nothing the cell did made a file: the write side of the same family asks too. The `open` probes name a NEW
+    // path, so a write that ran leaves a name the listing below sees (truncating a file that already exists leaves the
+    // listing identical, and the row green); the last one names z.txt so a run of it is caught by the size check.
+    for (const [code, door] of [
+        ["import io\nf = io.open('/data/t/w.txt', 'w')\nf.write('x')\nf.close()\nreturn 1", /attribute 'open' of module/],
+        ["from pathlib import Path\nPath('/data/t/w.txt').write_text('x')\nreturn 1", /attribute 'write_text' of PosixPath/],
+        ["from pathlib import Path\nPath('/data/t/w.txt').open('w')\nreturn 1", /attribute 'open' of PosixPath/],
+        ["from pathlib import Path\nPath('/data/t/b/z.txt').open('w').write('x')\nreturn 1", /attribute 'open' of PosixPath/],
+    ]) await asks(code, door);
     assert.deepStrictEqual(JSON.parse(py.runPython("import os, json; json.dumps(sorted(os.listdir('/data/t')))")), ["a", "b", "x.csv"], "no file was made");
+    assert.strictEqual(Number(py.runPython("import os; os.path.getsize('/data/t/b/z.txt')")), 1000, "a refused open truncated the file it named");
 });
 
 // --- the charge follows the read, not the name it is called through -------------------------------------
