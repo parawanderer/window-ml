@@ -88,6 +88,9 @@ export interface CommandDeps {
     /** one tab, or null when it is gone */
     getTab(tabId: number): Promise<TabInfo | null>;
     /** relay a session action to the page in a tab and wait for what it did; rejects when nothing listens there */
+    /** the tab a run the worker drives is on by the worker's own record: a tab, or the no-tab sentinel (sw/no-tab.ts) for
+     *  a run held with none; undefined when the worker drives no such run. Asked when the index names no tab. */
+    workerTab?(hash: string): number | undefined;
     toPage(tabId: number, action: "send" | "cancel" | "continue", body: { hash: string; text?: string; images?: string[]; files?: SentFile[]; elementContext?: unknown; maxSteps?: number; asIs?: string[] }, origin?: PromptOrigin): Promise<PageOutcome>;
     /** bring a tab and its window to the front; false when the tab is gone */
     focusTab(tabId: number, windowId?: number): Promise<boolean>;
@@ -130,6 +133,10 @@ export interface CommandDeps {
     listModels(): Promise<ModelChoice[] | { models: ModelChoice[]; filtered?: { hidden: number } }>;
     /** pin or unpin a session this runtime holds: saved first when pinning, then the row changed and written */
     pinSession(hash: string, pinned: boolean): void;
+    /** add a hiding rule for a session's files: its id, or why the pattern is refused (sw-files-hide.ts) */
+    addFilesRule?(hash: string, r: { effect: "hide" | "show"; source: string; scope: "session" | "global" }): { id: string } | { refused: string };
+    /** remove a hiding rule seen from a session; a widening removal waits for `confirmed` */
+    removeFilesRule?(hash: string, id: string, confirmed: boolean): { removed: true } | { removed: false; why: "unknown" | "confirm"; exposes?: string[] };
     /** name a session (a capped, non-empty title), or with null return it to a generated title */
     renameSession(hash: string, title: string | null): void;
     /** every event this runtime still holds for a session, oldest first; empty when it holds none */
@@ -150,6 +157,9 @@ export interface CommandDeps {
     /** start a run on a tab, assembled in the worker (`startUserRun`), never by the page it acts on; resolves with how it started */
     /** `error`: why nothing started, in words the person can act on */
     startAgent(tabId: number, opts: { task: string; images?: string[]; files?: SentFile[]; model?: string; maxSteps?: number; vision?: true; stream?: true; asIs?: string[] }, origin?: PromptOrigin): Promise<{ outcome: PageOutcome | "started"; hash?: string; error?: string }>;
+    /** start a run with NO tab (`AgentTarget` `detached`), as `startAgent` starts one on a tab; absent where the runtime
+     *  offers none (`capabilities.detached`) */
+    startDetached?(opts: Parameters<CommandDeps["startAgent"]>[1], origin?: PromptOrigin): ReturnType<CommandDeps["startAgent"]>;
     /** open a new tab at a URL and wait until the extension can talk to it; rejects when it never answers */
     openTab(url: string): Promise<number>;
     /** the page a blank agent target opens when the command names no URL ("" when unset) */
@@ -266,10 +276,16 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
     const ours = (id: unknown): boolean => (deps.ownsRuntime ? deps.ownsRuntime(id) : id === deps.runtime);
     const ownRuntime = (c: { runtime?: unknown }): CommandResult<any> | null =>
         ours(c.runtime) ? null : fail("not-found", "no such runtime here");
+    /** A run held with NO tab is filed under a sentinel id no tab has (no-tab.ts): a command that addresses the tab
+     *  itself (a highlight, a screenshot) is refused before the send, as for a closed tab. A turn is the worker's to route. */
+    const noPage = (tabId: number): CommandResult<any> | null => (tabId < 0 ? fail("unavailable", "this session's run has no tab") : null);
     /** The tab a session is bound to, or an error saying why there is none. */
     const tabOf = (hash: string): { tabId: number; error?: undefined } | { tabId?: undefined; error: CommandResult<any> } => {
         const b = deps.index.binding(hash);
-        return b?.tabId != null ? { tabId: b.tabId } : { error: fail("unavailable", "the tab this session ran on is closed") };
+        if (b?.tabId != null) return { tabId: b.tabId };
+        // The index names no tab for a run the worker holds with none, or one brought to a tab since: the worker's record says.
+        const held = deps.workerTab?.(hash);
+        return held != null ? { tabId: held } : { error: fail("unavailable", "the tab this session ran on is closed") };
     };
     /**
      * Is this session a chat with no page behind it, and therefore this worker's to answer?
@@ -315,6 +331,8 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             catch (err) { return { error: fail("failed", `could not start on ${url} — ${(err as Error)?.message || err}`) }; }
         }
         if (target?.kind === "headless") return { error: fail("unsupported", "this browser has no headless runtime") };
+        // A resume with no tab is TABLESS_RUN.md's step 4, not built: said, never read as a malformed target.
+        if (target?.kind === "detached") return { error: fail("unsupported", "this browser cannot resume a session with no tab yet") };
         return { error: fail("invalid", "a run needs a target: a tab, or a blank tab") };
     };
 
@@ -453,18 +471,24 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             if (tooMany) return fail("invalid", tooMany);
             if (task.length > CHAT_TEXT_MAX) return fail("invalid", "that task is too long");
             if (c.maxSteps != null && (!Number.isInteger(c.maxSteps) || c.maxSteps <= 0)) return fail("invalid", "maxSteps must be a positive whole number");
-            const t = await resolveTarget(c.target as { kind?: unknown; tabId?: unknown; url?: unknown } | undefined);
-            if (t.error) return t.error;
-            const tabId = t.tabId;
-
-            const r = await deps.startAgent(tabId, {
+            const opts = {
                 task, ...(images.length ? { images } : {}), ...(att.files ? { files: att.files } : {}),
                 ...(c.model ? { model: c.model } : {}),
                 ...(c.maxSteps != null ? { maxSteps: c.maxSteps } : {}),
                 ...(c.vision === true ? { vision: true as const } : {}),
                 ...(c.stream === true ? { stream: true as const } : {}),
                 ...(commandAsIs(c.asIs, from) ? { asIs: commandAsIs(c.asIs, from) } : {}),
-            }, commandOrigin(from, c.ui));
+            };
+            let r: Awaited<ReturnType<CommandDeps["startAgent"]>>;
+            // No tab: nothing to resolve, and nothing opened (TABLESS_RUN.md).
+            if ((c.target as { kind?: unknown } | undefined)?.kind === "detached") {
+                if (!deps.startDetached) return fail("unsupported", "this runtime cannot start a run with no tab");
+                r = await deps.startDetached(opts, commandOrigin(from, c.ui));
+            } else {
+                const t = await resolveTarget(c.target as { kind?: unknown; tabId?: unknown; url?: unknown } | undefined);
+                if (t.error) return t.error;
+                r = await deps.startAgent(t.tabId, opts, commandOrigin(from, c.ui));
+            }
             if (r.outcome === "started" && r.hash) {
                 if (!c.ephemeral) deps.keepSession(r.hash);
                 return ok({ session: { runtime: deps.runtime, hash: r.hash } });
@@ -521,6 +545,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             catch { return fail("unavailable", "that page is not reachable; the extension may not run there"); }
             if (outcome !== "adopted") {
                 if (outcome === "no-answer") return fail("unavailable", "that page did not answer; it may still be loading");
+                if (outcome === "busy") return fail("conflict", "the session is running: wait for its turn to end, or stop it, then resume it");
                 return fail("failed", "that page did not take the session");
             }
             // Only once the page holds it: a note about a resume that did not happen would be a lie in the place a
@@ -741,6 +766,8 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             if (!valid) return fail("invalid", "a highlight needs a selector, a token or null");
             const t = tabOf(s.id.hash);
             if (t.error) return t.error;
+            const none = noPage(t.tabId);
+            if (none) return none;
             deps.highlight(t.tabId, ref);
             return ok({});
         },
@@ -767,6 +794,26 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
 
         // What a person at the machine is LOOKING AT, so `drive` rather than `view`. Only a tab `tabs.list` would
         // have shown: a client can only have guessed any other id, and `forbidden` would confirm the tab exists.
+        "policy.files": async (c) => {
+            const s = session(c);
+            if (s.error) return s.error;
+            if (!deps.addFilesRule || !deps.removeFilesRule) return fail("unsupported", "this runtime keeps no hiding rules");
+            if (c.op === "add") {
+                if (c.effect !== "hide" && c.effect !== "show") return fail("invalid", "effect is hide or show");
+                if (c.scope !== "session" && c.scope !== "global") return fail("invalid", "scope is session or global");
+                if (typeof c.source !== "string") return fail("invalid", "source is a path or a glob");
+                const r = deps.addFilesRule(s.id.hash, { effect: c.effect, source: c.source, scope: c.scope });
+                return "refused" in r ? fail("invalid", r.refused) : ok(r);
+            }
+            if (c.op === "remove") {
+                if (typeof c.id !== "string" || !c.id) return fail("invalid", "id names a rule");
+                const r = deps.removeFilesRule(s.id.hash, c.id, c.confirm === true);
+                if (r.removed) return ok({ removed: true });
+                return r.why === "confirm" ? ok({ removed: false, confirm: { exposes: r.exposes ?? [] } }) : fail("not-found", "no such hiding rule in this session's view");
+            }
+            return fail("invalid", "op is add or remove");
+        },
+
         "tab.focus": async (c) => {
             const bad = ownRuntime(c);
             if (bad) return bad;
@@ -787,6 +834,8 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
                 if (s.error) return s.error;
                 const t = tabOf(s.id.hash);
                 if (t.error) return t.error;
+                const none = noPage(t.tabId);
+                if (none) return none;
                 tabId = t.tabId;
             } else return fail("invalid", "a screenshot needs a tab or a session");
             const tab = await deps.getTab(tabId);

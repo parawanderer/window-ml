@@ -6,7 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { collectPngs, replaceImages, isOpaque, samePixels, WEBP_LOSSLESS } from "../src/session/image-compact.ts";
-import { SessionStore } from "../src/session/session-store.ts";
+import { SessionStore, carryNsDropped } from "../src/session/session-store.ts";
 import { imageCompactor, compactionJob, compactionPaused } from "../src/sw/sw-image-compact.ts";
 import { jobStatus } from "../src/job-registry.ts";
 
@@ -84,12 +84,13 @@ function backend(seed = []) {
                 if (hw.cut != null) hist.length = Math.min(hist.length, hw.cut);
                 for (const [pos, m] of hw.puts) hist[pos] = m;
                 history.set(row.hash, hist);
-                if (hw.meta) meta.set(row.hash, hw.meta);
+                if (hw.meta) meta.set(row.hash, carryNsDropped(meta.get(row.hash), hw.meta));
             }
             rows.set(row.hash, row); const have = events.get(row.hash) ?? []; list.forEach((e, i) => { have[from + i] = e; }); events.set(row.hash, have); },
         events: async (hash) => [...(events.get(hash) ?? [])],
         historyRange: async (hash, from, to) => (history.get(hash) ?? []).slice(from, to),
         runMeta: async (hash) => meta.get(hash) ?? null,
+        noteNsDropped: async (hash, record) => { const old = meta.get(hash); if (old?.kind !== "chat") meta.set(hash, { ...(old ?? { kind: "agent" }), nsDropped: record }); },
         remove: async (hashes) => { for (const h of hashes) { rows.delete(h); events.delete(h); history.delete(h); meta.delete(h); } },
         _rows: rows, _events: events, _history: history,
     };

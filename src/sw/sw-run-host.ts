@@ -37,14 +37,14 @@ import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
 import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, grantOnceFetch, consentFetch, fetchConsent, resolveApproval } from "./sw-consent";
 import { settingBeforeCard, settingCard, settingFacts, settingMeasureDeps, holdSettingChange, releaseSettingChange, noteSettingDeclined, watchSetting, settingEntries, surveySettings, settingChangedElsewhere, type SettingChange } from "./sw-change-setting";
-import { ASK_POLICY_CAUSE, navOnlyWhy, startLeftWhy, judgeCall, fetchFacts, navigateFacts, actFacts, noteAct, dropActs, actsOf, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
+import { ASK_POLICY_CAUSE, BROKEN_POLICY_CAUSE, navOnlyWhy, startLeftWhy, judgeCall, fetchFacts, navigateFacts, actFacts, noteAct, dropActs, actsOf, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
 import { checkProposals, recordedFetches, measureBreadth, breadthNote, measureActBreadth, actBreadthNote, measureSettingBreadth, measureSettingRows, settingBreadthNote, recordedSettingKeys, type PolicyProposal, type SettingBreadth } from "./policy-proposal";
 import { approveManifest, checkManifestProposal, draftCardNote, type CheckedManifest } from "./sw-manifest-proposal";
 import { approveLibrary, checkLibraryProposal, isLibraryDraft, precheckLibrary, type CheckedLibrary } from "./sw-library-proposal";
 import { isExtensionSender, senderSelfApproves } from "./sw-site-access";
 import { relayDebugEvent } from "./sw-debug";
 import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels, fetchOllamaInfo } from "./sw-llm";
-import { ensureLocalTools, noteLocalStep, runLocalTool, runsInWorker } from "./sw-local-tools";
+import { ensureLocalTools, noteLocalStep, runLocalTool, runsInWorker, workerFacing } from "./sw-local-tools";
 import { lookPreviewArgs, workerLook } from "./worker-look";
 import { workerLocate } from "./worker-locate";
 import { runVision, workerWroteVision, type RunVision } from "./run-vision";
@@ -64,8 +64,8 @@ import { fetchTarget } from "./sw-fetch-url";
 import { grantRunFetch, grantRunOrigin, runOriginGranted, runOrigins, runFetchConsented, grantRunPython, takePyRefusal, pythonDialectReady, retabWorkerRun } from "./worker-tools";
 import { autoApprovePython } from "../agent/auto-approve";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
-import { takeMovedNote } from "./move-run";
-import { WORKER_ONLY_TOOLS, withoutWorkerOnly, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, keptOnRebuild, turnTabCells, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
+import { applyLiveMove, moveAfterTurn, takeMovedNote, type LiveTurn } from "./move-run";
+import { WORKER_ONLY_TOOLS, withoutWorkerOnly, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, firstTurnLeftTabs, runControllers, runInboxes, trackRun, persistRun, keptOnRebuild, turnTabCells, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { drawStoredPages } from "./sw-attach";
 import { claimValue, runMayClaim, valueHolders, readStoredBytes, readStoredColumns, readStoredText, withHeldValuesOnly } from "./sw-values";
@@ -76,6 +76,7 @@ import { focusLineFor } from "./sw-focus";
 import { delegateSend, CHANNEL_GONE } from "./delegate-send";
 import { NAV_COMMIT_MS } from "./nav-barrier";
 import { GATED_BUILTINS } from "../tools/tool-registry";
+import { isNoTab, needsPage, noPageText } from "./no-tab";
 import { checkVerifyRequest, verifyAsked, verifyVerb, withoutPageVision, workerVerify, VERIFY_REFUSED, VERIFY_WITHHELD, type VerifyOutcome, type WorkerVerify } from "./worker-verify";
 import { topDocument } from "./worker-vision";
 import { capPageAnswer, capPageContext } from "./page-answer-caps";
@@ -351,8 +352,25 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
 export const GATED_TOOL_NAMES: ReadonlySet<string> = GATED_BUILTINS;
 
 /**
+ * The keys a page's START_RUN may not set, at the payload's top level and inside its `rebuild` alike: the person's
+ * fields and the sender's (`pageStartPayload`). One list for both levels, so a key added here is stripped at each.
+ */
+export const PAGE_STRIPPED_KEYS = ["builtBy", "display", "files", "sends", "origin", "pageOrigin", "pageUrl", "inputScrubbed"] as const;
+
+/**
+ * A shallow copy of `o` without any of `PAGE_STRIPPED_KEYS`.
+ * @param o a page's payload, or its `rebuild`
+ * @returns the copy
+ */
+function withoutPersonFields<T extends object>(o: T): T {
+    const copy = { ...o } as Record<string, unknown>;
+    for (const k of PAGE_STRIPPED_KEYS) delete copy[k];
+    return copy as T;
+}
+
+/**
  * A page's START_RUN payload as the worker may trust it. A page's payload may ask for MORE gating, never less.
- * - Removed, the worker's to set: `builtBy`, `rebuild.builtBy`, `display`, `files` (pointers naming value-store rows), `sends`,
+ * - Removed, the worker's to set, at the top level and inside `rebuild` alike (`PAGE_STRIPPED_KEYS`): `builtBy`, `display`, `files` (pointers naming value-store rows), `sends`,
  *   `inputScrubbed` (a page's claim would spare a stored session's raw user turns the scrub on resume)
  *   and `origin` (the PromptOrigin: a page could stamp its prompt as typed on an extension surface). Only the worker's own `hostRun` call
  *   (sw-run-start.ts) marks a run worker-built, and `makeWorkerRun` hands one over; a page's claim would give its run the
@@ -373,14 +391,11 @@ export const GATED_TOOL_NAMES: ReadonlySet<string> = GATED_BUILTINS;
  */
 export function pageStartPayload(payload: unknown, sender: chrome.runtime.MessageSender, cfg: Pick<MlConfig, "autoApprovePython" | "autoApproveReadonly" | "autoApproveSelfSource" | "selfIntrospection">): unknown {
     if (!payload || typeof payload !== "object") return payload;
-    const { builtBy: _b, display: _d, files: _f, sends: _n, origin: _p, pageOrigin: _o, pageUrl: _u, inputScrubbed: _i, ...rest } = payload as StartRunPayload;
+    const rest = withoutPersonFields(payload as StartRunPayload);
     // The budget RESUME_RUN honours, so a page cannot ask for an unbounded run; an invalid one is no budget, and the loop's default applies.
     const budget = stepBudget(rest.maxSteps);
     if (budget) rest.maxSteps = budget; else delete (rest as { maxSteps?: number }).maxSteps;
-    if (rest.rebuild && typeof rest.rebuild === "object") {
-        const { builtBy: _rb, ...rebuild } = rest.rebuild;
-        rest.rebuild = rebuild;
-    }
+    if (rest.rebuild && typeof rest.rebuild === "object") rest.rebuild = withoutPersonFields(rest.rebuild);
     rest.autoApprovePython = !!rest.autoApprovePython && !!cfg.autoApprovePython;
     rest.autoApproveReadonly = !!rest.autoApproveReadonly && !!cfg.autoApproveReadonly;
     delete (rest as { autoApproveSameOriginAuth?: unknown }).autoApproveSameOriginAuth;
@@ -641,7 +656,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         const j = judgeCall(runId, "act", actFacts(url, name, element));
         for (const b of j.broken) recordRunLog(runId, { level: "warn", subsystem: "policy", kind: "broken", reason: b.reason, detail: { policy: b.policy.id, tool: name } });
         if (j.decision && j.by && j.by !== "builtin") {
-            recordRunLog(runId, { subsystem: "policy", kind: j.decision, reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: name, url, element: element.name ?? "" } });
+            recordRunLog(runId, { subsystem: "policy", kind: j.brokenAsk ? BROKEN_POLICY_CAUSE : j.decision, reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: name, url, element: element.name ?? "" } });
             return { decision: j.decision, label: j.by.label };
         }
         if (!j.decision && url && await senderSelfApproves({ url }).catch(() => false)) return { decision: "allow" as const, label: "this site is on the self-approval list" };
@@ -693,6 +708,12 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         if (held) {
             if (payload.renderOnly || payload.precheck || payload.readonlyTry) throw new Error("the run is held on this page");
             return { result: held.kind === "deny" ? arrivalDeniedText(held) : arrivalWaitingText(held) };
+        }
+        // Nor anything at all for a run with NO tab (no-tab.ts): a page tool is answered with how the run gets a page, and
+        // stays in the tool list so the model learns there is one (TABLESS_RUN.md). The worker's own tools run as ever.
+        if (isNoTab(tabId) && needsPage(payload.name, payload.args, p.tools.some((t) => t.name === payload.name && !!t.remote))) {
+            if (payload.renderOnly || payload.precheck || payload.readonlyTry) throw new Error("the run has no page");
+            return { result: noPageText(payload.name) };
         }
         // A call built for the page-built run, whose run is the worker's now: built again (`againIfHandedOver`).
         const handedSince = (): void => { if (pageRouted && byWorker()) throw new HandedOverMidCall(); };
@@ -772,7 +793,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     let unhostAsks: (() => void) | undefined;   // set once the run's steps may raise nested asks (sw-asks.ts)
     let unwatchArrivals: (() => void) | undefined;   // set once the run judges its tab's arrivals (nav-arrival.ts)
     let rewatchArrivals: (() => void) | undefined;   // the same judge, moved to the turn's tab now
-    const settle = (): void => { turnTabCells.delete(runId); unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); closeTurnTasks(runId); untrackRun(tabId, runId); deleteRun(runId); endPythonTurn(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); the turn's end: the run's Python namespace stays, the shared full worker's dict goes
+    const settle = (): void => { turnTabCells.delete(runId); unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); closeTurnTasks(runId); untrackRun(tabId, runId); deleteRun(runId); endPythonTurn(runId); releaseDebugger(tabId); moveAfterTurn(runId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); the turn's end: the run's Python namespace stays, the shared full worker's dict goes
     /** Ends the run's session on every surface when the setup throws after its start event went out; set once the fan exists. */
     let endSession: ((error: string) => void) | undefined;
     try {
@@ -809,7 +830,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // exec runs in its page's world and nowhere else. The start event below carries the same list, so the export holds
         // what the model was sent.
         const offerWorld = byWorker();
-        const modelTools = offerWorld ? withExecWorld(p.tools) : p.tools;
+        // A run the worker built and drives reads its worker tools' texts from the tools that run (workerFacing).
+        const shown = p.builtBy === "worker" && offerWorld ? workerFacing(runId, p) : p.tools;
+        const modelTools = offerWorld ? withExecWorld(shown) : shown;
         const toolDefs = modelTools.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
         const approvedSheets = new Set<string>();   // external sheets approved this run (isSheetApproved)
         // state: plumbing — why this run's python_exec cell was not run inside the dialect, by its exact source: written by the
@@ -822,6 +845,14 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // "One consent, scoped by the origin"): the worker's grant outlives the turn, so the turn starts from it.
         const consentedOrigins = new Set<string>(runOrigins(runId));
         if (p.pageOrigin) consentedOrigins.add(p.pageOrigin);
+        // What a move the person makes while this turn runs re-points (move-run.ts `applyLiveMove`): the destination becomes
+        // the turn's start page, as a move between turns makes it the run's (MOVE_RUN.md, step 4).
+        const liveTurn: LiveTurn = {
+            tabId: () => tabId,
+            page: () => ({ title: p.pageTitle, url: tabUrlNow() }),
+            rebuild: () => (p.crossPage === false ? undefined : runRebuilds.get(runId) ?? p.rebuild),
+            onPage: ({ origin, url, title }) => { p = { ...p, pageOrigin: origin, pageUrl: url, pageTitle: title }; consentedOrigins.add(origin); },
+        };
         // Origins an `allow` row let an arrival reach: consented for NAVIGATION only (POLICIES.md, ruling (b) as built). The
         // FETCH_URL choke point does not count them, so the gate does not either: a read there goes to its card.
         const navOnlyOrigins = new Set<string>();
@@ -982,7 +1013,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             if (askAnswer || seq === undefined) return askAnswer;
             const line = arrivalLine(h);
             const answered = (a: { allowed: boolean; text: string }) => { unreadAnswer = a.text || undefined; return a; };
-            askAnswer = raiseAsk(runId, seq, { kind: ARRIVAL_ASK, facts: { url: h.url }, why: { line, detail: line, cause: h.label !== undefined ? ASK_POLICY_CAUSE : "policies-unread", ...(h.label !== undefined ? { policy: h.label } : {}) } }).then(async (o) => {
+            askAnswer = raiseAsk(runId, seq, { kind: ARRIVAL_ASK, facts: { url: h.url }, why: { line, detail: line, cause: h.broken ? BROKEN_POLICY_CAUSE : h.label !== undefined ? ASK_POLICY_CAUSE : "policies-unread", ...(h.label !== undefined ? { policy: h.label } : {}), ...(h.broken ? { policyId: h.broken.id } : {}) } }).then(async (o) => {
                 if (arrivalHold(runId) !== h) return { allowed: true, text: "" };   // judged again meanwhile: the new judgement holds or not
                 if (o.allowed) {
                     // A person on a card: the origin is consented, and as the person for a fetch the worker runs.
@@ -1226,6 +1257,14 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         // A run the person moved to another tab since its last turn is told so, the same way (move-run.ts).
                         const moved = resumeMessages?.length && p.builtBy === "worker" ? takeMovedNote(runId) : undefined;
                         if (moved) (messages as { role: string; content: string }[]).push({ role: "system", content: moved });
+                    }
+                    // A move the person asked for while this turn ran lands HERE (MOVE_RUN.md, shape (b), slice 2): every call
+                    // of the previous step has answered and this request has not gone out, so nothing in flight points at the
+                    // old tab. The model is told as a move between turns tells it, with the new page's context as an arrival's.
+                    const liveMove = await applyLiveMove(runId, liveTurn);
+                    if (liveMove) {
+                        const info = liveMove.pageInfo ? `\n\nYou are now on the new page:\n${capPageContext(liveMove.pageInfo, byWorker())}` : "";
+                        (messages as { role: string; content: string }[]).push({ role: "system", content: liveMove.note + info });
                     }
                     // WHAT THIS REQUEST IS FOR: an agent step, in this run's session (see RequestHint).
                     const hint: RequestHint = { use: "agent", session: hintSession(runId), ...(opts?.after ? { after: opts.after } : {}) };
@@ -1861,6 +1900,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // A click on a link a policy denies is refused before the click: the describe layer of the arrival rule.
                     return name === "click" ? clickLinkRefusal(env?.href) ?? null : null;
                 },
+                // A page tool of a run with no tab: answered before the gate, which would ask on a card no tab shows.
+                unrunnable: (name, args) => (isNoTab(tabId) && needsPage(name, args, p.tools.some((t) => t.name === name && !!t.remote)) ? noPageText(name) : null),
                 approve: async ({ tool, arguments: args, seq, step, askWhy: gateWhy }) => {
                     // A page the run is held on is answered first (nav-arrival.ts): this call's card follows only if the
                     // person lets the run act there.
@@ -1966,7 +2007,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // A cell outside the dialect in a run whose earlier cell ran with the bridges lifted: its card says what that
                     // cell may have kept. Read here, where a wait is allowed: the mark outlives an evicted worker (sw-python.ts).
                     if (tool === "python_exec" && askWhy?.cause === "outside-dialect" && await pythonRunBridged(runId)) askWhy = { ...askWhy, bridged: true };
-                    if (askWhy?.policy !== undefined && !askedByPolicy(askWhy)) recordRunLog(runId, { subsystem: "policy", kind: "lapsed", reason: askWhy.cause, detail: { tool, policy: askWhy.policy, ...(tool === "fetch_url" ? { url: String((args as { url?: unknown }).url ?? "") } : {}) } });
+                    if (askWhy?.cause === BROKEN_POLICY_CAUSE) recordRunLog(runId, { subsystem: "policy", kind: BROKEN_POLICY_CAUSE, reason: askWhy.cause, detail: { tool, policy: askWhy.policy ?? "", id: askWhy.policyId ?? "" } });
+                    else if (askWhy?.policy !== undefined && !askedByPolicy(askWhy)) recordRunLog(runId, { subsystem: "policy", kind: "lapsed", reason: askWhy.cause, detail: { tool, policy: askWhy.policy, ...(tool === "fetch_url" ? { url: String((args as { url?: unknown }).url ?? "") } : {}) } });
                     // A worker tool's approval is granted to the run's state in this worker (worker-tools.ts), rebuilt here
                     // if an eviction took it, so the decision below has somewhere to put it.
                     if (byWorker() && runsInWorker(p, tool)) await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "", pyMedia).catch(() => { /* nothing granted: fails closed */ });
@@ -2112,7 +2154,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     if (j.decision === "ask" && !j.by) return "unknown";
                     for (const b of j.broken) recordRunLog(runId, { level: "warn", subsystem: "policy", kind: "broken", reason: b.reason, detail: { policy: b.policy.id, tool: "navigate" } });
                     if (!j.decision || !j.by || j.by === "builtin") return undefined;
-                    recordRunLog(runId, { subsystem: "policy", kind: j.decision, reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: "navigate", url: dest.href } });
+                    if (!j.brokenAsk) recordRunLog(runId, { subsystem: "policy", kind: j.decision, reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: "navigate", url: dest.href } });
                     return { decision: j.decision, label: j.by.label };
                 },
                 fetchNeedsConsent: (spelled) => { const url = fetchJudgedAs(spelled); return !(runFetchConsented(runId, url) ?? fetchConsent.get(tabId)?.has(url)); },   // a NEW url → gate; an already-approved one → auto
@@ -2150,7 +2192,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // An `ask` policy puts the call to the person where a free tier or a remembered consent would run it; it
                     // judges any run the loop gates, as a `deny` does.
                     if (j.decision === "allow" && !(byWorker() && runsInWorker(p, "fetch_url"))) return undefined;
-                    recordRunLog(runId, { subsystem: "policy", kind: j.decision, reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: "fetch_url", url } });
+                    if (!j.brokenAsk) recordRunLog(runId, { subsystem: "policy", kind: j.decision, reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: "fetch_url", url } });
                     return { decision: j.decision, label: j.by.label };
                 },
                 // An UNCREDENTIALED fetch to an origin the run is at / has been consented to (relative, or in
@@ -2251,6 +2293,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 // A run handed to the worker while this turn ran stays the worker's (`storedP`).
                 const resumeP = { ...storedP(), stepBase: stepBase + runMaxStep, seqBase: seqBase + runMaxSeq };
                 bgRuns.set(runId, { p: resumeP, tabId, messages, sub: snapSub(), ...keptOnRebuild(runId) });
+                firstTurnLeftTabs.delete(runId);
                 // The same snapshot `bgRuns` holds, where it outlives the run: `resumeP` so a later turn continues
                 // AFTER this one's steps rather than colliding with them.
                 saveRunHistory(runId, { messages, payload: resumeP, sub: snapSub() });

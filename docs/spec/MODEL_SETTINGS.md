@@ -222,7 +222,7 @@ each value is validated as `setModel`'s is: it must be on the server's list and 
 **Not settings, never writable**: global and run policies (`propose_policy` is the model's route there); the site lists
 and the self-approval list; program manifests and Python libraries (each has its own proposal path or none); the backup
 passphrase and keys; the archive folder's grant; pairing and hub keys; the secret values the person types in Settings
-(`secretRegistry`, `chrome.storage.local`, files-host's registry), a secret by name: never readable through
+(`ml_secret_registry`, `chrome.storage.local`, files-host's registry), a secret by name: never readable through
 `ml.settings()`, never writable. None of them is a key of `DEFAULT_CONFIG`, so `change_setting` cannot name them: a key
 that is not a classified one is refused.
 
@@ -575,8 +575,8 @@ still says so, it has no `value` field, and `held` tells the model the value is 
 `ml.settings`, which asks. A hidden key is `{ mode: "hidden", class }`. Today the held keys are the guarded
 `shellEnabled`, `shellRoots`, `shellPath`, `shellSandbox`, `execDefaultWorld`, `agentStartPage`, `agentSeesFocus`,
 `siteRequests`, `listPageSessions`, `persistUiRuns`, `sessionArchive`, `sessionRetentionDays`, `sessionStoreBudgetMB`,
-`valueStoreBudgetMB`, `exportToolDefs`, `taskNotifyOnly`, `taskTurnChainMax` and the gates `shellRevealsAllow` and
-`scrubPersonInput`, nineteen in all. The
+`valueStoreBudgetMB`, `exportToolDefs`, `taskNotifyOnly`, `taskTurnChainMax`, `filesQuotaMB` and the gates `shellRevealsAllow` and
+`scrubPersonInput`, twenty in all. The
 guarded and gate keys read free are `apiFormat`, `serverToolsOff`, `commanderServerTools`, `selfIntrospection`,
 `pierceClosedShadow`, `cdp`, `debugMode` and the three `autoApprove*` keys.
 

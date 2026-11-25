@@ -726,6 +726,16 @@ run has nowhere to live. It is also exactly when `session.send` would end at a c
 the composer rather than sitting beside it: two ways to continue one run is one too many, and one of them would
 always fail.
 
+**A run with no tab says so, in the resume bar's place.** When the row's `background.noTab` is set (the worker holds
+the run with no open tab, ASYNC_CALLS.md "A session with no tab shows it"), a banner replaces the "tab closed" bar:
+`noTabText` (`src/chat/no-tab.ts`) says it has no tab, what is still running or waiting (`taskMarkText`, the HUD
+card's words), and that a result is read at its next turn. Two gates, each on what is actually there. "Bring it here"
+opens the resume form above and asks the `session.resume` grant directly (`mayBringHere`), not `resumableHere`, which
+is false for such a run once the worker holds it (the composer reaches it). The sentence "A message sent here starts
+its next turn, with no page" is added only when the composer is drawn under the banner, so the banner never points at
+a composer that is not there; `capabilities.detached` gates nothing here. The banner's buttons are a row at its end,
+where the release's Stop will sit. The phone draws the same banner from `SessionChrome.noTabText`/`canBringHere`.
+
 The WHERE picker is one component (`useTargetPick`), shared with the start page. Resuming is a navigation from the
 agent's side, so offering it a different set of places to go than a fresh run would be a difference with nothing
 behind it. The form has no message box, because resuming takes no turn, and it says what the resume will LOSE
@@ -940,6 +950,7 @@ three, a tail still growing, a revision's header. Two do not, and neither is abo
   one. (An ANSWERED gate is ordinary work again and folds with the rest: the refusal is about the decision, not
   about the tool or about it having needed approval.)
 - **prose is never grouped.** What the model SAID is the thing this view exists to show. A turn that said something AND called tools is split (`splitProse`, `step-streak.tsx`): the remark stays where it is and its calls fold with the neighbouring run; a split whose calls folded with nothing is rejoined, so an unfolded turn looks as it always did.
+- **the thinking after a group's last call comes out of it.** With a final answer directly after the group, the thinking turns after its last tool call lift to just before that answer (`splitTrailingThinking`, `step-streak.tsx`), so they open without opening the group; a block under `MOVE_THINKING_MIN_TOKENS` (20) or with no text stays in, thinking between calls stays in, and a run with no final answer (stopped, failed, running) keeps all of it in the group.
 
 Two consequences worth knowing before changing it. The minimum is counted in CALLS, not turns, which is the only
 counting that answers both halves of the question — one lone step is not a group, while ONE turn whose model call

@@ -177,7 +177,7 @@ test("a PDF at the start: the task carries its outline under its pointer, the ro
     for (let i = 0; i < 100 && w.chats().length < 2; i++) await flush(4);
     assert.equal(w.reads.length, 1, "read once, in the offscreen document");
     const user = w.chats()[0].body.messages.find((m) => m.role === "user").content;
-    assert.match(user, /^what grew\?\n\n<file name="report\.pdf" type="application\/pdf" bytes="15" pages="2" pointer="@file:[^"]+">\n@file:\S+ "report\.pdf": attached by the person\. PDF, 2 pages/);
+    assert.match(user, /^what grew\?\n\n<file name="report\.pdf" type="application\/pdf" bytes="15" pages="2" pointer="@file:([^"]+)" path="\/files\/attached\/\1\/report\.pdf">\n@file:\S+ "report\.pdf": attached by the person\. PDF, 2 pages/);
     assert.ok(!user.includes("Revenue grew"), "page 2 is not in the task, only the first page's preview");
     assert.match(w.toolReplies().at(-1), /<page n="2">\nRevenue grew 12% in the second half\.\n<\/page>/, "the pointer reads the stored document");
     const rows = (await w.bg.context.__mlValues.rows()).filter((r) => r.sessions.includes(hash));
@@ -301,9 +301,11 @@ test("the worker assembles the run, pushes its toolset into the page, and the mo
     for (const n of ["click", "type", "python_exec", "chat_metadata"]) assert.ok(names.includes(n), `the model is offered ${n}`);
 });
 
-test("the tools the model is shown are the page's own definitions, built by the same factories", T, async () => {
+test("the tools the page runs are shown to the model as the page's own definitions, built by the same factories", T, async () => {
     // One definition: the worker builds its descriptors with the page's factories (worker-ml.ts). A drift between
-    // them is what this catches, field for field, against the page bundle's own tools.
+    // them is what this catches, field for field, against the page bundle's own tools. A tool the WORKER runs reads as
+    // the worker's own (sw-local-tools.ts `workerFacing`; tests/sent-tool-texts.test.mjs), so it is not compared here.
+    const { WORKER_TOOL_NAMES } = await import("../src/sw/worker-tools.ts");
     const { bg, chats } = world();
     await bg.context.__mlStartUserRunForTest(7, { task: "go", surface: "hud" });
     await flush();
@@ -315,11 +317,9 @@ test("the tools the model is shown are the page's own definitions, built by the 
     // …and puts the compose hint on interactives when exec is wired (tools.ts `withComposeNote`).
     const { withComposeNote } = await import("../src/tools/tools.ts");
     const page = withComposeNote(withToolDetails([...ml.domTools, ml.clickTool(), ml.typeTool(), ml.pythonTool(), ml.chatMetaTool(), ml.fetchTool(), ...docs]), offered.has("exec")).slice(0, docs.length ? -1 : undefined);
-    for (const t of page) {
-        if (!offered.has(t.name)) continue;
-        assert.equal(offered.get(t.name), t.description, `${t.name}: the worker shows the model the page's description`);
-    }
-    assert.ok(page.filter((t) => offered.has(t.name)).length >= 10, "the comparison covered the kit, not two tools");
+    const compared = page.filter((t) => offered.has(t.name) && !WORKER_TOOL_NAMES.has(t.name));
+    for (const t of compared) assert.equal(offered.get(t.name), t.description, `${t.name}: the worker shows the model the page's description`);
+    assert.ok(compared.length >= 10, `the comparison covered the kit, not two tools: ${compared.length}`);
 });
 
 test("what the page answers is page context and nothing else: it cannot change the task", T, async () => {
@@ -548,8 +548,8 @@ test("a PDF and a text file sent with a later message are held as that turn's po
     assert.equal(r.data, "turn");
     await w.waitChats(2);
     const said = w.lastUser(1);
-    assert.match(said, /^read these\n\n<file name="report\.pdf" type="application\/pdf" bytes="15" pages="2" pointer="@file:[^"]+">\n@file:\S+ "report\.pdf": attached by the person\. PDF, 2 pages/);
-    assert.match(said, /\n\n<file name="notes\.txt" type="text\/plain" bytes="11" pointer="@file:[^"]+">\nalpha\nbeta\n<\/file>$/);
+    assert.match(said, /^read these\n\n<file name="report\.pdf" type="application\/pdf" bytes="15" pages="2" pointer="@file:([^"]+)" path="\/files\/attached\/\1\/report\.pdf">\n@file:\S+ "report\.pdf": attached by the person\. PDF, 2 pages/);
+    assert.match(said, /\n\n<file name="notes\.txt" type="text\/plain" bytes="11" pointer="@file:([^"]+)" path="\/files\/attached\/\1\/notes\.txt">\nalpha\nbeta\n<\/file>$/);
     assert.deepEqual(await w.files(hash), [["report.pdf", "application/pdf", 2, 2], ["notes.txt", "text/plain", 2, 2]]);
     const rows = (await w.bg.context.__mlValues.rows()).filter((row) => row.sessions.includes(hash));
     assert.deepEqual(rows.map((row) => [row.format, row.held]).sort(), [["bytes", true], ["paged", true], ["text", true]], "held for the session");
@@ -571,7 +571,7 @@ test("a file with a steer while the run works is held as that message's pointer,
     w.gates[0]();
     await w.waitCalls(2);
     const user = w.chats()[1].body.messages.filter((m) => m.role === "user").at(-1).content;
-    assert.match(String(user), /this too\n\n<file name="notes\.txt" type="text\/plain" bytes="11" pointer="@file:[^"]+">\nalpha\nbeta\n<\/file>/);
+    assert.match(String(user), /this too\n\n<file name="notes\.txt" type="text\/plain" bytes="11" pointer="@file:([^"]+)" path="\/files\/attached\/\1\/notes\.txt">\nalpha\nbeta\n<\/file>/);
     w.gates[1]();
     for (let i = 0; i < 50; i++) await flush(4);
     assert.deepEqual((await w.state(hash, "run.files")).map((f) => [f.name, f.lines, f.turn]), [["notes.txt", 2, 2]], "the steer's turn, kept when the turn's payload is stored");
@@ -616,7 +616,7 @@ test("a message that is not delivered (a busy steer, a resume that cannot start)
     const ids = (await w.state(hash, "run.files")).map((f) => f.id);
     assert.equal(ids[0], oldId);
     assert.equal(new Set(ids).size, 3);
-    assert.match(w.lastUser(1), new RegExp(`<file name="old\\.txt" type="text/plain" bytes="4" pointer="@file:${oldId}">`));
+    assert.match(w.lastUser(1), new RegExp(`<file name="old\\.txt" type="text/plain" bytes="4" pointer="@file:${oldId}" path="/files/attached/${oldId}/old\\.txt">`));
 });
 
 test("two sends to an idle stored run at once: the first resumes, the second is held and steered into that turn, with its file (rule 4b, slice C)", T, async () => {
@@ -733,7 +733,7 @@ test("ADVERSARIAL: a run a page built, its tab now on ANOTHER approved site, is 
     const r = await w.bg.send({ type: "USER_RUN_ACTION", payload: { hash: "pagebuilt2", action: "send", text: "and this", files: [NOTES] } }, { tab: { id: 7, url: OTHER_SITE }, url: OTHER_SITE });
     assert.deepEqual([r.data, r.refused], ["turn", undefined], "the worker started the turn");
     await flush(40);
-    assert.match(w.lastUser(), /^and this\n\n<file name="notes\.txt" type="text\/plain" bytes="11" pointer="@file:[^"]+">/, "the model got the typed text and the file as a pointer");
+    assert.match(w.lastUser(), /^and this\n\n<file name="notes\.txt" type="text\/plain" bytes="11" pointer="@file:([^"]+)" path="\/files\/attached\/\1\/notes\.txt">/, "the model got the typed text and the file as a pointer");
     assert.equal(toPageMsgs(w.bg).length, 0, "no message, and no file, to the other site's page");
     // Back on the builder's site the run stays the worker's: the page that built it no longer owns it.
     w.open[0].url = BUILDER;
@@ -950,6 +950,29 @@ test("UPGRADE: a run stored before messages were counted, holding a PDF pointer 
     const ids = (await w.state(runId, "run.files")).map((f) => f.id);
     assert.deepEqual(ids, [OLD_PDF.id, fileId(runId, 2)], "the new file takes the next id, never the stored one's");
     assert.match(w.lastUser(0), new RegExp(`pointer="@file:${fileId(runId, 2)}"`));
+});
+
+test("UPGRADE: a session stored with blocks framed before `path` is replayed as stored; only a new message's block carries it", T, async () => {
+    const { fileId } = await import("../src/pointers/file-pointer.ts");
+    const runId = "oldrun02";
+    // What the code before `path` framed and stored: the block names the pointer only.
+    const OLD_TXT = { id: fileId(runId, 1), name: "old.txt", type: "text/plain", bytes: 4, lines: 1, pages: 0, read: 0, turn: 1, doc: "kold", data: "kold", sha256: "cd", chars: 4, figures: [], scans: [] };
+    const first = `first\n\n<file name="old.txt" type="text/plain" bytes="4" pointer="@file:${OLD_TXT.id}">\nold\n</file>`;
+    const snap = {
+        version: "9.9.9", ts: Date.now(), tabId: 7, messages: [{ role: "user", content: first }, { role: "assistant", content: "done" }],
+        p: {
+            runId, task: first, tools: [], model: "m", think: null, maxSteps: 5, systemPrompt: "s", surface: "off", sends: 1,
+            autoApprovePython: false, autoApproveReadonly: false, builtBy: "worker", files: [OLD_TXT], crossPage: true,
+            rebuild: { toolNames: [], model: "m", builtBy: "worker", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true },
+        },
+    };
+    const w = fileWorld({ local: { [`ml_bgrun_${runId}`]: snap } });
+    await w.bg.context.__mlEvictForTest();
+    assert.equal((await w.bg.send({ type: "USER_RUN_ACTION", payload: { hash: runId, action: "send", text: "and this", files: [NOTES], surface: "hud" } }, fromTab)).data, "turn");
+    await w.waitChats(1);
+    const users = w.chats()[0].body.messages.filter((m) => m.role === "user").map((m) => m.content);
+    assert.equal(users[0], first, "the stored message is sent as it was stored: nothing re-frames it");
+    assert.match(users.at(-1), new RegExp(`pointer="@file:${fileId(runId, 2)}" path="/files/attached/${fileId(runId, 2)}/notes\\.txt">`));
 });
 
 // --- review findings on slice 0 (#374): each one shown failing first ---

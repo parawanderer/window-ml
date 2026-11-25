@@ -14,13 +14,17 @@ import { fromFetch, free, boundFor, EffectsData } from "../effects";
 import { defineState } from "../state-registry";
 import type { AskWhy, PersistGrant } from "../contract";
 import { effectiveRows, type PolicyRow, type PolicyInput } from "./sw-policy-view";
+import { filesViewRows } from "./files-hide-view";
+import type { HideEffect, HideEntry } from "../files-hide";
 import { validList, CONSUMERS, GLOBAL_POLICIES_KEY, POLICY_LABEL_MAX } from "./policy-valid";
 import { REVEALS_CAUSE, revealsText } from "../shell/sh-call";
 
 /** Which kind of call a policy is about; a policy is only ever evaluated over calls of its own consumer. `sh` is
  *  `ml.sh` (docs/spec/SHELL.md), whose facts its own consumer builds. `setting` is `change_setting`
- *  (docs/spec/MODEL_SETTINGS.md): an `allow` frees only an ordinary key's change, never a guarded one. */
-export type PolicyConsumer = "fetch" | "sh" | "act" | "setting";
+ *  (docs/spec/MODEL_SETTINGS.md): an `allow` frees only an ordinary key's change, never a guarded one. `files` is a
+ *  hiding rule (POLICIES.md, "Hiding files", ruling 34): its effect is `hide` or `show` and its source a path or a glob,
+ *  never a script, so `judgeCall` never evaluates it; `filesHideEntries` reads it. */
+export type PolicyConsumer = "fetch" | "sh" | "act" | "setting" | "files";
 
 /** Where a policy came from: written by the person, added by answering an approval card, or proposed by the model and
  *  approved by the person on its own card (`propose_policy`). */
@@ -31,7 +35,8 @@ export interface StoredPolicy {
     id: string;
     scope: "global" | "run";
     consumer: PolicyConsumer;
-    effect: PolicyEffect;
+    /** `hide` or `show` for a `files` rule, and only for one; `allow`, `deny` or `ask` for every other consumer. */
+    effect: PolicyEffect | HideEffect;
     source: string;
     label: string;
     origin: PolicyOrigin;
@@ -52,6 +57,9 @@ export interface PolicyJudgement {
      *  `"ask"` of a store not loaded yet. */
     by?: StoredPolicy | "builtin";
     broken: { policy: StoredPolicy; reason: string }[];
+    /** Set when the `ask` is because a `deny` or an `ask` policy would not run (ruling 108): that policy and why. `by` is
+     *  the same policy, so a consumer that names an ask policy by `by.label` names this one; the card says it is broken. */
+    brokenAsk?: { policy: StoredPolicy; reason: string };
 }
 
 /** Why an allowing policy is gone: the archive took it, the person removed it, or they edited it (`narrowed`: it no longer
@@ -266,6 +274,13 @@ export function addGlobalPolicy(p: Pick<StoredPolicy, "consumer" | "effect" | "s
     return { ...made };
 }
 
+/** Whether `id` names a stored `files` rule, which only its session's view removes (it widens, so it asks first) and
+ *  nothing edits. */
+export function isFilesRule(id: string): boolean {
+    return globals.some((p) => p.id === id && p.consumer === "files")
+        || [...byRun.values()].some((list) => list.some((p) => p.id === id && p.consumer === "files"));
+}
+
 /** Remove one policy by id, from whichever scope holds it; true when it existed. */
 export function removePolicy(id: string): boolean {
     brokenWhy.delete(id);
@@ -320,6 +335,9 @@ export function takeArchiveNotice(runId: string): string | undefined {
 /** Change a policy's source, effect or label in place (the policy page); returns it, or undefined when there is none. */
 export function editPolicy(id: string, patch: Partial<Pick<StoredPolicy, "source" | "effect" | "label">>): StoredPolicy | undefined {
     const at = (list: StoredPolicy[]): number => list.findIndex((p) => p.id === id);
+    // A hiding rule has no edit: an allow/ask/deny over it would hold nothing, and its source skips `patternRefusal`.
+    // It is removed and added again through `policy.files`.
+    if (isFilesRule(id)) return undefined;
     const apply = (p: StoredPolicy): StoredPolicy => ({
         ...p,
         ...(typeof patch.source === "string" ? { source: patch.source } : {}),
@@ -357,10 +375,36 @@ export function policyView(): { global: StoredPolicy[]; runs: { hash: string; po
     };
 }
 
-/** One session's effective policies as rows (sw-policy-view.ts), computed here beside {@link judgeCall} from the same lists. */
-export function sessionPolicies(hash: string): { rows: PolicyRow[]; builtin: typeof BUILTIN_POLICY } {
+/**
+ * One session's effective policies as rows (sw-policy-view.ts), computed here beside {@link judgeCall} from the same lists.
+ * @param hash the session's hash
+ * @param platform the connected host's `hello.platform`, which decides the limit lines of a `hide` row's label
+ */
+export function sessionPolicies(hash: string, platform?: string): { rows: PolicyRow[]; builtin: typeof BUILTIN_POLICY } {
     const input = (l: StoredPolicy[]): PolicyInput[] => l.map((p) => ({ id: p.id, consumer: p.consumer, label: p.label, source: p.source, effect: p.effect, origin: p.origin, created: p.created, ...(brokenWhy.has(p.id) ? { broken: brokenWhy.get(p.id) } : {}) }));
-    return { rows: effectiveRows(input(globals), input(byRun.get(hash) ?? []), BUILTIN_POLICY), builtin: BUILTIN_POLICY };
+    const scripts = (l: StoredPolicy[]): StoredPolicy[] => l.filter((p) => p.consumer !== "files");
+    const session = byRun.get(hash) ?? [];
+    const viewed = (l: StoredPolicy[], layer: HideEntry["layer"]) => hideEntries(l, layer).map((e) => { const p = l.find((q) => q.id === e.id)!; return { ...e, label: p.label, origin: p.origin, created: p.created }; });
+    // As for every consumer, a `files` default row is shown only once the consumer has a rule (`effectiveRows`'s convention).
+    const g = viewed(globals, "global"), s = viewed(session, "session");
+    return { rows: [...effectiveRows(input(scripts(globals)), input(scripts(session)), BUILTIN_POLICY), ...(g.length || s.length ? filesViewRows(g, s, platform) : [])], builtin: BUILTIN_POLICY };
+}
+
+/** A list's `files` rules as the hide rule reads them, tagged with their layer. */
+function hideEntries(l: readonly StoredPolicy[], layer: HideEntry["layer"]): HideEntry[] {
+    return l.filter((p) => p.consumer === "files" && (p.effect === "hide" || p.effect === "show"))
+        .map((p) => ({ id: p.id, effect: p.effect as HideEffect, source: p.source, layer }));
+}
+
+/**
+ * The hiding rules that bind one session's files, session layer first (POLICIES.md, "Hiding files"): what a reader the host
+ * does not sandbox applies itself. Undefined until every saved policy is known, and for good after a read that failed, so a
+ * reader refuses rather than reads past a `hide` it has not seen.
+ * @param hash the session's hash
+ */
+export function filesHideEntries(hash: string): HideEntry[] | undefined {
+    if (!loaded || readState === "failed") return undefined;
+    return [...hideEntries(byRun.get(hash) ?? [], "session"), ...hideEntries(globals, "global")];
 }
 
 /**
@@ -380,7 +424,8 @@ export function removeFromSession(hash: string, id: string, confirmed: boolean):
 
 /**
  * Judge one call against the global policies and the run's. The strictest answer wins across both scopes: `deny`, then
- * `ask`, then `allow`; a policy that breaks is no opinion (and recorded). An `ask` puts the call to the person where an
+ * `ask`, then `allow`; a broken `allow` is no opinion, a broken `deny` or `ask` is an `ask` (ruling 108: a refusal that
+ * cannot run cannot be trusted to stay silent), and a clean `deny` still wins; every break is recorded. An `ask` puts the call to the person where an
  * `allow` or the built-in default would have run it. With no person's answer, the built-in default allows a call whose
  * effects are inside what its placement bounds (`free`, effects.ts) and otherwise the tiers above decide (`undefined`).
  *
@@ -401,23 +446,32 @@ export function removeFromSession(hash: string, id: string, confirmed: boolean):
 export function judgeCall(runId: string | undefined, consumer: PolicyConsumer, facts: Record<string, unknown> & { effects: EffectsData },
     placement: Parameters<typeof boundFor>[0] = "worker-survey"): PolicyJudgement {
     if (!loaded) return { decision: "ask", broken: [] };
-    const all = [...globals, ...(runId ? byRun.get(runId) ?? [] : [])].filter((p) => p.consumer === consumer);
+    const all = [...globals, ...(runId ? byRun.get(runId) ?? [] : [])].filter((p): p is StoredPolicy & { effect: PolicyEffect } => p.consumer === consumer && p.consumer !== "files");
     const broken: PolicyJudgement["broken"] = [];
-    let allow: StoredPolicy | undefined, ask: StoredPolicy | undefined;
+    let allow: StoredPolicy | undefined, ask: StoredPolicy | undefined, brokenAsk: PolicyJudgement["brokenAsk"];
     for (const p of all) {
         const r = evalPolicy(p.source, facts, p.effect);
-        if (r.broken) { brokenWhy.set(p.id, r.broken); broken.push({ policy: { ...p }, reason: r.broken }); continue; }
+        if (r.broken) {
+            brokenWhy.set(p.id, r.broken); broken.push({ policy: { ...p }, reason: r.broken });
+            // Keep going: a deny that evaluates cleanly further on still wins.
+            if (p.effect !== "allow") brokenAsk ??= { policy: { ...p }, reason: r.broken };
+            continue;
+        }
         brokenWhy.delete(p.id);
         if (r.decision === "deny") return { decision: "deny", by: { ...p }, broken };
         if (r.decision === "ask" && !ask) ask = p;
         if (r.decision === "allow" && !allow) allow = p;
     }
+    if (brokenAsk) return { decision: "ask", by: brokenAsk.policy, broken, brokenAsk };
     if (ask) return { decision: "ask", by: { ...ask }, broken };
     // The read failed: a saved `deny` may be missing, so nothing short of an added one's deny answers without the person.
     if (readState === "failed") return { decision: "ask", broken };
     // A call the host sends the person's credential with ALWAYS asks: no allow policy and no free tier answers it
     // (SHELL.md, "GH UNDER THE SANDBOX RULED"). A deny or an ask policy above still does.
     if (isCredentialed(facts)) return { decision: undefined, broken };
+    // A path argument a hiding rule holds ALWAYS asks: no allow policy and no free tier frees it, and the durable way to
+    // read the file is to remove the `hide` (POLICIES.md, "What the host gets").
+    if (namesHidden(facts)) return { decision: undefined, broken };
     // A call to a program that reveals other processes asks unless the person listed it: no allow policy and no free tier
     // answers it, since a policy can be the model's proposal and the list is a gate key (PROGRAM_MANIFEST.md, ruling 31).
     if (revealsUnlisted(facts)) return { decision: undefined, broken };
@@ -430,6 +484,10 @@ export function judgeCall(runId: string | undefined, consumer: PolicyConsumer, f
 /** Whether a call's facts say the host will inject a credential into it (`ShFacts.credential.held`). */
 const isCredentialed = (facts: Record<string, unknown>): boolean =>
     typeof facts.credential === "object" && facts.credential !== null && (facts.credential as { held?: unknown }).held === true;
+
+/** Whether a call's facts name a path a hiding rule holds (`ShFacts.paths[].hiddenBy`, from the host's `paths[].hiddenBy`). */
+const namesHidden = (facts: Record<string, unknown>): boolean =>
+    Array.isArray(facts.paths) && facts.paths.some((p) => typeof p === "object" && p !== null && typeof (p as { hiddenBy?: unknown }).hiddenBy === "string");
 
 /** Whether a call's facts say its program reveals other processes and is not in `shellRevealsAllow`
  *  (`ShFacts.reveals.allowed` false). */
@@ -491,8 +549,42 @@ export function lapsedSentence(l: LapsedAsk): string {
 /** The `AskWhy.cause` of a call that asks because an `ask` policy matched it. */
 export const ASK_POLICY_CAUSE = "ask-policy";
 
-/** Whether a call asks because an `ask` policy matched it, so its card offers no "remember" (an `allow` the `ask` overrides). */
-export const askedByPolicy = (why: AskWhy | undefined): boolean => why?.cause === ASK_POLICY_CAUSE;
+/** The `AskWhy.cause` of a call that asks because a `deny` or an `ask` policy would not run (ruling 108). */
+export const BROKEN_POLICY_CAUSE = "broken-policy";
+
+/** Whether a call asks because a policy asked or could not run, so its card offers no "remember" (an `allow` the policy
+ *  overrides, or a rule that would still be broken). */
+export const askedByPolicy = (why: AskWhy | undefined): boolean => why?.cause === ASK_POLICY_CAUSE || why?.cause === BROKEN_POLICY_CAUSE;
+
+/**
+ * A break reason (`evalPolicy`'s `broken`) in a few plain words, for the card and the model. Matched on the reasons
+ * policy-realm.ts and the evaluator produce; any other is "it fails when it runs".
+ * @param reason the text stored against the broken policy
+ */
+export function brokenPhrase(reason: string): string {
+    const field = /has no field '([^']{1,40})'/.exec(reason);
+    if (/^returned /.test(reason)) return "it returned something that is not true or false";
+    if (field && !/a (?:string|number|list|boolean) has no field/.test(reason)) return `it reads a field the call does not have ('${speakable(field[1])}')`;
+    if (/too much work|over \d+ steps/.test(reason)) return "it ran out of steps";
+    if (/nests too deeply|nested too deep|nested more than \d+ deep|Maximum call stack/.test(reason)) return "it is nested too deep";
+    if (/^unexpected token|^not allowed in a policy: unexpected token/.test(reason)) return "its source does not parse";
+    const na = /^not allowed in a policy: (.*)$/s.exec(reason);
+    if (na) return `not allowed in a policy: ${speakable(na[1]).slice(0, 80)}`;
+    return "it fails when it runs";
+}
+
+/**
+ * Why a call asks when a `deny` or an `ask` policy would not run: the card's line, which names the policy by its label and
+ * says what to do, and the model's sentence. The policy's id lets the card open it for editing.
+ * @param p the broken policy
+ * @param reason what evalPolicy said was wrong with it
+ */
+export function brokenPolicyWhy(p: StoredPolicy, reason: string): AskWhy {
+    const label = speakable(p.label), phrase = brokenPhrase(reason);
+    return { line: `Asking because the policy "${label}" is broken: ${phrase}. It may have been meant to ${p.effect === "deny" ? "refuse" : "ask about"} calls like this. Edit it to fix it.`,
+        detail: `Asked the person because the policy "${label}" is broken (${phrase}) and could not be checked. Nothing is wrong with the call.`,
+        cause: BROKEN_POLICY_CAUSE, policy: label, policyId: p.id };
+}
 
 /** The `AskWhy.cause` of a read of an origin an `allow` row let the run navigate to, and no more (POLICIES.md, ruling (b)). */
 export const NAV_ONLY_CAUSE = "nav-only";
@@ -536,6 +628,7 @@ function hostOf(origin: string): string {
  * @param j the judgement
  */
 export function askWhyOf(j: PolicyJudgement): AskWhy | undefined {
+    if (j.decision === "ask" && j.brokenAsk) return brokenPolicyWhy(j.brokenAsk.policy, j.brokenAsk.reason);
     if (j.decision === "ask" && j.by && j.by !== "builtin")
         return { line: `Asking because the policy "${speakable(j.by.label)}" asks about calls like this.`,
             detail: `This call needed approval because the policy "${speakable(j.by.label)}" asks the person about calls like it; the call itself did not change.`,
@@ -650,7 +743,8 @@ export function withPolicies<T extends object>(current: T, runId: string): T & {
     };
 }
 
-/** A run's policies as the model reads them (`ml.current.policies`): what each allows or refuses, as written. */
-export function policiesForModel(runId: string): { scope: StoredPolicy["scope"]; effect: PolicyEffect; label: string; source: string }[] {
-    return [...globals, ...(byRun.get(runId) ?? [])].map((p) => ({ scope: p.scope, effect: p.effect, label: p.label, source: p.source }));
+/** A run's policies as the model reads them (`ml.current.policies`): what each allows or refuses, as written. A
+ *  `files` rule is left out: a hidden file reads as absent, and its path in this list would say it exists. */
+export function policiesForModel(runId: string): { scope: StoredPolicy["scope"]; effect: StoredPolicy["effect"]; label: string; source: string }[] {
+    return [...globals, ...(byRun.get(runId) ?? [])].filter((p) => p.consumer !== "files").map((p) => ({ scope: p.scope, effect: p.effect, label: p.label, source: p.source }));
 }

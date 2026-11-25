@@ -32,16 +32,18 @@ export const PDF_FILE_ACCEPT = "application/pdf,.pdf";
 
 /** A PDF a runtime has read, ready to frame: its `<page>` sections (pdf-frame.ts) and what the block states. For an
  *  agent run, `pointer` is its `@file:` pointer and `body` the outline (file-pointer.ts) in place of the pages. */
-export interface ReadPdfFile { name: string; type: string; bytes: number; pages: number; body: string; escaped: number; pointer?: string }
+export interface ReadPdfFile { name: string; type: string; bytes: number; pages: number; body: string; escaped: number; pointer?: string; path?: string }
 
 /** A text file an agent run holds because it is too long to send whole (sw-attach.ts): framed as its outline (`body`,
  *  file-pointer.ts `textOutline`) under its `@file:` pointer. */
-export interface HeldTextFile { name: string; type: string; bytes: number; lines: number; body: string; escaped: number; pointer: string }
+export interface HeldTextFile { name: string; type: string; bytes: number; lines: number; body: string; escaped: number; pointer: string; path?: string }
 
 /** A text file sent whole; on an agent run the worker built, with its `@file:` pointer too. */
-export type WholeTextFile = AttachedFile & { pointer?: string };
+export type WholeTextFile = AttachedFile & { pointer?: string; path?: string };
 
-/** A file as the model's message frames it: a text file sent whole, one held as its outline, or a PDF the runtime read. */
+/** A file as the model's message frames it: a text file sent whole, one held as its outline, or a PDF the runtime read.
+ *  `path`, on a run the worker built, is where its cells open the file (`/files/attached/<handle>/<name>`), present only
+ *  when that text opens it as written (sw-attach.ts `openablePath`). */
 export type FramedFile = WholeTextFile | HeldTextFile | ReadPdfFile;
 
 /** Is `f` a PDF's bytes, as a command carries them? */
@@ -281,16 +283,16 @@ export function attr(v: string): string {
  */
 export function fileBlock(f: FramedFile): string {
     if (isReadPdf(f)) {
-        const head = `<file name="${attr(f.name)}" type="${attr(f.type)}" bytes="${attr(String(f.bytes))}" pages="${attr(String(f.pages))}"${f.pointer ? ` pointer="${attr(f.pointer)}"` : ""}${f.escaped ? ` escaped="${attr(String(f.escaped))}"` : ""}>`;
+        const head = `<file name="${attr(f.name)}" type="${attr(f.type)}" bytes="${attr(String(f.bytes))}" pages="${attr(String(f.pages))}"${f.pointer ? ` pointer="${attr(f.pointer)}"` : ""}${f.path ? ` path="${attr(f.path)}"` : ""}${f.escaped ? ` escaped="${attr(String(f.escaped))}"` : ""}>`;
         return `${head}\n${f.body}${f.body && !f.body.endsWith("\n") ? "\n" : ""}</file>`;
     }
     if (isHeldText(f)) {
-        const head = `<file name="${attr(f.name)}" type="${attr(f.type)}" bytes="${attr(String(f.bytes))}" lines="${attr(String(f.lines))}" pointer="${attr(f.pointer)}"${f.escaped ? ` escaped="${attr(String(f.escaped))}"` : ""}>`;
+        const head = `<file name="${attr(f.name)}" type="${attr(f.type)}" bytes="${attr(String(f.bytes))}" lines="${attr(String(f.lines))}" pointer="${attr(f.pointer)}"${f.path ? ` path="${attr(f.path)}"` : ""}${f.escaped ? ` escaped="${attr(String(f.escaped))}"` : ""}>`;
         return `${head}\n${f.body}${f.body && !f.body.endsWith("\n") ? "\n" : ""}</file>`;
     }
     let n = 0;
     const text = f.text.replace(/<\/file/gi, () => { n++; return "<\\/file"; });
-    const head = `<file name="${attr(f.name)}" type="${attr(f.type)}" bytes="${utf8Length(f.text)}"${f.pointer ? ` pointer="${attr(f.pointer)}"` : ""}${n ? ` escaped="${n}"` : ""}>`;
+    const head = `<file name="${attr(f.name)}" type="${attr(f.type)}" bytes="${utf8Length(f.text)}"${f.pointer ? ` pointer="${attr(f.pointer)}"` : ""}${f.path ? ` path="${attr(f.path)}"` : ""}${n ? ` escaped="${n}"` : ""}>`;
     return `${head}\n${text}${text.endsWith("\n") ? "" : "\n"}</file>`;
 }
 

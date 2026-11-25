@@ -358,7 +358,7 @@ test("desktop: with nothing open the page is a start box; an agent run picks a t
     const options = list.getByRole("option");
     await expect(options.first()).toHaveText("New tab");
     await expect(list.locator(".tp-rule")).toHaveCount(1);
-    await expect(options).toHaveText([/New tab/, /The front page.*news\.example/, /Tables — API reference/, /Pointers — the pipe dialect/, /Your cart/, /Inbox \(3\)/, /Flights AMS → LIS/]);
+    await expect(options).toHaveText([/New tab/, /No tab/, /The front page.*news\.example/, /Tables — API reference/, /Pointers — the pipe dialect/, /Your cart/, /Inbox \(3\)/, /Flights AMS → LIS/]);
     await expect(list.locator(".tp-window")).toHaveCount(3);
     // A group the runtime can name has a coloured heading; one it cannot (no tabGroups grant) is a plain rule. Both
     // indent their tabs. A runtime-made icon is drawn; a tab without one gets its site's letter.
@@ -457,6 +457,37 @@ test("the start page picks a device before a model, and starts the run on the on
     await page.locator(".chat-start-box textarea").fill("check the build");
     await page.locator(".chat-start-box textarea").press("Enter");
     await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({ type: "agent.start", runtime: "desk-pc", task: "check the build" });
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("No tab is offered where the runtime starts runs with no page, says what such a run cannot do, and starts one", async () => {
+    const { page, errors } = await open(DESKTOP);
+    await expect(page.locator(".chat-start-box")).toBeVisible();
+    const where = page.getByRole("button", { name: /^Where it runs:/ });
+    await where.click();
+    await page.getByRole("option", { name: /^No tab/ }).click();
+    await expect(where).toHaveAccessibleName("Where it runs: no tab");
+    // Said in the form, not only in a tip: what it cannot do, and that ml.sh asks on every call.
+    const note = page.locator('[data-field="no-tab"]');
+    await expect(note).toContainText("cannot read or act on a page");
+    await expect(note).toContainText("asks you on every call");
+    await page.locator(".chat-start-box textarea").fill("sum the logs");
+    await page.locator(".chat-start-box textarea").press("Enter");
+    await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({ type: "agent.start", runtime: "laptop", task: "sum the logs", target: { kind: "detached" } });
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("No tab is not offered by a runtime without capabilities.detached", async () => {
+    const { page, errors } = await open(DESKTOP);
+    await page.getByRole("button", { name: /^Device:/ }).click();
+    await page.getByRole("listbox", { name: "Device" }).getByRole("option", { name: /^Desk PC/ }).click();
+    const where = page.getByRole("button", { name: /^Where it runs:/ });
+    await where.click();
+    await expect(page.getByRole("option", { name: /^New tab/ })).toBeVisible();
+    await expect(page.getByRole("option", { name: /^No tab/ })).toHaveCount(0);
+    await expect(page.locator('[data-field="no-tab"]')).toHaveCount(0);
     expect(errors).toEqual([]);
     await page.close();
 });
@@ -1803,7 +1834,7 @@ test("tabs the runtime could not list are counted in a warning at the top of the
     await expect(warn).toContainText("Allowed in that browser's extension settings");
     await expect(warn.getByRole("button")).toHaveCount(0);
     // It is about the whole list: filtering hides it, and the listed tabs are all still there.
-    await expect(list.getByRole("option")).toHaveCount(7);
+    await expect(list.getByRole("option")).toHaveCount(8);
     await list.getByRole("searchbox", { name: "Filter tabs" }).fill("cart");
     await expect(warn).toHaveCount(0);
     await list.getByRole("searchbox", { name: "Filter tabs" }).fill("");
@@ -2259,13 +2290,52 @@ test("phone (touch): tapping a step's dot opens its tip, and the tap still opens
         await expect(step).toBeVisible();
         await expect(page.locator(".tt-layer")).toBeHidden();
 
+        // PROBE (flaky: the tip never opens). "The tap missed a row that had moved under it" and "the tip opened and
+        // something took it down" look identical a screenshot later, and the rule's last pointer (#2098) is one fact
+        // short in both: it says the rule saw a touch, not whether the finger was on the dot or the row had shifted,
+        // and nothing at all about a tip that came up and went. Recorded around the tap, dumped only when the
+        // assertion fails.
+        await page.evaluate(() => {
+            const out = [];
+            const at = () => {
+                const r = document.querySelector(".astep.tool .astep-head .dot")?.getBoundingClientRect();
+                return r ? [r.left, r.top, r.width, r.height].map(Math.round) : null;
+            };
+            const log = (ev, extra = {}) => out.push({ t: Math.round(performance.now()), ev, ...extra, box: at(), rows: document.querySelectorAll(".astep").length });
+            window.__ttProbe = out;
+            document.addEventListener("pointerdown", (e) => log("pointerdown", {
+                type: e.pointerType,
+                target: e.target?.getAttribute?.("class") ?? "",
+                inTip: !!e.target?.closest?.(".tt"),
+                xy: [Math.round(e.clientX), Math.round(e.clientY)],
+                hit: (() => { const h = document.elementFromPoint(e.clientX, e.clientY); return h ? `${h.tagName.toLowerCase()}.${h.getAttribute("class") ?? ""}` : null; })(),
+            }), true);
+            document.addEventListener("scroll", (e) => log("scroll", {
+                on: e.target === document ? "document" : (e.target.getAttribute?.("class") ?? e.target.nodeName),
+                top: Math.round(e.target.scrollTop ?? -1),
+            }), true);
+            window.addEventListener("blur", () => log("blur"));
+            new MutationObserver((ms) => {
+                for (const m of ms) if (m.target.classList?.contains("tt-layer")) log("layer", { hidden: m.target.hidden, text: (m.target.textContent ?? "").slice(0, 40) });
+            }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ["hidden"] });
+            log("install");
+            // The box every 50 ms, so a row that MOVES with no event to say so (a layout change, not a scroll) is in
+            // the timeline rather than inferred from a tap that landed somewhere else.
+            const tick = setInterval(() => log("box"), 50);
+            setTimeout(() => clearInterval(tick), 3000);
+        });
         await step.locator(".astep-head .dot").first().tap();
         const tip = page.locator(".tt-layer");
         // INSTRUMENT (flaky: the tip stays hidden): a failure carries the last pointer the tip rule saw.
         try {
             await expect(tip).toBeVisible();
         } catch (e) {
-            const seen = await page.evaluate(() => window.__ttLastPointer ?? "the rule never ran");
+            const seen = await page.evaluate(() => ({
+                last: window.__ttLastPointer ?? "the rule never ran",
+                probe: window.__ttProbe ?? [],
+                open: [...document.querySelectorAll(".astep.open")].map((s) => s.getAttribute("data-astep-seq")),
+                layer: (() => { const l = document.querySelector(".tt-layer"); return l ? { hidden: l.hidden, text: l.textContent } : "no layer"; })(),
+            }));
             throw new Error(`${e.message}\n the tip rule's last pointer: ${JSON.stringify(seen)}`);
         }
         await expect(tip).toContainText("Completed successfully");
@@ -3786,6 +3856,70 @@ test("an open chat session's footer usage figure follows a new usage sample with
     // The demo's model has no known window, so the bare figure and the tooltip both carry the number.
     await expect(page.locator(".composer-foot .usage-total")).toHaveText("399 tok");
     await expect(gauge.locator(".tt-pop")).toContainText("399 tokens in context");
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// --- background tasks on a row, and the banner for a run with no tab ---
+
+const setBackground = (page, key, background) => page.evaluate(([k, b]) => globalThis.__chatFake.updateSummary(k, { background: b }), [key, background]);
+
+test("a row marks its background tasks in both views, and draws nothing for a lone noTab or no field at all", async () => {
+    for (const calm of [false, true]) {
+        const { page, errors } = await open(DESKTOP, "", { "view.calm": calm });
+        // UPGRADE: the demo's rows carry no `background`, as the index wrote them before it existed.
+        await expect(row(page, CAPPED).locator(".chat-task-mark")).toHaveCount(0);
+        await setBackground(page, CAPPED, { running: 2, waiting: 1 });
+        await expect(row(page, CAPPED).locator(".chat-task-mark")).toHaveText("2 running · 1 result waiting");
+        await setBackground(page, CAPPED, { running: 0, waiting: 0, noTab: true });
+        await expect(row(page, CAPPED).locator(".chat-task-mark")).toHaveCount(0);
+        expect(errors).toEqual([]);
+        await page.close();
+    }
+});
+
+test("a run with no tab shows a banner in place of the 'tab closed' bar, and Bring it here opens the resume form", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CAPPED)}`);
+    // UPGRADE: no `background` key, so today's bar.
+    await expect(page.locator(".chat-resume")).toBeVisible();
+    await expect(page.locator(".chat-notab")).toHaveCount(0);
+
+    await setBackground(page, CAPPED, { running: 1, waiting: 0, noTab: true });
+    await expect(page.locator(".chat-notab")).toContainText("This run has no tab. 1 running in background. A result is read at its next turn.");
+    await expect(page.locator(".chat-resume")).toHaveCount(0);
+    // A run with no tab is not resumable (`resumableHere`), so the composer is drawn and the banner says what a message does.
+    await expect(page.locator(".composer")).toBeVisible();
+    await expect(page.locator(".chat-notab")).toContainText("A message sent here starts its next turn, with no page.");
+    await page.locator(".chat-notab .chat-resume-go").click();
+    await expect(page.locator(".chat-dialog .tp-pill-tab")).toBeVisible();
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("a no-tab banner offers no Bring it here to a device without the grant to resume", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CAPPED)}`);
+    await page.evaluate(() => globalThis.__chatFake.setRuntime("laptop", { grants: [{ scope: "view" }] }));
+    await setBackground(page, CAPPED, { running: 0, waiting: 0, noTab: true });
+    await expect(page.locator(".chat-notab")).toHaveText("This run has no tab.");
+    await expect(page.locator(".chat-notab .chat-resume-go")).toHaveCount(0);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("a no-tab run whose composer is drawn says a message starts its next turn", async () => {
+    const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(CAPPED_HERE)}`);
+    // CAPPED_HERE has its tab, so canResume is false and the composer stands; noTab on it is the held-with-no-tab case.
+    await setBackground(page, CAPPED_HERE, { running: 0, waiting: 0, noTab: true });
+    await expect(page.locator(".chat-notab")).toHaveText(/This run has no tab\. A message sent here starts its next turn, with no page\./);
+    await expect(page.locator(".composer")).toBeVisible();
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("a run that still has its tab keeps the composer and shows no banner", async () => {
+    const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(CAPPED_HERE)}`);
+    await expect(page.locator(".chat-notab")).toHaveCount(0);
+    await expect(page.locator(".chat-resume")).toHaveCount(0);
     expect(errors).toEqual([]);
     await page.close();
 });

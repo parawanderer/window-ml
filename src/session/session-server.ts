@@ -255,10 +255,11 @@ export class SessionServer {
         for (const client of this.clients) this.post(client, { type: "runtime", runtime: this.opts.runtime() });
     }
 
-    /** A tab's document went away; send the rows that changed. */
-    pageGone(tabId: number, opts: { closed: boolean }): void {
+    /** A tab's document went away; send the rows that changed, and return them. `noTab`: the runs the worker carries on with no tab. */
+    pageGone(tabId: number, opts: { closed: boolean; noTab?: readonly string[] }): SessionSummary[] {
         const rows = this.index.pageGone(tabId, opts);
         for (const session of rows) this.broadcastIndex({ type: "upsert", session });
+        return rows;
     }
 
     /** A tab's top frame moved (the browser's report); send the rows whose current page changed, and return them. */

@@ -3,8 +3,8 @@
 //
 // docs/spec/PYTHON_DIALECT.md, "Membership replaces `mode`": membership is decided by running the cell under the fork's
 // gate (`restricted.run_cell`) in the offscreen worker. A worker-built run with Python auto-approval on: the first cell
-// finishes inside (no gate, approval `sandbox`); the second imports `os`, is refused at run time, and asks with the line
-// "Outside the read-only Python dialect: import 'os' (line 2)" in the sidebar, and only the approved full run's result
+// finishes inside (no gate, approval `sandbox`); the second imports `subprocess`, is refused at run time, and asks with the line
+// "Outside the read-only Python dialect: import 'subprocess' (line 2)" in the sidebar, and only the approved full run's result
 // reaches the model. Self-SKIPS without dist/pyodide, or when it is the stock core (no `restricted.py` in the stdlib).
 import { test, expect } from "@playwright/test";
 import http from "node:http";
@@ -21,8 +21,8 @@ const HAS_FORK = existsSync(join(HERE, "../../dist/pyodide/pyodide.mjs")) && exi
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const INSIDE = "xs = [i * i for i in range(10)]\nsum(xs)";
-const OUTSIDE = "x = 1\nimport os\nsorted(os.listdir('/'))[:1]";
-const WHY = "Outside the read-only Python dialect: import 'os' (line 2)";
+const OUTSIDE = "x = 1\nimport subprocess\nx";
+const WHY = "Outside the read-only Python dialect: import 'subprocess' (line 2)";
 
 /** Serve a blank page on 127.0.0.1. */
 async function servePage() {
@@ -43,7 +43,7 @@ test("under CI, a job that fetched the fork core ships it in dist/pyodide", () =
 
 // --- inside runs unasked; outside asks with where it left ---
 
-test("an inside cell runs with no card; an `import os` cell asks, and the card names the import and its line", async () => {
+test("an inside cell runs with no card; an `import subprocess` cell asks, and the card names the import and its line", async () => {
     test.skip(!HAS_FORK, "needs the restricted-mode fork core in dist/pyodide (npm run fetch-pyodide, then build)");
     test.setTimeout(150000);
     const fake = await startFakeLlm({ model: "fake-model" });
@@ -88,7 +88,7 @@ test("an inside cell runs with no card; an `import os` cell asks, and the card n
         expect(out.length, JSON.stringify(out)).toBe(2);
         expect(out[0]).toContain("285");
         expect(out[1], "the full run's own result, not the refused try's").not.toMatch(/not in dialect/);
-        expect(out[1]).toContain("outside the read-only Python dialect (import 'os' (line 2))");
+        expect(out[1]).toContain("outside the read-only Python dialect (import 'subprocess' (line 2))");
 
         const log = await ext.sw.evaluate(async () => (await globalThis.__mlRunLog.all()).filter((x) => /^python-(inside|outside)$/.test(x.kind)).map((x) => x.kind));
         expect(log).toEqual(["python-inside", "python-outside"]);

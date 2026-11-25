@@ -269,16 +269,18 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
      still arrives is dropped, with a run-log record, and starts nothing. A run moved first starts the turn on its
      CURRENT tab, since the inbox follows the run (rule 4a). A run whose tab is gone keeps its runtime-bound tasks
      (the kernel and the host do not live in the tab), and a result parks with a run-log record; no turn starts by
-     itself on a run with no tab, and the parked result is read at the run's next turn once the person brings the
-     session to a tab (`adoptSession`).
+     itself on a run with no tab, and the parked result is read at the run's next turn: the person's next message,
+     which reaches a run the worker holds with no tab as a turn with no page (`TABLESS_RUN.md`, §As built, part 1),
+     or the first turn after they bring the session to a tab (`adoptSession`).
    - **A session with no tab shows it** (Shane, 2026-11-12: "the UI should indicate this weird state clearly"). A run
      with no tab that still has a runtime-bound task running, or a parked result, is shown as such on the CHAT PAGE
      (and the phone app, which draws the same views): it is the surface that keeps finished sessions, and a run with
      no tab has no sidebar to show anything in. Recommended shape, refined with the chat-page lane when built: the
      session's card in the chat page's session list carries a state mark with the count (`background: 2 running`,
      `1 result waiting`), distinct from the running and idle marks; opening the session shows a banner saying it has
-     no tab, what is running or waiting, and that a result is read at the run's next turn. Until the detached host
-     (`TABLESS_RUN.md`) is built, that turn needs the session brought to a tab; after it, the turn runs with no page.
+     no tab, what is running or waiting, and that a result is read at the run's next turn. That turn is the person's
+     next message, which runs with no page while the worker holds the run with no tab (`TABLESS_RUN.md`, §As built,
+     part 1); bringing the session to a tab is the other way to it.
      The bring-here action stays beside the banner in both (`MOVE_RUN.md`). The sidebar shows the same mark only on a session it
      lists while some other tab is open. The HUD mark above covers a run that has a tab. The state is read from the
      durable task table, never a second copy, and clears when the task ends and its result is read. OPEN, a pointer

@@ -565,6 +565,22 @@ function rateLimitWaitMs(retryAfter: string | null, body: string, attempt = 0): 
  *  so the status alone would fail the run on a limit a few seconds' wait clears. */
 const RATE_LIMITED_400 = /rate.?limit(ed)? (exceeded|reached)|too many requests/i;
 
+// WHO HEARS A SESSION'S MODEL CALLS start and end: the energy hold (sw-energy.ts), wired in background.ts so this file
+// need not import it (it reads the event stream, which imports this file).
+let requestObserver: ((session: string) => () => void) | null = null;   // state: plumbing
+
+/** Hear every model call that names a session (`hint.session`): `f` is called as it starts and returns what to call
+ *  when it ends, answered or failed. */
+export function observeRequests(f: ((session: string) => () => void) | null): void { requestObserver = f; }
+
+/** Run one model call inside the observer's start and end. An observer that throws never fails the call. */
+async function observed<T>(payload: FetchLlmPayload, call: () => Promise<T>): Promise<T> {
+    const session = payload.hint?.session;
+    let done: (() => void) | null = null;
+    try { done = session && requestObserver ? requestObserver(session) : null; } catch { /* bookkeeping */ }
+    try { return await call(); } finally { try { done?.(); } catch { /* bookkeeping */ } }
+}
+
 // Shared setup for a chat request: resolves the model, runs the vision
 // fail-fast, builds the wire body, and returns a `send(body, stream)` that does
 // the privileged fetch (returning parsed JSON, or the raw Response when
@@ -841,7 +857,13 @@ const HANDBACK_ERROR =
     'Function Calling to the server-side loop ("Legacy" on OpenWebUI v0.10.0+, ' +
     '"Default" on older builds), or check that the tool id is correct.';
 
+/** One non-streamed model call (`fetchLLMCall`), heard by the request observer. */
 export async function fetchLLM(payload: FetchLlmPayload, signal?: AbortSignal): Promise<LlmResult | { content: string | null; tool_calls: ToolCall[]; usage: TokenUsage | null }> {
+    return observed(payload, () => fetchLLMCall(payload, signal));
+}
+
+/** The call itself. */
+async function fetchLLMCall(payload: FetchLlmPayload, signal?: AbortSignal): Promise<LlmResult | { content: string | null; tool_calls: ToolCall[]; usage: TokenUsage | null }> {
     const { config, format, body, send, model, requestId } = await prepareRequest(payload, signal);
     const _t0 = Date.now();   // wall-clock of this model call → usage.genMs (for the run's tok/s)
     const spend = spendForCall(config);   // the prices this call runs under (sw-prices.ts); nothing unless spend tracking is set
@@ -940,6 +962,11 @@ function servedProto(res: Response, asked: ProtoMode | null, url: string): boole
 // separate thinking stream the same way, for a caller that shows it live (a
 // worker-hosted chat, sw-chat.ts); without it the thinking only lands at the end.
 export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: string) => void, signal?: AbortSignal, onReasoning?: (delta: string) => void): Promise<{ content: string; sources: unknown[]; model: string; reasoning: string | null; usage: TokenUsage | null }> {
+    return observed(payload, () => streamLLMCall(payload, onDelta, signal, onReasoning));
+}
+
+/** The streamed call itself, heard by the request observer through `streamLLM`. */
+async function streamLLMCall(payload: FetchLlmPayload, onDelta: (delta: string) => void, signal?: AbortSignal, onReasoning?: (delta: string) => void): Promise<{ content: string; sources: unknown[]; model: string; reasoning: string | null; usage: TokenUsage | null }> {
     const { config, format, body, send, model, protoAsked, requestId } = await prepareRequest(payload, signal);
     const _t0 = Date.now();   // wall-clock of this streamed call → usage.genMs
     const spend = spendForCall(config);   // the prices this call runs under (sw-prices.ts); nothing unless spend tracking is set
@@ -1065,6 +1092,15 @@ export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: strin
 export async function streamAgentTurn(
     payload: FetchLlmPayload,
     onDelta: (acc: { reasoning: string; content: string; phases: GenPhase[]; phaseChanged: boolean; tokens?: number; reasoningTokens?: number; calls?: LiveToolCall[] }) => void,
+    signal?: AbortSignal,
+): Promise<{ content: string | null; tool_calls: ToolCall[]; reasoning: string | null; usage: TokenUsage | null }> {
+    return observed(payload, () => streamAgentTurnCall(payload, onDelta, signal));
+}
+
+/** The streamed agent turn itself, heard by the request observer through `streamAgentTurn`. */
+async function streamAgentTurnCall(
+    payload: FetchLlmPayload,
+    onDelta: Parameters<typeof streamAgentTurn>[1],
     signal?: AbortSignal,
 ): Promise<{ content: string | null; tool_calls: ToolCall[]; reasoning: string | null; usage: TokenUsage | null }> {
     const { config, format, body, send, protoAsked, requestId } = await prepareRequest(payload, signal);

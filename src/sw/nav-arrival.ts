@@ -13,12 +13,13 @@
 // worker memory, as the hand-over's decision is: an evicted worker forgets it, and a run resurrected after an eviction
 // is judged again on the page it wakes on (sw-run-host.ts).
 
-import { judgeCall, navigateFacts, policiesReady, speakable, type PolicyJudgement } from "./sw-policies";
+import { judgeCall, navigateFacts, policiesReady, speakable, brokenPhrase, type PolicyJudgement } from "./sw-policies";
+import { isNoTab } from "./no-tab";
 
 /** Why a run may not act on the page its tab holds: a policy denies it, or asks about it and the person has not answered. */
 export type ArrivalHold =
     | { kind: "deny"; url: string; label: string }
-    | { kind: "ask"; url: string; origin: string; label?: string };
+    | { kind: "ask"; url: string; origin: string; label?: string; /** the policy is broken (ruling 108): its id and why, in words */ broken?: { id: string; phrase: string } };
 
 /** What a judged arrival comes to: held, let through with its origin consented, or let through as it is. */
 export type ArrivalVerdict = ArrivalHold | { kind: "allow"; origin: string } | { kind: "pass" };
@@ -41,6 +42,7 @@ const spoke = new Map<string, string>();   // state: plumbing — the URL each r
  * @returns stops watching; the run's hold stays, for its next turn
  */
 export function watchArrivals(tabId: number, runId: string, judge: Judge): () => void {
+    if (isNoTab(tabId)) return () => { /* nothing was watched */ };
     let m = judges.get(tabId);
     if (!m) { m = new Map(); judges.set(tabId, m); }
     m.set(runId, judge);
@@ -132,6 +134,7 @@ function judgeQuietly(runId: string, url: string): void {
  * @param runId the run
  */
 export function watchBetweenTurns(tabId: number, runId: string): void {
+    if (isNoTab(tabId)) return;   // no tab, so no arrivals to judge
     quiet.get(runId)?.();
     quiet.set(runId, watchArrivals(tabId, runId, (url) => judgeQuietly(runId, url)));
 }
@@ -177,7 +180,7 @@ export function arrivalVerdict(url: string, j: PolicyJudgement): ArrivalVerdict 
     const by = j.by && j.by !== "builtin" ? j.by : undefined;
     if (j.decision === "deny" && by) return { kind: "deny", url: dest.href, label: speakable(by.label) };
     // An `ask` with no policy behind it is the store that could not be read: a saved `deny` may be missing.
-    if (j.decision === "ask") return { kind: "ask", url: dest.href, origin: dest.origin, ...(by ? { label: speakable(by.label) } : {}) };
+    if (j.decision === "ask") return { kind: "ask", url: dest.href, origin: dest.origin, ...(by ? { label: speakable(by.label) } : {}), ...(j.brokenAsk ? { broken: { id: j.brokenAsk.policy.id, phrase: brokenPhrase(j.brokenAsk.reason) } } : {}) };
     if (j.decision === "allow" && by) return { kind: "allow", origin: dest.origin };
     return { kind: "pass" };
 }
@@ -185,6 +188,7 @@ export function arrivalVerdict(url: string, j: PolicyJudgement): ArrivalVerdict 
 /** The card's line for a hold (approved strings, 2026-10-24). */
 export function arrivalLine(h: ArrivalHold): string {
     if (h.kind === "deny") return `The run arrived on ${h.url}, which the policy "${h.label}" denies. Nothing of the run runs on this page.`;
+    if (h.broken && h.label !== undefined) return `The run arrived on ${h.origin}, a page it did not open by name. Asking because the policy "${h.label}" is broken: ${h.broken.phrase}. It may have been meant to refuse or ask about pages like this. Edit it to fix it.`;
     return h.label !== undefined
         ? `The run arrived on ${h.origin}, a page it did not open by name. Asking because the policy "${h.label}" asks about pages like this.`
         : `The run arrived on ${h.origin}, a page it did not open by name. Asking because the saved policies could not be read.`;
@@ -201,7 +205,7 @@ export const arrivalDeniedText = (h: Extract<ArrivalHold, { kind: "deny" }>): st
  * @param note what the person said with a denial
  */
 export function arrivalAnsweredText(h: Extract<ArrivalHold, { kind: "ask" }>, approved: boolean, note?: string): string {
-    const why = h.label !== undefined ? `, which the policy "${h.label}" asks about` : "";
+    const why = h.label === undefined ? "" : h.broken ? `, which the policy "${h.label}" could not be checked about, since it is broken` : `, which the policy "${h.label}" asks about`;
     if (approved) return `The tab moved to ${h.origin}, a page the run did not open by name${why}. The person approved the run acting on it.`;
     return `The tab moved to ${h.origin}, a page the run did not open by name${why}. The person declined, and the tab went back to the page before.${note ? ` They said: ${note}` : ""}`;
 }

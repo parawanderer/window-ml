@@ -2,6 +2,7 @@
 // served over the `ml-sessions` port to extension pages (session-server.ts). background.ts feeds it from the same
 // places that feed the DevTools panel, so the index holds what a panel would show for every tab at once
 // (docs/dev/chat-page.md §The local index).
+import { addFilesRule, removeFilesRule } from "./sw-files-hide";
 import { restoreChatRecord } from "../session/chat-record";
 import { forgetRunPolicies, runPolicies, archivedPolicyLoss } from "./sw-policies";
 import { hintSession, type SentFile } from "../contract/contract-run";
@@ -9,7 +10,7 @@ import { FilesRefused, isPdfFile, pdfToPageRun, textFiles } from "../attached-fi
 import { type MlDebugEvent } from "../contract/contract-debug";
 import { createCommandHandler, THIS_BROWSER, type CommandDeps, type PageOutcome } from "../session/session-commands";
 import { cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, isBackgroundChat, releaseEvictedChatFiles, sendBackgroundChat, setBackgroundChatModel, startBackgroundChat } from "./sw-chat";
-import { releaseSessionValues, storeHeld } from "./sw-values";
+import { readStoredText, releaseSessionValues, storeHeld } from "./sw-values";
 import { type StoredSession } from "../contract/contract-messages";
 import { SESSION_CONTRACT_VERSION, type Command, type CommandFrom, type CommandResult, type CommandType, type ArchiveCapability, type BlankStartCapability, type RuntimeInfo, type SessionSummary, type TabGroupInfo, type TabInfo } from "../session/session-host";
 import { FaviconCache, stripOrder } from "./tab-favicons";
@@ -23,17 +24,18 @@ import type { NeutralMessage } from "../contract/contract-chat";
 import { cleanTitle, titleMessages } from "../session/session-title";
 import { defineState } from "../state-registry";
 import { bindTaskRows, refreshTaskRow, syncTaskRows } from "./sw-task-rows";
-import { bgRuns, hydrationDone, keptOnRebuild, makeWorkerRun, pageValueSession, runControllers, runRebuilds, startingControllers, trackRun, untrackRun, workerRunsStarting } from "./sw-runs";
+import { bgRuns, hydrationDone, isWorkerRun, runHasNoTab, runInboxes, keptOnRebuild, makeWorkerRun, pageValueSession, runControllers, runRebuilds, startingControllers, trackRun, untrackRun, workerRunsStarting } from "./sw-runs";
 import { moveRun } from "./move-run";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { isExtensionSender } from "./sw-site-access";
 import { fileChunks } from "./sw-file-chunks";
-import { fetchLLM, streamLLM, getConfig, listAvailableModels, modelCapabilitiesBatch, residentContextLength } from "./sw-llm";
-import { forModelMessages, forTurn } from "./sw-scrub";
+import { fetchLLM, streamLLM, streamAgentTurn, getConfig, listAvailableModels, modelCapabilities, modelCapabilitiesBatch, residentContextLength } from "./sw-llm";
+import { forModel, forModelMessages, forTurn, redactedNote } from "./sw-scrub";
 import { workerMl } from "./worker-ml";
 import { ocrRequest } from "../ml/ml-vision";
 import { planImages } from "../image-gate";
 import { ensureOffscreen } from "./sw-offscreen";
+import { forgetAgentFiles } from "./sw-agent-files";
 import { readPdfOffscreen } from "./sw-attach";
 import type { PdfMessage } from "../pdf/pdf-wire";
 import { pythonBundlePresent, deletePythonRun } from "./sw-python";
@@ -49,6 +51,7 @@ import { shellCapabilities, refreshShell, onShellStatus, hostMissing, hostIsOutd
 import { keptEvent } from "./sw-asks";
 import { forRow, forRowText } from "./sw-scrub";
 import { onRegistryChanged } from "./sw-secret-registry";
+import { isNoTab, NO_TAB } from "./no-tab";
 
 /**
  * Ask a tab's page something, PUTTING THE CONTENT SCRIPT BACK if it is not there.
@@ -142,7 +145,7 @@ function localRuntime(): RuntimeInfo {
         // backend behind it); `pythonBench` is MEASURED, because a checkout without the wheels builds a bundle whose
         // bench would fail at run time. `localSettings`: this browser's pages may edit its settings, which only the
         // extension's own pages can (a phone over the hub reports the capability and holds nothing to edit with).
-        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: pythonBundled, localSettings: true, switchModel: true, attachFiles: true, attachPdf: true, ...archiveCapability(), ...blankStartCapability(), ...shellCapabilities(), ...(attentionCodes().length ? { attention: attentionCodes() } : {}) },
+        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: pythonBundled, localSettings: true, switchModel: true, detached: true, attachFiles: true, attachPdf: true, ...archiveCapability(), ...blankStartCapability(), ...shellCapabilities(), ...(attentionCodes().length ? { attention: attentionCodes() } : {}) },
         // This browser's own pages hold every scope.
         grants: [{ scope: "view" }, { scope: "drive" }, { scope: "approve" }, { scope: "screen" }],
     };
@@ -343,6 +346,19 @@ export function configureSessionCommands(run: RunDeps): void {
             return String((r as { content?: string | null }).content || "").trim();
         },
         scrub: (asIs) => forTurn(asIs ? { asIs } : {}),
+        // `read_pages` (FILE_ATTACHMENTS.md, "Reading the pages held back"): offered only to a model whose capabilities
+        // say it takes tools, its held rows read for the chat's own session, its results scrubbed as an agent run's are.
+        takesTools: async (model) => {
+            const config = await getConfig();
+            const target = model || config.model;
+            const caps = target ? await modelCapabilities(config, target) : null;
+            return Array.isArray(caps) && caps.includes("tools");
+        },
+        callTools: async (req, onLive, signal) => await streamAgentTurn(
+            { messages: req.messages, ...(req.tools ? { tools: req.tools } : {}), model: req.model, think: req.think, hint: req.hint },
+            (acc) => onLive({ content: acc.content, reasoning: acc.reasoning }), signal),
+        readHeld: (key, session) => readStoredText(key, session),
+        scrubResult: async (text) => { const r = await forModel(text); return r.text + redactedNote(r.counts); },
     });
     handler = createCommandHandler({
         runtime: localRuntimeId(),
@@ -372,6 +388,7 @@ export function configureSessionCommands(run: RunDeps): void {
                 return true;
             } catch { return false; }   // closed between the check and the focus
         },
+        workerTab: (hash) => (isWorkerRun(hash) ? runInboxes.get(hash)?.tabId ?? bgRuns.get(hash)?.tabId : undefined),
         toPage: async (tabId, action, body, origin) => {
             // A run the worker built is driven from the worker: the page never carries the person's message.
             if (action === "send" || action === "continue") {
@@ -399,6 +416,7 @@ export function configureSessionCommands(run: RunDeps): void {
             run.forgetRun(hash);
             forgetBackgroundChat(hash);
             await sessionStore?.forget([hash]);
+            await forgetAgentFiles(hash);   // the files its runs wrote (sw-agent-files.ts)
             // A session is in the live store OR the archive; deleting it means from both. Only when the archive is on:
             // otherwise nothing was ever moved there, and asking would start SQLite for every delete.
             if (archiveOn) {
@@ -409,6 +427,8 @@ export function configureSessionCommands(run: RunDeps): void {
         },
         keepSession,
         pinSession,
+        addFilesRule,
+        removeFilesRule,
         renameSession,
         ...(sessionStore ? { storageReport } : {}),
         listModels: async () => {
@@ -434,6 +454,13 @@ export function configureSessionCommands(run: RunDeps): void {
                 return { outcome: "started", hash };
             } catch (e) { return { outcome: "none", error: (e as Error)?.message || String(e) }; }
         },
+        // A run with no tab is a run on the no-tab sentinel (no-tab.ts): `startUserRun` opens and adopts nothing for it.
+        startDetached: async (opts, origin) => {
+            try {
+                const { hash } = await run.startUserRun(NO_TAB, { ...opts, surface: "chat" }, origin ? { sender: origin } : {});
+                return { outcome: "started", hash };
+            } catch (e) { return { outcome: "none", error: (e as Error)?.message || String(e) }; }
+        },
         history: async (hash) => (sessionStore ? await sessionStore.history(hash) : null),
         ...(sessionStore ? { storedEvents: readKept } : {}),
         adoptSession: async (tabId, hash, history) => {
@@ -442,6 +469,8 @@ export function configureSessionCommands(run: RunDeps): void {
             // move, never hosted a second time: its memory is fresher than the saved history, so that is not read back.
             // On its own tab it is resumed as before.
             const held = bgRuns.get(hash);
+            // A turn running is not resumed: it is moved, from a surface that says it waits for the step (`moveRun`).
+            if (runControllers.has(hash) || runInboxes.has(hash)) return "busy";
             if (held && held.tabId !== tabId) {
                 const rebuild = held.p.rebuild;
                 if (!rebuild) return "none";
@@ -590,6 +619,7 @@ export const sessionStore = (() => {
                 // Deleted, or moved to the archive: its run policies go with it (POLICIES.md, "Scopes"). An archived
                 // session that comes back starts with none. `kept` (the move failed) leaves them.
                 if (e.outcome === "deleted" || e.outcome === "archived") { forgetRunPolicies(e.hash, e.outcome); deletePythonRun(e.hash); void endTasks(e.hash, e.outcome); }   // and its Python namespace and its detached tasks
+                if (e.outcome === "deleted") void forgetAgentFiles(e.hash);   // the files its runs wrote: an archived session keeps them
                 recordHousekeeping({
                     subsystem: "sessions", kind: e.outcome === "kept" ? "archive-failed" : "evict", reason: e.reason, key: e.hash, bytes: e.bytes,
                     detail: { outcome: e.outcome, idleDays: Math.floor(e.idleMs / DAY_MS), ...(e.error ? { error: e.error } : {}) },
@@ -715,14 +745,35 @@ if (sessionStore) {
         // The upgrade's pass, in the background: a row not yet moved is resumed from the row meanwhile.
         .then((r) => { void store.migrate().catch(() => 0); return r; })
         .then(() => store.open())
-        .then((rows) => {
-            sessionServer.restored(sessionServer.index.restore(rows.map((r) => ({ summary: r.summary, count: r.count }))));
-            void syncTaskRows().catch(() => undefined);
+        .then(async (rows) => {
+            const openTabs = await tabsOfThisBrowser().catch(() => undefined);
+            const restored = sessionServer.index.restore(rows.map((r) => ({ summary: r.summary, count: r.count })), openTabs);
+            sessionServer.restored(restored);
+            // A dropped id is written back, or the next start in this browser restores it again, onto whatever tab holds it then.
+            const stale = new Set(rows.filter((r) => r.summary.page?.tabId != null).map((r) => r.summary.id?.hash));
+            for (const row of restored) if (stale.has(row.id.hash) && row.page?.tabId == null) store.putSummary(row);
+            // A run held with no tab and no tasks has no table for that pass to find (sw-task-rows.ts): its row is set here.
+            void syncTaskRows().catch(() => undefined).then(() => hydrationDone).then(() => Promise.all([...bgRuns.keys()].filter(runHasNoTab).map(refreshTaskRow))).catch(() => undefined);
             void recordStorageSnapshot().catch(() => { /* storage unavailable */ });
             // Whatever a previous worker saved and never compacted, sessions from before compaction existed included.
             imageCompaction?.kick();
         })
         .catch(() => { /* no storage: the list is whatever this worker sees from now on */ });
+}
+
+/** The storage.session key a worker sets once it has started in this browser: it outlives an eviction, never a restart. */
+const BROWSER_SEEN_KEY = "ml_sessions_browser_seen";
+
+/**
+ * The ids of every tab open now, for `SessionIndex.restore`; EMPTY when the browser restarted since the rows were
+ * saved, because tab ids start over then and an open tab may hold a closed one's id. A worker that was only evicted
+ * finds its own mark in storage.session and checks the ids against the open tabs instead.
+ */
+async function tabsOfThisBrowser(): Promise<ReadonlySet<number>> {
+    const seen = (await chrome.storage.session.get(BROWSER_SEEN_KEY))[BROWSER_SEEN_KEY] === true;
+    const open = new Set((await chrome.tabs.query({})).flatMap((t) => (typeof t.id === "number" ? [t.id] : [])));
+    await chrome.storage.session.set({ [BROWSER_SEEN_KEY]: true });
+    return seen ? open : new Set();
 }
 
 /** Read the session settings once (retention, budget, titles); never rejects, since a worker without storage keeps
@@ -990,7 +1041,8 @@ export async function unarchiveSession(hash: string): Promise<boolean> {
         get: async (k) => (await chrome.storage.local.get(k))[k],
         set: (k, v) => chrome.storage.local.set({ [k]: v }),
     }).catch(() => { /* storage unavailable: the chat reads, it just does not resume */ });
-    sessionServer.restored(sessionServer.index.restore([{ summary: got.summary, count: got.events.length }]));
+    // An archived session has no live tab behind it: whatever id its row kept names another tab now, or none.
+    sessionServer.restored(sessionServer.index.restore([{ summary: got.summary, count: got.events.length }], new Set()));
     await archiveCall("remove", { hash }).catch(() => { /* in both until the next archive: harmless */ });
     scheduleFolderSync();
     return true;
@@ -1056,10 +1108,24 @@ export function sessionPageMoved(tabId: number, url: string): void {
     for (const row of sessionServer.pageMoved(tabId, url)) if (row.saved) sessionStore?.putSummary(row);
 }
 
+/**
+ * A tab's document went away (`tabs.onRemoved`, `onReplaced`, a navigation that ends a page's run): the rows it changed
+ * are sent, and a saved one is written, so the next worker does not restore a `page.tabId` the browser may hand to
+ * another tab.
+ * @param tabId the tab
+ * @param opts whether the tab closed, or only its document went
+ */
+export function sessionPageGone(tabId: number, opts: { closed: boolean; noTab?: readonly string[] }): void {
+    for (const row of sessionServer.pageGone(tabId, opts)) if (row.saved) sessionStore?.putSummary(row);
+}
+
 /** Fold one debug event into the index, and save it when the session is one we keep. Never throws: a malformed event
  *  must not break the relay it rides beside, and a full disk must not stop a run.
  *  @returns the session's hash when the index took the event, else undefined */
 export function ingestSessionEvent(event: unknown, source: IngestSource): string | undefined {
+    // A run with no tab is filed under the sentinel (no-tab.ts), which is no tab of the browser's: the index is told none,
+    // so no row ever names it as the session's tab.
+    if (isNoTab(source.tabId)) source = { ...source, tabId: undefined };
     try {
         const out = sessionServer.ingest(event as MlDebugEvent, source);
         if (!out.accepted) return undefined;

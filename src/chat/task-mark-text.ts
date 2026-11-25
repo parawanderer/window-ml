@@ -1,6 +1,6 @@
-// task-mark-text.ts — the words of a run's background-task mark on the HUD card, as one pure function.
+// task-mark-text.ts — the words of a run's background-task mark, as one pure function: the HUD card, the chat page's list and the phone's list. In src/chat so the phone's bundler reaches it.
 
-import { backgroundOf, type TaskBackground } from "../../contract/contract-debug";
+import { backgroundOf, type TaskBackground } from "../contract/contract-debug";
 
 /**
  * What the card says of a run's background tasks: "1 running in background", "2 running · 1 result waiting", "1 result

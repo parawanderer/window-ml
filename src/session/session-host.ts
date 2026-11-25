@@ -126,6 +126,9 @@ export interface RuntimeCapabilities {
     switchModel?: boolean;
     /** `device.*`: this runtime holds paired devices and can list, renew, revoke and re-scope them */
     devices?: boolean;
+    /** `agent.start` with a `detached` target: a run that starts with no tab (docs/spec/TABLESS_RUN.md). It needs `agent`,
+     *  not `tabs`. Absent means no, and a client offers no "No tab" choice. */
+    detached?: boolean;
     /** RESERVED: `agent.start` with a headless target. False on every runtime today. */
     headless?: boolean;
     /** RESERVED: accepts `agent.start` with `lineage` (a subagent started by another agent). False today. */
@@ -407,6 +410,9 @@ export type SessionStreamMessage =
 export type AgentTarget =
     | { kind: "tab"; tabId: number }
     | { kind: "blank"; url?: string }
+    /** No tab at all (docs/spec/TABLESS_RUN.md): the run's page tools are answered with how it gets a page, and the tools
+     *  that need none run. Requires `capabilities.detached`; on `agent.start` only, so far. */
+    | { kind: "detached" }
     /** RESERVED: requires `capabilities.headless` */
     | { kind: "headless" };
 
@@ -645,6 +651,15 @@ export type Command =
     | { type: "tab.screenshot"; runtime: RuntimeId; target: { tabId: number } | { session: SessionId }; maxBytes?: number }
     /** Outline an element (`selector`) or a canvas point/box (`token`) on the session's page; `null` clears it. */
     | { type: "page.highlight"; session: SessionId; ref: { selector: string } | { token: string } | null }
+    /**
+     * Add or remove a hiding rule for a session's files (POLICIES.md, "Hiding files", ruling 34): `hide` holds what its
+     * pattern matches, `show` releases a default hold or a lower `hide`. One command and one handler for every renderer
+     * (the extension's, the file browser's, a remote host's). Adding a `show` widens and IS the approval, so the renderer
+     * shows the entry and what it releases first; removing a `hide` widens and is refused until `confirm` says the renderer
+     * showed the entry and what becomes readable. Refused patterns answer `invalid` with the reason.
+     */
+    | { type: "policy.files"; session: SessionId; op: "add"; effect: "hide" | "show"; source: string; scope: "session" | "global" }
+    | { type: "policy.files"; session: SessionId; op: "remove"; id: string; confirm?: boolean }
     /** A small model call on the client's behalf, for work the UI does about a session: its title, a block
      *  summary, `explain` notes. The runtime always uses its UTILITY model profile and caps `maxTokens`; the client
      *  cannot choose a model, so this cannot become a way to run arbitrary generations on someone's main model. */
@@ -702,6 +717,8 @@ export const COMMAND_SCOPE: { readonly [T in CommandType]: Scope } = {
     "tab.focus": "drive",
     "tab.screenshot": "screen",
     "page.highlight": "drive",
+    // A `show` releases a held file to the model, so changing the list is answering for the person: `approve`, not `drive`.
+    "policy.files": "approve",
     "side.call": "drive",
 };
 
@@ -926,6 +943,9 @@ export interface CommandResultData {
     "tab.focus": Record<string, never>;
     "tab.screenshot": { image: ImageDataUrl; width: number; height: number; ts: number };
     "page.highlight": Record<string, never>;
+    /** `add`: the entry's id. `remove`: `removed`, or `confirm` with the ids a widening removal would let decide, when
+     *  `confirm` was not sent. */
+    "policy.files": { id: string } | { removed: true } | { removed: false; confirm: { exposes: string[] } };
     /** `structured` is the parsed JSON when a `schema` was sent */
     "side.call": { content: string; structured?: unknown; usage?: TokenUsage | null };
 }

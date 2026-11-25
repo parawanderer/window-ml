@@ -39,13 +39,15 @@ import { changeSettingTool } from "../tools/change-setting-tool";
 import { proposeManifestTool } from "../tools/propose-manifest-tool";
 import { pythonInstallTool } from "../tools/python-install-tool";
 import { offersTask, taskTool } from "../tools/task-tool";
-import { shellTurnedOn } from "./sw-shell";
+import { shellOffered } from "./sw-shell";
 import { defineTool } from "../ml/ml-tool-factories";
 import { notePersonTurn } from "./sw-start-approval";
 import { adoptOnTab } from "./adopt-run";
 import { holdStands } from "./nav-arrival";
 import { toPageUi } from "./sw-side-panel";
 import { resetTaskChain, setTaskTurnHost, taskTurnHasWork } from "./sw-tasks";
+import { isNoTab } from "./no-tab";
+import { refreshTaskRow } from "./sw-task-rows";
 
 /** Whether a run the worker builds offers `python_install`. On since the install step (docs/plan/repl/PACKAGES_INSTALL.md,
  *  slice 4): an approved card is installed into the run's own Python worker. */
@@ -68,10 +70,10 @@ const DEFAULT_MAX_STEPS = 10;
  * @throws when the tab is not an ordinary web page, there is nothing to do, or the page cannot host the run
  */
 export async function startUserRun(tabId: number, req: UserRunRequest, opts: { keep?: boolean; approvalRouting?: "both"; answer?: true; sender?: Omit<PromptOrigin, "surface"> } = {}): Promise<{ hash: string }> {
-    // The URL and title are the BROWSER's, never something the page said about itself.
-    const tab = await chrome.tabs.get(tabId);
-    const url = tab.url || "";
-    if (!/^https?:/i.test(url)) throw new Error("An agent run can only start on an ordinary web page (http or https).");
+    // The URL and title are the BROWSER's, never something the page said about itself. A run with NO tab (no-tab.ts) has neither.
+    const tab = isNoTab(tabId) ? undefined : await chrome.tabs.get(tabId);
+    const url = tab?.url || "";
+    if (tab && !/^https?:/i.test(url)) throw new Error("An agent run can only start on an ordinary web page (http or https).");
     // Past the cap a start is refused, never cut: the composers say so first, and this is the half no surface can skip.
     const tooMany = imagesRefusal(req.images?.length ?? 0);
     if (tooMany) throw new ImagesRefused(tooMany);
@@ -91,7 +93,7 @@ export async function startUserRun(tabId: number, req: UserRunRequest, opts: { k
 }
 
 /** {@link startUserRun} once the run has its id: attach the files, assemble, adopt, host. */
-async function startMinted(tabId: number, tab: chrome.tabs.Tab, url: string, ml: ReturnType<typeof workerMl>, runId: string, req: UserRunRequest, files: SentFile[] | undefined, opts: { keep?: boolean; approvalRouting?: "both"; answer?: true; sender?: Omit<PromptOrigin, "surface"> }): Promise<{ hash: string }> {
+async function startMinted(tabId: number, tab: chrome.tabs.Tab | undefined, url: string, ml: ReturnType<typeof workerMl>, runId: string, req: UserRunRequest, files: SentFile[] | undefined, opts: { keep?: boolean; approvalRouting?: "both"; answer?: true; sender?: Omit<PromptOrigin, "surface"> }): Promise<{ hash: string }> {
     const shelf = sessionTokens(runId).files;
     // What the person sends is scrubbed by registered value where it becomes the turn (ruling 39): the task as framed, its
     // files at rest, a long paste's pointer and the page context. Read first, so a store that cannot be read refuses the
@@ -108,8 +110,8 @@ async function startMinted(tabId: number, tab: chrome.tabs.Tab, url: string, ml:
     if (paste) Object.assign(recipe, withPasteLine(recipe, typed, paste.line));
     // propose_policy and change_setting only here: a run the worker builds for the person may ask them for a policy or a
     // setting change; no page's run can. And
-    // propose_manifest when the settings turn ml.sh on, which the run's scripts then reach.
-    const shellOn = await getConfig().then(shellTurnedOn, () => false);
+    // propose_manifest when the settings turn ml.sh on and a process host answers, which the run's scripts then reach.
+    const shellOn = await getConfig().then(shellOffered, () => false);
     // `task` wherever a call can detach: an ml.sh call, or a python_exec cell past its lease (sw-python-task.ts).
     const base = [...(recipe.options.tools ?? (ml as { domTools?: { name: string }[] }).domTools ?? []), ...(recipe.options.extraTools ?? [])];
     const extraTools = [...(recipe.options.extraTools ?? []), proposePolicyTool(defineTool), changeSettingTool(defineTool), ...(shellOn ? [proposeManifestTool(defineTool)] : []), ...(offersTask(shellOn, base.map((t) => t?.name)) ? [taskTool(defineTool)] : []),
@@ -135,7 +137,8 @@ async function startMinted(tabId: number, tab: chrome.tabs.Tab, url: string, ml:
     let cfg: Awaited<ReturnType<typeof getConfig>>;
     let adopted: Awaited<ReturnType<typeof adoptOnTab>>;
     try {
-        adopted = await adoptOnTab(tabId, runId, rebuild);
+        // No tab: no page to adopt, and the model is told it has none (`NO_TAB_CONTEXT`).
+        adopted = isNoTab(tabId) ? { pageInfo: NO_TAB_CONTEXT } : await adoptOnTab(tabId, runId, rebuild);
         if (adopted.error) throw new Error(`The run could not start on this page: ${adopted.error}.`);
         cfg = await getConfig();
         if (starting.signal.aborted) throw new Error("Cancelled before the run started.");
@@ -151,7 +154,7 @@ async function startMinted(tabId: number, tab: chrome.tabs.Tab, url: string, ml:
             runId, systemPrompt: asm.systemPrompt, pageContext: scrubbedContext(scrub, capPageContext(adopted.pageInfo)), think: null,
             maxSteps: recipe.maxSteps ?? DEFAULT_MAX_STEPS, surface, stream: recipe.stream, toolTokens: true, origin: recipe.origin,
             navigate: true, crossOrigin: true, approvalRouting: opts.approvalRouting ?? "ui",
-            page: { origin: new URL(url).origin, url, title: tab.title || undefined },
+            ...(tab ? { page: { origin: new URL(url).origin, url, title: tab.title || undefined } } : {}),
             builtBy: "worker",
         }),
         ...(recipe.display ? { display: recipe.display } : {}),
@@ -169,8 +172,13 @@ async function startMinted(tabId: number, tab: chrome.tabs.Tab, url: string, ml:
     }
     endStart(runId, starting);
     hostRun({ type: "START_RUN", payload }, tabId, () => { workerRunsStarting.delete(runId); }, undefined, undefined, undefined, scrub.note());
+    // Started with no tab: its session row says so from the start, as a run whose tab closed says it (no-tab.ts).
+    if (isNoTab(tabId)) void refreshTaskRow(runId);
     return { hash: runId };
 }
+
+/** What a run started with no tab reads where a page's context would be: that there is none, and what still works. */
+const NO_TAB_CONTEXT = "This run has no tab: it started with no page. The tools that need a page answer that they need one; the others work. The person can bring this session to a tab.";
 
 /** A page context through the turn's scrub, absent when there is none. */
 const scrubbedContext = (scrub: TurnScrub, ctx: string | undefined): string | undefined => (ctx ? scrub.text(ctx) : ctx);
@@ -464,7 +472,8 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
         let hosted = false;
         try {
             try {
-                if (!stored.p.rebuild || (!await holdStands(tabId, hash) && (await adoptOnTab(tabId, hash, stored.p.rebuild)).error)) { endStart(hash, starting); return takeBack("none"); }
+                // A run with no tab (no-tab.ts) has no page to adopt or judge: its turn starts with none.
+                if (!stored.p.rebuild || (!isNoTab(tabId) && !await holdStands(tabId, hash) && (await adoptOnTab(tabId, hash, stored.p.rebuild)).error)) { endStart(hash, starting); return takeBack("none"); }
                 if (starting.signal.aborted) { endStart(hash, starting); return takeBack("none"); }
             } catch (e) {
                 endStart(hash, starting);

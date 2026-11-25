@@ -176,6 +176,40 @@ test("a PDF attached to a chat is read by the runtime: its text in <page> sectio
     } finally { await ext.context.close(); await fake.stop(); }
 });
 
+test("a chat's PDF past the text a message takes: the note names read_pages, a call reads the page, and the turn shows it", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    // The model says it takes tools (`/api/show`), which is what offers read_pages (FILE_ATTACHMENTS.md).
+    fake.setCapabilities(["completion", "tools"]);
+    const ext = await launchExtension();
+    const fixture = (name) => path.join(import.meta.dirname, "..", "fixtures", "pdf", name);
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off" });
+        fake.setScript([{ tool: "read_pages", args: { file: "large-text.pdf", pages: "1" } }, { content: "read the held page" }]);
+        const { page: chat, errors } = await openChatPage(ext);
+        await chat.getByRole("button", { name: /^Kind:/ }).click();
+        await chat.getByRole("listbox", { name: "Kind" }).getByRole("option", { name: /^Chat/ }).click();
+        // One page of more than 40,000 characters: past the 32,000 a message takes when the context is not known.
+        await chat.locator('.chat-start-box input[type="file"]').setInputFiles([fixture("large-text.pdf")]);
+        await expect(chat.locator(".chat-start-box .cfiles .file-pill")).toHaveCount(1);
+        await chat.locator(".chat-start-box textarea").fill("what does it say?");
+        await chat.locator(".chat-start-box textarea").press("Enter");
+
+        await expect(chat.locator(".chat-main")).toContainText("read the held page");
+        const [first, second] = fake.calls();
+        expect(JSON.stringify(first.messages.at(-1))).toContain("page 1 was not sent: past the text a message takes. Read them with read_pages.");
+        expect(first.tools.map((t) => t.function.name)).toEqual(["read_pages"]);
+        // The call's result is the page, cut where one call's text ends, and it is what the next request carries.
+        const result = second.messages.at(-1);
+        expect(result.role).toBe("tool");
+        expect(result.content).toContain('<file name="large-text.pdf" pages="1">');
+        expect(result.content).toMatch(/\(page 1 is cut here: its text runs past what one call returns, 32000 of \d+ characters\)/);
+        // The turn draws the call between the question and the answer.
+        await expect(chat.locator(".chat-main .chat-tools")).toHaveCount(1);
+        await expect(chat.locator(".chat-main .chat-tools")).toContainText("read_pages");
+        expect(errors).toEqual([]);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
 /** A two-card box for the fake backend to report, so the resource panel has something to draw. */
 const GiB = 1024 ** 3;
 const card = (id, free) => ({ gpu_id: String(id), name: `CUDA${id}`, runner: "CUDA", compute: "12.0", driver: "13.2", total_memory: 101972967424, physical_memory: 102641958912, free_memory: free });
@@ -984,6 +1018,39 @@ test("a session this browser holds nothing live for says so: a plain chat, and a
 
 // --- resuming a run whose tab closed, over the REAL runtime (the fake host's resume moved the page by itself) ---
 
+test("a run the worker still holds when its tab closes goes on with no tab: no resume bar, and the next message is a turn with no page", async () => {
+    // TABLESS_RUN.md part 1: the worker files the run under no tab (`detachTabRuns`), its row carries
+    // `background.noTab`, and `resumableHere` offers no resume beside a composer that reaches the run.
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const site = await startPageServer({});
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off" });
+        fake.setScript([{ content: "nothing to do" }, { tool: "click", args: { selector: "#go" } }, { content: "the second answer" }]);
+        const site1 = await ext.context.newPage();
+        await site1.goto(site.url + "/");
+        await waitForMl(site1);
+        const { page: chat, errors } = await openChatPage(ext);
+        await chat.locator(".chat-start-box textarea").fill("count the widgets");
+        await chat.locator(".chat-start-box textarea").press("Enter");
+        await expect(chat).toHaveURL(/#\/s\/local%3A/, { timeout: 10_000 });
+        await expect(chat.locator(".chat-transcript")).toContainText("nothing to do", { timeout: 15_000 });
+        await site1.close();
+        await chat.bringToFront();
+
+        await expect(chat.locator(".composer .cinput")).toBeVisible({ timeout: 10_000 });
+        await expect(chat.locator(".chat-resume")).toHaveCount(0);
+        await chat.locator(".composer .cinput").fill("and once more");
+        await chat.locator(".composer .cinput").press("Enter");
+        await expect(chat.locator(".chat-transcript")).toContainText("the second answer", { timeout: 15_000 });
+        // The page tool stays listed and is answered without a page: the model reads why, and how the run gets one.
+        const sent = fake.calls()[2].messages.filter((m) => m.role === "tool").map((m) => String(m.content)).join("\n");
+        expect(sent).toContain('"click" needs a page, and this run has no tab');
+        await expect(chat.locator(".chat-resume")).toHaveCount(0);
+        expect(errors).toEqual([]);
+    } finally { await ext.context.close(); await site.stop(); await fake.stop(); }
+});
+
 test("Resume on a page puts the run on the picked tab: the closed-tab bar goes, one divider, and the run takes the next message", async () => {
     // Shane's report (2026-11-14): the press added a "resumed on" divider, left the bar, and a second press added a
     // second divider. The worker's index re-owned the session but kept the closed tab's page on its row.
@@ -1006,6 +1073,11 @@ test("Resume on a page puts the run on the picked tab: the closed-tab bar goes, 
         const site2 = await ext.context.newPage();
         await site2.goto(site.url + "/?second");
         await waitForMl(site2);
+        // The bar is for a run the worker no longer HOLDS: the browser stops an idle worker, which drops the finished
+        // run from memory, and the tab closes after that. A run still held goes on with no tab (the test above).
+        const cdp = await ext.context.newCDPSession(chat);
+        await cdp.send("ServiceWorker.enable");
+        await cdp.send("ServiceWorker.stopAllWorkers");
         await site1.close();
         await chat.bringToFront();
 

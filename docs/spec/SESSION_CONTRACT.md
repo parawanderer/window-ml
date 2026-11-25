@@ -157,6 +157,17 @@ wrapped in a `SessionEventEnvelope`: `v`, the global `session` id, an `epoch` an
 - **A client drops an envelope whose `event.session.hash` differs from `session.hash`**, so no source can write into
   another session's record by mislabelling an event.
 - `gone` ends a subscription when the session is deleted.
+- **A chat turn's tool calls are `agent-step` events in the chat's session**: the event, and the step renderer, an
+  agent run already uses, with `turn` naming the chat turn they belong to (that turn's `chat` event `id`). A
+  worker-hosted chat emits them only when it offered the model a tool (`read_pages`, FILE_ATTACHMENTS.md). Each falls
+  between its turn's `chat` and its `chat-result` or `chat-error`, and a session's status is still decided by its
+  turns alone, never by a step. In a chat session `step` and `seq` are both the session's count of tool calls from 1,
+  kept in the chat's record, so each is unique in the session and increases across turns, in a chat brought back after
+  a worker restart too. A client holds a step whose `turn` names a `chat` it does not hold as an orphan until that
+  `chat` arrives: it is never drawn under another turn, and never becomes a turn of its own. Additive: a client that
+  predates `turn` reduces the step into the session's `steps`, draws the turn and its answer as before with no step
+  shown, and its JSON export still carries the step raw. The hub never reads it, since the event rides in the sealed
+  body.
 
 ## Render descriptors: new kinds and fallbacks
 
@@ -211,6 +222,7 @@ runtime answers a type or option it does not offer with `unsupported`.
 | `tab.screenshot`: on demand, size-capped | screen | `screenshots` | `CAPTURE_TAB` |
 | `page.highlight`: a selector, a canvas token, or clear | drive | `highlight` | `__mlHighlight` → `ML_HL_REMOTE` |
 | `side.call`: a utility-model call about a session | drive | `sideCalls` | `FETCH_LLM` with `extend: "utility"` |
+| `policy.files`: add a hiding rule for a session's files (`op: "add"`, `effect` `hide` or `show`, a path or glob `source`, `scope` `session` or `global`), or remove one by `id` (`op: "remove"`; removing a `hide` widens and answers `confirm` until sent with `confirm: true`); POLICIES.md, "Hiding files" | approve | | nothing |
 | `file.put`: one chunk of a file sent ahead of the message that names it (a PDF, or a text file that will not go whole, `sentWhole`), over the hub only: `{ runtime, sha256, index, count, bytes }`, the chunk's raw bytes after the JSON and a zero byte in the sealed body. Answers `{ held, complete }`; `complete` once every chunk is in and the bytes hash to `sha256`. At most 4 unanswered (FILE_ATTACHMENTS.md, "Over the hub") | drive | (the hub path; `unsupported` from a runtime that takes none, and the client sends inline) | nothing |
 | `file.have`: which chunks of a file this runtime holds, `{ held, count, complete }`, so a client sends only the rest | drive | (as `file.put`) | nothing |
 | `device.list` | admin | `devices` | nothing |
@@ -327,10 +339,11 @@ command because `session.send` would reach a page that no longer holds the sessi
   a `@tool:` pointer still resolves; live element references, the page's `state`, cached fetches, page-defined
   tools and approval grants dropped, and each named in `dropped`.
 
-#### Proposed: a detached target (TABLESS_RUN.md, not built)
+#### A detached target (TABLESS_RUN.md)
 
-**Status: proposal (2026-11-22, the `[window-ml move-run]` lane); the shape read and accepted by the coordinator on
-#2094, and the Chat Page lane draws the start form's "No tab" and the page chip.**
+**Status: built on `agent.start` (2026-11-23, the `[window-ml move-run]` lane, TABLESS_RUN.md §As built, part 2),
+which also built the start form's "No tab". On `session.resume` it is still a proposal, answered `unsupported` until
+TABLESS_RUN.md step 4. The shape was read and accepted by the coordinator on #2094.**
 A run can have NO page ([`TABLESS_RUN.md`](TABLESS_RUN.md)): started with none, or left with none when its tab closed.
 It reaches the contract as one additive member of an open enumeration, so nothing here breaks:
 

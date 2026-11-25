@@ -66,6 +66,38 @@ must be unable to do anything but answer. The dialect is exactly that: it is the
 it has a step budget, and it already has the halting and adversarial tests. A policy that throws, runs out of budget or
 reaches outside the dialect is **no opinion**, so the call asks: a broken policy fails closed.
 
+**RULED 2026-11-23 (Shane, ruling 109): a policy is written in a smaller language than the dialect, checked when it is
+saved.** Shane's target is the kernel's verified programs: checked before they are stored, total by structure, a pure
+function of the call's facts, fail closed (ruling 108 is the last). The whole dialect is more than a predicate over a
+frozen record needs: it admitted recursion, helper functions and `try`/`catch`, and the last caught the host's stack
+overflow. Not built; small-fixes builds it.
+
+**Admitted.** `(c) => <expression>`, or a block of leading `const` bindings and `for…of` statements ending in one
+`return <expression>`. An expression is built from literals (string, number, boolean, an array of strings, a regex
+literal), `===`, `!==`, `&&`, `||`, `!`, same-type `<` and `>`, the ternary, strict reads on `c`, indexing and
+`.length`, `.some` and `.every` with an inline arrow, `.includes`, `.startsWith`, `.endsWith`, `.slice`, `.join`, a
+regex literal's `.test`, `c.effects.has` and `.uses`, `new Set(<array literal>)` read with `.has` and `.size` only,
+and `new URL(<string>)` read through its string properties only. A `for (const x of xs)` body holds only `if
+(<expression>) return <expression>;` and nested `for…of`: it is `.every` or `.some` spelled as a loop.
+
+**Refused.** `let` and every assignment; helper functions and recursion; an arrow anywhere but `.some` and `.every`;
+`try`/`catch` and `throw`; `while` and the classic `for`; `new RegExp`; `Map`; `JSON.parse`; `sort` and `reduce`;
+`async`; locale-dependent methods; a `Set`'s mutators; a `URL`'s setters and `searchParams`.
+
+**Why these.** The admitted list follows a census of every policy we ship or show (small-fixes, 331 sources in
+`tests/fixtures/policy-corpus.json` plus the built-ins, docs and settings read on main): no shipped, documented or
+realistic-test policy uses a refused form. Of 110 model-written answers, 23 reached outside the expression forms: a
+`const` list or `Set` first (9), `for…of` (8), the ternary (5), `new URL` (1). Shane: a form our own authors reach for
+belongs in the language, so those four are admitted, `for…of` without `let` so that no loop carries an accumulator and
+the source still reads as a rule to the person approving it.
+
+**The check at save.** Both authors pass it: a person's policy (the `POLICIES` message) and a model's
+(`propose_policy`). A source outside the language is refused with a line naming the rewrite. A stored policy outside
+the language is broken when it loads, so by ruling 108 a `deny` or `ask` among them asks. With no recursion and no
+loop but over the facts, every policy halts by construction; the size caps and the step budget stay as guards, because
+`const a = s + s; const b = a + a;` still doubles a string per line and a regex can still backtrack. One meter is
+shared by all policies judged on a call.
+
 **A JS subset, not a policy language of its own.** The policy languages before this one each brought their own syntax
 (Cedar, Rego, CEL, IAM's JSON conditions); Starlark and eBPF are restricted subsets of a language people already know.
 This is the second kind, with two things those lack: the subset already exists and is already the security boundary (the
@@ -111,6 +143,22 @@ card shows the call's resolved facts, not the script.
      hold does not fire, and the call asks anyway; one that tests an absence fires. Either way no `ask` fails open.
      A BROKEN `ask` is no opinion, like a broken `deny`: a call an `allow` or the built-in default frees still runs, and
      the policy page shows the `ask` as broken.
+     **RULED 2026-11-23 (Shane, ruling 108): a broken `deny` or `ask` makes the call ASK.** The sentence above and "a
+     broken policy fails closed" (in "Why the read-only dialect") disagreed, and the code followed this one: a `deny`
+     with a typo in a field name, one that used its whole step budget and one that overflowed the stack were each
+     skipped, and a call an `allow` or the built-in default frees then ran (small-fixes' audit of main 8356772f,
+     re-run by it; the coordinator read `judgeCall`). From this ruling a broken `deny` or `ask` yields `ask`, with
+     that policy as the reason; a broken `allow` stays no opinion; a `deny` that evaluates cleanly still wins. The
+     card says inline why the call escalated and what to do (Shane): it names the policy, gives the break in plain
+     words, carries an action that opens the policy for editing, and offers no "remember". The cause slug is
+     `broken-policy`. Built. A policy is judged per call, so a broken `deny` or `ask` makes every call of its consumer
+     (among the run's and the global policies) that it breaks on ask until it is fixed or removed; one that does not
+     parse, or that the language refuses, breaks on every such call. When a clean `ask` also matches, the card names
+     the broken one, since it is the one the person can act on. Two more findings of the same audit: the dialect's
+     `try`/`catch` catches the host's stack overflow, below `MAX_CALL_DEPTH`, so a policy can return the opposite
+     answer with nothing recorded, and the outcome depends on the caller's stack depth (small-fixes repairs it for
+     both realms: the overflow becomes a stop no script catches and the depth limit moves below the host's); and
+     `propose_policy` vets a proposal against one probe only.
   2. **The card says why.** It names the `ask` policy that raised it, and offers no "remember" whose only result would be
      an `allow` the `ask` overrides.
   3. **The upgrade.** Builds before this one load only `allow` and `deny` (`sw-policies.ts`, the load filter), so a stored
@@ -764,14 +812,33 @@ Shane's ruling 34 (2026-11-17): the files the host's sandbox holds unreadable ar
 them. Make the default reasonable; someone with an idiosyncratic layout fixes it with an override, not with a new
 default rule. Two things stay defects whatever the policies say: a path the call's facts list as hidden
 (`hiddenSecrets`) that the call can read, and a default-held value reaching the model with no override. The rest of
-this section is the coordinator's calls under the ruling, each surfaced to Shane. Nothing here is built.
+this section is the coordinator's calls under the ruling, each surfaced to Shane.
+
+**Built so far (the extension's readers, the first of three PRs).** The `files` consumer with `hide` and `show` entries
+in the policy store, the four defaults as built-in rows, the layer rule and its refusals (`src/files-hide.ts`), the
+`policy.files` command, the view's rows (`src/sw/files-hide-view.ts`), and the `/files` reader in the offscreen document
+bound by the resolved list (`src/session/files-hide-rule.ts`), which Python's mount and `ml.fs` both read through. The
+second PR (window-ml-host #58 and this repository's half) binds a program the shell starts: every `spawn` goes through
+`spawnBound` (`src/sw/sw-spawn.ts`) and carries the list, below. NOT built: the model's proposal card, the offer when a
+root is added, and the four defaults in the view of a session with no `files` rule: as for every consumer, a default row
+appears once the consumer has a rule (a stated gap, closed before PR C merges, with the three tests that pin it). In the
+browser copy, which has no symlinks, `default:link-target` and `default:linked-template` hold nothing, and the
+linked-template refusal of a `show` is the host's to make. Three choices made in building it, on the red team's findings
+at #2088: the policy page's generic edit and remove refuse a `files` row (an `allow` saved over a `hide` held nothing,
+and one click removed a `hide` with no confirmation), so a hiding rule is removed only from a session's view, which
+confirms, and DevTools Settings' own form for these rows is PR C; a `hide` that matches a directory holds everything
+under it, as the offer's one row for a credential directory needs, while a `show` releases only what it matches; and
+`ml.current.policies` carries no `files` row. The reason given at #2088, that a hidden file reads as absent, does not
+hold: its NAME is listed ("What a hidden file shows", below). Whether the model may read its own hiding rules is decided
+with the masked-file design; until then the row stays out.
 
 **One list, two verbs, the policy store's.** A hiding rule is a `StoredPolicy` with consumer `files`, effect `hide` or
 `show`, and `source` a path or a glob. Scope `global`, or `run`, which is the session's and keyed by its hash, as for
-every policy. Origin `person`, `card` or `proposed`. There is no second store: the policy page, its edit and remove,
-and the run-scope lifetime rules (it survives a resume and is removed at archive) are the ones above.
+every policy. Origin `person`, `card` or `proposed`. There is no second store: the policy page and the run-scope
+lifetime rules (it survives a resume and is removed at archive) are the ones above.
 
-- **`hide <pattern>`** holds what it matches, for reading and writing, like a default hold.
+- **`hide <pattern>`** holds what it matches, and everything under a directory it matches, for reading and writing,
+  like a default hold.
 - **`show <pattern>`** releases a hold on what it matches: a default (a dotenv name, one of the three credential files
   at a root's top, a held symlink target, or a linked template), or a `hide` in a layer below it. By the layer rule
   below, a session `show` overrides a person's global `hide`. A shown path is readable AND writable, and is never listed
@@ -786,6 +853,11 @@ and the run-scope lifetime rules (it survives a resume and is removed at archive
   `.env` lands on the now-unmasked template (on macOS `.env` stays refused by its name, but the same bytes read under
   the template's). So the entry is refused, naming `.env` as the link that resolves to it; `show .env` with it is the
   entry that applies whole.
+- **`mask <pattern>`, a third effect, is ruled and not built** (ruling 113, 2026-11-24; SECRET_HANDLES.md, "A masked
+  file"). It lists the file, shows its keys with each value replaced, takes writes through the extension's own code
+  and puts the real values back, and is read-only to a program not allowed for it. `default:dotenv` becomes a `mask`.
+  On a tie within a layer the order is `hide`, `mask`, `show`. A `show` may then be scoped to one program and pinned
+  by hash. Until it is built, everything in this section stands as written.
 - **A `show` does not stop the registry scrub.** A value registered as a secret is still scrubbed from what a
   released file prints (SECRET_HANDLES.md, "The scrub as built").
 
@@ -807,7 +879,8 @@ offers no "always": a global `show` under a global `hide` is the person's own ed
 what matches LATER too, and the card says so beside the paths it lists. Nothing changes until the person approves. A
 person may also write an entry directly, in DevTools Settings, from the file browser's right-click (ruling 24), or with
 "always" on a card that offers it; that is expected to be rare. A page, `change_setting` and `ml.settings` can neither
-write nor propose one: the list is a gate key ([MODEL_SETTINGS.md](MODEL_SETTINGS.md)).
+write nor propose one: the entries are rows of the policy store, which is no setting
+([MODEL_SETTINGS.md](MODEL_SETTINGS.md), "Not settings, never writable").
 
 **One command to change it.** Adding or removing an entry is one session-contract command with one handler, whichever
 renderer sends it: the extension's, the file browser's, or a remote host's. It is sealed and carried over the hub like
@@ -818,34 +891,49 @@ renderer first shows the entry verbatim and the paths that would become readable
 the remove control until a person-signed command exists. The hub needs no change to carry the command, the read below
 or the second verb: the sealed body is opaque to it ([hub-client.md](../dev/hub-client.md)).
 
-**What the host gets.** On each `spawn`, the worker sends the call's resolved list: the session's layer over the global
-one, as `{ "show": [<pattern>…], "hide": [<pattern>…] }` with each entry's id. The host applies `show` before it builds
-the held set, so `hiddenSecrets` never lists a shown path, and adds each `hide`. On macOS a `hide` becomes read and
-write deny rules after the template allow, and a `show` an allow after the denies but never over a credential directory.
-On Linux a `hide` is resolved against the tree when the call is spawned and each match is masked; more than 256 matches
-fails the spawn with `SandboxFailed` naming the entry, rather than leaving the excess readable. Naming a hidden path in
-`pathArgs` asks, for a `hide` as for a dotenv file, and the card names the entry that hides it; approved, it re-allows
-that path's read for that call. No `allow` policy of any consumer frees that ask, and no "always" is offered on it: the
-durable way to read the file is to remove the `hide`. A change applies from the next call; a call already running keeps
-the sandbox it started with. The host's protocol (window-ml-host, PROTOCOL.md) gains the `spawn` field when this is
-built.
+**What the host gets.** On each `spawn`, the worker sends the call's resolved list, the session's layer over the global
+one, as `hideList`: ONE array of `{ id, effect, pattern }` in ascending precedence, where the last entry that matches a
+path decides (a `hide` by the path or a directory above it, a `show` by the path exactly). The worker sorts it by the
+rule above (global under session, then less specific under more, then `show` under `hide`, and of two entries equal on
+all three the one stored first last), so the host's last match is the entry that rule names; a refused entry is left out
+(`hostHideList`, `src/files-hide.ts`). This one array replaced the `{ "show": […], "hide": […] }` this section first
+said (the coordinator's call on window-ml-host #58), since two lists cannot say which entry decides. An entry the host
+cannot read refuses the spawn and is never skipped. A host whose `hello.hideList` is not `true` would ignore the field:
+the worker refuses a call there while any `hide` applies, and sends it unchanged when there are only `show` entries,
+which then hold more, not less. A store that could not be read refuses the call. The host applies `show` before it
+builds the held set, so `hiddenSecrets` never lists a shown path, and adds each `hide`. On macOS a `hide` becomes read
+and write deny rules after the template allow, and a `show` an allow after the denies but never over a credential
+directory. On Linux a `hide` is resolved against the tree when the call is spawned and each match is masked; more than
+256 matches fails the spawn with `SandboxFailed` naming the entry, rather than leaving the excess readable. Naming a
+hidden path in `pathArgs` asks, for a `hide` as for a dotenv file, and the card names the entry that hides it; approved,
+it re-allows that path's read for that call. No `allow` policy of any consumer frees that ask, and no "always" is
+offered on it: the durable way to read the file is to remove the `hide`. A change applies from the next call; a call
+already running keeps the sandbox it started with. The host's protocol is window-ml-host PROTOCOL.md, "The hide list".
+The host reports such a path as `paths[].hiddenBy`, and `judgeCall` asks on it before any `allow` or the free tier
+(`namesHidden`).
 
 **Every reader of a root is bound by it.** The list binds every way a file under a root is read, not only a `spawn`:
 `ml.fs` and its one ranged reader, an `@files` reference, the file browser's content view, and Python's `/files`
-mount (built, #2026; the reader asks a hide rule at every open and read, and nothing sets one until this list is
-built). One list, every reader: a reader the host does not sandbox applies the worker's resolved list
+mount (built, #2026; the reader asks the hide rule at every open and read, and the rule is this list, set by PR A
+of this section's build). One list, every reader: a reader the host does not sandbox applies the worker's resolved list
 itself before it reads. A hidden file readable through `ml.fs` is the defect this rules out, and a row asserts it for
 each reader.
 
-**What a hidden file shows.** As for a default-held file: its NAME is listed, by `ls`, the file browser and `glob`, on
+**What a hidden file shows.** The answer for every reader and platform is one table, in
+[SECRET_HANDLES.md](SECRET_HANDLES.md), "What the model can see of a secret". As for a default-held file: its NAME is listed, by `ls`, the file browser and `glob`, on
 both platforms; its content is not, and a read fails with EPERM on macOS and EACCES on Linux. A `hide` behaves as the
 defaults do on each platform, and the file browser marks the name as hidden (the per-entry `hidden` flag the hide-list
 item asks for).
 
-**Known limits.** On Linux a `hide` is resolved when the call is spawned, so a file the call creates that matches it is
-not masked for that call; macOS's rules match by pattern and cover it. The next call's spawn holds it on both. A file
-inside a credential directory, or under a mask in `$HOME`, has no `show` that releases it (ruling 46): a layout that
-keeps a file a call needs in one has no override in this version, and moves that file out.
+**Known limits.** On Linux a default holds a dotenv file only at a root's top (`root/app/.env` is readable). On Linux a
+`hide` is resolved when the call is spawned and again when it starts, so a file that appears after it starts and matches
+it is readable to that call until it ends, whoever created it (the call, or any other process writing into the tree
+meanwhile); macOS's rules match by pattern and cover it. The next call holds it on both. A `hide` follows names: a hard
+link made earlier under a name it does not match still opens the file, on both platforms, as for the defaults. Each
+`hide` row of the view says both, in plain words, the Linux line only when the connected host reports Linux
+(`hideLimits`, `src/sw/files-hide-view.ts`). A file inside a credential directory, or under a mask in `$HOME`, has no
+`show` that releases it (ruling 46): a layout that keeps a file a call needs in one has no override in this version, and
+moves that file out.
 
 **The read, for the view.** The view of the effective list is the access tab of small-fixes' per-session Session
 summary page, a read-only layered list (default < global < session) with a scope chip, an "overrides <rule>" line and
@@ -913,7 +1001,8 @@ hidden until the person picks it, and never all at once by default. The coordina
   through a `spawn`.
 - Naming a hidden path in `pathArgs` asks, names the `hide`, and no `allow` policy frees the ask.
 - The upgrade: there was no earlier hide list, so the fixture is today's policy store, with no `files` rows, read by
-  the new code. Its policies decide as before, and the view shows the four defaults only.
+  the new code. Its policies decide as before. As built (PR A), the view holds no `files` row until a rule exists,
+  then the four defaults first; showing the defaults with no rule is the follow-up below.
 
 **Other sessions' files, later** (ruling 91, 2026-11-20; NOT BUILT AND NOT SCHEDULED). Each session's folder on disk
 is private to it, and the host refuses every other session's folder under `window-ml-files/` by default

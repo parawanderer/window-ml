@@ -150,7 +150,7 @@ export async function runOn(path, scripts, { between, fetches = [{ url: DATA_URL
             return { result: "" };
         },
     });
-    onBg?.(bg);
+    await onBg?.(bg);
     bg.commit?.(7, { documentId: "doc-1", url: SITE_URL });
     const { hash } = await bg.context.__mlStartUserRunForTest(7, { task: "probe", surface: "hud", maxSteps: 80 });
     for (let i = 0; i < ticks && n <= steps.length; i++) await new Promise((r) => setTimeout(r, 0));

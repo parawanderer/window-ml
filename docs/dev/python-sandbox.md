@@ -193,7 +193,13 @@ the run's `ml.chat` with `images` is the vision chat `look` uses (`workerVisionC
 a worker-hosted run (`run:<id>`), a page (`page:<tabId>`), or one of our own surfaces (`own`). A cell inside the
 read-only dialect runs with no card; one outside it asks, and gets the full gated `ml`. A principal change spawns a new worker;
 the old one's kept bench namespace dies with it (the bench's "sandbox restarted" banner), and a
-respawn writes the `pyodide/respawn` housekeeping record (`docs/dev/housekeeping.md`). The
+respawn writes the `pyodide/respawn` housekeeping record (`docs/dev/housekeeping.md`). A worker's message acts only
+on its OWN principal's pending runs: the offscreen document keeps one `pending` map over every principal, keyed by a
+sequential id any worker can name, so each branch of a worker's `onmessage` (a reply, a `partial` chunk, `started`,
+`spending`, an `mlCall`) reads its entry through `own`, which refuses another principal's id and records
+`pyodide/foreign-id` (reason the branch, key the sender's principal, nothing of the message) once. Before it, a
+full-mode cell could answer another run's cell, write into its stream or call `ml` under its wire stamp
+(`tests/offscreen-worker-ids.test.mjs`, one row per branch; `tests/redteam-worker-ids.test.mjs`, the attacks). The
 lockdown is `lockdownReadonly` (`src/python/lockdown.ts`), one boot step that never undoes:
 (1) Agoric `ses` `lockdown()` with `overrideTaming: "severe"`, after one `runPythonAsync("1")` warmup. Pyodide's
 `getPyProxyClass` assigns `.constructor` on a plain object, which a frozen `Object.prototype` refuses for every PyProxy
@@ -311,7 +317,7 @@ it (asks, the full gated `ml`).
 **Membership is decided by RUNNING the cell under the fork's gate, never by its source alone**
 (`docs/spec/PYTHON_DIALECT.md`, "Membership replaces `mode`"). The fork's `restricted.check()` admits `import`, calls
 and attributes; which modules, calls and attributes are allowed is enforced only by the allow tables while
-`restricted.run_cell` runs. So `import os` passes `check()` and is refused by `run_cell`. The path, for a run the
+`restricted.run_cell` runs. So `import subprocess` passes `check()` and is refused by `run_cell`. The path, for a run the
 worker drives with `autoApprovePython` on:
 
 1. The host's read-only try (`tryPythonInside`, `sw-run-host.ts`) runs the cell before the gate, with the run's grant
@@ -344,10 +350,30 @@ worker drives with `autoApprovePython` on:
    `DataFrame.dtypes` are not listed: `str()` of a numpy dtype imports from C under the cell's frame, which has no
    `__builtins__`, so it raises KeyError (#2040). `tests/python-dialect-vocab.test.mjs` holds every listed stdlib name to a call
    that runs inside or a reason. Both functions go when the fork does this itself.
+   **The `os` subset (ruling 112)** is `_ml_os_reads`: the names `DIALECT_OS_READS` lists of `os`, `os.path`, `glob`
+   and `pathlib` (reads and scans, `os.chdir`/`os.getcwd`, `os.environ` read and written through its methods), each
+   registered lifted, and the kinds they return readable. Every other name of `os` asks, which
+   `tests/python-os-inside.test.mjs` enumerates from the core's own `os`. A LISTING is charged in the file system, since
+   `glob`, `os.walk` and `Path.iterdir` list from inside a lifted call the gate never sees again (`listing-charge.ts`):
+   `listingSteps`, `DIR_LISTING_STEPS` a listing plus `DIR_ENTRY_STEPS` a name, from a MEMFS directory's own count and
+   for a `/files` page before the mount asks for it (`chargeListing`; `DIR_FIRST_PAGE` names first, so a walk over many small directories stays cheap, then `DIR_PAGE`), kept when the page held fewer, because the fork's charge cannot credit.
+   `os.listdir` releases the GIL around its readdir, so the hook re-attaches the thread state and calls the fork's C
+   charge (`_PyRestricted_Charge`) itself; outside a run that charge is nothing. A READ is `Path.read_text` or
+   `read_bytes` of a regular file, charged `FILE_READ_STEPS + ceil(size / FILE_BYTES_PER_STEP)` before it reads (figures: `os-cost.ipynb`). Still asking, each for
+   its own reason: builtin `open` (a file the cell drops is finalized under the gate, which refuses its C finalizer;
+   one it keeps is not data; `with` is not in the node list), `Path.glob`/`rglob` (each maps a `Path` method that sets
+   an attribute, from C, under the gate; `glob.glob` reads the same names), `os.environ[k] = v` and `del` (the fork
+   writes an item only of a value the cell owns), `dict(os.environ)` (it calls the mapping's Python `keys()` from C,
+   unlifted; `os.environ.copy()` runs), and a `walk` that prunes its directory list (the list is the library's). A
+   hidden file under `/files` stays listed, and reading it raises `PermissionError` in the cell, without the reader's
+   words: the open wrappers are off for an inside cell. The environment a fresh interpreter starts with is exactly
+   `PYTHON_ENV` (`pinEnvironment`, right after the load: Emscripten adds `_` and Pyodide `PYTHONINSPECT`).
 3. `wrapUserScript(…, inside)` runs the cell through `run_cell` (`INSIDE_CELL`, `python-dialect-run.ts`) in a COPY of the namespace that holds no `_` name.
    A bare trailing expression gets `return ` spliced in at its own column, so the value matches the full path. Decimal
    arithmetic sets the thread context's sticky flags from C, which no ownership check sees, so the context's flags and
-   traps are put back after the run, refused or not, and a later cell never reads what an inside cell computed.
+   traps are put back after the run, refused or not, and a later cell never reads what an inside cell computed. The
+   working directory and the environment are put back when the cell is refused, so its approved rerun starts from
+   what was there; a cell that finishes keeps what it changed.
 4. If it finishes, its bindings are copied back, except a builtin's name or one starting with `_`, and only if every
    new binding and the value are DATA (`_ml_not_inert`, an allowlist on the exact type: scalars, the builtin containers,
    numpy arrays, pandas frames, series and indexes, object values walked), or exactly what the cell's own import
@@ -703,6 +729,45 @@ reach it through the factory's closure, so a JsProxy there would be one in the n
 harness's references captured before any cell ran, never the importable `json`/`base64`, which a cell may patch.
 Tested under real CPython against a fake transport: `tests/ml-facade.test.mjs`.
 
+## The outside mark (`py-mark.ts`)
+
+Once a worker has been posted a cell outside the read-only dialect, no later cell in it is tried inside
+(PYTHON_DIALECT.md, "What an inside run may leave behind is data, never code", layer 3). An approved cell can plant code
+that the gate's lifted calls run ungated, and `tests/python-outside-plant.test.mjs` shows two such shapes.
+
+- **Where it lives.** `outsideMarks`, a `WeakMap<Worker, { told }>` in the offscreen document (state
+  `python.outside-mark`). It is never in the worker and never in Python, since approved code reaches both. A fresh
+  Worker object is unmarked, so a reap, a kill or a restart clears it with no code of its own.
+- **When it is set.** `ensureWorker` wraps the new Worker's `postMessage`. Every post to a Python worker, from
+  `offscreen.ts` or `files-host.ts`, is classified by `postMarks` BEFORE it is sent, so an inside post that races a
+  running outside cell is already refused. The cell's result carries `markSet` (the document's field, written over
+  whatever the worker sent), and the service worker writes the run log's `python/outside-mark` record from it.
+- **What it does.** `runInWorker` answers an inside post to a marked worker itself, with `{ ok: false, notInDialect:
+  MARKED_FIRST | MARKED_AGAIN, marked: true }`, and never sends it. That covers the readiness probe and an inside run's
+  libraries. `pythonDialectReady` does not cache a `marked` answer: its cache spans every run of the service worker, and
+  one marked run must not make the others ask. `pythonOutsideWhy` turns the refusal into the card's line (cause
+  `sandbox-marked`) and gives the model its sentence on `MARKED_FIRST` only, once per worker.
+- **Which posts mark: an enumeration, not an exclusion** (`WORKER_POSTS`). A kind the table does not know marks, and so
+  does a field outside `KNOWN_FIELDS`. The classifier mirrors the worker's dispatch order and its exact conditions:
+  an answer needs a numeric `seq`, and a buffer returns early only with no `id`, so a message the worker would run is
+  never classified as harmless. `tests/python-outside-mark.test.mjs` holds the table to the fields `onMessage` reads.
+
+| Kind (dispatch order) | What it is | Runs cell-supplied code ungated |
+| --- | --- | --- |
+| `mlAnswer` | an `ml` wire call's answer | no |
+| `interruptBuffer` | the interrupt buffer, once, at birth | no |
+| `filesShared` | the `/files` mount's buffers, once, at birth | no |
+| `takeDropped` | the idle reap's hand-over | no |
+| `deleteRun` | drop a run's kept namespace | no |
+| `prewarm` | start the runtime early | no |
+| `env` | the harness reads the interpreter | no |
+| `complete` | the editor's completion (jedi), which may import what the source names | yes (marks) |
+| `library` | a tier 3 library's shape or load, person-approved, shape-checked | no |
+| `benchReset` | drop the bench's kept namespace | no |
+| `inside` | a cell inside the dialect, run by the fork's gate | no (and refused when marked) |
+| `run` | a cell outside the dialect: approved, the bench's, a page's, an install candidate's | yes (marks) |
+| anything else | a kind or field the table does not know | yes (marks) |
+
 ## Installing a package (`python_install`, slices 2 to 4b of docs/plan/repl/PACKAGES_INSTALL.md)
 
 Offered to a run the worker builds (`OFFER_PYTHON_INSTALL`, `sw-run-start.ts`). An install belongs to that run: its
@@ -782,8 +847,9 @@ disposes it when the worker dies, which aborts every write still open.
   it closed. A refused write (ENOSPC) fails its writer: later writes raise the same errno and the close aborts, so no
   file lands with part of what was written. A per-cell commit stays possible (the txn shape covers it) and is not built.
 - **Refusals are the reader's.** Where a run may write is the reader's to say, and the mount passes its errno through
-  unchanged: EROFS at the root and in `attached/`, free under `agent/` (ruling 86) once the reader's write side lands.
-  Until then the reader answers EROFS to every write, `agent/` included (`src/session/ranged-reader.ts`). The modes
+  unchanged: EROFS at the root and in `attached/`, free under `agent/` (ruling 86), where a closed file lands in the
+  session's store of run-made files (`src/session/agent-files.ts`) within `filesQuotaMB`, past which a write is ENOSPC
+  (`src/session/ranged-reader.ts`). A file still open when the worker goes is discarded and noted, never half-written. The modes
   carry write bits on purpose: Emscripten checks them before calling the mount and would say EACCES where the answer is
   EROFS. A symlink and a hard link are EPERM (this core's `os` has no `link`; the node op refuses anyway). A refused
   first `open` drops the directory's listing, so the next lookup asks the reader, which has no such file: no phantom is
@@ -791,8 +857,8 @@ disposes it when the worker dies, which aborts every write still open.
 - **The working directory is `/files/agent`**, the reader's `home`, posted with the channel's memory and entered at
   every mount, so a relative `open()` lands where the run writes; `../attached/` reads, and never writes.
 - **A hidden file is refused in the reader's words**, since the model acts on the text and an errno carries none (the
-  reader's hide rule is a hook nothing sets yet: the offscreen document builds its `RangedReader` with none, so nothing
-  is hidden until POLICIES.md's "Hiding files" is built). The mount keeps this cell's EACCES messages by path; `open`,
+  reader's hide rule is the resolved hide list since #2088: the offscreen document builds its `RangedReader` with
+  `makeHideRule`, `src/session/files-hide-rule.ts`). The mount keeps this cell's EACCES messages by path; `open`,
   `io.open` and `os.open`, wrapped at boot (`FILES_OPEN_WORDS`), set the `PermissionError`'s `strerror` from them, and a
   failed cell's error is rewritten from them too (`inWords`) for a refusal no `open` saw. The wrappers are switched in
   only for a cell outside the dialect, the originals back for one inside. Not `sys.monitoring`: the cancel's spend owns
@@ -805,9 +871,12 @@ disposes it when the worker dies, which aborts every write still open.
   worker against an in-memory reader on a second thread (`tests/files-mount-py.test.mjs`,
   `tests/fixtures/files-channel-fake.mjs`).
 - **What the model is told.** `python_exec`'s description, for a worker-hosted run only (the one with `_mintToken`),
-  says the person's attached files are under `/files/attached/` (found with `os.listdir`) and that `/files` is
-  read-only; a page-hosted run's still says it has no filesystem. It promises no write until the reader's write side
-  lands (`tests/worker-media.test.mjs`).
+  says the person's attached files are under `/files/attached/` (read-only, found with `os.listdir`) and that it writes
+  in `/files/agent/`, the working directory; a page-hosted run's still says it has no filesystem
+  (`tests/worker-media.test.mjs`). A run the worker built and drives is sent the text of the tool that runs, at
+  every turn (`workerFacing`, sw-local-tools.ts): until 2026-11-23 it was sent the page-hosted text, written at the
+  start from the worker's assembling `ml`, and a session stored then still holds it in its payload
+  (`tests/sent-tool-texts.test.mjs`).
 
 ## `input()` and `getpass()` (proposed, not built)
 
@@ -824,6 +893,8 @@ alone.
 - **A worker-hosted run keeps one namespace across its cells; every other call is stateless** (a page's `ml.pythonExec`, a page-hosted agent).
 - **Every cell runs hardened; membership in the dialect, decided by running it, is what skips the card.** There is no
   `mode`: a cell outside the dialect asks, whatever it does.
+- **After a cell runs outside the dialect in a worker, no later cell there is tried inside** (the outside mark): each
+  asks until the worker is replaced. A new message to a Python worker marks unless `WORKER_POSTS` says it runs no cell code.
 - **The lock is not what ships.** `pyodide-lock.json` names 354 packages; the extension ships the 25 of the start-up
   set's closure (`pkg-shipped.gen.ts`). Anything that treats a lock entry as present on disk is wrong for the other 329.
 - **A Python callable a cell gave JavaScript is REVOKED at the cell's cancel, never destroyed** (`cell-gate.ts`): a

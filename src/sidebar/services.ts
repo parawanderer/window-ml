@@ -92,9 +92,10 @@ export interface SidebarServices {
      * The sessions this browser can bring to the tab this surface sits in ("bring a session here", MOVE_RUN.md): this
      * tab's site first. Only the HUD, which sits in a tab, has it.
      */
-    bringable?(): Promise<{ hash: string; title: string; url: string; lastTs: number; held: boolean }[]>;
-    /** Bring one of {@link bringable} to this tab: moved when the runtime holds it, resumed here when it is saved. */
-    bringHere?(session: string): Promise<{ ok: true } | { error: string }>;
+    bringable?(): Promise<{ hash: string; title: string; url: string; lastTs: number; held: boolean; running?: true }[]>;
+    /** Bring one of {@link bringable} to this tab: moved when the runtime holds it, resumed here when it is saved. `queued` is
+     *  the worker's sentence when the run's turn is running: it moves at its next step boundary, not now. */
+    bringHere?(session: string): Promise<{ ok: true; queued?: string } | { error: string }>;
     /**
      * Would the runtime still ACT on this session? Named for the fact rather than for one action, because two
      * controls depend on it and they fail differently: stopping is REFUSED ("the session is not running"), while
