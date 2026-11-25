@@ -19,7 +19,7 @@ import type { ChatStore } from "./chat-store";
 import { Dialog } from "../sidebar/dialog";
 import type { ChatExtras } from "./extras";
 import { mayStart } from "./grants";
-import { TabPicker } from "./tab-picker";
+import { NO_TAB_TIP, TabPicker } from "./tab-picker";
 import { blankStartState } from "./blank-start";
 import { BlankStartDialog } from "./blank-start-dialog";
 import { IconWarn } from "../sidebar/icons";
@@ -60,7 +60,8 @@ export interface TargetPick {
     fields: preact.JSX.Element | null;
     /** the same choice as one compact control, for a composer's row */
     inline: preact.JSX.Element | null;
-    /** the page a NEW tab opens at, where one is being picked: its own line under the row, never in it */
+    /** the line under the row, never in it: the page a NEW tab opens at, where one is being picked, or what a run with
+     *  no tab can and cannot do, where "No tab" is */
     urlField: preact.JSX.Element | null;
     /** is a NEW tab what is currently chosen? (the one target whose page has to be opened, and so permitted) */
     blank: boolean;
@@ -84,11 +85,12 @@ export interface TargetPick {
  * starting an agent on a page nobody picked is the mistake this must not make. A new tab is always there to go back to.
  * @param r the pick remembered for this runtime, if any
  * @param tabs the runtime's open tabs, as `tabs.list` just answered
- * @returns the tab to choose, `"blank"` for a new tab, or null for no remembered choice that still holds
+ * @returns the tab to choose, `"blank"` for a new tab, `"none"` for no tab, or null for no remembered choice that still holds
  */
-export function rememberedTab(r: RememberedTarget | undefined, tabs: readonly TabInfo[]): number | "blank" | null {
+export function rememberedTab(r: RememberedTarget | undefined, tabs: readonly TabInfo[]): number | "blank" | "none" | null {
     if (!r) return null;
     if ("blank" in r) return "blank";
+    if ("none" in r) return "none";
     const origin = (u: string): string | null => { try { return new URL(u).origin; } catch { return null; } };
     const same = tabs.find((t) => t.tabId === r.tabId);
     if (same && origin(same.url) !== null && origin(same.url) === origin(r.url)) return same.tabId;
@@ -102,9 +104,9 @@ export function rememberedTab(r: RememberedTarget | undefined, tabs: readonly Ta
  * stands, as before. The pick still has to hold (`rememberedTab`).
  * @param r the pick remembered for this runtime, if any
  * @param tabs the runtime's open tabs, as `tabs.list` just answered
- * @returns the tab to choose, `"blank"` for a new tab, or null to make the usual first guess
+ * @returns the tab to choose, `"blank"` for a new tab, `"none"` for no tab, or null to make the usual first guess
  */
-export function firstTab(r: RememberedTarget | undefined, tabs: readonly TabInfo[]): number | "blank" | null {
+export function firstTab(r: RememberedTarget | undefined, tabs: readonly TabInfo[]): number | "blank" | "none" | null {
     const back = rememberedTab(r, tabs);
     let visit: TabInfo | undefined;
     for (const t of tabs) if (typeof t.lastAccessed === "number" && t.lastAccessed > (visit?.lastAccessed ?? 0)) visit = t;
@@ -114,9 +116,12 @@ export function firstTab(r: RememberedTarget | undefined, tabs: readonly TabInfo
 }
 
 /** `remember`: offer the last tab picked on this runtime again (`lastTargets`) and remember each new pick. The start
- *  page's; a resume is a question about one run, which the last start page's answer says nothing about. */
-export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, enabled: boolean, extras?: ChatExtras, remember = false): TargetPick {
-    const [where, setWhere] = useState<"tab" | "blank">("tab");
+ *  page's; a resume is a question about one run, which the last start page's answer says nothing about. `noTab`: offer
+ *  "No tab" too, where the runtime starts runs with no page (`capabilities.detached`); the start page's, since a resume
+ *  with no tab is not built (TABLESS_RUN.md, step 4). */
+export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, enabled: boolean, extras?: ChatExtras, remember = false, noTab = false): TargetPick {
+    const offersNoTab = noTab && !!rt?.capabilities?.detached;
+    const [where, setWhere] = useState<"tab" | "blank" | "none">("tab");
     const [tabId, setTabId] = useState<number | null>(null);
     const [url, setUrl] = useState("");
     const [tabs, setTabs] = useState<TabInfo[] | null>(null);
@@ -141,10 +146,13 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
             // The first list picks whichever is more recent: the last tab picked here (if still open) or the last tab
             // visited (`firstTab`), else the tab showing in the first window. A refresh NEVER moves a choice: a chosen tab that has closed stays chosen and says so (`closed`),
             // because silently switching to whichever tab is in front would start an agent on a page nobody picked.
-            const back = fresh && remember ? firstTab(lastTargets.peek()[rt.id], list) : null;
+            // A remembered "No tab" counts only where it is still offered; elsewhere the usual first guess is made.
+            const remembered = fresh && remember ? firstTab(lastTargets.peek()[rt.id], list) : null;
+            const back = remembered === "none" && !offersNoTab ? null : remembered;
             setTabId((id) => (typeof back === "number" ? back
                 : id != null && (!fresh || list.some((t) => t.tabId === id)) ? id : list.find((t) => t.active)?.tabId ?? list[0]?.tabId ?? null));
-            if (fresh && (back === "blank" || !list.length)) setWhere("blank");
+            if (fresh && back === "none") setWhere("none");
+            else if (fresh && (back === "blank" || !list.length)) setWhere("blank");
             else if (typeof back === "number") setWhere("tab");
         });
     };
@@ -183,10 +191,12 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
     }, [rt, wantsTabs]);
 
     const closed = where === "tab" && tabId != null && !!tabs && !tabs.some((t) => t.tabId === tabId);
+    // "No tab" chosen on a runtime that stopped offering it (a device switch, an older runtime): a new tab instead.
+    const none = where === "none" && offersNoTab;
     return {
-        target: () => (where === "tab" && tabId != null ? { kind: "tab", tabId } : { kind: "blank", ...(url.trim() ? { url: url.trim() } : {}) }),
-        ready: where === "blank" || (tabId != null && !closed),
-        blank: where === "blank",
+        target: () => (none ? { kind: "detached" } : where === "tab" && tabId != null ? { kind: "tab", tabId } : { kind: "blank", ...(url.trim() ? { url: url.trim() } : {}) }),
+        ready: none || where === "blank" || where === "none" || (tabId != null && !closed),
+        blank: where === "blank" || (where === "none" && !none),
         url: url.trim(),
         useUrl: (u) => { setWhere("blank"); setUrl(u); },
         useTabs: () => { setWhere("tab"); },
@@ -215,7 +225,7 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
         ) : null,
         inline: enabled ? (
             <>
-                <TabPicker tabs={tabs} groups={groups} value={where === "tab" && tabId != null ? tabId : "blank"}
+                <TabPicker tabs={tabs} groups={groups} value={none ? "none" : where === "tab" && tabId != null ? tabId : "blank"} noTab={offersNoTab}
                     onOpen={() => load(false)}
                     loading={wantsTabs && tabs === null}
                     runtime={rt?.id}
@@ -224,8 +234,8 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
                     sitesGrant={rt ? extras?.fix?.(rt.id, "site-access") : null}
                     groupsHint="Group names and colours need a browser permission, given on the computer these tabs are on."
                     onChange={(v) => {
-                        if (v === "blank") setWhere("blank"); else { setWhere("tab"); setTabId(v); }
-                        if (remember && rt) rememberTarget(rt.id, v === "blank" ? { blank: true } : { tabId: v, url: tabs?.find((t) => t.tabId === v)?.url ?? "" });
+                        if (v === "blank" || v === "none") setWhere(v); else { setWhere("tab"); setTabId(v); }
+                        if (remember && rt) rememberTarget(rt.id, v === "blank" ? { blank: true } : v === "none" ? { none: true } : { tabId: v, url: tabs?.find((t) => t.tabId === v)?.url ?? "" });
                     }} />
             </>
         ) : null,
@@ -233,7 +243,9 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
         // the room and left the device, the tab and the model reading "Desk …", "New t…", "qwen3:3…" — four labels
         // cut to nothing so a placeholder could keep its width. It is also the rarest thing on the row now that a new
         // tab has a page to open without being told one, which makes it the wrong thing to charge the others for.
-        urlField: enabled && where === "blank" ? (
+        // Said in the form, not only in the row's tip: what a run with no page gets is what decides whether to pick it.
+        urlField: enabled && none ? <p class="chat-pick-note" data-field="no-tab">{NO_TAB_TIP}</p>
+            : enabled && (where === "blank" || where === "none") ? (
             <input class="chat-pick-url" type="url" value={url} aria-label="Page to open" placeholder="https://… (optional)"
                 onInput={(e: any) => setUrl(e.target.value)} />
         ) : null,

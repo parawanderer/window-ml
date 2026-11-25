@@ -49,6 +49,10 @@ def _ml_not_inert(_roots, _cap=2000000):
     _seq = {list, tuple, set, frozenset, _co.deque}
     _map = {dict, _co.OrderedDict, _co.Counter}
     _np, _pd = _sys.modules.get("numpy"), _sys.modules.get("pandas")
+    # A path of exactly pathlib's own type holds only strings (its arguments went through os.fspath).
+    _pl = _sys.modules.get("pathlib")
+    if _pl is not None:
+        _scalar |= {_pl.PurePosixPath, _pl.PosixPath}
     _pdscalar = {_pd.Timestamp, _pd.Timedelta, type(_pd.NaT), type(_pd.NA), _pd.Period} if _pd else set()
     _pdobj = (_pd.DataFrame, _pd.Series) if _pd else ()
     # Exact types, from the modules' own attributes: numpy's scalar types but object_ and void (either can hold an object),
@@ -145,9 +149,20 @@ def _ml_inside_run(_src, _g):
     # Decimal arithmetic sets the thread context's sticky flags (Inexact, Rounded) from C, a write the ownership check
     # never sees, so a later cell would read what an inside cell computed. The context's flags and traps are put back
     # as they were, whatever the run did; its other fields an inside cell cannot set (the context is never owned).
-    import decimal as _dc
+    import decimal as _dc, os as _os
     _ctx = _dc.getcontext()
     _flags, _traps = dict(_ctx.flags), dict(_ctx.traps)
+    # The os subset writes two things outside the namespace: the working directory and the environment. A refused
+    # cell's are put back, so its approved rerun starts from what was there.
+    _cwd, _environ = _os.getcwd(), dict(_os.environ)
+    def _put_back():
+        try:
+            _os.chdir(_cwd)
+        except OSError:
+            pass
+        for _k in [_k for _k in _os.environ if _k not in _environ]:
+            del _os.environ[_k]
+        _os.environ.update(_environ)
     try:
         try:
             _v = _rs.run_cell(_ml_trailing_return(_src), _ns, frozenset(${JSON.stringify(nodes)}))
@@ -170,6 +185,7 @@ def _ml_inside_run(_src, _g):
             if _ln:
                 _msg += " (line " + str(_ln) + ")"
         _ml_not_in_dialect = _msg
+        _put_back()
         return None
     # A finished run's new bindings, and its value, must be DATA: a function, class or generator it made carries a body
     # the gate never ran, and a builtin it captured (f = open) is a call the gate refused, either of which a later
@@ -181,6 +197,7 @@ def _ml_inside_run(_src, _g):
                          + [("the value it returns", _v)])
     if _bad:
         _ml_not_in_dialect = _bad
+        _put_back()
         return None
     for _k, _x in _ns.items():
         if _keep(_k) and (_k not in _g or _g[_k] is not _x):
@@ -228,6 +245,42 @@ export const DIALECT_STDLIB_REFUSED: Record<string, string> = {
     "random.choice": "it advances the random module's shared generator, a write the ownership check cannot see, so a later cell's draws would depend on an inside cell",
 };
 
+/** The names of os, os.path, glob and pathlib a cell inside the dialect may use (ruling 112): reads and scans of the
+ *  file system, the working directory and the environment. Every other name asks: anything that removes, renames or
+ *  writes a file, os.system, os.exec*, and process and fd calls. `_ml_os_reads` registers each, and
+ *  tests/python-os-inside.test.mjs enumerates this Python's own os against the list. */
+export const DIALECT_OS_READS: Record<"os" | "os.path" | "glob" | "pathlib", string[]> = {
+    os: ["DirEntry", "chdir", "curdir", "environ", "extsep", "fsdecode", "fsencode", "fspath", "getcwd", "getenv", "listdir", "lstat", "pardir", "path", "pathsep", "scandir", "sep", "stat", "stat_result", "walk"],
+    "os.path": ["abspath", "basename", "commonpath", "commonprefix", "dirname", "exists", "expanduser", "getmtime", "getsize", "isabs", "isdir", "isfile", "islink", "join", "lexists", "normcase", "normpath", "relpath", "split", "splitext"],
+    glob: ["escape", "glob", "iglob"],
+    pathlib: ["Path", "PosixPath", "PurePath", "PurePosixPath"],
+};
+
+/** Steps a directory listing is charged per name, before it lists. Set on the strict basis (the cheapest step's time),
+ *  as `REGEX_UNITS_PER_STEP` is: `Path.iterdir` takes about 89 steps' time a name, `glob.glob` about 60, `os.walk` 20,
+ *  `os.scandir` 15 and `os.listdir` 10 (notebooks/python-dialect/os-cost.ipynb), since the first three run Python per
+ *  name inside one lifted call the step count never sees. In `/files` the mount charges a whole page of `DIR_PAGE`
+ *  names before each page it asks for, since it cannot know the count first. */
+export const DIR_ENTRY_STEPS = 128;
+
+/** Steps every directory listing is charged once, whatever it holds: the call's own cost, about 300 steps' time for
+ *  `glob.glob` and `Path.iterdir` on an empty directory (os-cost.ipynb). */
+export const DIR_LISTING_STEPS = 512;
+
+/**
+ * The steps a listing of `names` names is charged before it lists, by both readdirs (listing-charge.ts, the `/files`
+ * mount's page).
+ * @param names the names the listing holds, or the page it asks for
+ */
+export const listingSteps = (names: number): number => DIR_LISTING_STEPS + names * DIR_ENTRY_STEPS;
+
+/** Bytes a read of a file is charged per step, before it reads: FILE_READ_STEPS + ceil(size / FILE_BYTES_PER_STEP). */
+export const FILE_BYTES_PER_STEP = 2;
+
+/** Steps every read is charged once, whatever the file's size: `Path.read_text` of an empty file takes about 470
+ *  steps' time (os-cost.ipynb). */
+export const FILE_READ_STEPS = 512;
+
 /**
  * Make the interpreter ready to run cells inside the dialect, once per worker: the fork's modules present, its build
  * gate off (no specialization, tier 2 or JIT), the whitelist and manifests written where `load_manifests` reads them,
@@ -257,7 +310,8 @@ def _ml_dialect_setup(_files):
             or _ml_lifted_reads(_restricted, restricted, _done["kinds"], json.loads(_files["manifest-pandas.json"]))
             or _ml_buffer_args(_restricted, restricted)
             or _ml_out_args(_restricted, restricted)
-            or _ml_read_csv_inside(_restricted, restricted, _done))
+            or _ml_read_csv_inside(_restricted, restricted, _done)
+            or _ml_os_reads(_restricted, restricted, _done["modules"]))
 
 def _ml_stdlib(_restricted, restricted, _man):
     # load_manifests admits READING each name manifest-stdlib.json lists (allow_module) but registers no call, so a
@@ -482,6 +536,69 @@ def _ml_out_args(_restricted, restricted):
             if _own is not None:
                 _own(func, self, args, kwargs)
         _restricted.allow_call(_f, True, _check)
+    return ""
+
+def _ml_os_reads(_restricted, restricted, _admitted):
+    # The os subset (ruling 112): DIALECT_OS_READS' names of os, os.path, glob and pathlib, each callable registered
+    # lifted, and the kinds they return readable. allow_module REPLACES a module's names, so each is the union with what
+    # load_manifests admitted. A listing is charged where every one of them lists, in the file system's readdir
+    # (listing-charge.ts), so glob's and walk's own scandir calls are paid too. A read is charged here, before it reads:
+    # Path.read_text and read_bytes of a regular file, FILE_READ_STEPS + ceil(size / FILE_BYTES_PER_STEP). Not builtin open(): a file the
+    # cell drops (open(p).read()) is finalized under the gate, where its C finalizer is refused and the refusal caught,
+    # so the run is refused anyway; one it keeps is not data; and "with" is outside the node whitelist.
+    # What a cell changes outside its namespace, the working directory and the environment, _ml_inside_run puts back
+    # when the cell is refused.
+    import glob, inspect, os, pathlib, posixpath, collections.abc as _cabc
+    _lists = ${JSON.stringify(DIALECT_OS_READS)}
+    _mods = {"os": os, "os.path": posixpath, "glob": glob, "pathlib": pathlib}
+    for _name, _names in list(_lists.items()) + [("posixpath", _lists["os.path"])]:
+        _restricted.allow_module(_name, sorted(set(_admitted.get(_name, [])) | set(_names)))
+    def _cost(_p):
+        # The steps reading _p whole costs, or a refusal: only a regular file is read (a device never ends).
+        try:
+            _s = os.stat(_p)
+        except restricted.NotInDialect:
+            raise
+        except (OSError, TypeError, ValueError):
+            return 0    # the call itself raises what the cell sees
+        if _s.st_mode & 0o170000 != 0o100000:
+            raise restricted.NotInDialect("not in dialect: reading " + repr(os.fspath(_p)) + ", which is not a regular file")
+        return ${FILE_READ_STEPS} - (-_s.st_size // ${FILE_BYTES_PER_STEP})
+    def _read_check(func, self, args, kwargs):
+        _restricted.charge(_cost(self if self is not None else args[0]))
+    for _name, _names in _lists.items():
+        for _n in _names:
+            _f = getattr(_mods[_name], _n)
+            # pathlib's classes construct a path; os's (DirEntry, stat_result) are only returned.
+            if callable(_f) and (not isinstance(_f, type) or _name == "pathlib"):
+                _restricted.allow_call(_f, True, None)
+    # The kinds the calls return. A scandir iterator and walk's and iglob's generators resume lifted, as they were made.
+    _restricted.allow_kind(os.DirEntry, ["name", "path", "is_dir", "is_file", "is_symlink", "stat"])
+    with os.scandir("/") as _it:
+        _restricted.allow_kind(type(_it), ["__iter__", "__next__", "__enter__", "__exit__"])
+    _restricted.allow_kind(os.stat_result, ["st_size", "st_mtime", "st_mode", "st_ctime", "st_atime"])
+    _env = ["get", "keys", "items", "values", "update", "setdefault", "pop", "copy"]
+    _restricted.allow_kind(type(os.environ), _env + ["[]", "__iter__", "__^"])
+    for _n in _env:
+        _f = inspect.getattr_static(type(os.environ), _n, None) or getattr(_cabc.MutableMapping, _n)
+        _restricted.allow_call(getattr(_f, "__func__", _f), True, None)
+    for _v in (_cabc.KeysView, _cabc.ItemsView, _cabc.ValuesView):
+        _restricted.allow_kind(_v, ["__^"])
+    # pathlib: Path's reads and scans, its dunders (/, str, ==) lifted; its properties read lifted by a dynamic rule.
+    # Not Path.glob or rglob: each returns a map over a Path method that sets an attribute, which map calls from C under
+    # the gate, and the gate refuses every attribute set. glob.glob and glob.iglob read the same names.
+    _pm = ["iterdir", "exists", "is_dir", "is_file", "stat", "read_text", "read_bytes", "joinpath",
+           "with_name", "with_suffix", "relative_to", "is_relative_to", "match", "as_posix", "resolve", "absolute"]
+    _props = ["name", "suffix", "suffixes", "stem", "parent", "parents", "parts", "anchor"]
+    for _c in (pathlib.PurePosixPath, pathlib.PosixPath):
+        _restricted.allow_kind(_c, [_n for _n in _pm if hasattr(_c, _n)] + ["__^"])
+        _restricted.allow_dynamic(_c, lambda obj, name, _p=frozenset(_props): name in _p)
+        for _n in _pm:
+            _f = inspect.getattr_static(_c, _n, None)
+            if isinstance(_f, (staticmethod, classmethod)):
+                _f = _f.__func__
+            if callable(_f):
+                _restricted.allow_call(_f, True, _read_check if _n in ("read_text", "read_bytes") else None)
     return ""
 _ml_dialect_setup(${JSON.stringify(files)})
 `;

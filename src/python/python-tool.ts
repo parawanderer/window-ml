@@ -88,10 +88,10 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
     const currentClause = onSheet ? " Or `'current'` for THIS Google Sheet."
         : singleTable ? " Or `'current'` for the one table on this page." : "";
     const tablesDesc = "Spreadsheet/table data → pandas DataFrame(s). " + PYTHON.tables + currentClause;
-    // A worker-hosted run's worker mounts the session's files at /files (files-mount.ts), read-only until the reader's write
-    // side lands; every other principal has no /files. Writes are not promised: the reader answers EROFS to each.
+    // A worker-hosted run's worker mounts the session's files at /files (files-mount.ts): attached/ read-only, agent/ the
+    // run's to write and the working directory (ruling 86); every other principal has no /files.
     const filesClause = mintVia
-        ? "No network here: use fetch_url for that. Files the person attached to this session are under /files/attached/ (list it with os.listdir); /files is read-only."
+        ? "No network here: use fetch_url for that. Files the person attached to this session are under /files/attached/ (read-only; list it with os.listdir); write yours in /files/agent/, the working directory."
         : "No network or filesystem here: use fetch_url for that.";
     // Only a worker-hosted run keeps a namespace across its cells (root C), and only the worker's `ml` has `_mintToken`;
     // a page-hosted agent's cells have no run, so they stay stateless.

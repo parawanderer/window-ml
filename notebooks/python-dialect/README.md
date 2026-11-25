@@ -41,3 +41,9 @@ beside it (`make-<name>.py`, the file to edit) and its pinned inputs under `data
   injected table, an earlier inside cell, an earlier asked cell, or an alias. A skeleton until the sweep runs (after the
   widened vocabulary is on main); its classifier is checked on the cells of `tests/e2e/python-dialect-edits.spec.mjs`.
   Reader: `reshape-edits/provenance.py`; rows pinned in `data/reshape-edits/cells.json`. Generator: `make-reshape-edits.py`.
+- [os-cost.ipynb](os-cost.ipynb): do `DIR_ENTRY_STEPS`, `FILE_BYTES_PER_STEP` (`python-dialect-run.ts`) and `DIR_PAGE`
+  (`files-mount.ts`) cover the time the os subset's calls take? The interpreter's ns per step (the cheapest step, an
+  empty loop, is the strict basis), `os.listdir` / `os.scandir` / `os.walk` / `glob.glob` / `Path.iterdir` in ns per entry on MEMFS
+  directories of 10 to 10,000 names as step-equivalents, `Path.read_bytes` / `read_text` as bytes per step, and the
+  `/files` page overcharge as arithmetic. Timings come from `os-cost/bench.py` (run by `os-cost/one.mjs`, from the repo
+  root, on `dist/pyodide`); inputs pinned in `data/os-cost/bench.json`. Generator: `make-os-cost.py`.

@@ -465,6 +465,7 @@ export class FakeHost implements SessionHost {
                 if (!caps.agent) return fail("unsupported", "this runtime runs no agents");
                 if (c.target.kind === "headless" && !caps.headless) return fail("unsupported", "this runtime has no headless target");
                 if (c.target.kind === "tab" && !caps.tabs) return fail("unsupported", "this runtime has no tabs");
+                if (c.target.kind === "detached" && !caps.detached) return fail("unsupported", "this runtime cannot start a run with no tab");
                 // As the real runtime does: a tab that has closed is refused, never swapped for another.
                 if (c.target.kind === "tab" && !this.tabs.some((t) => c.target.kind === "tab" && t.tabId === c.target.tabId)) return fail("not-found", "no such tab");
                 const att = checkFilesField(c.files, "agent");
@@ -572,6 +573,7 @@ export class FakeHost implements SessionHost {
             case "session.resume": {
                 if (h.summary.kind !== "agent") return fail("unsupported", "only a run resumes onto a page");
                 if (h.summary.status === "running" || h.summary.status === "waiting") return fail("conflict", "that session is still going");
+                if (c.target.kind === "detached") return fail("unsupported", "this runtime cannot resume a session with no tab yet");
                 // A blank target becomes a REAL tab, because that is what opening one does. Reporting a page with no
                 // tab id would leave the run looking as homeless as it was a moment ago, and the page would go on
                 // offering to resume something it had just resumed.

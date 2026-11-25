@@ -3,6 +3,7 @@
 
 import { maskOverlap, maskSecretBytes, type SecretForm } from "../secret-mask";
 import { FILES_CHUNK, type DirPage, type FileStat, type FilesChannel, type FsError, type FsErrorCode, type Txn, type WriteFlags } from "../python/files-reader";
+import { AgentFilesError, type AgentFiles, type AgentOp, type LostWrite } from "./agent-files";
 
 /** One file the person attached to a session, as the shelf holds it: what the reader lists under `attached/<handle>/<name>`. */
 export interface AttachedFile {
@@ -94,20 +95,43 @@ function canonical(p: unknown, syscall: string): string {
     return p;
 }
 
+/** What the reader needs of the store of run-made files (agent-files.ts). */
+export type AgentStore = Pick<AgentFiles, "node" | "children" | "blob" | "usage" | "commit">;
+
+/** The last segment of a path. */
+const baseName = (p: string): string => p.slice(p.lastIndexOf("/") + 1);
+
 /**
  * The `files` volume over the shelf: the root holds `attached/` and `agent/`; `attached/<handle>/` holds that
- * attachment, read-only; `agent/` is the run's own space, empty until the write side lands (slice 3). A folder's
- * times are its newest attachment's, or the reader's start when there is none.
+ * attachment, read-only; `agent/` is the run's own space, the files its runs made (`agent`, agent-files.ts), empty
+ * where there is no such store. A folder's times are its newest attachment's, or the reader's start when there is none.
  */
-function filesVolume(source: FilesSource, startedMs: number): Volume {
+function filesVolume(source: FilesSource, startedMs: number, agent?: AgentStore): Volume {
     const dir = (mtimeMs: number, readonly: boolean, children: () => Promise<string[]>): VNode =>
         ({ kind: "dir", size: 0, mtimeMs, birthtimeMs: mtimeMs, readonly, children });
     return {
         async node(session, path) {
+            if (path === "agent") return dir(startedMs, false, async () => (agent ? (await agent.children(session, "")).map((n) => baseName(n.path)) : []));
+            if (path.startsWith("agent/")) {
+                if (!agent) return null;
+                const rel = path.slice("agent/".length);
+                const n = await agent.node(session, rel);
+                if (!n) {
+                    // A path through a file is ENOTDIR, as in attached/.
+                    for (let up = rel; up.includes("/");) {
+                        up = up.slice(0, up.lastIndexOf("/"));
+                        const a = await agent.node(session, up);
+                        if (a) { if (a.kind === "file") throw fsError("ENOTDIR", "stat", path); break; }
+                    }
+                    return null;
+                }
+                if (n.kind === "dir") return dir(n.mtimeMs, false, async () => (await agent.children(session, rel)).map((c) => baseName(c.path)));
+                const key = n.blob!;
+                return { kind: "file", size: n.size, mtimeMs: n.mtimeMs, birthtimeMs: n.birthtimeMs, readonly: false, version: n.version!, blob: () => agent.blob(key) };
+            }
             const files = await source.attached(session);
             const newest = files.reduce((m, f) => Math.max(m, f.attachedMs), 0) || startedMs;
             if (path === "") return dir(newest, true, async () => ["agent", "attached"]);
-            if (path === "agent") return dir(startedMs, false, async () => []);
             if (path === "attached") return dir(newest, true, async () => [...new Set(files.map((f) => f.handle))]);
             const [top, handle, name, ...rest] = path.split("/");
             if (top !== "attached") return null;
@@ -129,18 +153,82 @@ interface ReadFd {
     blob: Blob;
 }
 
-/** What the reader needs: its source, the hide rule, and a clock. */
+/** What the reader needs: its source, the hide rule, a clock, and for the write side the store of run-made files, the
+ *  quota and where a discarded write is reported. With no `agent` store every write answers EROFS. */
 export interface RangedReaderDeps {
     source: FilesSource;
     hidden?: HideRule;
     now?: () => number;
+    /** Where the files a session's runs make are kept (agent-files.ts). */
+    agent?: AgentStore;
+    /** The most bytes a session's run-made files may take (the `filesQuotaMB` setting), asked at each `openWrite`. */
+    quotaBytes?: (session: string) => Promise<number>;
+    /** A file whose pending part was discarded because its channel went with the file not committed. */
+    onLost?: (rec: LostWrite) => void;
+}
+
+/**
+ * What ENOSPC says: the file, the quota, and the two ways out (FILE_ATTACHMENTS.md, "Writes"). The quota is the
+ * person's setting, raised only on their word, so the model is told to ask, not to retry.
+ */
+const noSpace = (w: { path: string; quota: number }): string =>
+    `ENOSPC: '${w.path}' would take this session's files past their quota of ${Math.round(w.quota / 1048576)} MiB. Remove files under /files/agent/ (os.remove in Python), or ask the person to raise filesQuotaMB (change_setting).`;
+
+/** A write descriptor: its pending part, the transaction it lands with, and what its file took before (for the quota). */
+interface Writer {
+    session: string;
+    txn: Txn;
+    /** The canonical path (`agent/…`). */
+    path: string;
+    data: Blob;
+    /** The file's stored size when it was opened, which its commit replaces. */
+    was: number;
+    quota: number;
+    sealed: boolean;
+}
+
+/** One open transaction: its session and its changes in order, a writer standing for its file's put. */
+interface TxnState { session: string; items: Array<Writer | AgentOp> }
+
+/**
+ * Whether a transaction's own queued changes leave `dir` (relative to `agent/`) a folder: true after its mkdir, false
+ * after its rmdir or a rename away, the stored path it was renamed from when what is stored there decides, and
+ * undefined when the transaction did not touch it and what is stored decides.
+ */
+function pendingDir(items: TxnState["items"], dir: string): boolean | string | undefined {
+    let made: boolean | string | undefined;
+    for (const [k, i] of items.entries()) {
+        if ("sealed" in i) continue;
+        if (i.op === "mkdir" && i.path === dir) made = true;
+        else if (i.op === "rmdir" && i.path === dir) made = false;
+        else if (i.op === "rename" && i.from === dir) made = false;
+        // A rename onto it: `dir` is now what `from` was at that point of the transaction.
+        else if (i.op === "rename" && i.to === dir) made = pendingDir(items.slice(0, k), i.from) ?? i.from;
+    }
+    return made;
+}
+
+/** Zeros, a chunk at a time, for a write past the end or a truncate that grows: a Blob of references, never a whole buffer. */
+const ZERO_CHUNK = new Blob([new Uint8Array(FILES_CHUNK)]);
+function zeros(n: number): Blob {
+    const parts: Blob[] = [];
+    for (; n > FILES_CHUNK; n -= FILES_CHUNK) parts.push(ZERO_CHUNK);
+    if (n > 0) parts.push(ZERO_CHUNK.slice(0, n));
+    return new Blob(parts);
+}
+
+/** `data` with `bytes` written at `position`: slices of the old Blob around the new bytes, zero-filled past the end. */
+function overwrite(data: Blob, position: number, bytes: Uint8Array): Blob {
+    const head = position <= data.size ? data.slice(0, position) : new Blob([data, zeros(position - data.size)]);
+    return new Blob([head, bytes as BlobPart, data.slice(position + bytes.length)]);
 }
 
 /**
  * The ranged reader: one per offscreen document, handing out a channel per front end connection. Every descriptor and
  * transaction belongs to the channel that made it and the session it was made under; the channel's end closes them.
  * Bytes are read by range from stored Blobs into the caller's buffer, never a whole file and never a buffer per chunk.
- * The write side answers EROFS until slice 3 (ruling 54).
+ * Writes land under `agent/` only, in the store of run-made files, each transaction at its commit; with no store, or
+ * anywhere else, a write answers EROFS.
  */
 export class RangedReader {
     private readonly volumes: Record<VolumeName, Volume>;
@@ -151,9 +239,26 @@ export class RangedReader {
 
     constructor(deps: RangedReaderDeps) {
         const startedMs = (deps.now ?? Date.now)();
-        this.volumes = { files: filesVolume(deps.source, startedMs) };
+        this.volumes = { files: filesVolume(deps.source, startedMs, deps.agent) };
         this.hidden = deps.hidden ?? (() => false);
         this.source = deps.source;
+        this.deps = deps;
+    }
+
+    private readonly deps: RangedReaderDeps;
+    /** Every open writer, by session, across channels: what the quota adds to the stored files. */
+    private readonly writers = new Map<string, Set<Writer>>(); // state: plumbing — pending parts, gone with their channel
+    /**
+     * Each session's stored total: read at each `openWrite`, and again after each commit succeeds. A commit's own quota
+     * check uses the figure already here; what another channel committed since is caught by the store's `maxBytes`.
+     */
+    private readonly stored = new Map<string, number>(); // state: cache — re-read from agent-files at every open and after every commit
+
+    /** Whether `w` growing to `size` keeps its session within its quota, with every other pending part counted. */
+    private fits(w: Writer, size: number): boolean {
+        let total = this.stored.get(w.session) ?? 0;
+        for (const o of this.writers.get(w.session) ?? []) total += (o === w ? size : o.data.size) - o.was;
+        return total <= w.quota;
     }
 
     /**
@@ -202,20 +307,60 @@ export class RangedReader {
         const statOf = async (s: string, p: string, n: VNode): Promise<FileStat> =>
             ({ kind: n.kind, size: n.size, mtimeMs: n.mtimeMs, birthtimeMs: n.birthtimeMs, hidden: await isHidden(s, p), readonly: n.readonly });
         const hiddenRefusal = (syscall: string, p: string): FsError => fsError("EACCES", syscall, p, `EACCES: '${p}' is hidden`);
-        /** A write verb's answer until the write side lands: the path checked as any call checks it, then EROFS. */
-        const readOnly = async (syscall: string, path: unknown, t: unknown): Promise<never> => call(syscall, (s) => {
-            txnOf(s, t, syscall);
+        const wfds = new Map<number, Writer>(); // state: plumbing — the channel's write descriptors, discarded at its end
+        const txs = new Map<Txn, TxnState>(); // state: plumbing — what each open transaction will commit
+        const agent = reader.deps.agent;
+        /** A path a write may name: under `agent/`, with a store to keep it; else EROFS (the root, `attached/`). Hidden is EACCES. */
+        const writable = async (s: string, path: unknown, syscall: string): Promise<string> => {
             const p = canonical(path, syscall);
-            throw fsError("EROFS", syscall, p, "read-only file system");
+            if (!agent || !p.startsWith("agent/")) throw fsError("EROFS", syscall, p, "read-only file system");
+            if (await isHidden(s, p)) throw hiddenRefusal(syscall, p);
+            return p;
+        };
+        const stateOf = (s: string, t: unknown, syscall: string): TxnState => {
+            const id = txnOf(s, t, syscall);
+            let st = txs.get(id);
+            if (!st) txs.set(id, st = { session: s, items: [] });
+            return st;
+        };
+        const writerOf = (s: string, wfd: unknown, syscall: string): Writer => {
+            const w = typeof wfd === "number" ? wfds.get(wfd) : undefined;
+            if (!w || w.session !== s || w.sealed) throw fsError("EBADF", syscall, undefined, `bad descriptor ${String(wfd)}`);
+            return w;
+        };
+        const forget = (w: Writer) => { reader.writers.get(w.session)?.delete(w); };
+        /** Drop a transaction's pending parts, the files still open and the ones sealed by their close alike; `lost`
+         *  reports each file, as a channel's end does. */
+        const discard = (id: Txn, lost: boolean) => {
+            const st = txs.get(id);
+            txs.delete(id);
+            txns.delete(id);
+            for (const [fd, w] of wfds) if (w.txn === id) wfds.delete(fd);
+            for (const w of st?.items ?? []) {
+                if (!("sealed" in w)) continue;
+                forget(w);
+                if (lost) { try { reader.deps.onLost?.({ session: w.session, path: w.path, at: (reader.deps.now ?? Date.now)(), reason: "channel-ended" }); } catch { /* a report must not stop the end */ } }
+            }
+            return st;
+        };
+        /** A change of names: checked as a write is, then kept for the commit, which checks it against what is stored. */
+        const change = (syscall: string, t: unknown, op: (s: string) => Promise<AgentOp>) => call(syscall, async (s) => {
+            txnOf(s, t, syscall);
+            const o = await op(s);
+            // The rule was asked meanwhile: the transaction, or the channel's session, may have gone.
+            live(syscall);
+            stateOf(s, t, syscall).items.push(o);
         });
+        const rel = (p: string) => p.slice("agent/".length);
 
         return {
             get home() { return session === null || disposed ? undefined : FILES_HOME; },
             setSession(hash) {
                 if (disposed) return;
                 const next = typeof hash === "string" && hash ? hash : null;
-                // A session change closes what the channel had open, so a descriptor never comes back to life.
-                if (next !== session) { fds.clear(); txns.clear(); }
+                // A session change closes what the channel had open, so a descriptor never comes back to life; a file
+                // not committed is discarded and reported, as at the channel's end.
+                if (next !== session) { for (const id of [...txs.keys()]) discard(id, true); fds.clear(); txns.clear(); }
                 session = next;
             },
             stat: (path, opts) => call("stat", async (s) => {
@@ -263,7 +408,8 @@ export class RangedReader {
                 return { fd, size: n.size, version: n.version! };
             }),
             read: (fd, position, length, dest) => call("read", async (s) => {
-                const f = fdOf(s, fd, "read");
+                const w = wfds.get(fd);
+                const f: { path: string; blob: Blob } = w && w.session === s ? { path: w.path, get blob() { return w.data; } } : fdOf(s, fd, "read");
                 if (!Number.isInteger(position) || position < 0 || !Number.isInteger(length) || length < 0 || length > FILES_CHUNK || !(dest instanceof Uint8Array)) throw fsError("EINVAL", "read");
                 if (await isHidden(s, f.path)) throw hiddenRefusal("read", f.path);
                 const n = Math.min(length, f.blob.size - position, dest.length);
@@ -281,28 +427,118 @@ export class RangedReader {
                 const bytes = window.subarray(position - from, position - from + n);
                 // A descriptor closed, or a channel ended, while the range was read writes nothing into `dest`: the
                 // window may already be another request's.
-                if (fds.get(fd) !== f || disposed || session !== s) throw fsError("EBADF", "read", undefined, `bad descriptor ${fd}`);
+                if ((w ? wfds.get(fd) !== w : fds.get(fd) !== f) || disposed || session !== s) throw fsError("EBADF", "read", undefined, `bad descriptor ${fd}`);
                 dest.set(bytes.subarray(0, n));
                 return n;
             }),
-            fstat: (fd) => call("fstat", (s) => { const f = fdOf(s, fd, "fstat"); return statOf(s, f.path, f.node); }),
+            fstat: (fd) => call("fstat", async (s) => {
+                const w = wfds.get(fd);
+                if (w && w.session === s) return { kind: "file" as const, size: w.data.size, mtimeMs: (reader.deps.now ?? Date.now)(), birthtimeMs: 0, hidden: await isHidden(s, w.path), readonly: false };
+                const f = fdOf(s, fd, "fstat");
+                return statOf(s, f.path, f.node);
+            }),
             close: (fd) => call("close", (s) => { fdOf(s, fd, "close"); fds.delete(fd); }),
             begin: () => call("begin", (s) => { const t = reader.nextId++; txns.set(t, s); return t; }),
-            openWrite: (path, _flags: WriteFlags, txn) => readOnly("open", path, txn),
-            write: (wfd) => call("write", () => { throw fsError("EBADF", "write", undefined, `bad descriptor ${wfd}`); }),
-            truncate: (wfd) => call("ftruncate", () => { throw fsError("EBADF", "ftruncate", undefined, `bad descriptor ${wfd}`); }),
-            closeWrite: (wfd) => call("close", () => { throw fsError("EBADF", "close", undefined, `bad descriptor ${wfd}`); }),
-            rename: async (from, to, txn) => call("rename", (s) => {
-                txnOf(s, txn, "rename");
-                canonical(to, "rename");
-                throw fsError("EROFS", "rename", canonical(from, "rename"), "read-only file system");
+            openWrite: (path, flags: WriteFlags, txn) => call("open", async (s) => {
+                const st = stateOf(s, txn, "open");
+                const p = await writable(s, path, "open");
+                if (!["w", "a", "r+", "x"].includes(flags)) throw fsError("EINVAL", "open", p);
+                const n = await resolve(s, p, "open");
+                if (n?.kind === "dir") throw fsError("EISDIR", "open", p);
+                if (n && flags === "x") throw fsError("EEXIST", "open", p);
+                if (!n) {
+                    if (flags === "r+") throw fsError("ENOENT", "open", p);
+                    // A folder this transaction made counts: its commit applies the mkdir before the file.
+                    const parent = p.slice(0, p.lastIndexOf("/"));
+                    const made = pendingDir(st.items, rel(parent));
+                    const up = made === undefined ? await resolve(s, parent, "open") : typeof made === "string" ? await resolve(s, `agent/${made}`, "open") : made ? { kind: "dir" } : null;
+                    if (!up) throw fsError("ENOENT", "open", p);
+                    if (up.kind !== "dir") throw fsError("ENOTDIR", "open", p);
+                }
+                const data = n && flags !== "w" ? await n.blob!() : new Blob([]);
+                const quota = await (reader.deps.quotaBytes ?? (async () => Infinity))(s);
+                reader.stored.set(s, await agent!.usage(s));
+                live("open");
+                if (session !== s || txs.get(txn) !== st) throw fsError("EBADF", "open", undefined, "no session");
+                const w: Writer = { session: s, txn, path: p, data, was: n?.size ?? 0, quota, sealed: false };
+                const wfd = reader.nextId++;
+                wfds.set(wfd, w);
+                st.items.push(w);
+                let set = reader.writers.get(s);
+                if (!set) reader.writers.set(s, set = new Set());
+                set.add(w);
+                return { wfd, size: data.size };
             }),
-            unlink: (path, txn) => readOnly("unlink", path, txn),
-            mkdir: (path, txn) => readOnly("mkdir", path, txn),
-            rmdir: (path, txn) => readOnly("rmdir", path, txn),
-            commitTx: (txn) => call("commit", (s) => { txns.delete(txnOf(s, txn, "commit")); }),
-            abortTx: (txn) => call("abort", (s) => { txns.delete(txnOf(s, txn, "abort")); }),
+            write: (wfd, position, bytes) => call("write", (s) => {
+                const w = writerOf(s, wfd, "write");
+                if (!Number.isInteger(position) || position < 0 || !(bytes instanceof Uint8Array) || bytes.length > FILES_CHUNK) throw fsError("EINVAL", "write", w.path);
+                const size = Math.max(w.data.size, position + bytes.length);
+                if (!reader.fits(w, size)) throw fsError("ENOSPC", "write", w.path, noSpace(w));
+                // A copy: the caller's buffer is reused for the next chunk.
+                w.data = overwrite(w.data, position, bytes.slice());
+            }),
+            truncate: (wfd, length) => call("ftruncate", (s) => {
+                const w = writerOf(s, wfd, "ftruncate");
+                if (!Number.isInteger(length) || length < 0) throw fsError("EINVAL", "ftruncate", w.path);
+                if (!reader.fits(w, length)) throw fsError("ENOSPC", "ftruncate", w.path, noSpace(w));
+                w.data = length <= w.data.size ? w.data.slice(0, length) : new Blob([w.data, zeros(length - w.data.size)]);
+            }),
+            closeWrite: (wfd) => call("close", (s) => {
+                const w = writerOf(s, wfd, "close");
+                w.sealed = true;
+                wfds.delete(wfd as number);
+            }),
+            rename: (from, to, txn) => change("rename", txn, async (s) => {
+                const a = await writable(s, from, "rename"), b = await writable(s, to, "rename");
+                return { op: "rename", from: rel(a), to: rel(b) };
+            }),
+            unlink: (path, txn) => change("unlink", txn, async (s) => ({ op: "unlink", path: rel(await writable(s, path, "unlink")) })),
+            mkdir: (path, txn) => change("mkdir", txn, async (s) => {
+                const p = canonical(path, "mkdir");
+                if (p === "agent") throw fsError("EEXIST", "mkdir", p);
+                return { op: "mkdir", path: rel(await writable(s, p, "mkdir")) };
+            }),
+            rmdir: (path, txn) => change("rmdir", txn, async (s) => ({ op: "rmdir", path: rel(await writable(s, path, "rmdir")) })),
+            commitTx: (txn) => call("commit", async (s) => {
+                const id = txnOf(s, txn, "commit");
+                const st = txs.get(id);
+                if (!st?.items.length) { discard(id, false); return; }
+                // A file still open has nothing to commit yet: it commits at its close (ruling 75).
+                if (st.items.some((i) => "sealed" in i && !i.sealed)) throw fsError("EINVAL", "commit", undefined, "EINVAL: a file of this transaction is still open");
+                const writers = st.items.filter((i): i is Writer => "sealed" in i);
+                for (const w of writers) if (!reader.fits(w, w.data.size)) throw fsError("ENOSPC", "commit", w.path, noSpace(w));
+                // The hide rule again: a path hidden since its file was opened is not written, as it is no longer read.
+                for (const i of st.items) {
+                    const named = "sealed" in i ? [i.path] : i.op === "rename" ? [`agent/${i.from}`, `agent/${i.to}`] : [`agent/${i.path}`];
+                    for (const p of named) if (await isHidden(s, p)) throw hiddenRefusal("commit", p);
+                }
+                live("commit");
+                if (txs.get(id) !== st) throw fsError("EBADF", "commit", undefined, `bad transaction ${String(txn)}`);
+                const ops: AgentOp[] = st.items.map((i) => ("sealed" in i ? { op: "put", path: rel(i.path), data: i.data } : i));
+                txs.delete(id);
+                txns.delete(id);
+                // The quota again, inside the store's transaction: what another channel committed since this one's
+                // files were opened counts.
+                const quota = writers.length ? Math.min(...writers.map((w) => w.quota)) : undefined;
+                try { await agent!.commit(s, ops, quota !== undefined && Number.isFinite(quota) ? { maxBytes: quota } : {}); }
+                catch (e) {
+                    for (const w of writers) forget(w);
+                    if (e instanceof AgentFilesError && e.code === "ENOSPC") throw fsError("ENOSPC", "commit", `agent/${e.path}`, noSpace({ path: `agent/${e.path}`, quota: quota! }));
+                    if (e instanceof AgentFilesError) throw fsError(e.code, "commit", `agent/${e.path}`);
+                    throw e;
+                }
+                // What is stored now, for every other pending part's next chunk: the store's figure, or, when it cannot
+                // be read, the last one plus what this commit grew by, never nothing (which would read as an empty store).
+                const grew = writers.reduce((n, w) => n + w.data.size - w.was, 0);
+                for (const w of writers) forget(w);
+                const now = await agent!.usage(s).catch(() => (reader.stored.get(s) ?? 0) + grew);
+                reader.stored.set(s, now);
+            }),
+            abortTx: (txn) => call("abort", (s) => { discard(txnOf(s, txn, "abort"), false); }),
             dispose() {
+                // A file not committed when its channel goes is discarded, and reported (FILE_ATTACHMENTS.md, "A worker
+                // evicted mid-file"); the previous version stands.
+                for (const id of [...txs.keys()]) discard(id, true);
                 disposed = true;
                 session = null;
                 fds.clear();
