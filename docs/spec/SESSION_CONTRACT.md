@@ -328,10 +328,11 @@ command because `session.send` would reach a page that no longer holds the sessi
   a `@tool:` pointer still resolves; live element references, the page's `state`, cached fetches, page-defined
   tools and approval grants dropped, and each named in `dropped`.
 
-#### Proposed: a detached target (TABLESS_RUN.md, not built)
+#### A detached target (TABLESS_RUN.md)
 
-**Status: proposal (2026-11-22, the `[window-ml move-run]` lane); the shape read and accepted by the coordinator on
-#2094, and the Chat Page lane draws the start form's "No tab" and the page chip.**
+**Status: built on `agent.start` (2026-11-23, the `[window-ml move-run]` lane, TABLESS_RUN.md §As built, part 2),
+which also built the start form's "No tab". On `session.resume` it is still a proposal, answered `unsupported` until
+TABLESS_RUN.md step 4. The shape was read and accepted by the coordinator on #2094.**
 A run can have NO page ([`TABLESS_RUN.md`](TABLESS_RUN.md)): started with none, or left with none when its tab closed.
 It reaches the contract as one additive member of an open enumeration, so nothing here breaks:
 

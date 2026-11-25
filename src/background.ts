@@ -269,9 +269,7 @@ if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
 }
 if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
     chrome.tabs.onRemoved.addListener((tabId) => {
-        // The async lane's `onTabClosed(tabId)` (#2107, the closed-tab release) goes HERE, AHEAD of the detach: it finds the
-        // runs held on this tab by their tabId, which the detach sets to NO_TAB, so after it no held run gets a release deadline.
-        // Then, while the runs still name the tab: a run the worker drives goes on with no tab (no-tab.ts), so its row is
+        // First, while the runs still name the tab: a run the worker drives goes on with no tab (no-tab.ts), so its row is
         // not marked interrupted and the list says it is held with no tab.
         const noTab = detachTabRuns(tabId);
         for (const hash of noTab) void refreshTaskRow(hash);
