@@ -3,9 +3,19 @@
 import { DEFAULT_HOLDS, beats, overlapsDefault, patternRefusal, patternsOverlap, type HideEntry } from "../files-hide";
 import type { PolicyLayer, PolicyRow } from "./sw-policy-view";
 
-/** What every `files` row's label ends with until the host applies the list to the programs it starts (POLICIES.md, "What the
- *  host gets"): in the label, since a row carries no field beyond what the policy page already reads. */
-export const HIDE_NOT_ON_SPAWN = " (not applied yet to programs the shell starts: it binds /files, as Python and ml.fs read it)";
+/** The limit of a `hide` on a Linux host, which masks what it matches when a command starts (window-ml-host PROTOCOL.md,
+ *  "The hide list"): one line of a `hide` row's label, only when the connected host reports Linux. */
+export const HIDE_LIMIT_LINUX_LATE = "A hide does not cover a file that appears while a command is already running (Linux).";
+
+/** The limit of a `hide` on every host: it holds paths, and a hard link is another path to the same file. One line of every
+ *  `hide` row's label. */
+export const HIDE_LIMIT_HARD_LINK = "A hide follows names: a second hard link made earlier under another name still opens the file.";
+
+/** The limit lines a `hide` row's label ends with, one per line: in the label, since a row carries no field beyond what the
+ *  policy page already reads. */
+export function hideLimits(platform: string | undefined): string {
+    return (platform === "linux" ? [HIDE_LIMIT_LINUX_LATE, HIDE_LIMIT_HARD_LINK] : [HIDE_LIMIT_HARD_LINK]).map((l) => "\n" + l).join("");
+}
 
 /** A row's place before it is compared: a default hold or a stored entry. */
 type Placed = { layer: PolicyLayer; entry: HideEntry | { id: string; layer: "default"; effect: "hide"; source: string }; label: string; origin?: string; created?: number };
@@ -30,14 +40,17 @@ function overlap(a: Placed, b: Placed): boolean {
  * `beats` (session over global over default, then the more specific, then `hide`). Removing a `hide` widens and names the
  * rows it was overriding; removing a `show` narrows; a default cannot be removed. An entry the rule refuses (`patternRefusal`)
  * is shown broken and decides nothing.
+ * A `hide` row's label ends with its limits (`hideLimits`), the Linux one only when the connected host reports Linux.
  * @param globals the person's global `files` entries
  * @param session the session's own `files` entries
+ * @param platform the connected host's `hello.platform`, or undefined when none is connected
  */
-export function filesViewRows(globals: readonly ViewedHideEntry[], session: readonly ViewedHideEntry[]): PolicyRow[] {
+export function filesViewRows(globals: readonly ViewedHideEntry[], session: readonly ViewedHideEntry[], platform?: string): PolicyRow[] {
     const placed: Placed[] = [
         ...DEFAULT_HOLDS.map((d): Placed => ({ layer: "default", entry: { id: d.id, layer: "default", effect: "hide", source: d.id }, label: d.label })),
         ...[...globals, ...session].map((e): Placed => ({ layer: e.layer, entry: e, label: e.label ?? `${e.effect} ${e.source}`, ...(e.origin ? { origin: e.origin } : {}), ...(e.created !== undefined ? { created: e.created } : {}) })),
     ];
+    const words = (p: Placed): string => p.label + (p.layer !== "default" && p.entry.effect === "hide" ? hideLimits(platform) : "");
     const live = (p: Placed): boolean => p.layer === "default" || patternRefusal(p.entry.source, p.entry.effect) === undefined;
     return placed.map((r) => {
         const broken = live(r) ? undefined : patternRefusal(r.entry.source, r.entry.effect);
@@ -46,14 +59,14 @@ export function filesViewRows(globals: readonly ViewedHideEntry[], session: read
         const overriddenBy = rivals.filter((o) => beats(o.entry, r.entry)).map((o) => o.entry.id);
         const row: PolicyRow = {
             consumer: "files", layer: r.layer,
-            entry: { id: r.entry.id, label: r.label + HIDE_NOT_ON_SPAWN, source: r.entry.source, effect: r.entry.effect, ...(r.origin ? { origin: r.origin } : {}), ...(r.created !== undefined ? { created: r.created } : {}), ...(broken ? { broken } : {}) },
+            entry: { id: r.entry.id, label: words(r), source: r.entry.source, effect: r.entry.effect, ...(r.origin ? { origin: r.origin } : {}), ...(r.created !== undefined ? { created: r.created } : {}), ...(broken ? { broken } : {}) },
             wins: overriddenBy.length === 0, overrides, overriddenBy,
         };
         if (r.layer !== "default") {
             const reach = r.layer === "global" ? "all" : "session";
             row.removal = r.entry.effect === "show"
                 ? { class: "narrows", exposes: [], reach }
-                : { class: "widens", exposes: rivals.filter((o) => overrides.includes(o.entry.id)).map((o) => ({ id: o.entry.id, label: o.label + HIDE_NOT_ON_SPAWN, effect: o.entry.effect })), reach };
+                : { class: "widens", exposes: rivals.filter((o) => overrides.includes(o.entry.id)).map((o) => ({ id: o.entry.id, label: words(o), effect: o.entry.effect })), reach };
         }
         return row;
     });

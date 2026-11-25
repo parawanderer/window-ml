@@ -67,7 +67,7 @@
     "pre": {
       "py": "xs = [1, 2]\nd = {\"a\": 1}"
     },
-    "py": "xs.append(3)\nd[\"b\"] = 2\nimport os",
+    "py": "xs.append(3)\nd[\"b\"] = 2\nimport subprocess",
     "env": "none",
     "expect": "refused",
     "leaves_nothing": true,

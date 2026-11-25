@@ -1040,6 +1040,39 @@ test("policy page: Add sends op add with the effect, label and source typed", as
     assert.deepEqual(calls.at(-1), { type: "POLICIES", payload: { op: "add", consumer: "fetch", effect: "deny", label: "no tracker", source: '(c) => c.kind === "fetch" && c.host === "example.com"' } });
 });
 
+// --- the approval card of a broken policy (ruling 108): which policy, why in plain words, and an edit that opens it ---
+
+const BROKEN_WHY = {
+    line: 'Asking because the policy "label a" is broken: it reads a field the call does not have (\'hostt\'). It may have been meant to refuse calls like this. Edit it to fix it.',
+    detail: 'Asked the person because the policy "label a" is broken (it reads a field the call does not have (\'hostt\')) and could not be checked. Nothing is wrong with the call.',
+    cause: "broken-policy", policy: "label a", policyId: "a",
+};
+
+test("a broken-policy card names the policy, says why, offers no remember, and its Edit policy opens that policy's editor on the policy page", async () => {
+    const view = policyView({ global: [policy("a", { effect: "deny", source: "(c) => c.hostt === 1" }), policy("b")], runs: [], broken: { a: "not allowed in a policy: the call has no field 'hostt'" } });
+    const { w } = await settingsWithPolicies(view);
+    await w.dispatch(agentStart("brk1", "read the site"));
+    await w.dispatch(agentStep("brk1", 1, { seq: 0, pending: true, awaitingApproval: true, tool: "fetch_url", arguments: { url: "https://other.example/" }, askWhy: BROKEN_WHY }));
+    w.shadow.querySelector(".back, [aria-label=\"Back\"], .hdr-back")?.click();
+    await w.flush();
+    const row = [...w.shadow.querySelectorAll(".row")].find((r) => /read the site/.test(r.textContent));
+    row?.click();
+    await w.flush();
+    const line = w.shadow.querySelector(".appr-askwhy");
+    assert.ok(line, "the card says why it asks");
+    assert.equal(line.querySelector("span").textContent, BROKEN_WHY.line);
+    assert.match(line.textContent, /"label a" is broken: it reads a field the call does not have/);
+    assert.equal(w.shadow.querySelector(".appr-btn.remember, .appr-grant"), null, "no remember on a broken-policy card");
+    const edit = [...line.querySelectorAll("button")].find((b) => b.textContent === "Edit policy");
+    assert.ok(edit, "an action opens the policy");
+    edit.click();
+    await w.flush(); await w.flush();
+    const rowA = section(w, "Policies").querySelector('.pol-row[data-policy-id="a"]');
+    assert.ok(rowA.querySelector(".pol-edit"), "the policy is open for editing");
+    assert.equal(rowA.querySelector("textarea").value, "(c) => c.hostt === 1");
+    assert.equal(section(w, "Policies").querySelector('.pol-row[data-policy-id="b"] .pol-edit'), null, "and no other");
+});
+
 // --- "Waiting for an answer": the sites asking for access, for every site, the popup's rows in Settings ---
 
 /** A waiting request as ACCESS_REQUESTS lists one. */

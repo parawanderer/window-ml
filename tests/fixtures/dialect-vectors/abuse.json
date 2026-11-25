@@ -313,10 +313,10 @@
   },
   {
     "name": "py: an unlisted import",
-    "py": "import os\nreturn os.getcwd()",
+    "py": "import subprocess\nreturn subprocess.run",
     "env": "none",
     "expect": "refused",
-    "reason": "IMPORT_NAME is gated; os is not a listed module",
+    "reason": "IMPORT_NAME is gated; subprocess is not a listed module",
     "from": "docs/spec/PYTHON_DIALECT.md, Tests (Python-only)"
   },
   {

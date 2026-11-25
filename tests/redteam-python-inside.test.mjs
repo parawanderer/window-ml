@@ -93,7 +93,7 @@ test("P1-namespace: a refused inside run leaves shared values as it found them (
 test("P1-output: a refused inside run's output is discarded (the try's stdout never reaches the call's result)", { timeout: 60000 }, async (t) => {
     if (skip) return t.skip(skip);
     const ns = world();
-    const out = await cell(ns, "print('LEAKED')\nimport os");
+    const out = await cell(ns, "print('LEAKED')\nimport subprocess");
     assert.ok(out.refused, `expected a refusal, got ${JSON.stringify(out)}`);
     // DEFENDED: the try's output is dropped with its bindings. Positive control below: a finished cell keeps its print.
     assert.strictEqual(out.stdout, "", "a refused try's stdout is discarded, not left in the call's output");
@@ -281,7 +281,7 @@ test("P3-why: pythonOutsideWhy names the fork's refusal", () => {
 test("P5-calls: run-time refusals for modules, open, js and dunder paths (each refuses and would ask)", { timeout: 60000 }, async (t) => {
     if (skip) return t.skip(skip);
     const cases = [
-        ["import os", /import 'os'/],
+        ["import subprocess", /import 'subprocess'/],
         ["import js", /import 'js'/],
         ["import pyodide.http", /import 'pyodide\.http'/],
         ["open('/etc/passwd')", /call on builtin_function_or_method/],

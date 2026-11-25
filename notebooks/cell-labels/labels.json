@@ -1,0 +1,133 @@
+{
+  "taxonomy": 1,
+  "about": "The cell classifier's rules as data (docs/spec/CELL_FACTS.md, Half 2). A name not listed here earns no label. Changing any list raises `taxonomy`. Patterns are globs over a call's or read's dotted name: `*` matches anything (dots included), and a receiver that is not a plain name reads as `*` (so `df[\"a\"].sum()` is `*.sum`). Python names are read with imports resolved, plus `aliases` for names a kept namespace brings in without an import.",
+  "python": {
+    "aliases": { "pd": "pandas", "np": "numpy", "plt": "matplotlib.pyplot", "sns": "seaborn" },
+    "ingest": {
+      "calls": ["pandas.read_*", "*.read_text", "*.read_bytes", "json.load", "ml.table", "ml.fetch"],
+      "open_read": true
+    },
+    "parse": {
+      "calls": ["io.StringIO", "StringIO", "csv.reader", "csv.DictReader", "json.loads", "*.splitlines"],
+      "split_separators": ["\n", "\r\n", ",", "\t", ";", "|"]
+    },
+    "list": {
+      "calls": ["os.listdir", "os.walk", "os.scandir", "glob.glob", "glob.iglob", "*.iterdir", "*.glob", "*.rglob",
+                "os.path.exists", "os.path.isfile", "os.path.isdir", "os.path.getsize", "os.path.getmtime", "os.stat",
+                "*.exists", "*.is_file", "*.is_dir", "*.stat"]
+    },
+    "probe": {
+      "calls": ["globals", "locals", "vars", "os.getcwd", "platform.*", "help", "importlib.*", "pkgutil.*", "micropip.list"],
+      "bare_calls": ["dir"],
+      "reads": ["os.environ", "os.environ.*", "sys.version", "sys.version_info", "sys.path", "sys.platform", "sys.modules", "sys.executable"]
+    },
+    "inspect": {
+      "output_calls": ["len", "type", "dir", "*.head", "*.tail", "*.info", "*.describe"],
+      "output_reads": ["*.shape", "*.dtypes", "*.dtype", "*.columns", "*.index", "*.ndim", "*.size"],
+      "unwrap": ["list", "tuple", "sorted", "*.tolist", "*.to_list"]
+    },
+    "select": {
+      "calls": ["*.query", "*.filter", "filter", "*.nlargest", "*.nsmallest", "*.dropna", "*.drop_duplicates", "*.unique", "*.sample"],
+      "reads": ["*.loc", "*.iloc", "*.at", "*.iat"],
+      "mask_calls": ["*.isin", "*.isna", "*.isnull", "*.notna", "*.notnull", "*.duplicated", "*.between", "*.str.contains", "*.str.startswith", "*.str.endswith"]
+    },
+    "transform": {
+      "calls": ["*.assign", "*.apply", "*.map", "map", "*.astype", "pandas.to_datetime", "pandas.to_numeric", "pandas.concat",
+                "*.merge", "*.sort_values", "*.sort_index", "sorted", "*.sort", "*.pivot", "*.melt", "*.cumsum", "*.cumprod",
+                "*.shift", "*.diff", "*.pct_change", "*.rank", "*.rolling", "*.expanding", "*.fillna", "*.rename", "*.replace",
+                "*.reset_index", "*.set_index", "*.round", "*.stack", "*.unstack", "*.transform", "*.reindex", "*.to_period",
+                "*.strftime", "*.clip", "numpy.select", "numpy.where"],
+      "reads": ["*.str", "*.dt"],
+      "assign_subscript": true
+    },
+    "aggregate": {
+      "calls": ["*.sum", "*.mean", "*.median", "*.count", "*.min", "*.max", "min", "max", "sum", "*.groupby", "*.value_counts",
+                "*.agg", "*.aggregate", "*.idxmax", "*.idxmin", "pandas.pivot_table", "*.pivot_table", "pandas.crosstab",
+                "*.nunique", "*.std", "*.var", "*.mode", "*.quantile", "*.prod", "*.resample", "*.most_common",
+                "collections.Counter", "statistics.*"],
+      "accumulate_in_loop": true
+    },
+    "report": {
+      "calls": ["*.to_markdown", "*.to_string", "*.to_dict", "*.to_json", "*.to_html", "json.dumps"],
+      "formatted_print": true
+    },
+    "write": {
+      "calls": ["*.to_csv", "*.to_excel", "*.to_parquet", "*.to_feather", "*.to_pickle", "*.write_text", "*.write_bytes", "json.dump", "*.savefig"],
+      "text_without_target": ["*.to_csv", "*.to_excel"],
+      "open_write": true
+    },
+    "shell": { "calls": ["ml.sh", "ml.sh.*", "subprocess.*", "os.system", "os.popen"] },
+    "plot": { "calls": ["matplotlib.*", "seaborn.*", "*.plot", "*.plot.*"] },
+    "define": { "def": true, "class": true, "lambda_assigned": true },
+    "output_calls": ["print"]
+  },
+  "js": {
+    "ingest": {
+      "calls": ["ml.table", "ml.fetch", "fetch", "ml.fs.readFile", "ml.dereference"],
+      "pointer_strings": ["@tool:", "@file:"]
+    },
+    "parse": {
+      "calls": ["JSON.parse"],
+      "split_separators": ["\n", "\r\n", ",", "\t", ";", "|"],
+      "split_regex_chars": ["\\n", ","],
+      "map_chain_through": ["*.filter", "*.slice", "*.trim", "*.trimEnd", "*.map", "*.replace", "*.replaceAll"]
+    },
+    "list": {
+      "calls": ["ml.fs.readdir", "ml.fs.stat", "ml.fs.exists"],
+      "reads": ["ml.current.files", "ml.current.files.*", "ml.current.attachments", "ml.current.attachments.*"]
+    },
+    "probe": {
+      "typeof": ["ml", "ml.*", "window", "window.*", "globalThis", "globalThis.*"],
+      "keys_of": ["ml", "ml.*", "window", "globalThis", "self"],
+      "keys_calls": ["Object.keys", "Object.getOwnPropertyNames"],
+      "reads": ["navigator", "navigator.*", "location", "location.*", "window.location", "window.location.*", "ml.current", "ml.current.*"]
+    },
+    "inspect": {
+      "output_reads": ["*.length", "*.textContent", "*.outerHTML"],
+      "output_calls": ["Object.keys"],
+      "unwrap": ["JSON.stringify", "String"]
+    },
+    "select": {
+      "calls": ["*.filter", "*.find", "*.findLast"],
+      "selector_calls": ["*.querySelector", "*.querySelectorAll"],
+      "trivial_selector": "^([a-zA-Z][\\w-]*|#[\\w-]+)$"
+    },
+    "transform": {
+      "calls": ["*.map", "*.flatMap", "*.sort", "*.toSorted", "*.reverse", "*.flat", "*.concat", "*.join", "*.trim",
+                "*.toLowerCase", "*.toUpperCase", "*.replace", "*.replaceAll", "*.padStart", "*.padEnd", "*.toFixed",
+                "Object.entries", "Object.fromEntries", "Array.from", "Number", "parseFloat", "parseInt"],
+      "assign_member": true
+    },
+    "aggregate": {
+      "calls": ["*.reduce", "*.reduceRight"],
+      "spread_calls": ["Math.max", "Math.min"],
+      "accumulate_in_loop": true,
+      "loop_callbacks": ["*.forEach"],
+      "set_get_in_loop": ["*.set"]
+    },
+    "report": {
+      "calls": ["JSON.stringify"],
+      "template_output": true
+    },
+    "dom-read": {
+      "roots": ["document", "document.*", "window.document", "window.document.*"],
+      "calls": ["*.querySelector", "*.querySelectorAll", "*.getElementById", "*.getElementsByTagName", "*.getElementsByClassName",
+                "*.closest", "*.getAttribute", "*.getBoundingClientRect"],
+      "reads": ["*.textContent", "*.innerText", "*.innerHTML", "*.outerHTML", "*.children", "*.parentElement", "*.cells",
+                "*.tagName", "*.classList", "*.dataset", "*.nextElementSibling", "*.previousElementSibling", "*.childNodes",
+                "*.firstElementChild"]
+    },
+    "dom-act": {
+      "calls": ["*.click", "*.dispatchEvent", "*.focus", "*.blur", "*.submit", "*.setAttribute", "*.removeAttribute",
+                "*.appendChild", "*.insertAdjacentHTML", "*.scrollIntoView", "*.replaceWith", "*.classList.add",
+                "*.classList.remove", "*.classList.toggle"],
+      "assign": ["*.textContent", "*.innerHTML", "*.innerText", "*.outerHTML", "*.value", "*.checked", "*.selected",
+                 "*.className", "*.style.*", "*.dataset.*", "*.src", "*.href", "document.title"]
+    },
+    "write": { "calls": ["ml.fs.writeFile", "ml.fs.appendFile", "ml.fs.mkdir", "ml.sh.put"] },
+    "shell": { "calls": ["ml.sh", "ml.sh.*"] },
+    "plot": { "calls": ["*.getContext", "*.fillRect", "*.strokeRect", "*.fillText", "*.lineTo", "*.arc", "document.createElementNS"] },
+    "define": { "function": true, "class": true, "arrow_assigned": true },
+    "output_calls": ["console.log"]
+  }
+}

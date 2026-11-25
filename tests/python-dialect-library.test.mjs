@@ -101,7 +101,7 @@ test("a library whose source does not match its pin is not loaded", async (t) =>
 test("a library body outside the dialect is not loaded: an import, a loop, a class, a dunder, a file", async (t) => {
     if (skip) return t.skip(skip);
     const bodies = {
-        bad_os: "import os\nX = os.getcwd()",
+        bad_subprocess: "import subprocess\nX = subprocess.run",
         bad_while: "def f():\n    while True:\n        pass",
         bad_class: "class A:\n    pass",
         bad_dunder: "def f(o):\n    return o.__class__",

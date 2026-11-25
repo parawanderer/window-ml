@@ -35,6 +35,7 @@ import { workerMl } from "./worker-ml";
 import { ocrRequest } from "../ml/ml-vision";
 import { planImages } from "../image-gate";
 import { ensureOffscreen } from "./sw-offscreen";
+import { forgetAgentFiles } from "./sw-agent-files";
 import { readPdfOffscreen } from "./sw-attach";
 import type { PdfMessage } from "../pdf/pdf-wire";
 import { pythonBundlePresent, deletePythonRun } from "./sw-python";
@@ -50,7 +51,7 @@ import { shellCapabilities, refreshShell, onShellStatus, hostMissing, hostIsOutd
 import { keptEvent } from "./sw-asks";
 import { forRow, forRowText } from "./sw-scrub";
 import { onRegistryChanged } from "./sw-secret-registry";
-import { isNoTab } from "./no-tab";
+import { isNoTab, NO_TAB } from "./no-tab";
 
 /**
  * Ask a tab's page something, PUTTING THE CONTENT SCRIPT BACK if it is not there.
@@ -144,7 +145,7 @@ function localRuntime(): RuntimeInfo {
         // backend behind it); `pythonBench` is MEASURED, because a checkout without the wheels builds a bundle whose
         // bench would fail at run time. `localSettings`: this browser's pages may edit its settings, which only the
         // extension's own pages can (a phone over the hub reports the capability and holds nothing to edit with).
-        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: pythonBundled, localSettings: true, switchModel: true, attachFiles: true, attachPdf: true, ...archiveCapability(), ...blankStartCapability(), ...shellCapabilities(), ...(attentionCodes().length ? { attention: attentionCodes() } : {}) },
+        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: pythonBundled, localSettings: true, switchModel: true, detached: true, attachFiles: true, attachPdf: true, ...archiveCapability(), ...blankStartCapability(), ...shellCapabilities(), ...(attentionCodes().length ? { attention: attentionCodes() } : {}) },
         // This browser's own pages hold every scope.
         grants: [{ scope: "view" }, { scope: "drive" }, { scope: "approve" }, { scope: "screen" }],
     };
@@ -402,6 +403,7 @@ export function configureSessionCommands(run: RunDeps): void {
             run.forgetRun(hash);
             forgetBackgroundChat(hash);
             await sessionStore?.forget([hash]);
+            await forgetAgentFiles(hash);   // the files its runs wrote (sw-agent-files.ts)
             // A session is in the live store OR the archive; deleting it means from both. Only when the archive is on:
             // otherwise nothing was ever moved there, and asking would start SQLite for every delete.
             if (archiveOn) {
@@ -436,6 +438,13 @@ export function configureSessionCommands(run: RunDeps): void {
         startAgent: async (tabId, opts, origin) => {
             try {
                 const { hash } = await run.startUserRun(tabId, { ...opts, surface: "chat" }, origin ? { sender: origin } : {});
+                return { outcome: "started", hash };
+            } catch (e) { return { outcome: "none", error: (e as Error)?.message || String(e) }; }
+        },
+        // A run with no tab is a run on the no-tab sentinel (no-tab.ts): `startUserRun` opens and adopts nothing for it.
+        startDetached: async (opts, origin) => {
+            try {
+                const { hash } = await run.startUserRun(NO_TAB, { ...opts, surface: "chat" }, origin ? { sender: origin } : {});
                 return { outcome: "started", hash };
             } catch (e) { return { outcome: "none", error: (e as Error)?.message || String(e) }; }
         },
@@ -597,6 +606,7 @@ export const sessionStore = (() => {
                 // Deleted, or moved to the archive: its run policies go with it (POLICIES.md, "Scopes"). An archived
                 // session that comes back starts with none. `kept` (the move failed) leaves them.
                 if (e.outcome === "deleted" || e.outcome === "archived") { forgetRunPolicies(e.hash, e.outcome); deletePythonRun(e.hash); void endTasks(e.hash, e.outcome); }   // and its Python namespace and its detached tasks
+                if (e.outcome === "deleted") void forgetAgentFiles(e.hash);   // the files its runs wrote: an archived session keeps them
                 recordHousekeeping({
                     subsystem: "sessions", kind: e.outcome === "kept" ? "archive-failed" : "evict", reason: e.reason, key: e.hash, bytes: e.bytes,
                     detail: { outcome: e.outcome, idleDays: Math.floor(e.idleMs / DAY_MS), ...(e.error ? { error: e.error } : {}) },

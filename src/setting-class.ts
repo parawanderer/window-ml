@@ -105,6 +105,7 @@ export const SETTING_CLASSES: Readonly<{ [K in keyof MlConfig]: SettingDecl }> =
     valueStoreBudgetMB: { class: "guarded", reason: "how much disk the bodies of large fetched tables may use", widens: (from, to) => (to as number) < (from as number) },
     exportToolDefs: { class: "guarded", reason: "whether an export carries the full tool definitions", widens: off },
     taskNotifyOnly: { class: "guarded", reason: "whether a finished task starts the run's next turn with no message from you", widens: off },
+    filesQuotaMB: { class: "guarded", reason: "how many MiB of files this session's runs may keep in /files/agent", widens: (from, to) => (to as number) > (from as number) },
     taskTurnChainMax: { class: "guarded", reason: "how many turns finished tasks may start in a row with no message from you", widens: (from, to) => (to as number) > (from as number) },
 
     model: { class: "ordinary", domain: model },
