@@ -105,6 +105,10 @@ function useReplyArrival(msg: { current: HTMLDivElement | null }, body: { curren
     });
 }
 
+/** A MODEL'S REPLY: the answer as rendered Markdown, or as its raw source (`initialRaw`), highlighted, where an address or
+ *  `@tool:` pointer is clickable and a link target that is neither loses the underline the theme gives it.
+ *  @group transcript
+ */
 export function ReplyBubble({ content, status, model, profile, ts, reasoning = null, sources = null, error, label, capped, initialRaw, resumeCap, retry, streaming, tokenRun, tokenScope, anchorHash, latest }: {
     content: string; status: Status; model: string | null; profile: "utility" | "default" | null; ts: number;
     reasoning?: string | null; sources?: unknown[] | null; error?: string; label?: string; capped?: boolean; initialRaw?: boolean;
@@ -231,7 +235,7 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
                     : collapsed
                         ? <div class="asst-collapsed" onClick={toggleCollapsed}>{preview!.text}{preview!.more ? <span class="more"> …</span> : null}</div>
                         : showRaw
-                            ? <Code text={content} lang="markdown" />
+                            ? <Code text={content} lang="markdown" hash={tokenRun?.hash || anchorHash} />
                             : tokenRun && hasTokens(content, aliasOf(tokenRun))
                                 ? <AnswerBody text={content} run={tokenRun} cls="asst-answer" scope={tokenScope} />
                                 : streamed.current
