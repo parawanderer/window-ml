@@ -260,7 +260,7 @@ test("a settings change releases no other session's run and arms nothing", T, as
 
 // --- a kept row carries no value after the release ---
 
-test("a kept undelivered row carries no figure after a release: its result is cleared, but the image it drew is still stored and delivered with the row", { ...T }, async () => {
+test("a kept undelivered row carries no figure after a release: its result and the image it drew are cleared, and the next turn is sent neither", { ...T }, async () => {
     const w = boot();
     const a = await w.run(7)("probe");
     const MARK = "U0VDUkVUTUFSS0VS";   // base64("SECRETMARKER"), a figure no delivery should carry after the release
