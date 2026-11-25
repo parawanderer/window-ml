@@ -6,6 +6,7 @@ import { ArrivingMsg, PROMPT_RAW_TIPS, RawToggle, SentAsIs, SentContext, SentIma
 import { cssDurationMs } from "../use-close";
 import { services, bareHash } from "../services";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import type { ComponentChildren } from "preact";
 import { useJustArrived } from "./history-paint";
 import { StreamingMd, continuesLiveAnswer } from "./streaming-md";
 import type { ExtendProfile } from "../../contract/contract-chat";
@@ -295,7 +296,8 @@ export function EmbedRunView({ s }: { s: Session }) {
  *  @gallery {"t": {"id": "t1", "ts": 1760000000000, "user": "What does the stamp look like at rest?", "assistant": "The time shows; the buttons wait for the pointer.", "status": "ok"}}
  *  @gallery-flow user-stamp tests/gallery-flows/MessageTurn.mjs
  */
-export function MessageTurn({ t, hash }: { t: Turn; hash?: string }) {
+/** One chat turn: the person's message, what ran between it and the answer (`between`: its tool calls), the answer. */
+export function MessageTurn({ t, hash, between }: { t: Turn; hash?: string; between?: ComponentChildren }) {
     // With files attached, `t.user` is exactly what the model got (the `<file>` blocks included, the raw view) and
     // `t.display` the words and the files apart (the rendered view, files as chips under the message).
     const [raw, setRaw] = useRawView();
@@ -311,6 +313,7 @@ export function MessageTurn({ t, hash }: { t: Turn; hash?: string }) {
                 {t.display && !raw ? <SentContext context={t.display.context} /> : null}
                 <SentAsIs names={t.display?.asIs} />
             </ArrivingMsg>
+            {between}
             {/* `anchorHash` is what the event lane scrolls to. A chat session gets a container bar and
                 generation spans like any other, and clicking one used to navigate here and then find nothing
                 to reach — the anchor was only set for agent answers, which is where `tokenRun` comes from. */}

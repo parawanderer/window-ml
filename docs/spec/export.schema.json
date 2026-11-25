@@ -1014,6 +1014,10 @@
           "description": "Groups the records a single model turn emitted: a thought and the tool call it decided on share one `seq`. It is therefore NOT unique — 9 records over 5 turns carry 5 distinct values — so it identifies a turn's event group, not a record. ORDER: the `steps` array is already in the order things happened. Sort by `seq` only with a stable sort, or ties reorder; array order is authoritative.",
           "type": "number"
         },
+        "turn": {
+          "description": "In a chat session: the chat turn this tool call belongs to (the turn's id), with `step` and `seq` both the session's count of tool calls. Absent in an agent run.",
+          "type": "string"
+        },
         "at": {
           "description": "When the step completed. Volatile.",
           "type": "string",

@@ -776,3 +776,292 @@ test("the first pass still sweeps when the live set cannot be read or the releas
     assert.deepEqual(released, ["dead2"]);
     assert.equal(swept, 3);
 });
+
+// --- read_pages in a chat's turn: when it is offered, the loop, its bound, and what it leaves behind (FILE_ATTACHMENTS.md, "Reading the pages held back") ---
+
+/** A four-page document whose message sends pages 1-2 (each half of slice 1's cap): 3 and 4 are held back. Page 3 holds
+ *  a word the scrub below replaces. */
+const HELD_DOC = () => {
+    const half = FILE_INLINE_MAX / 2;
+    return { pageCount: 4, pages: [
+        { n: 1, kind: "text", text: "1".repeat(half), measure: {} }, { n: 2, kind: "text", text: "2".repeat(half), measure: {} },
+        { n: 3, kind: "text", text: "has SECRET inside", measure: {} }, { n: 4, kind: "text", text: "44444", measure: {} },
+    ] };
+};
+/** One model call's answer: its text, and the tool calls it makes. */
+const said = (content, ...tool_calls) => ({ content, tool_calls, reasoning: null, usage: null });
+/** A `read_pages` call by the model; `args` is an object, or the JSON string the openai format sends. */
+const readCall = (args, id = "c1", name = "read_pages") => ({ id, name, arguments: args });
+
+/**
+ * A worker that offers `read_pages`: `script` is what each `callTools` answers in turn (an answer, or a function of
+ * the request and its position; past its end the model answers "done"). `rows` is the value store the held PDFs go to,
+ * read back through `readHeld`; `take` is the model's `tools` capability.
+ */
+function toolWorld({ script = [], take = async () => true, doc = HELD_DOC(), scrubResult, ...rest } = {}) {
+    const rows = new Map();
+    const w = world({
+        pdf: reader(doc),
+        hold: async (blob, format, source) => { const key = `row-${rows.size + 1}`; rows.set(key, format === "paged" ? await blob.text() : ""); return key; },
+        ...rest,
+    });
+    const calls = [], reads = [], takes = [];
+    w.deps.takesTools = async (model) => { takes.push(model); return take(model); };
+    w.deps.callTools = async (req, onLive, signal) => {
+        calls.push(req);
+        const next = script[calls.length - 1];
+        return typeof next === "function" ? next(req, calls.length, signal) : next ?? said("done");
+    };
+    w.deps.readHeld = async (key, session) => { reads.push({ key, session }); return rows.get(key); };
+    w.deps.scrubResult = scrubResult ?? (async (t) => t);
+    return { ...w, calls, reads, takes, rows };
+}
+/** The tool messages a request carries, in order. */
+const toolMsgs = (req) => req.messages.filter((m) => m.role === "tool");
+
+test("ENUMERATED: not offered when the model does not say it takes tools, or the worker cannot run it, or no page is held back", T, async () => {
+    const cases = [
+        ["takesTools resolves false", (w) => { w.deps.takesTools = async () => false; }],
+        ["takesTools rejects", (w) => { w.deps.takesTools = async () => { throw new Error("caps down"); }; }],
+        ["takesTools absent", (w) => { delete w.deps.takesTools; }],
+        ["callTools absent", (w) => { delete w.deps.callTools; }],
+        ["readHeld absent", (w) => { delete w.deps.readHeld; }],
+        ["scrubResult absent", (w) => { delete w.deps.scrubResult; }],
+    ];
+    for (const [what, arrange] of cases) {
+        const w = toolWorld();
+        arrange(w);
+        await startBackgroundChat({ text: "", files: [PDF] });
+        await until(() => w.of("chat-result").length === 1, `the turn (${what})`);
+        assert.equal(w.calls.length, 0, `${what}: callTools never called`);
+        assert.match(userOf(w).content, /pages 3-4 were not sent: past the text a message takes\. This chat cannot show them\.\n<\/file>$/, what);
+        assert.doesNotMatch(userOf(w).content, /read_pages/, what);
+        assert.equal(w.of("agent-step").length, 0, what);
+    }
+    // No page held back: nothing to read, so the model is not even asked about tools.
+    const w = toolWorld({ doc: textDoc(5, 5) });
+    await startBackgroundChat({ text: "", files: [PDF] });
+    await until(() => w.of("chat-result").length === 1, "the whole-PDF turn");
+    assert.equal(w.calls.length, 0);
+    assert.deepEqual(w.takes, [], "takesTools is not asked when nothing is held back");
+    assert.doesNotMatch(userOf(w).content, /not sent/);
+});
+
+test("offered: the note says to read them with read_pages, the model is asked about the chat's model, and one function is offered", T, async () => {
+    const w = toolWorld({ script: [said("answer")] });
+    await startBackgroundChat({ text: "", files: [PDF], model: "big" });
+    await until(() => w.of("chat-result").length === 1, "the turn");
+    assert.deepEqual(w.takes, ["big"]);
+    assert.match(userOf(w).content, /pages 3-4 were not sent: past the text a message takes\. Read them with read_pages\.\n<\/file>$/);
+    assert.equal(w.calls.length, 1);
+    assert.equal(w.calls[0].tools.length, 1);
+    assert.equal(w.calls[0].tools[0].type, "function");
+    assert.equal(w.calls[0].tools[0].function.name, "read_pages");
+    assert.equal(w.calls[0].model, "big");
+    assert.equal(w.of("chat-result")[0].content, "answer");
+    assert.equal(w.of("agent-step").length, 0, "no call made, no step drawn");
+});
+
+test("a call reads pages of this message's PDF: the next request ends with the assistant's calls and a tool message of the scrubbed result, and the events are in order with a turn's ids", T, async () => {
+    const w = toolWorld({
+        script: [said("let me look", readCall({ file: "paper.pdf", pages: "3" }, "c1")), said("the answer")],
+        scrubResult: async (t) => t.replaceAll("SECRET", "[hidden]"),
+    });
+    const hash = await startBackgroundChat({ text: "what is on page 3?", files: [PDF] });
+    await until(() => w.of("chat-result").length === 1, "the turn");
+
+    const [first, second] = w.calls;
+    assert.equal(first.tools.length, 1);
+    const tail = second.messages.slice(first.messages.length);
+    assert.deepEqual(tail.map((m) => m.role), ["assistant", "tool"]);
+    assert.deepEqual(tail[0].tool_calls, [readCall({ file: "paper.pdf", pages: "3" }, "c1")]);
+    assert.equal(tail[0].content, "let me look");
+    const want = '<file name="paper.pdf" pages="4">\n<page n="3">\nhas [hidden] inside\n</page>\n</file>';
+    assert.equal(tail[1].content, want, "scrubResult applied to what the tool answered");
+    assert.equal(tail[1].tool_call_id, "c1");
+    assert.deepEqual(second.messages.slice(0, first.messages.length), first.messages, "the request so far is carried unchanged");
+
+    assert.deepEqual(w.kinds(), ["chat", "agent-step", "agent-step", "chat-result"]);
+    const id = `${hash}-1`;
+    const [, pend, done] = w.events;
+    for (const e of [pend, done]) {
+        assert.equal(e.id, id);
+        assert.equal(e.turn, id);
+        assert.equal(e.step, 1);
+        assert.equal(e.seq, 1);
+        assert.equal(e.tool, "read_pages");
+        assert.deepEqual(e.arguments, { file: "paper.pdf", pages: "3" });
+        assert.deepEqual(e.session, { hash, turn: 1 });
+        assert.equal(e.thought, "let me look", "what the model wrote with its call is on the first call's step, in both events");
+    }
+    assert.equal(pend.pending, true);
+    assert.equal("result" in pend, false);
+    assert.equal(done.pending, undefined);
+    assert.equal(done.result, want, "the done step carries the scrubbed text the model read");
+    assert.equal(typeof done.toolMs, "number");
+    assert.equal(w.of("chat-result")[0].content, "the answer");
+});
+
+test("arguments as the openai format sends them, a JSON string, are read; a string that is not an object is an empty call", T, async () => {
+    const w = toolWorld({ script: [
+        said("", readCall(JSON.stringify({ file: "paper.pdf", pages: "4" }), "a"), readCall("not json", "b"), readCall("[1]", "c")),
+        said("ok"),
+    ] });
+    await startBackgroundChat({ text: "", files: [PDF] });
+    await until(() => w.of("chat-result").length === 1, "the turn");
+    const [a, b, c] = toolMsgs(w.calls[1]).map((m) => m.content);
+    assert.match(a, /<page n="4">\n44444\n<\/page>/);
+    assert.match(b, /^read_pages needs `file`/);
+    assert.match(c, /^read_pages needs `file`/);
+    assert.deepEqual(w.of("agent-step").filter((e) => !e.pending).map((e) => e.arguments), [{ file: "paper.pdf", pages: "4" }, {}, {}]);
+});
+
+test("a PDF held from an EARLIER turn is read through readHeld(key, the chat's hash), and the message carries no new file", T, async () => {
+    const w = toolWorld({ script: [said("first answer"), said("", readCall({ file: "paper.pdf", pages: "3-4" })), said("second answer")] });
+    const hash = await startBackgroundChat({ text: "", files: [PDF] });
+    await until(() => w.of("chat-result").length === 1 && recordOf(w, hash), "the first turn and its record");
+    assert.deepEqual(w.reads, [], "the first turn's own PDF is not read back");
+    const { doc } = recordOf(w, hash).files[0];
+
+    assert.equal(await sendBackgroundChat(hash, "and page 3?"), "turn");
+    await until(() => w.of("chat-result").length === 2, "the second turn");
+    assert.deepEqual(w.reads, [{ key: doc, session: hash }]);
+    assert.equal(w.calls[1].tools.length, 1, "offered on a turn that sends no file: a page is still held back");
+    assert.equal(toolMsgs(w.calls[2])[0].content, '<file name="paper.pdf" pages="4">\n<page n="3">\nhas SECRET inside\n</page>\n<page n="4">\n44444\n</page>\n</file>');
+    assert.equal(w.of("agent-step")[0].turn, `${hash}-2`);
+});
+
+test("a held PDF whose rows are gone answers that it is no longer held, and the turn goes on", T, async () => {
+    const w = toolWorld({ script: [said("first"), said("", readCall({ file: "paper.pdf", pages: "3" })), said("second")] });
+    const hash = await startBackgroundChat({ text: "", files: [PDF] });
+    await until(() => w.of("chat-result").length === 1 && recordOf(w, hash), "the first turn");
+    w.rows.clear();   // readHeld now answers undefined, as a released row does
+    w.deps.readHeld = async () => { throw new Error("no such row"); };
+    await sendBackgroundChat(hash, "again");
+    await until(() => w.of("chat-result").length === 2, "the second turn");
+    assert.equal(toolMsgs(w.calls[2])[0].content, "paper.pdf is no longer held by this chat. The person can attach it again.");
+    assert.equal(w.of("chat-error").length, 0);
+});
+
+test("the bound: four calls across iterations, then the model is called with no tools, and the fourth result carries the last-call line", T, async () => {
+    const again = (i) => said("", readCall({ file: "paper.pdf", pages: "4" }, `c${i}`));
+    const w = toolWorld({ script: [again(1), again(2), again(3), again(4), again(5)] });
+    await startBackgroundChat({ text: "", files: [PDF] });
+    await until(() => w.of("chat-result").length === 1, "the turn");
+    assert.equal(w.calls.length, 5);
+    assert.deepEqual(w.calls.map((c) => c.tools === null), [false, false, false, false, true], "the fifth model call offers nothing");
+    const results = toolMsgs(w.calls[4]).map((m) => m.content);
+    assert.equal(results.length, 4);
+    for (const r of results.slice(0, 3)) assert.doesNotMatch(r, /last read_pages call/);
+    assert.match(results[3], /\n\n\(That was this turn's last read_pages call: answer from the pages read so far\.\)$/);
+    assert.equal(w.of("agent-step").length, 8, "four calls, two events each: a fifth call made past `tools: null` is not run");
+    assert.deepEqual([...new Set(w.of("agent-step").map((e) => e.seq))], [1, 2, 3, 4]);
+    assert.equal(w.of("chat-result").length, 1);
+});
+
+test("six calls in ONE batch: the fifth and sixth are answered 'Not read', the fourth carries the last-call line, and the next call has no tools", T, async () => {
+    const batch = Array.from({ length: 6 }, (_, i) => readCall({ file: "paper.pdf", pages: "4" }, `c${i + 1}`));
+    const w = toolWorld({ script: [said("", ...batch), said("final")] });
+    await startBackgroundChat({ text: "", files: [PDF] });
+    await until(() => w.of("chat-result").length === 1, "the turn");
+    const out = toolMsgs(w.calls[1]);
+    assert.deepEqual(out.map((m) => m.tool_call_id), ["c1", "c2", "c3", "c4", "c5", "c6"], "every call is answered, in order");
+    assert.match(out[3].content, /last read_pages call/);
+    const refusal = "Not read: a turn makes at most 4 read_pages calls. Answer from the pages read so far.";
+    assert.equal(out[4].content, refusal);
+    assert.equal(out[5].content, refusal);
+    assert.equal(w.calls[1].tools, null);
+    assert.deepEqual(w.of("agent-step").filter((e) => !e.pending).map((e) => e.seq), [1, 2, 3, 4, 5, 6]);
+    assert.equal(w.of("chat-result")[0].content, "final");
+});
+
+test("an unknown tool name is answered that the chat has no such tool, and the turn goes on", T, async () => {
+    const w = toolWorld({ script: [said("", readCall({}, "x", "exec")), said("fine")] });
+    await startBackgroundChat({ text: "", files: [PDF] });
+    await until(() => w.of("chat-result").length === 1, "the turn");
+    assert.equal(toolMsgs(w.calls[1])[0].content, 'This chat has no tool named "exec": read_pages is its only one.');
+    assert.equal(w.of("agent-step")[1].tool, "exec");
+});
+
+test("a cancel mid-loop ends the turn as an error, with no result and nothing saved", T, async () => {
+    let release;
+    const w = toolWorld({ script: [said("", readCall({ file: "paper.pdf", pages: "3" })), () => new Promise((r) => { release = r; })] });
+    const hash = await startBackgroundChat({ text: "", files: [PDF] });
+    await until(() => w.calls.length === 2, "the second model call to be waiting");
+    assert.equal(cancelBackgroundChat(hash), true);
+    release(said("too late"));
+    await until(() => w.of("chat-error").length === 1, "the cancel to land");
+    assert.equal(w.of("chat-result").length, 0);
+    assert.match(w.of("chat-error")[0].error, /cancelled/);
+    assert.equal(w.stored.has(hash), true, "a failed turn that made a call persists its count (below), and only that");
+    assert.deepEqual(recordOf(w, hash).messages, []);
+});
+
+test("only the person's message and the final answer stay in the history: no tool call, no tool message", T, async () => {
+    const w = toolWorld({ script: [said("looking", readCall({ file: "paper.pdf", pages: "3" })), said("answer one"), said("answer two")] });
+    const hash = await startBackgroundChat({ text: "q1", files: [PDF] });
+    await until(() => w.of("chat-result").length === 1 && recordOf(w, hash), "the turn");
+    assert.deepEqual(recordOf(w, hash).messages.map((m) => m.role), ["user", "assistant"]);
+    assert.equal(recordOf(w, hash).messages[1].content, "answer one");
+    assert.equal("tool_calls" in recordOf(w, hash).messages[1], false);
+    await sendBackgroundChat(hash, "q2");
+    await until(() => w.of("chat-result").length === 2, "the second turn");
+    const req = w.calls[2];   // the second turn's first model call: the history, then the new question
+    assert.deepEqual(req.messages.map((m) => m.role), ["user", "assistant", "user"]);
+});
+
+test("toolSeq: a step's number continues across turns and across an eviction, is saved only when a call was made, and a record without it starts at 1", T, async () => {
+    const call = (id) => said("", readCall({ file: "paper.pdf", pages: "4" }, id));
+    const w = toolWorld({ script: [call("a"), call("b"), said("one"), call("c"), said("two"), call("d"), said("three")] });
+    const hash = await startBackgroundChat({ text: "", files: [PDF] });
+    await until(() => w.of("chat-result").length === 1 && recordOf(w, hash), "turn 1");
+    assert.deepEqual(w.of("agent-step").filter((e) => !e.pending).map((e) => e.seq), [1, 2]);
+    assert.equal(recordOf(w, hash).toolSeq, 2);
+
+    await sendBackgroundChat(hash, "next");
+    await until(() => w.of("chat-result").length === 2, "turn 2");
+    assert.equal(w.of("agent-step").at(-1).seq, 3, "in memory: on from the last");
+    assert.equal(recordOf(w, hash).toolSeq, 3);
+
+    forgetBackgroundChat(hash);   // an eviction: the record is all that is left
+    assert.equal(isBackgroundChat(hash), false);
+    await sendBackgroundChat(hash, "after the eviction");
+    await until(() => w.of("chat-result").length === 3, "turn 3");
+    assert.equal(w.of("agent-step").at(-1).seq, 4, "from the record: no step number reused");
+    assert.equal(w.of("agent-step").at(-1).step, 4);
+    assert.equal(recordOf(w, hash).toolSeq, 4);
+
+    // A chat that never called the tool writes no key; a record from before the key began its count at 1.
+    const quiet = toolWorld({ script: [said("no calls")] });
+    const q = await startBackgroundChat({ text: "", files: [PDF] });
+    await until(() => recordOf(quiet, q), "the quiet record");
+    assert.equal("toolSeq" in recordOf(quiet, q), false);
+    const old = toolWorld({ script: [call("z"), said("ok")] });
+    old.stored.set("oldseq1", { hash: "oldseq1", messages: [{ role: "user", content: "hi" }, { role: "assistant", content: "hello" }], model: null, extend: null, numCtx: null, numGpu: null, think: null, schema: null, toolIds: null, maxTokens: null, save: true });
+    await sendBackgroundChat("oldseq1", "", undefined, [PDF]);
+    await until(() => old.of("chat-result").length === 1, "the old record's turn");
+    assert.equal(old.of("agent-step")[0].seq, 1);
+});
+
+test("a FAILED turn that made a call still saves toolSeq, and the next turn's steps go on from it", T, async () => {
+    const boom = () => { throw new Error("the backend went down"); };
+    const w = toolWorld({ script: [said("", readCall({ file: "paper.pdf", pages: "3" })), boom, said("", readCall({ file: "paper.pdf", pages: "4" })), said("recovered")] });
+    const hash = await startBackgroundChat({ text: "", files: [PDF] });
+    await until(() => w.of("chat-error").length === 1, "the failed turn");
+    assert.equal(recordOf(w, hash).toolSeq, 1);
+    assert.deepEqual(recordOf(w, hash).messages, [], "the failed message is not kept");
+    assert.deepEqual(w.held, [], "and its PDF is not held");
+
+    // The failed turn's PDF was never held, so the retry sends it again; its steps go on from the saved count.
+    assert.equal(await sendBackgroundChat(hash, "retry", undefined, [PDF]), "turn");
+    await until(() => w.of("chat-result").length === 1, "the retry");
+    assert.equal(w.of("agent-step").at(-1).seq, 2);
+    assert.equal(recordOf(w, hash).toolSeq, 2);
+});
+
+test("a failed turn that made no call saves nothing, as before", T, async () => {
+    const w = toolWorld({ script: [() => { throw new Error("down"); }] });
+    const hash = await startBackgroundChat({ text: "", files: [PDF] });
+    await until(() => w.of("chat-error").length === 1, "the failed turn");
+    assert.equal(w.stored.has(hash), false);
+});
