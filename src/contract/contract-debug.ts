@@ -272,7 +272,11 @@ export interface DebugAgentStep extends DebugBase {
      *  (pending: true, no result yet) with the completed DONE and patch the row in place. Thoughts
      *  have no seq. `pending` marks the START (render "running…" until the DONE arrives). */
     seq?: number; pending?: boolean;
-    /** Design A: a pending step whose background-hosted tool is BLOCKED on the human gate. The sidebar
+    /** In a CHAT session, the chat turn this tool call belongs to: that turn's `chat` event `id`. A step there carries
+     *  `step` and `seq` as the session's count of tool calls (SESSION_CONTRACT.md, "Session events"). Absent in an
+     *  agent run. */
+    turn?: string;
+    /** Design A:a pending step whose background-hosted tool is BLOCKED on the human gate. The sidebar
      *  renders approve/deny controls (instead of "running…") and posts the decision back via SET_APPROVAL. */
     awaitingApproval?: boolean;
     /** `thought` = the assistant's user-facing PROSE (content); `reasoning` = its separate thinking
