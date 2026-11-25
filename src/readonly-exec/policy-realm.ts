@@ -6,7 +6,7 @@
 // quiet mistakes that turn a rule into a grant (a typo'd field, a coercing compare) are a BROKEN policy instead. Anything
 // that goes wrong is no opinion: a broken policy fails closed, and the caller stores the reason against it.
 
-import { NotInDialect, Denied } from "./limits";
+import { NotInDialect, Denied, ResourceStop } from "./limits";
 import { tokenize } from "./tokenizer";
 import { Parser, Node } from "./parser";
 import { Evaluator, runSync } from "./evaluator";
@@ -44,7 +44,7 @@ function parse(source: string): Node {
             // loops are `for…of` over what the call holds. Refused when parsed, whatever the test or the body.
             const loop = findNode(ast, (n) => n.type === "While" || n.type === "DoWhile");
             hit = loose ? { error: `not allowed in a policy: ${loose.op} coerces; compare with ${loose.op}=` }
-                : loop ? { error: "not allowed in a policy: `while` and `do…while` are for scripts, not policies; loop with `for (const x of …)`" } : { ast };
+                : loop ? { error: LOOP_REFUSAL } : { ast };
         } catch (e) { hit = { error: reason(e) }; }
         parsed.set(source, hit);
         if (parsed.size > PARSE_CACHE_SIZE) parsed.delete(parsed.keys().next().value as string);
@@ -68,9 +68,15 @@ function findNode(node: unknown, pred: (n: Node) => boolean): Node | undefined {
     return undefined;
 }
 
-/** The text stored against a broken policy. */
+/** What a policy containing `while` or `do…while` is broken with, whatever the test: the loop forms are for scripts. */
+const LOOP_REFUSAL = "not allowed in a policy: `while` and `do…while` are for scripts, not policies; loop with `for (const x of …)`";
+
+/** The text stored against a broken policy. A {@link ResourceStop} is worded for a policy, not as a script's error: a
+ *  loop stop (a constant-true `while`) is the same refusal as any `while`; every other bound keeps its own text, which names the
+ *  bound and the way on, without the class name. */
 function reason(e: unknown): string {
     if (e instanceof PolicyParseError) return e.message;
+    if (e instanceof ResourceStop) return e.kind === "loop" ? LOOP_REFUSAL : e.message;
     if (e instanceof NotInDialect || e instanceof Denied) return `not allowed in a policy: ${e.message}`;
     if (e instanceof Error) return `${e.name}: ${e.message}`;
     return `threw ${String(e)}`;

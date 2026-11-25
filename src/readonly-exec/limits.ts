@@ -72,7 +72,7 @@ function stopText(kind: StopKind, o: { budget?: number; left?: number; shell?: b
 //      (parser.ts); a collection still cannot change while it is being iterated, and calls nest at most
 //      MAX_CALL_DEPTH deep. Running out of steps is a {@link ResourceStop}, an error the model reads.
 //   B. BOUNDED COST, a resource policy. A script that halts can still take very long. The step budget and the size
-//      caps below stop it instead of freezing the page's main thread (the budget with an error, a size cap by asking the human), a regex that could
+//      caps below stop it instead of freezing the page's main thread (each with a {@link ResourceStop}, an error the model reads, not a question to the person), a regex that could
 //      backtrack exponentially (one host call, unbounded) is refused before it runs, and every regex SEARCH is priced
 //      on its input before it runs (regex-cost.ts), since one quantifier is enough to make it quadratic. A step is only a fair unit if
 //      no single step does unbounded work, so a host call is also charged for the size of what it scans or expands

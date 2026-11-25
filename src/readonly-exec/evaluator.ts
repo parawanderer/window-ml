@@ -302,7 +302,8 @@ export class Evaluator {
                 : coll ? (isMap(x) ? [...(x as Map<unknown, unknown>)].flat() : [...(x as Set<unknown>)])
                     : Object.keys(x).map((k) => Object.getOwnPropertyDescriptor(x, k)?.value);
             parts += kids.length;
-            // Over what is LEFT of the budget is a trip; over the size a value may have at all stays a refusal.
+            // Over what is LEFT of the budget is a `steps-left` stop; over the size a value may have at all is an `expanded` stop.
+            // Both are a ResourceStop the model reads; neither asks the person.
             if (parts > cap) {
                 if (cap < MAX_EXPANDED) throw new ResourceStop("steps-left", { budget: this.budget, left: this.fuel, shell: this.shell });
                 throw new ResourceStop("expanded");

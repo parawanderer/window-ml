@@ -367,9 +367,27 @@ test("a policy containing `while` or `do…while` is broken when parsed: the loo
     assert.equal(evalPolicy("(c) => { for (const x of [1]) { } return true }", {}, "allow").decision, "allow");
 });
 
-test("the budget text names ml.sh by the SETTINGS check today (FLIP TO THE FIXED FLAG: the worker survey's `shell` is `shellTurnedOn`, not host presence)", async () => {
-    // When async's fix makes the run's shell flag mean host present AND setting on, sw-run-host.ts (`shellOffered`) reads it
-    // and these two rows become the host-absent, capability-absent and both-present rows.
+// --- a stop inside a policy is worded for a policy -----------------------------------------------------------------------
+
+test("a policy with a constant-true `while` is broken with the policy's own sentence, not the script's `Add a return`", () => {
+    for (const src of ["(c) => { while (true) { } return true }", "(c) => { do { } while (true); return true }"]) {
+        const r = evalPolicy(src, {}, "allow");
+        assert.equal(r.decision, undefined, src);
+        assert.match(r.broken, /^not allowed in a policy: `while` and `do…while` are for scripts, not policies/, src);
+        assert.doesNotMatch(r.broken, /ResourceStop|Add a `return`/, src);
+    }
+});
+
+test("a policy whose recursion passes the depth limit is broken with the stop's own words and advice, without the class name", () => {
+    const r = evalPolicy("(c) => { const f = (n) => f(n + 1); return f(0) }", {}, "allow");
+    assert.equal(r.decision, undefined);
+    assert.match(r.broken, /^Stopped: the script's own functions nested past the depth limit \(\d+ calls\) .*Write the recursion as a loop\.$/);
+    assert.doesNotMatch(r.broken, /ResourceStop|not allowed in a policy/);
+});
+
+test("the budget text names ml.sh only when the survey's `shell` flag is set, and says nothing of it otherwise", async () => {
+    // The flag is the run's `shellOffered` (host presence included, sw-run-host.ts); the host-absent and capability rows are in
+    // tests/sh-offered.test.mjs. This pins what the text does with the flag it is handed.
     const via = (shell) => evalReadonlyInWorker({ js: "let i = 0; while (i >= 0) { i++ }" }, { ...(shell ? { shell: true } : {}) });
     assert.ok(!/ml\.sh/.test((await via(false)).result));
     assert.match((await via(true)).result, /detached through ml\.sh\./);
