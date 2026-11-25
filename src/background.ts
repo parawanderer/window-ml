@@ -84,7 +84,7 @@ import { watchRedirects } from "./sw/sw-redirects";
 import { fetchImageDataUrl } from "./sw/sw-image-fetch";
 import { approvalKey } from "./approval-key";
 import { raiseAsk } from "./sw/sw-asks";
-import { probeShell, refreshShell, shellStatusRead } from "./sw/sw-shell";
+import { probeShell, refreshShell, shellStatus, shellStatusRead } from "./sw/sw-shell";
 import { toPageUi, notePage, forgetTab, syncAllPanels, servePanelPort, startGesture, tabHidden, cuePanel, panelOpen, HL_POSITIONS } from "./sw/sw-side-panel";
 import { checkReadPlan } from "./table/table-plan";
 
@@ -269,9 +269,7 @@ if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
 }
 if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
     chrome.tabs.onRemoved.addListener((tabId) => {
-        // The async lane's `onTabClosed(tabId)` (#2107, the closed-tab release) goes HERE, AHEAD of the detach: it finds the
-        // runs held on this tab by their tabId, which the detach sets to NO_TAB, so after it no held run gets a release deadline.
-        // Then, while the runs still name the tab: a run the worker drives goes on with no tab (no-tab.ts), so its row is
+        // First, while the runs still name the tab: a run the worker drives goes on with no tab (no-tab.ts), so its row is
         // not marked interrupted and the list says it is held with no tab.
         const noTab = detachTabRuns(tabId);
         for (const hash of noTab) void refreshTaskRow(hash);
@@ -812,7 +810,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
                 // One session's effective view (docs/spec/POLICIES.md, "The effective view"): a read, so no change to answer with.
                 const hash = str(p.hash, 100);
                 if (!hash) { sendResponse({ error: "a session hash is needed" }); return; }
-                sendResponse({ data: sessionPolicies(hash) });
+                sendResponse({ data: sessionPolicies(hash, shellStatus().host?.platform) });
                 return;
             } else if (p.op === "removeChecked") {
                 // A removal from a session's view: a widening one needs `confirm: true`, and refuses with the entry and what it would expose.
@@ -820,7 +818,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
                 if (!hash || !id) { sendResponse({ error: "a session hash and a policy id are needed" }); return; }
                 const r = removeFromSession(hash, id, p.confirm === true);
                 if (!r.removed) { sendResponse(r.why === "confirm" ? { error: "confirm", data: { row: r.row } } : { error: "no such policy" }); return; }
-                sendResponse({ data: sessionPolicies(hash) });
+                sendResponse({ data: sessionPolicies(hash, shellStatus().host?.platform) });
                 return;
             } else if (p.op !== undefined && p.op !== "list") { sendResponse({ error: "unknown op" }); return; }
             sendResponse({ data: policyView() });

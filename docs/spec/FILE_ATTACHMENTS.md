@@ -239,7 +239,8 @@ unknown vision used to get it, unread.
 person pasted count first, then the pages that need one, in page order. A page past the cap goes to the reader model
 when one is set, and otherwise is named in the block with what can get it: "pages 9-48 are scans not sent as images.
 This chat cannot show them." Once slice 3's `look` on a page exists, an agent run's note names it as the recovery;
-until then the note says there is none, since a recovery named must be callable now.
+until then the note says there is none, since a recovery named must be callable now. A worker chat's note says "Read
+them with read_pages." on a turn that offers the tool (below, "`read_pages`, as built").
 
 **Built for worker chats (2026-10-29).** A runtime listing `capabilities.attachPdf` takes `{ name, type, data }` in
 `files` on `chat.start` and on `session.send` to a chat, `data` the bytes as base64 (the extension's channel is JSON),
@@ -448,8 +449,9 @@ that rule for attachments and should reuse the `@tool:` value path, not a parall
   lets a model weigh an instruction found inside it.
 - **Lifetime.** A fetch can be repeated, so its value is evicted like any other; an attachment cannot, so it is held for
   the session ("Eviction differs by producer", slice 3).
-- **The recovery a held-back note names.** A worker chat has no tools ("This chat cannot show them."); an agent run
-  names the call that gets the page.
+- **The recovery a held-back note names.** A worker chat has one tool, `read_pages`, and names it on a turn that
+  offers it ("Read them with read_pages."), otherwise "This chat cannot show them."; an agent run names the call that
+  gets the page.
 
 Where there are no tools (a worker chat), "past the cap" cannot become a pointer. Decided (Shane, 2026-10-29): a PDF
 past the cap is no longer refused whole. Its pages go in order while they fit and the rest are named ("pages 12-30
@@ -464,7 +466,7 @@ Giving worker chats the read-only dialect instead would be a far larger surface 
 an agent run instead ("start a run to read them") leaves the model stuck, which is the thing the note is there to
 prevent. `read_pages` is a new agent-facing call, so it gets the red-team pass.
 
-**Where a worker chat keeps its PDFs (ruled 2026-11-17; built, the tool not yet).** In the value store, held for the
+**Where a worker chat keeps its PDFs (ruled 2026-11-17; built, the tool since 2026-11-24).** In the value store, held for the
 chat's session through `storeHeld`, as an agent run's attached files are: two rows per PDF, its bytes (`bytes`) and
 its read document (`paged`). One store, so the files panel lists from it. A PDF is held once its message is
 answered; a failed turn holds nothing, since its message is not kept either. A text file is not held: it is sent
@@ -490,6 +492,32 @@ whole or refused, so no page of it is held back.
 - The tool is offered only when the model's capabilities say it takes tools (`MODEL_CAPS` `tools: true`). Unknown and
   no keep "This chat cannot show them.", because a backend refuses a whole request that lists tools to a model without
   them. Named cost: a model that takes tools but does not say so never gets `read_pages`.
+
+**`read_pages`, as built (2026-11-24, `src/tools/read-pages-tool.ts`, `toolLoop` in sw-chat.ts).**
+
+- Offered on a turn only while the chat holds a PDF with a page no message sent (a PDF listed with no rows does not
+  count) and the model's capabilities say `tools`. The PDFs it reads are the chat's held ones, read back from their
+  `paged` row for the chat's own session (`readHeld`, the one function the session store's ranged reader replaces),
+  and this message's, from the document the message was framed from. Both are as the model read them, scrubbed.
+- Arguments `{ file, pages }`: `file` is the name the `<file>` block gives; two PDFs with one name are `name#1` and
+  `name#2`, in the order sent, and the bare name is refused listing both. `pages` is the `pages` verb's grammar, at
+  most 50 pages a call.
+- The answer is a `<file name pages>` block of `<page n>` sections, text only, escaped as a message's are. A page
+  with a figure says the figure is not returned; a scan with no text says it has none. Pages past one call's text
+  (`pdfTextBudget`, as a message's) are named, to read in another call; a first page alone past it comes cut where the
+  budget ends and says so, since named it could never be read. Every refusal (no such file, no such page, a
+  bad page list, no longer held) is a sentence the model reads, never an error that ends the turn.
+- At most 4 calls a turn. The 4th result says it was the last; a 5th call in the same reply is answered "Not read",
+  and the next model call is made with no tools, so the turn ends in an answer. A cancel ends the loop.
+- Each result goes through the scrub an agent run's tool results go through (`forModel` and the line naming what was
+  taken) before the model reads it, and the same text is the step's `result`, so the transcript and both exports show
+  what the model read.
+- Each call is an `agent-step` in the chat's session with `turn` (SESSION_CONTRACT.md, "Session events"), drawn
+  between the turn's message and its answer, and written raw under the turn in the Markdown export.
+- Only the question and the answer stay in the chat's history; a later turn that needs a page reads it again. Named
+  cost: a later turn does not see what an earlier one read.
+- Not built: a re-read of a scan or figure page as an image (the vision path for a re-read); the answer names it as
+  not returned.
 
 Built (2026-10-29, `pdfTextBudget` and `fitPages`):
 
@@ -2527,6 +2555,17 @@ otherwise it is refused (`PAGE_GONE`). Only a top frame can build a run (`granta
 is the top frame's and the comparison is exact; the composers (sidebar, DevTools) take files for an agent session. The
 `dereference` tool reads a text pointer as its text through the pipe ("Text, N lines" in the header); the inventory,
 the shelf's refusals and the `run.files` state row say lines for text and pages for a PDF. Images wait, as ruled.
+
+**Built (2026-11-24): where a cell opens it.** On a run the worker built, each block also names the file's path under
+the mount, after `pointer`: `path="/files/attached/<handle>/<name>"`, the handle being the pointer's id and the name the
+stored one, as the mount lists it (sw-attach.ts `openablePath`). It is there only when it opens the file as written: a
+name holding `/` (the mount reads it as a folder), a name that is `.` or `..` (the mount refuses the segment) and a name
+the turn's scrub changes (the framed task is scrubbed whole, the mount lists the stored name) get none. Only the
+attribute is absent: the file is still attached, its block still names its pointer, and its folder
+`/files/attached/<handle>/` is listed, so the model lists the folder. A `"` in a name is written `&quot;`, as in `name`;
+the attribute's decoded value is the path. A hidden attachment carries its path, since its name is listed; the read is
+refused by the hide rule. A message stored before this is replayed as stored. It costs 32 characters and the name per
+attached file.
 
 ## Open
 

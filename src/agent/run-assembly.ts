@@ -601,8 +601,9 @@ export interface RunHosting {
     navigate: boolean;
     crossOrigin: boolean;
     approvalRouting: StartRunPayload["approvalRouting"];
-    /** the page the run starts on: its origin seeds the cross-origin consent, the rest is provenance */
-    page: { origin: string; url: string; title?: string };
+    /** the page the run starts on: its origin seeds the cross-origin consent, the rest is provenance. Absent for a run
+     *  that starts with no tab (TABLESS_RUN.md) */
+    page?: { origin: string; url: string; title?: string };
     /** "worker" for a run the worker built (sw-run-start.ts) */
     builtBy?: "worker";
 }
@@ -630,7 +631,7 @@ export function startPayload(asm: AssembledRun, h: RunHosting): StartRunPayload 
         crossPage: h.navigate,
         crossOrigin: h.crossOrigin,
         approvalRouting: h.approvalRouting,
-        pageOrigin: h.page.origin, pageUrl: h.page.url, pageTitle: h.page.title || undefined,
+        ...(h.page ? { pageOrigin: h.page.origin, pageUrl: h.page.url, pageTitle: h.page.title || undefined } : {}),
         rebuild: rebuildFor(asm, h.crossOrigin, h.builtBy),
         ...(h.builtBy ? { builtBy: h.builtBy } : {}),
     };

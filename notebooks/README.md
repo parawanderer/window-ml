@@ -14,6 +14,7 @@ README naming every notebook. How they are made, run and checked: [docs/dev/note
 - [session-store/](session-store/README.md): the bounds a Chrome extension actually has for a session's history: how much an MV3 service worker holds before it dies, the quota with and without `unlimitedStorage`, the largest IndexedDB put, the runtime message limit.
 - [secrets/](secrets/README.md): ruling 32's hash-only matcher, measured before its widths are fixed: the forms a secret gives, the false candidates on four kinds of text, the filter pass against the plaintext scrub, the slow confirm's cost, and one filter hit against the pass's spread.
 - [tables/](tables/README.md): the stored-table decode cache: what decoding a 64 MB stored CSV costs the service worker, and how much of it to keep.
+- [cell-labels/](cell-labels/README.md): the offline cell classifier (what each `exec`/`python_exec` cell is for, from its syntax), its fixtures, and its first use on the corpus baseline.
 - [shell/](shell/README.md): which shell programs past sessions ran, ranked for `ml.sh` program manifests (program names and counts only).
 - `pyproject.toml`, `uv.lock`: the one environment (`node scripts/nb.mjs setup`).
 - `src/wmlnb/`: what every notebook shares (`extract`, `open_ro`, `provenance`, `find_sweep`, `store`).

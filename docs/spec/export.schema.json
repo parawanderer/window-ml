@@ -1014,6 +1014,10 @@
           "description": "Groups the records a single model turn emitted: a thought and the tool call it decided on share one `seq`. It is therefore NOT unique — 9 records over 5 turns carry 5 distinct values — so it identifies a turn's event group, not a record. ORDER: the `steps` array is already in the order things happened. Sort by `seq` only with a stable sort, or ties reorder; array order is authoritative.",
           "type": "number"
         },
+        "turn": {
+          "description": "In a chat session: the chat turn this tool call belongs to (the turn's id), with `step` and `seq` both the session's count of tool calls. Absent in an agent run.",
+          "type": "string"
+        },
         "at": {
           "description": "When the step completed. Volatile.",
           "type": "string",
@@ -2693,11 +2697,15 @@
           "type": "string"
         },
         "cause": {
-          "description": "Why it asks, as a slug: why the policy is gone (`archived`, `removed`, `narrowed`), `outside-dialect`, `ask-policy` (an `ask` policy matched, and the card offers no \"remember\"), `nav-only` (a read of an origin a policy lets the run go to, not read), `start-left` (a read of the start origin once the tab has left it), or `reveals` (a call whose program shows other processes and is not in `shellRevealsAllow`, and would otherwise run unasked), or `sandbox-marked` (a python_exec cell not tried inside the dialect because an earlier cell ran outside it in the same worker).",
+          "description": "Why it asks, as a slug: why the policy is gone (`archived`, `removed`, `narrowed`), `outside-dialect`, `ask-policy` (an `ask` policy matched, and the card offers no \"remember\"), `nav-only` (a read of an origin a policy lets the run go to, not read), `start-left` (a read of the start origin once the tab has left it), or `reveals` (a call whose program shows other processes and is not in `shellRevealsAllow`, and would otherwise run unasked), `sandbox-marked` (a python_exec cell not tried inside the dialect because an earlier cell ran outside it in the same worker), or `broken-policy` (a `deny` or an `ask` policy would not run, so the call asks and the card offers no \"remember\" but an edit of that policy).",
           "type": "string"
         },
         "policy": {
           "description": "The gone policy's label, or for `ask-policy` the policy that asks; absent when no policy is involved.",
+          "type": "string"
+        },
+        "policyId": {
+          "description": "`broken-policy` only: the id of the policy that would not run, for the card's \"Edit policy\".",
           "type": "string"
         },
         "program": {
