@@ -2145,6 +2145,9 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
    so a log full of them does not turn into a wall of blue. */
 a.out-link { color: inherit; text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 2px; cursor: pointer; }
 a.out-link:hover { text-decoration-thickness: 2px; }
+/* A markdown link target in a raw view that holds no link we draw (a relative path, a data: URI, a refused address): the
+   theme underlines `.hljs-link` as if it were clickable, so it loses that (code-links.ts). */
+.hljs-link.hljs-link-dead { text-decoration: none; }
 a.out-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
 /* Midnight: the gutter shows time only, so a day change gets its own divider — without it 00:00:01 sits
    directly under 23:59:58 and reads as one second later. */
