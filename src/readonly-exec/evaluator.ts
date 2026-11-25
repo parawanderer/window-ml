@@ -808,7 +808,13 @@ export class Evaluator {
      *  (`classList`) stays itself, so `contains` answers; it is printed as its tokens ({@link printable}). */
     private memberValue(v: unknown): unknown {
         if (this.isTokenList(v)) { this.readTokenList = true; return v; }
-        return isDomCollection(v, this.isTokenList) ? Array.from(v as ArrayLike<unknown>) : v;
+        return isDomCollection(v, this.isTokenList) ? this.domArray(v as ArrayLike<unknown>) : v;
+    }
+    /** A NodeList or HTMLCollection as a real Array, charged its length BEFORE the copy: the copy is made after the
+     *  new-array charge a host call's result gets, so `querySelectorAll('*')` on a huge page copied it for one step. */
+    private domArray(v: ArrayLike<unknown>): unknown[] {
+        this.tick(Math.floor(v.length / HOST_COPY_ELEMENTS_PER_STEP));
+        return Array.from(v);
     }
 
     // Bind a destructuring pattern (`const {a,b} = …`, `([a,b]) => …`) MEDIATED: every extracted property goes
@@ -1350,7 +1356,7 @@ export class Evaluator {
             // HTMLCollection, which have no .map/.filter, so `querySelectorAll('x').map(…)` throws (the
             // model forgets to spread). In this read-only dialect it's safe to just hand back a real
             // Array, so the survey runs instead of falling through to the manual gate.
-            return this.own(this.sized(isDomCollection(out, this.isTokenList) ? Array.from(out as ArrayLike<unknown>) : out));
+            return this.own(this.sized(isDomCollection(out, this.isTokenList) ? this.domArray(out as ArrayLike<unknown>) : out));
         }
         // Ident(args) — only whitelisted coercion/parse builtins.
         // Judged by VALUE: the root's own function, by identity. A script that rebinds the name (`const Number = …`) has an ordinary

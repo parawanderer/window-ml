@@ -12,6 +12,7 @@ import { FilesRefused, fileBlocks, checkFilesField, FILE_INLINE_MAX } from "../s
 import { FETCH_PREVIEW_CHARS } from "../src/ml/ml-tool-factories.ts";
 import { ValueTooLarge } from "../src/pointers/value-store.ts";
 import { framePrompt } from "../src/agent/prompts.ts";
+import { RangedReader } from "../src/session/ranged-reader.ts";
 
 const page = (n, text, kind = "text") => ({ n, text, kind, measure: {} });
 const doc = (...pages) => ({ pageCount: pages.length, pages });
@@ -46,7 +47,7 @@ test("a PDF is stored as its bytes and its read document for the run's session, 
     assert.deepEqual(r.added.map((p) => [p.id, p.name, p.pages, p.read, p.turn, p.data, p.doc, p.figures, p.scans]), [[id, "report.pdf", 3, 3, 1, "k1", "k2", [2], [3]]]);
     assert.equal(w.shelf.resolve(`@file:${id}`).file, r.added[0], "the pointer the block names resolves on the run's shelf");
     const block = fileBlocks(r.files);
-    assert.match(block, new RegExp(`^<file name="report.pdf" type="application/pdf" bytes="12" pages="3" pointer="@file:${id}">\\n@file:${id} "report.pdf": attached by the person\\. PDF, 3 pages`));
+    assert.match(block, new RegExp(`^<file name="report.pdf" type="application/pdf" bytes="12" pages="3" pointer="@file:${id}" path="/files/attached/${id}/report\\.pdf">\\n@file:${id} "report.pdf": attached by the person\\. PDF, 3 pages`));
     assert.match(block, /Page 2 has a figure; page 3 is scanned\. Read with dereference/);
     assert.ok(!block.includes("chart"), "the pages are not sent, only the first page's preview");
 });
@@ -55,7 +56,7 @@ test("the task carries a short text file whole and the PDF as its outline, in at
     const w = world();
     const r = await attachFiles("run1", [{ name: "a.log", type: "text/plain", text: "line\n" }, pdf("report.pdf")], 1, w.deps);
     const { text, display } = framePrompt("summarise", null, r.files);
-    assert.match(text, new RegExp(`^summarise\\n\\n<file name="a\\.log" type="text/plain" bytes="5" pointer="@file:${fileId("run1", 1)}">\\nline\\n</file>\\n\\n<file name="report\\.pdf"[^>]* pointer="@file:${fileId("run1", 2)}"`));
+    assert.match(text, new RegExp(`^summarise\\n\\n<file name="a\\.log" type="text/plain" bytes="5" pointer="@file:${fileId("run1", 1)}" path="/files/attached/${fileId("run1", 1)}/a\\.log">\\nline\\n</file>\\n\\n<file name="report\\.pdf"[^>]* pointer="@file:${fileId("run1", 2)}"`));
     assert.deepEqual(display.context.map((c) => [c.file.name, c.file.pages ?? null]), [["a.log", null], ["report.pdf", 3]]);
 });
 
@@ -138,7 +139,7 @@ test("a text file is stored as its text for the run's session and sent whole und
     const id = fileId("run1", 1);
     assert.deepEqual(r.added.map((p) => [p.id, p.name, p.type, p.lines, p.pages, p.read, p.turn, p.doc, p.data, p.chars, p.bytes]),
         [[id, "a.txt", "text/plain", 2, 0, 0, 2, "k1", "k1", 9, 9]]);
-    assert.equal(fileBlocks(r.files), `<file name="a.txt" type="text/plain" bytes="9" pointer="@file:${id}">\nhi\nthere\n</file>`);
+    assert.equal(fileBlocks(r.files), `<file name="a.txt" type="text/plain" bytes="9" pointer="@file:${id}" path="/files/attached/${id}/a.txt">\nhi\nthere\n</file>`);
     assert.equal(w.shelf.resolve('@file:"a.txt"').file, r.added[0]);
     assert.deepEqual(await attachFiles("run1", undefined, 1, w.deps), { added: [] });
 });
@@ -153,9 +154,9 @@ test("text past what a message sends whole is framed as its outline under its po
     assert.deepEqual([b.lines, b.chars], [5000, 40_000]);
     const block = fileBlocks(r.files);
     assert.ok(big.text.length > FILE_INLINE_MAX);
-    assert.match(block, new RegExp(`^<file name="server\\.log" type="text/plain" bytes="40000" lines="5000" pointer="@file:${b.id}">\\n@file:${b.id} "server\\.log": attached by the person\\. Text, 5000 lines, about 10k tokens\\.\\nRead with dereference\\(@file:${b.id}, pipe "head -n 100"\\); grep -n finds a line\\.\\nOpening:\\nboot ok\\n`));
+    assert.match(block, new RegExp(`^<file name="server\\.log" type="text/plain" bytes="40000" lines="5000" pointer="@file:${b.id}" path="/files/attached/${b.id}/server\\.log">\\n@file:${b.id} "server\\.log": attached by the person\\. Text, 5000 lines, about 10k tokens\\.\\nRead with dereference\\(@file:${b.id}, pipe "head -n 100"\\); grep -n finds a line\\.\\nOpening:\\nboot ok\\n`));
     assert.ok(block.length < 2000 + small.text.length, "the outline, not the text");
-    assert.match(block, new RegExp(`<file name="n\\.txt" type="text/plain" bytes="4" pointer="@file:${n.id}">\\nnote\\n</file>$`));
+    assert.match(block, new RegExp(`<file name="n\\.txt" type="text/plain" bytes="4" pointer="@file:${n.id}" path="/files/attached/${n.id}/n\\.txt">\\nnote\\n</file>$`));
 });
 
 test("the same text twice is one file, stored once; a different text under a name in use names the first", async () => {
@@ -181,7 +182,7 @@ test("ADVERSARIAL: a text file cannot close its block or open a section, whole o
     const hb = fileBlocks(held.files);
     assert.equal(hb.match(/<\/file>/gi).length, 1, hb);
     assert.ok(!/<page/i.test(hb), "no section opens inside the outline");
-    assert.match(hb, /^<file [^>]* lines="2" pointer="@file:[^"]+" escaped="3">\n/);
+    assert.match(hb, /^<file [^>]* lines="2" pointer="@file:[^"]+" path="\/files\/attached\/[^"\/]+\/big\.txt" escaped="3">\n/);
 });
 
 test("a text the store cannot keep refuses the message with the store's reason; nothing is noted", async () => {
@@ -196,6 +197,102 @@ test("a message refused partway takes back the pointers it noted, and leaves one
     await assert.rejects(attachFiles("run1", [{ name: "kept.txt", type: "text/plain", text: "kept" }, { name: "a.txt", type: "text/plain", text: "a" }, pdf("x.pdf", "%PDF-1.7 bad")], 2, w.deps), FilesRefused);
     assert.deepEqual(w.shelf.all().map((f) => [f.name, f.turn]), [["kept.txt", 1]], "a.txt is taken back; kept.txt, already held, stays");
     assert.equal(w.shelf.all()[0], before.added[0]);
+});
+
+// --- where a worker cell opens an attached file: the block's `path` ---
+
+/** The `path` attribute of the one block in `text`, decoded as an attribute's value is, or undefined when it has none. */
+function blockPath(text) {
+    const tag = /^<file [^>]*>/m.exec(text)?.[0] ?? "";
+    const m = / path="([^"]*)"/.exec(tag);
+    return m ? m[1].replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#13;/g, "\r").replace(/&#10;/g, "\n").replace(/&#9;/g, "\t").replace(/&amp;/g, "&") : undefined;
+}
+
+/** The mount over `w`'s shelf, as `filesAttached` (sw-python.ts) hands it to the reader: a channel on session "run1". */
+function mountOf(w, hidden = () => false) {
+    const bytes = new Map(w.puts.map((put, i) => [`k${i + 1}`, put.text]));
+    const source = {
+        attached: async () => w.shelf.all().map((f) => ({ handle: f.id, name: f.name, key: f.data, bytes: f.bytes, sha256: f.sha256, attachedMs: 1 })),
+        blob: async (key) => new Blob([bytes.get(key)]),
+        secretForms: async () => [],
+    };
+    const ch = new RangedReader({ source, hidden, now: () => 1 }).openChannel("files");
+    ch.setSession("run1");
+    return ch;
+}
+
+/** The whole file at `path` (a `/files/...` path) read through `ch`, as text. */
+async function readAt(ch, path) {
+    assert.ok(path.startsWith("/files/"), path);
+    const { fd, size } = await ch.open(path.slice("/files/".length));
+    const dest = new Uint8Array(size);
+    let at = 0;
+    while (at < size) { const n = await ch.read(fd, at, Math.min(7, size - at), dest.subarray(at)); assert.ok(n > 0); at += n; }
+    await ch.close(fd);
+    return new TextDecoder().decode(dest);
+}
+
+/** A scrub that takes `secret` out, as the turn's does: `again` is the pure form `openablePath` asks. */
+const scrubOf = (secret) => {
+    const take = (t) => t.split(secret).join("[REDACTED:K]");
+    return { text: take, again: take, deep: (v) => v };
+};
+
+test("each of the three shapes names where a worker cell opens it, and that path opens the file through the mount", async () => {
+    const w = world();
+    const big = "row\n".repeat(FILE_INLINE_MAX / 4 + 10);
+    const r = await attachFiles("run1", [{ name: "s.csv", type: "text/csv", text: "a,b\n1,2\n" }, { name: "big.log", type: "text/plain", text: big }, pdf("r.pdf")], 1, w.deps);
+    const [whole, held, doc] = r.files.map((f) => fileBlocks([f]));
+    const ch = mountOf(w);
+    assert.equal(blockPath(whole), `/files/attached/${fileId("run1", 1)}/s.csv`);
+    assert.equal(await readAt(ch, blockPath(whole)), "a,b\n1,2\n");
+    assert.equal(await readAt(ch, blockPath(held)), big, "the held text opens whole by range, not only its outline");
+    assert.equal(await readAt(ch, blockPath(doc)), "%PDF-1.7 one");
+    for (const b of [whole, held, doc]) assert.match(b, /^<file [^>]* pointer="@file:[^"]+" path="[^"]+"/, "path follows pointer");
+});
+
+test("a name with a space, a quote and a non-ASCII character: the decoded path opens the file, and the quote cannot end the attribute", async () => {
+    const w = world();
+    const name = 'Q3 "final" résumé.txt';
+    const r = await attachFiles("run1", [{ name, type: "text/plain", text: "ok\n" }], 1, w.deps);
+    const block = fileBlocks(r.files);
+    const tag = /^<file [^>]*>/.exec(block)[0];
+    assert.match(tag, / path="[^"]*&quot;final&quot;[^"]*"/, "the quote is written as &quot;");
+    assert.deepEqual([...tag.matchAll(/ (\w+)="/g)].map((m) => m[1]), ["name", "type", "bytes", "pointer", "path"], "no attribute is forged");
+    assert.equal(await readAt(mountOf(w), blockPath(block)), "ok\n");
+});
+
+test("no path when the turn's scrub changes it: the framed name is not the one the mount lists", async () => {
+    const w = world();
+    const r = await attachFiles("run1", [{ name: "token-sk9.txt", type: "text/plain", text: "x\n" }, { name: "plain.txt", type: "text/plain", text: "y\n" }], 1, { ...w.deps, scrub: scrubOf("sk9") });
+    const [secret, plain] = r.files.map((f) => fileBlocks([f]));
+    assert.equal(blockPath(secret), undefined);
+    assert.equal(blockPath(plain), `/files/attached/${fileId("run1", 2)}/plain.txt`, "a file whose path the scrub leaves alone keeps it");
+});
+
+test("no path for a name holding `/`, which the mount would read as a folder", async () => {
+    const w = world();
+    const r = await attachFiles("run1", [{ name: "a/b.csv", type: "text/csv", text: "z\n" }], 1, w.deps);
+    assert.equal(blockPath(fileBlocks(r.files)), undefined);
+    assert.match(fileBlocks(r.files), /pointer="@file:[^"]+">/, "the pointer still names it");
+});
+
+test.todo("a name holding `/` opens through the mount (it is listed as one entry, and the path splits it: ENOENT)");
+
+test("a hidden attachment: its block carries the path (its name is listed), and the read is refused by the hide rule", async () => {
+    const w = world();
+    const r = await attachFiles("run1", [{ name: ".env", type: "text/plain", text: "K=v\n" }], 1, w.deps);
+    const path = blockPath(fileBlocks(r.files));
+    assert.equal(path, `/files/attached/${fileId("run1", 1)}/.env`);
+    const ch = mountOf(w, (_s, p) => p.endsWith("/.env"));
+    const page = await ch.opendir(path.slice("/files/".length, path.lastIndexOf("/")), { limit: 5 });
+    assert.deepEqual(page.entries.map((e) => [e.name, e.hidden]), [[".env", true]]);
+    await assert.rejects(ch.open(path.slice("/files/".length)), (e) => e.code === "EACCES");
+});
+
+test("a block framed without the worker's attach (a page-built run, a chat) has no path", () => {
+    assert.doesNotMatch(fileBlocks([{ name: "n.txt", type: "text/plain", text: "hi" }]), / path=/);
+    assert.doesNotMatch(framePrompt("t", null, [{ name: "n.txt", type: "text/plain", text: "hi" }]).text, / path=/);
 });
 
 // --- a long paste ---

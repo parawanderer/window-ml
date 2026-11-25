@@ -1,0 +1,577 @@
+{
+  "commit": "447e67a7c6dd0c7853e1409c4a60006ed58e1990",
+  "extracted_at": "2026-11-24T10:54:44+00:00",
+  "rows": {
+    "listing": [
+      {
+        "base_ns_median": 1875,
+        "call": "os.listdir",
+        "n": 0,
+        "ns_max": 1458750,
+        "ns_median": 1875,
+        "ns_min": 1333,
+        "ns_per_entry": null,
+        "ns_per_entry_min": null,
+        "reps": 2000
+      },
+      {
+        "base_ns_median": 1875,
+        "call": "os.listdir",
+        "n": 1,
+        "ns_max": 16208,
+        "ns_median": 1583,
+        "ns_min": 1458,
+        "ns_per_entry": -292,
+        "ns_per_entry_min": 125,
+        "reps": 2000
+      },
+      {
+        "base_ns_median": 1875,
+        "call": "os.listdir",
+        "n": 10,
+        "ns_max": 65125,
+        "ns_median": 2834,
+        "ns_min": 2583,
+        "ns_per_entry": 95.9,
+        "ns_per_entry_min": 125,
+        "reps": 2000
+      },
+      {
+        "base_ns_median": 1875,
+        "call": "os.listdir",
+        "n": 100,
+        "ns_max": 316667,
+        "ns_median": 15354.5,
+        "ns_min": 14417,
+        "ns_per_entry": 134.795,
+        "ns_per_entry_min": 130.84,
+        "reps": 2000
+      },
+      {
+        "base_ns_median": 1875,
+        "call": "os.listdir",
+        "n": 1000,
+        "ns_max": 270958,
+        "ns_median": 152354,
+        "ns_min": 145000,
+        "ns_per_entry": 150.479,
+        "ns_per_entry_min": 143.667,
+        "reps": 200
+      },
+      {
+        "base_ns_median": 1875,
+        "call": "os.listdir",
+        "n": 10000,
+        "ns_max": 2352083,
+        "ns_median": 1763979.5,
+        "ns_min": 1618000,
+        "ns_per_entry": 176.21045,
+        "ns_per_entry_min": 161.6667,
+        "reps": 20
+      },
+      {
+        "base_ns_median": 1375,
+        "call": "os.scandir",
+        "n": 0,
+        "ns_max": 52750,
+        "ns_median": 1375,
+        "ns_min": 1291,
+        "ns_per_entry": null,
+        "ns_per_entry_min": null,
+        "reps": 2000
+      },
+      {
+        "base_ns_median": 1375,
+        "call": "os.scandir",
+        "n": 1,
+        "ns_max": 17250,
+        "ns_median": 1708,
+        "ns_min": 1583,
+        "ns_per_entry": 333,
+        "ns_per_entry_min": 292,
+        "reps": 2000
+      },
+      {
+        "base_ns_median": 1375,
+        "call": "os.scandir",
+        "n": 10,
+        "ns_max": 88209,
+        "ns_median": 4000,
+        "ns_min": 3708,
+        "ns_per_entry": 262.5,
+        "ns_per_entry_min": 241.7,
+        "reps": 2000
+      },
+      {
+        "base_ns_median": 1375,
+        "call": "os.scandir",
+        "n": 100,
+        "ns_max": 134458,
+        "ns_median": 26292,
+        "ns_min": 24750,
+        "ns_per_entry": 249.17,
+        "ns_per_entry_min": 234.59,
+        "reps": 2000
+      },
+      {
+        "base_ns_median": 1375,
+        "call": "os.scandir",
+        "n": 1000,
+        "ns_max": 454417,
+        "ns_median": 255771,
+        "ns_min": 243875,
+        "ns_per_entry": 254.396,
+        "ns_per_entry_min": 242.584,
+        "reps": 200
+      },
+      {
+        "base_ns_median": 1375,
+        "call": "os.scandir",
+        "n": 10000,
+        "ns_max": 3159209,
+        "ns_median": 2864958.5,
+        "ns_min": 2768833,
+        "ns_per_entry": 286.35835,
+        "ns_per_entry_min": 276.7542,
+        "reps": 20
+      },
+      {
+        "base_ns_median": 6125,
+        "call": "glob.glob",
+        "n": 0,
+        "ns_max": 135625,
+        "ns_median": 6125,
+        "ns_min": 5833,
+        "ns_per_entry": null,
+        "ns_per_entry_min": null,
+        "reps": 2000
+      },
+      {
+        "base_ns_median": 6125,
+        "call": "glob.glob",
+        "n": 1,
+        "ns_max": 156750,
+        "ns_median": 7583,
+        "ns_min": 7250,
+        "ns_per_entry": 1458,
+        "ns_per_entry_min": 1417,
+        "reps": 2000
+      },
+      {
+        "base_ns_median": 6125,
+        "call": "glob.glob",
+        "n": 10,
+        "ns_max": 143083,
+        "ns_median": 19000,
+        "ns_min": 18416,
+        "ns_per_entry": 1287.5,
+        "ns_per_entry_min": 1258.3,
+        "reps": 2000
+      },
+      {
+        "base_ns_median": 6125,
+        "call": "glob.glob",
+        "n": 100,
+        "ns_max": 344250,
+        "ns_median": 128459,
+        "ns_min": 123917,
+        "ns_per_entry": 1223.34,
+        "ns_per_entry_min": 1180.84,
+        "reps": 2000
+      },
+      {
+        "base_ns_median": 6125,
+        "call": "glob.glob",
+        "n": 1000,
+        "ns_max": 1509791,
+        "ns_median": 1191833.5,
+        "ns_min": 1170791,
+        "ns_per_entry": 1185.7085,
+        "ns_per_entry_min": 1164.958,
+        "reps": 200
+      },
+      {
+        "base_ns_median": 6125,
+        "call": "glob.glob",
+        "n": 10000,
+        "ns_max": 12591791,
+        "ns_median": 12301146,
+        "ns_min": 12027167,
+        "ns_per_entry": 1229.5021,
+        "ns_per_entry_min": 1202.1334,
+        "reps": 20
+      },
+      {
+        "base_ns_median": 2334,
+        "call": "os.walk",
+        "n": 0,
+        "ns_max": 108875,
+        "ns_median": 2334,
+        "ns_min": 2208,
+        "ns_per_entry": null,
+        "ns_per_entry_min": null,
+        "reps": 2000
+      },
+      {
+        "base_ns_median": 2334,
+        "call": "os.walk",
+        "n": 1,
+        "ns_max": 41750,
+        "ns_median": 2750,
+        "ns_min": 2625,
+        "ns_per_entry": 416,
+        "ns_per_entry_min": 417,
+        "reps": 2000
+      },
+      {
+        "base_ns_median": 2334,
+        "call": "os.walk",
+        "n": 10,
+        "ns_max": 35167,
+        "ns_median": 5959,
+        "ns_min": 5708,
+        "ns_per_entry": 362.5,
+        "ns_per_entry_min": 350,
+        "reps": 2000
+      },
+      {
+        "base_ns_median": 2334,
+        "call": "os.walk",
+        "n": 100,
+        "ns_max": 147458,
+        "ns_median": 38334,
+        "ns_min": 36625,
+        "ns_per_entry": 360,
+        "ns_per_entry_min": 344.17,
+        "reps": 2000
+      },
+      {
+        "base_ns_median": 2334,
+        "call": "os.walk",
+        "n": 1000,
+        "ns_max": 691042,
+        "ns_median": 367687.5,
+        "ns_min": 357500,
+        "ns_per_entry": 365.3535,
+        "ns_per_entry_min": 355.292,
+        "reps": 200
+      },
+      {
+        "base_ns_median": 2334,
+        "call": "os.walk",
+        "n": 10000,
+        "ns_max": 4055000,
+        "ns_median": 3911791.5,
+        "ns_min": 3815375,
+        "ns_per_entry": 390.94575,
+        "ns_per_entry_min": 381.3167,
+        "reps": 20
+      },
+      {
+        "base_ns_median": 5917,
+        "call": "Path.iterdir",
+        "n": 0,
+        "ns_max": 95667,
+        "ns_median": 5917,
+        "ns_min": 5708,
+        "ns_per_entry": null,
+        "ns_per_entry_min": null,
+        "reps": 2000
+      },
+      {
+        "base_ns_median": 5917,
+        "call": "Path.iterdir",
+        "n": 1,
+        "ns_max": 16416,
+        "ns_median": 7750,
+        "ns_min": 7459,
+        "ns_per_entry": 1833,
+        "ns_per_entry_min": 1751,
+        "reps": 2000
+      },
+      {
+        "base_ns_median": 5917,
+        "call": "Path.iterdir",
+        "n": 10,
+        "ns_max": 133125,
+        "ns_median": 22209,
+        "ns_min": 21291,
+        "ns_per_entry": 1629.2,
+        "ns_per_entry_min": 1558.3,
+        "reps": 2000
+      },
+      {
+        "base_ns_median": 5917,
+        "call": "Path.iterdir",
+        "n": 100,
+        "ns_max": 452875,
+        "ns_median": 167208,
+        "ns_min": 161875,
+        "ns_per_entry": 1612.91,
+        "ns_per_entry_min": 1561.67,
+        "reps": 2000
+      },
+      {
+        "base_ns_median": 5917,
+        "call": "Path.iterdir",
+        "n": 1000,
+        "ns_max": 3004500,
+        "ns_median": 1666875,
+        "ns_min": 1602500,
+        "ns_per_entry": 1660.958,
+        "ns_per_entry_min": 1596.792,
+        "reps": 200
+      },
+      {
+        "base_ns_median": 5917,
+        "call": "Path.iterdir",
+        "n": 10000,
+        "ns_max": 19372084,
+        "ns_median": 17677291.5,
+        "ns_min": 16845125,
+        "ns_per_entry": 1767.13745,
+        "ns_per_entry_min": 1683.9417,
+        "reps": 20
+      }
+    ],
+    "meta": {
+      "cpu_count": 15,
+      "cpus": "Apple M5 Pro",
+      "date": "2026-11-24T10:54:44Z",
+      "loadavg_end": [
+        4.9296875,
+        5.2294921875,
+        5.349609375
+      ],
+      "loadavg_start": [
+        4.9970703125,
+        5.25439453125,
+        5.3603515625
+      ],
+      "node": "v26.12.1",
+      "platform": "emscripten",
+      "pyodide": "314.0.3",
+      "python": "3.14.2 (main, Oct 28 2026, 17:14:45) [Clang 23.0.0git (https:/github.com/llvm/llvm-project e5927fecf8a6ce89e1a4eac5b8",
+      "seconds": 7
+    },
+    "reads": [
+      {
+        "call": "Path.read_bytes",
+        "ns_max": 44875,
+        "ns_median": 6041,
+        "ns_min": 5792,
+        "ns_per_byte": null,
+        "ns_per_byte_min": null,
+        "reps": 1024,
+        "size": 0
+      },
+      {
+        "call": "Path.read_text",
+        "ns_max": 29042,
+        "ns_median": 9291.5,
+        "ns_min": 9000,
+        "ns_per_byte": null,
+        "ns_per_byte_min": null,
+        "reps": 1024,
+        "size": 0
+      },
+      {
+        "call": "Path.read_bytes",
+        "ns_max": 17084,
+        "ns_median": 6042,
+        "ns_min": 5833,
+        "ns_per_byte": 377.625,
+        "ns_per_byte_min": 364.5625,
+        "reps": 1024,
+        "size": 16
+      },
+      {
+        "call": "Path.read_text",
+        "ns_max": 52125,
+        "ns_median": 9417,
+        "ns_min": 9125,
+        "ns_per_byte": 588.5625,
+        "ns_per_byte_min": 570.3125,
+        "reps": 1024,
+        "size": 16
+      },
+      {
+        "call": "Path.read_bytes",
+        "ns_max": 32375,
+        "ns_median": 6083,
+        "ns_min": 5875,
+        "ns_per_byte": 23.76171875,
+        "ns_per_byte_min": 22.94921875,
+        "reps": 1024,
+        "size": 256
+      },
+      {
+        "call": "Path.read_text",
+        "ns_max": 45125,
+        "ns_median": 9417,
+        "ns_min": 9125,
+        "ns_per_byte": 36.78515625,
+        "ns_per_byte_min": 35.64453125,
+        "reps": 1024,
+        "size": 256
+      },
+      {
+        "call": "Path.read_bytes",
+        "ns_max": 98292,
+        "ns_median": 6000,
+        "ns_min": 5833,
+        "ns_per_byte": 5.859375,
+        "ns_per_byte_min": 5.6962890625,
+        "reps": 1024,
+        "size": 1024
+      },
+      {
+        "call": "Path.read_text",
+        "ns_max": 25959,
+        "ns_median": 9500,
+        "ns_min": 9250,
+        "ns_per_byte": 9.27734375,
+        "ns_per_byte_min": 9.033203125,
+        "reps": 1024,
+        "size": 1024
+      },
+      {
+        "call": "Path.read_bytes",
+        "ns_max": 7834,
+        "ns_median": 7042,
+        "ns_min": 7000,
+        "ns_per_byte": 0.107452392578125,
+        "ns_per_byte_min": 0.1068115234375,
+        "reps": 16,
+        "size": 65536
+      },
+      {
+        "call": "Path.read_text",
+        "ns_max": 25541,
+        "ns_median": 24958.5,
+        "ns_min": 24791,
+        "ns_per_byte": 0.38083648681640625,
+        "ns_per_byte_min": 0.3782806396484375,
+        "reps": 16,
+        "size": 65536
+      },
+      {
+        "call": "Path.read_bytes",
+        "ns_max": 28167,
+        "ns_median": 19959,
+        "ns_min": 19792,
+        "ns_per_byte": 0.019034385681152344,
+        "ns_per_byte_min": 0.0188751220703125,
+        "reps": 9,
+        "size": 1048576
+      },
+      {
+        "call": "Path.read_text",
+        "ns_max": 267875,
+        "ns_median": 259125,
+        "ns_min": 256292,
+        "ns_per_byte": 0.24712085723876953,
+        "ns_per_byte_min": 0.24441909790039062,
+        "reps": 9,
+        "size": 1048576
+      },
+      {
+        "call": "Path.read_bytes",
+        "ns_max": 163208,
+        "ns_median": 124584,
+        "ns_min": 122292,
+        "ns_per_byte": 0.014851570129394531,
+        "ns_per_byte_min": 0.01457834243774414,
+        "reps": 9,
+        "size": 8388608
+      },
+      {
+        "call": "Path.read_text",
+        "ns_max": 2077375,
+        "ns_median": 2014667,
+        "ns_min": 1990250,
+        "ns_per_byte": 0.2401670217514038,
+        "ns_per_byte_min": 0.23725628852844238,
+        "reps": 9,
+        "size": 8388608
+      }
+    ],
+    "step_rate": {
+      "branch": {
+        "ns_per_step": [
+          109.77575834544989,
+          111.04679171924995,
+          109.26959438243395,
+          109.86196582820492,
+          109.2813853116883,
+          109.72929962420221,
+          109.2228026631838,
+          109.95492327046,
+          109.36105183368967
+        ],
+        "steps": 1000006
+      },
+      "def_call": {
+        "ns_per_step": [
+          64.96455868774646,
+          64.1433169001639,
+          63.98956843764887,
+          63.54832285010412,
+          65.68309316906753,
+          64.65331180021514,
+          63.70172464942005,
+          63.476240237596826,
+          63.125342079912556
+        ],
+        "steps": 600006
+      },
+      "default_budget": 15000000,
+      "for_add": {
+        "ns_per_step": [
+          116.81629910220512,
+          116.90979854120866,
+          116.99808901146581,
+          117.4380873714755,
+          117.45104529372809,
+          116.31034413793515,
+          116.20888574668581,
+          115.58472349165874,
+          114.48510508936944
+        ],
+        "steps": 1000006
+      },
+      "if_pass": {
+        "ns_per_step": [
+          33.22382451149848,
+          33.17465655642617,
+          34.0438035731044,
+          33.34169715468124,
+          33.15140369104084,
+          33.6235877732024,
+          33.61689061519346,
+          33.34506653231309,
+          33.26952591775186
+        ],
+        "steps": 3005006
+      },
+      "pass_loop": {
+        "ns_per_step": [
+          20.006088839756053,
+          19.84807484577399,
+          19.958321214666455,
+          19.84721494732451,
+          19.831380037177965,
+          20.730740637456268,
+          20.121576795520543,
+          19.902303689243887,
+          20.039976625670622
+        ],
+        "steps": 3005006
+      }
+    }
+  },
+  "source": {
+    "cmd": "node notebooks/python-dialect/os-cost/one.mjs",
+    "driver": "notebooks/python-dialect/os-cost/one.mjs"
+  }
+}

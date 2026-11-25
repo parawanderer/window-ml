@@ -1,6 +1,6 @@
 # Cell facts: what a cell did, recorded, and what a cell is for, classified offline
 
-**Status: ruled, not built.** RULED 2026-11-24 (Shane, ruling 111, in the coordinator's session): both halves are
+**Status: ruled; Half 2 built, Half 1 not.** RULED 2026-11-24 (Shane, ruling 111, in the coordinator's session): both halves are
 wanted, "not shown to the model, but kept for our own reference and e.g. exposed in the JSON export". A cell is one
 `exec` or `python_exec` call of a run. Owners: the recorded facts are the async lane's, for both languages; the
 classifier is the bench lane's.
@@ -101,6 +101,9 @@ lifted calls are computed or thrown and then dropped; no wire-call count exists.
 
 ## Half 2: the offline classifier
 
+**Built** (taxonomy 1; this table and `labels.json` agree): [notebooks/cell-labels/](../../notebooks/cell-labels/README.md), first used in
+`cell-labels-baseline.ipynb`.
+
 One tool, one taxonomy for both languages, reading the JSON export and writing a table beside it. It lives with the
 bench's notebooks (`docs/dev/notebooks.md`) and nothing under `src/` imports it (a test asserts this).
 
@@ -118,23 +121,23 @@ bench's notebooks (`docs/dev/notebooks.md`) and nothing under `src/` imports it 
 - **Never empty.** A cell that parses and earns no label gets `other`; one that does not parse gets `unparsed`.
 
 - **The step's arguments count as syntax.** A label may be earned from the tool call's arguments, which the export
-  holds: a `python_exec` step that passes `tables` (exports from before ruling 110) is `ingest`, with the flag
+  holds: a `python_exec` step that passes a non-empty `tables` (exports from before ruling 110) is `ingest`, with the flag
   `by-argument`.
 
 | Label | Means | Python, leading names | JS, leading names |
 | --- | --- | --- | --- |
 | `ingest` | data enters the cell from outside its source | `pd.read_*`, `open` with no mode or a read mode, `Path.read_text`/`read_bytes`, `json.load`, `ml.table`, `ml.fetch`; the `tables` argument | `ml.table`, `ml.fetch`, `fetch`, `ml.fs.readFile`, a `@tool:` or `@file:` dereference |
-| `parse` | text is turned into records by hand | `io.StringIO(`, `csv.reader`, `json.loads`, a `split` on a line or field separator | a `split` on `"\n"` or `","`, `JSON.parse`; a `map` chained on such a `split` is part of the parse, not `transform` |
-| `list` | file-system metadata is read | `os.listdir`, `os.walk`, `os.scandir`, `glob`, `Path.iterdir`/`glob`/`rglob`, `os.path.exists`/`isfile`/`isdir`, `os.stat` | `ml.fs.readdir`, `ml.fs.stat` |
-| `probe` | the cell asks what its environment is | `globals()`, `locals()`, `vars()`, a bare `dir()`, `os.getcwd`, `os.environ`, `sys.version`, `sys.path`, `platform.*` | `typeof ml`, `Object.keys` of `globalThis` or `ml`, `navigator.*`, `location.*` |
+| `parse` | text is turned into records by hand | `io.StringIO(`, `csv.reader`, `json.loads`, `splitlines`, a `split` on a line or field separator; `map` over such a `split` is part of the parse | a `split` on `"\n"` or `","`, `JSON.parse`; a `map` chained on such a `split`, and a call that feeds one (`txt.trim().split("\n")`), is part of the parse, not `transform` |
+| `list` | file-system metadata is read | `os.listdir`, `os.walk`, `os.scandir`, `glob`, `Path.iterdir`/`glob`/`rglob`, `os.path.exists`/`isfile`/`isdir`, `os.stat` | `ml.fs.readdir`, `ml.fs.stat`, a read of `ml.current.files` or `ml.current.attachments` (`list` only, not also `probe`) |
+| `probe` | the cell asks what its environment is | `globals()`, `locals()`, `vars()`, a bare `dir()`, `os.getcwd`, `os.environ`, `sys.version`, `sys.path`, `platform.*` | `typeof ml`, `Object.keys` of `globalThis` or `ml`, `navigator.*`, `location.*`, any other read of `ml.current` |
 | `inspect` | a description of DATA is the cell's output | `head`, `tail`, `info`, `describe`, `dtypes`, `shape`, `columns`, `len`, `type`, `dir(x)`, where the value is printed, returned or a bare expression; the same name used inside a computation earns nothing | a bare or returned read of `length`, `textContent`, `outerHTML`, `Object.keys(x)` |
 | `select` | rows or items are kept or dropped | boolean indexing, `loc`/`iloc`, `query`, `filter`, `nlargest`/`nsmallest`, a comprehension with `if` | `filter`, `find`, `querySelector(All)` with a selector that is not a bare tag or id |
 | `transform` | values are changed, same cardinality | assignment to a column or key, `assign`, `apply`, `map`, `astype`, `to_datetime`/`to_numeric`, the `.str` accessor, `merge`, `sort_values`, `sorted`, `pivot`, `melt`, `cumsum`/`shift`/`diff`/`rank` | `map` (but see `parse`), `sort`, string and array reshaping |
-| `aggregate` | many values become fewer | `sum`, `mean`, `count`, `min`/`max` (methods and builtins), `groupby`, `value_counts`, `agg`, `idxmax`/`idxmin`, `pivot_table`, `crosstab` | `reduce`, `Math.max`/`min` over a spread, a `for…of` that accumulates |
-| `report` | the result is rendered for a reader | `to_markdown`, `to_string`, `to_dict`, `json.dumps`, a formatted `print` of a computed value | `JSON.stringify` of the result, a template string built for return |
+| `aggregate` | many values become fewer | `sum`, `mean`, `count`, `min`/`max` (methods and builtins), `groupby`, `value_counts`, `agg`, `idxmax`/`idxmin`, `pivot_table`, `crosstab`, a `+=` inside a loop | `reduce`, `Math.max`/`min` over a spread, a `for…of` that accumulates |
+| `report` | the result is rendered for a reader | `to_markdown`, `to_string`, `to_dict`, `json.dumps`, `to_csv()`/`to_excel()` with no target (they return the text), a formatted `print` of a computed value | `JSON.stringify` of the result, a template string built for return |
 | `dom-read` | the page is read | none | any read on `document` or an element |
 | `dom-act` | the page is changed or driven | none | a write to the DOM, `click`, `dispatchEvent`, a form value set |
-| `write` | a file is written | `to_csv` and kin, `open` with a write mode, `Path.write_*` | `ml.fs.writeFile`, `ml.fs.appendFile`, `ml.sh.put` |
+| `write` | a file is written | `to_csv` and kin given a target, `open` with a write mode, `Path.write_*` | `ml.fs.writeFile`, `ml.fs.appendFile`, `ml.sh.put` |
 | `shell` | a program is run | `ml.sh.*`, `subprocess` | `ml.sh.*` |
 | `plot` | a picture is drawn | `matplotlib`, `.plot(` | a canvas or SVG draw |
 | `define` | a function or class is bound to a name | a `def`, a `class`, a `lambda` ASSIGNED to a name; an inline `lambda` argument is not | a function or class declaration, an arrow assigned to a name |
