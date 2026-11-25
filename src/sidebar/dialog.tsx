@@ -34,6 +34,8 @@ import { useRef, useEffect, useLayoutEffect } from "preact/hooks";
  * keyboard as a page that did not change.
  *
  * `labelledBy` is the id of the heading inside; `alert` makes it an `alertdialog` (a confirmation, not a form).
+ *
+ * @gallery none Draws its card into a host outside its own tile, and only a caller opens one: see it in place in CodeDiff's flow (`tests/gallery-flows/CodeDiff.mjs`, which opens the maximised view in this shell).
  */
 export function Dialog(props: DialogProps) {
     const mark = useRef<HTMLSpanElement>(null);

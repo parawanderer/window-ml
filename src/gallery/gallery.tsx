@@ -337,6 +337,13 @@ function Gallery() {
         document.body.appendChild(host);
         render(<CursorTipLayer />, host);
     },
+    /** Take down what `mountTipLayer` mounted, so the next flow on the shared page starts without it. */
+    unmountTipLayer: () => {
+        const host = document.getElementById("gl-tip-layer");
+        if (!host) return;
+        render(null, host);
+        host.remove();
+    },
     status: (id: string, variant: string) => statuses.peek()[statusKey(id, variant)] ?? null,
     statuses: () => statuses.peek(),
     log: () => entryLog.peek(),
