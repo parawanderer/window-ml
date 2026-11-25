@@ -117,6 +117,21 @@ test("files.list: a cursor is checked by its shape only, and one written by hand
     assert.deepEqual((await server.list("s1", "attached", { cursor: "c:h1" })).ok.entries.map((e) => e.name), ["h2"]);
 });
 
+test("files.list: a cursor cannot change the session or the path of the command that carries it", T, async () => {
+    const { server } = setup();
+    // A cursor taken from s2's listing, or written to name another path or session, lists s1's `attached/` after it.
+    const s2page = await server.list("s2", "attached", { limit: 1 });
+    const fromS2 = s2page.ok.next ?? "c:h0";
+    for (const cursor of [fromS2, "c:../s2/attached", "c:agent", "c:/files/attached/h9", "c:s2:attached/h9", "c:h0/../../s2"]) {
+        const r = await server.list("s1", "attached", { cursor });
+        if (r.fail) { assert.equal(r.fail, "invalid", cursor); continue; }
+        for (const e of r.ok.entries) assert.ok(["h1", "h2"].includes(e.name), `${cursor} listed ${e.name}`);
+    }
+    // And in s1's agent/ (empty here), a cursor naming attached entries lists nothing of attached/.
+    const r = await server.list("s1", "agent", { cursor: "c:" });
+    assert.deepEqual(r.ok.entries, []);
+});
+
 test("files.list with no session is refused and opens no channel", T, async () => {
     const { server, chans } = setup();
     for (const s of [undefined, "", 5]) assert.equal((await server.list(s, "")).fail, "invalid");
