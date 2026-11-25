@@ -8,6 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
+import { fakeNativeHost } from "./fake-native-host.mjs";
 
 const require = createRequire(import.meta.url);
 const { jsonResponse, loadBackground } = require("./helpers");
@@ -115,6 +116,15 @@ test("(c) the chat page (agent.start): python_exec reads as the worker-hosted to
     assertSentIsRun(w.bg, r.data.session.hash, w.sent(0), FACTS, "chat page");
 });
 
+test("(c2) the chat page's \"No tab\" (agent.start, detached): python_exec reads as the worker-hosted tool that runs it", T, async () => {
+    const w = world();
+    const r = await w.cmd({ type: "agent.start", runtime: "local", task: "t", target: { kind: "detached" } });
+    assert.equal(r.ok, true, `agent.start: ${JSON.stringify(r)}`);
+    assert.ok(await until(() => w.bodies().length >= 1));
+    assertWorkerPy(w.sent(0), "no tab");
+    assertSentIsRun(w.bg, r.data.session.hash, w.sent(0), FACTS, "no tab");
+});
+
 test("(d) the harness's start hook: python_exec reads as the worker-hosted tool that runs it", T, async () => {
     const w = world();
     const { hash } = await w.bg.context.__mlStartUserRunForTest(7, { task: "t", surface: "hud" });
@@ -124,7 +134,8 @@ test("(d) the harness's start hook: python_exec reads as the worker-hosted tool 
 });
 
 test("every worker tool, with ml.sh and answer on too: each text the model reads is the text of the tool that runs", T, async () => {
-    const w = world({ config: { ...config, shellEnabled: true, shellRoots: ["/tmp/x"] } });
+    // ml.sh is offered only when a process host answers at the run's start (#2130, `shellOffered`), so one answers here.
+    const w = world({ config: { ...config, shellEnabled: true, shellRoots: ["/tmp/x"] }, onNative: fakeNativeHost({ landlockAbi: null }).onNative });
     const { hash } = await w.bg.context.__mlStartUserRunForTest(7, { task: "t", surface: "hud" }, { answer: true });
     assert.ok(await until(() => w.bodies().length >= 1));
     const names = w.sent(0).map((t) => t.name).filter((n) => WORKER_TOOL_NAMES.has(n)).sort();

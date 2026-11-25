@@ -5,7 +5,7 @@
 //
 // The order and grouping are `tabTree` (tab-tree.ts); this file draws them. A favicon is drawn only when the runtime
 // sent it as a data URL (`faviconSrc`), otherwise the site's first letter stands in.
-import { IconCheck, IconPlus, IconWarn } from "../sidebar/icons";
+import { IconCheck, IconPlus, IconTab, IconWarn } from "../sidebar/icons";
 import { truncate } from "../sidebar/format";
 import { cursorTipOn } from "../sidebar/ui-kit";
 import { cutTip } from "./cut-tip";
@@ -14,8 +14,11 @@ import { usePickerPop } from "./pop-picker";
 import { groupFolds, setGroupFold } from "./view-mode";
 import { faviconSrc, tabHost, tabMatches, tabTree, type TabGroupView, type TabTreeItem, type TabView } from "./tab-tree";
 
-/** What is picked: a tab by id, or a new tab. */
-export type TabChoice = number | "blank";
+/** What is picked: a tab by id, a new tab, or no tab at all (a run with no page, TABLESS_RUN.md). */
+export type TabChoice = number | "blank" | "none";
+
+/** What the "No tab" row's tip says a run with no page can and cannot do, as the runtime answers its tools today. */
+export const NO_TAB_TIP = "The run starts with no page. It can run Python, fetch URLs, read this session's files from Python at /files, look at attached files, and start tasks. ml.sh works only from a Python cell, and asks you on every call. It cannot read or act on a page (exec, click, type, look at a tab, ml.fs) until you bring the session to a tab.";
 
 /** Chromium's group colours, as the page draws them (the browser's own palette, dimmed a little for the dark ground). */
 const GROUP_COLOR: Record<string, string> = {
@@ -60,7 +63,7 @@ function TabIcon({ tab }: { tab: TabView }) {
  * `groupsHint` is said under the list when some group is only known to be together (no names or colours).
  * Keyboard: arrows move, Enter picks, Escape closes; typing goes to the filter.
  */
-export function TabPicker({ tabs, groups, value, onChange, onOpen, groupsHint, groupsGrant, runtime, withheld = 0, sitesGrant, loading }: {
+export function TabPicker({ tabs, groups, value, onChange, onOpen, groupsHint, groupsGrant, runtime, withheld = 0, sitesGrant, loading, noTab = false }: {
     tabs: readonly TabView[] | null;
     groups?: readonly TabGroupView[];
     value: TabChoice;
@@ -79,18 +82,20 @@ export function TabPicker({ tabs, groups, value, onChange, onOpen, groupsHint, g
      *  choice. The caller decides, because only it knows whether a null list means "not yet" or "never" — a runtime
      *  with no tabs never gets one, and would shimmer for ever. */
     loading?: boolean;
+    /** offer "No tab" after "New tab": the runtime starts runs with no page (`capabilities.detached`) and this is a start */
+    noTab?: boolean;
 }) {
     const [asking, setAsking] = useState<"" | "groups" | "sites">("");
     // A group starts folded as the browser's strip has it, then as it was last left here; typing opens every group,
     // since a match hidden inside a fold is a match not found.
     const foldKey = (g: TabGroupView) => `${runtime ?? ""}:${g.id}`;
     const foldedFor = (g: TabGroupView, q: string) => !q && (groupFolds.value[foldKey(g)] ?? !!g.collapsed);
-    const chosen = value === "blank" ? null : tabs?.find((t) => t.tabId === value) ?? null;
+    const chosen = typeof value !== "number" ? null : tabs?.find((t) => t.tabId === value) ?? null;
     // A filtered list drops the group and window headings of what no longer shows, and keeps the rest in place.
     const treeFor = (q: string): TabTreeItem[] => tabTree((tabs ?? []).filter((t) => tabMatches(t, q)), groups);
-    // What the arrows walk: "New tab", then each tab, in the order drawn.
+    // What the arrows walk: "New tab", "No tab" where offered, then each tab, in the order drawn.
     const p = usePickerPop<TabChoice>({
-        picksFor: (q) => ["blank", ...visibleTabs(treeFor(q), (g) => foldedFor(g, q))],
+        picksFor: (q) => ["blank", ...(noTab ? ["none" as const] : []), ...visibleTabs(treeFor(q), (g) => foldedFor(g, q))],
         value, onPick: onChange, onOpen,
     });
     const items = treeFor(p.q.trim());
@@ -129,9 +134,10 @@ export function TabPicker({ tabs, groups, value, onChange, onOpen, groupsHint, g
                 onto an empty list is worse than one that plainly is not ready yet. A REFRESH keeps the list it has
                 (`load(false)` never sets null), so this is the first load only, and the real pill fades in after it. */}
             {waiting ? <span class="tp-pill tp-pill-tab tp-pill-wait" role="status" aria-label="Loading tabs" /> : (
-            <button {...p.pillProps} {...(chosen ? cutTip(chosen.title || tabHost(chosen.url)) : {})} class={`tp-pill tp-pill-tab${waited.current ? " tp-pill-in" : ""}`} aria-label={`Where it runs: ${chosen ? chosen.title || tabHost(chosen.url) : value === "blank" ? "a new tab" : "a tab that has closed"}`}>
-                {value !== "blank" && !chosen ? <span class="tp-pill-text tp-gone">That tab closed · pick another</span>
+            <button {...p.pillProps} {...(chosen ? cutTip(chosen.title || tabHost(chosen.url)) : {})} class={`tp-pill tp-pill-tab${waited.current ? " tp-pill-in" : ""}`} aria-label={`Where it runs: ${chosen ? chosen.title || tabHost(chosen.url) : value === "blank" ? "a new tab" : value === "none" ? "no tab" : "a tab that has closed"}`}>
+                {typeof value === "number" && !chosen ? <span class="tp-pill-text tp-gone">That tab closed · pick another</span>
                     : chosen ? <><TabIcon tab={chosen} /><span class="tp-pill-text">{chosen.title || tabHost(chosen.url)}</span></>
+                    : value === "none" ? <><span class="tp-fav tp-new" aria-hidden="true"><IconTab /></span><span class="tp-pill-text">No tab</span></>
                         : <><span class="tp-fav tp-new" aria-hidden="true"><IconPlus /></span><span class="tp-pill-text">New tab</span></>}
                 <svg class="tp-caret" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
             </button>
@@ -144,6 +150,14 @@ export function TabPicker({ tabs, groups, value, onChange, onOpen, groupsHint, g
                         <span class="tp-title">New tab</span>
                         {value === "blank" ? <span class="tp-check" aria-hidden="true"><IconCheck /></span> : null}
                     </button>
+                    {noTab ? (
+                        <button type="button" role="option" aria-selected={value === "none"} {...p.row("none")} {...cursorTipOn(NO_TAB_TIP)}>
+                            <span class="tp-fav tp-new" aria-hidden="true"><IconTab /></span>
+                            <span class="tp-title">No tab</span>
+                            <span class="tp-host">Python, fetch, files</span>
+                            {value === "none" ? <span class="tp-check" aria-hidden="true"><IconCheck /></span> : null}
+                        </button>
+                    ) : null}
                     <div class="tp-rule" role="separator" />
                     {withheld > 0 && !p.q.trim() ? (
                         // Said, not silently dropped: a tab that is open but missing reads as a bug in the list.

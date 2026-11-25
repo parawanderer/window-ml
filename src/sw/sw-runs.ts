@@ -31,6 +31,7 @@ import { type CurrentSnapshot } from "../agent/current-context";
 import { contextTextOf, messageRow, pointerRow } from "../agent/state-rows";
 import { releaseShOutputs } from "./sw-shell-call";
 import { forgetArrivalRun } from "./nav-arrival";
+import { isExtensionSender } from "./sw-site-access";
 import { isNoTab, NO_TAB } from "./no-tab";
 
 // Design A: the AbortController for each live background run, keyed by runId, so a CANCEL_RUN message
@@ -732,12 +733,15 @@ export const rekeyRunInbox = (runId: string, to: number): boolean => {
 };
 
 /**
- * Whether a message's sender may answer for a run: an extension page (no `sender.tab`) may, a tab only if it is the one
- * the run's inbox is on.
+ * Whether a message's sender may answer for a run: this extension's own page may, proved by what the sender IS (its URL
+ * under the extension's, and its extension id where the browser gives one), never by having no tab; a tab only if it is
+ * the one the run's inbox is on. A run with no tab (no-tab.ts) is answered by the extension's pages alone.
  * @param sender the message's sender
  * @param runId the run the message names
  */
-export const senderOwnsRun = (sender: { tab?: { id?: number } }, runId: string): boolean => !sender.tab || sender.tab.id === runInboxes.get(runId)?.tabId;
+export const senderOwnsRun = (sender: chrome.runtime.MessageSender, runId: string): boolean => sender.tab
+    ? sender.tab.id === runInboxes.get(runId)?.tabId
+    : isExtensionSender(sender) && (chrome.runtime.id == null || sender.id === chrome.runtime.id);
 
 /** A tab Chrome has handed a NEW id (`chrome.tabs.onReplaced` — a discard restored, a prerender swapped in):
  *  move everything this module files under the old one, or the run it is hosting is orphaned under an id nothing

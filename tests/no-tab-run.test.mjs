@@ -30,7 +30,7 @@ const shellOn = (tabId) => ({ tab: { id: tabId, url: SITE_URL }, url: SITE_URL, 
  * @returns the worker, the run id, `script`, `turns()`, `pageCalls()` (every RUN_TOOL_IN_PAGE call that is not a
  *  preview), `bodies()` (every model request), `rows()` (the session list as a chat page sees it)
  */
-async function run({ first = [exec], onExec, indexedDB, keep = false } = {}) {
+async function run({ first = [exec], onExec, indexedDB, keep = false, detached = false } = {}) {
     const script = [...first];
     let bg;
     bg = loadBackground({
@@ -70,13 +70,22 @@ async function run({ first = [exec], onExec, indexedDB, keep = false } = {}) {
         }
         return map;
     };
-    const { hash } = await bg.context.__mlStartUserRunForTest(7, { task: "probe", surface: "hud", maxSteps: 6 }, keep ? { keep: true } : undefined);
+    // `detached`: started the chat page's way with "No tab" (`agent.start`, a `detached` target), not on tab 7.
+    const { hash } = detached ? await startDetached(port) : await bg.context.__mlStartUserRunForTest(7, { task: "probe", surface: "hud", maxSteps: 6 }, keep ? { keep: true } : undefined);
     const turns = () => bg.tabMessages.map((a) => a[1]).filter((m) => m?.type === "ML_DEBUG_TO_PAGE" && m.event?.kind === "agent-result" && m.event.id === hash).length
         + port.messages.filter((m) => m.type === "event" && m.event?.kind === "agent-result" && m.event.id === hash).length;
     const pageCalls = () => bg.tabMessages.filter(([, m]) => m?.type === "RUN_TOOL_IN_PAGE" && m.payload?.name && !m.payload.precheck && !m.payload.readonlyTry && !m.payload.renderOnly && !m.payload.finish);
     const bodies = () => bg.calls.filter((c) => c.url.includes("/chat/completions")).map((c) => c.body);
     const live = () => bg.context.__mlRunStateForTest().controllers.includes(hash);
     return { bg, hash, script, turns, pageCalls, bodies, rows, live, port };
+}
+/** Starts a run with no tab over the session channel, as the start form's "No tab" does; returns its hash. */
+async function startDetached(port, id = 900) {
+    port.send({ type: "cmd", id, command: { type: "agent.start", runtime: "local", task: "probe", maxSteps: 6, target: { kind: "detached" } } });
+    assert.ok(await until(() => port.messages.some((m) => m.type === "result" && m.id === id)), "agent.start is answered");
+    const answer = port.messages.find((m) => m.type === "result" && m.id === id).result;
+    assert.equal(answer.ok, true, `agent.start with no tab starts: ${JSON.stringify(answer)}`);
+    return { hash: answer.data.session.hash };
 }
 /** What the model read back for each tool call, oldest first. */
 const toolResults = (body) => (body?.messages ?? []).filter((m) => m.role === "tool").map((m) => String(m.content));
@@ -181,6 +190,61 @@ test("session.resume with a tab target gives a run with no tab that tab: the cha
     assert.ok(await until(() => r.rows().get(r.hash)?.background === undefined), "the row no longer says no tab");
     const moved = (await r.bg.context.__mlRunLog.all()).filter((e) => e.run === r.hash && e.subsystem === "tab" && e.kind === "moved");
     assert.deepEqual(moved.map((e) => [e.detail.from, e.detail.to]), [[-1, 8]], "moved from no tab, not hosted a second time");
+});
+
+// --- a run that STARTS with no tab: agent.start with a detached target ("No tab" in the start form) ---
+
+test("the runtime says it can start a run with no tab (capabilities.detached)", T, async () => {
+    const r = await run();
+    r.port.send({ type: "cmd", id: 1, command: { type: "runtime.info", runtime: "local" } });
+    assert.ok(await until(() => r.port.messages.some((m) => m.type === "result" && m.id === 1)));
+    const info = r.port.messages.find((m) => m.type === "result" && m.id === 1).result;
+    assert.equal(info.data?.capabilities?.detached, true);
+});
+
+test("agent.start with no tab opens and adopts nothing, tells the model it has no page, answers its page tools, and runs its worker tools", T, async () => {
+    const r = await run({ detached: true, first: [exec, { name: "agent_api_docs", args: {} }] });
+    // Its result goes to no tab's surfaces: the turn is seen to end by the worker, with the model's last reply read.
+    assert.ok(await until(() => !r.live() && r.bodies().length >= 3), "the turn ends");
+    assert.equal(r.bg.tabsCreated.length, 0, "no tab was opened");
+    assert.equal(r.bg.tabMessages.filter(([, m]) => m?.type === "ADOPT_RUN_NOW").length, 0, "no page was adopted");
+    assert.equal(r.pageCalls().length, 0, "nothing went to any tab");
+    const first = JSON.stringify(r.bodies()[0].messages);
+    assert.match(first, /This run has no tab: it started with no page/, "the model is told it has no page");
+    const read = toolResults(r.bodies().at(-1));
+    assert.ok(read.some((t) => /"exec" needs a page, and this run has no tab/.test(t)), "a page tool is answered with how the run gets a page");
+    assert.ok(!read.at(-1).includes("needs a page"), "a worker tool ran");
+    const row = r.rows().get(r.hash);
+    assert.equal(row?.kind, "agent");
+    assert.equal(row.page, undefined, "a run that started with no page names none");
+    assert.equal(row.background?.noTab, true, "and is held with no tab");
+    assert.notEqual(row.status, "interrupted");
+});
+
+test("a run started with no tab takes its next message as a turn with no page, and bring a session here gives it a tab", T, async () => {
+    const r = await run({ detached: true, first: [] });
+    assert.ok(await until(() => !r.live() && r.bodies().length >= 1));
+    r.script.push(exec);
+    assert.deepEqual(await send(r, "go on"), { ok: true, data: { mode: "turn" } });
+    assert.equal(r.pageCalls().length, 0, "the second turn had no page either");
+    assert.deepEqual(await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudOn(8)), { data: true });
+    r.script.push(exec);
+    const before = r.bg.tabMessages.length;
+    assert.deepEqual(await send(r, "now here", 2), { ok: true, data: { mode: "turn" } });
+    // other.example may not use window.ml, so the exec runs in an isolated world: its precheck is the page message.
+    assert.ok(r.bg.tabMessages.slice(before).some(([t, m]) => t === 8 && m?.type === "RUN_TOOL_IN_PAGE" && m.payload?.name === "exec"), "the next turn's exec went to the tab it was brought to");
+    assert.ok(!/needs a page/.test(toolResults(r.bodies().at(-1)).at(-1)), "and was not answered as having no page");
+    assert.ok(await until(() => r.rows().get(r.hash)?.background === undefined), "the row no longer says no tab");
+});
+
+test("session.resume with no tab is refused as unsupported until it is built", T, async () => {
+    // A resume is of a SAVED session, so this one is stored.
+    const { IDBFactory } = require("fake-indexeddb");
+    const r = await run({ detached: true, first: [], indexedDB: new IDBFactory() });
+    assert.ok(await until(() => !r.live() && r.bodies().length >= 1));
+    r.port.send({ type: "cmd", id: 5, command: { type: "session.resume", session: { runtime: "local", hash: r.hash }, target: { kind: "detached" } } });
+    assert.ok(await until(() => r.port.messages.some((m) => m.type === "result" && m.id === 5)));
+    assert.equal(r.port.messages.find((m) => m.type === "result" && m.id === 5).result.error?.code, "unsupported");
 });
 
 // --- a run with no tab across a worker eviction ---

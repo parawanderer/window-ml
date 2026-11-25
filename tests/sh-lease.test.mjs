@@ -791,7 +791,8 @@ test("rekeyRunInbox moves a live run's inbox to the new tab: a late result lands
     assert.equal(runInboxes.get("run-rekey").tabId, 9);
     assert.equal(senderOwnsRun({ tab: { id: 9 } }, "run-rekey"), true);
     assert.equal(senderOwnsRun({ tab: { id: 7 } }, "run-rekey"), false, "the old tab still answers for the run");
-    assert.equal(senderOwnsRun({}, "run-rekey"), true, "an extension page has no tab and is not refused");
+    assert.equal(senderOwnsRun({ url: chrome.runtime.getURL("sidebar.html"), id: chrome.runtime.id }, "run-rekey"), true, "an extension page has no tab and is not refused");
+    assert.equal(senderOwnsRun({}, "run-rekey"), false, "having no tab is not proof of being the extension's page");
     host.finish();
     await until(() => run.inbox().length > 0);
     assert.equal(runInboxes.get("run-rekey").queue, run.inbox(), "the result went to the re-keyed inbox itself");

@@ -353,8 +353,25 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
 export const GATED_TOOL_NAMES: ReadonlySet<string> = GATED_BUILTINS;
 
 /**
+ * The keys a page's START_RUN may not set, at the payload's top level and inside its `rebuild` alike: the person's
+ * fields and the sender's (`pageStartPayload`). One list for both levels, so a key added here is stripped at each.
+ */
+export const PAGE_STRIPPED_KEYS = ["builtBy", "display", "files", "sends", "origin", "pageOrigin", "pageUrl", "inputScrubbed"] as const;
+
+/**
+ * A shallow copy of `o` without any of `PAGE_STRIPPED_KEYS`.
+ * @param o a page's payload, or its `rebuild`
+ * @returns the copy
+ */
+function withoutPersonFields<T extends object>(o: T): T {
+    const copy = { ...o } as Record<string, unknown>;
+    for (const k of PAGE_STRIPPED_KEYS) delete copy[k];
+    return copy as T;
+}
+
+/**
  * A page's START_RUN payload as the worker may trust it. A page's payload may ask for MORE gating, never less.
- * - Removed, the worker's to set: `builtBy`, `rebuild.builtBy`, `display`, `files` (pointers naming value-store rows), `sends`,
+ * - Removed, the worker's to set, at the top level and inside `rebuild` alike (`PAGE_STRIPPED_KEYS`): `builtBy`, `display`, `files` (pointers naming value-store rows), `sends`,
  *   `inputScrubbed` (a page's claim would spare a stored session's raw user turns the scrub on resume)
  *   and `origin` (the PromptOrigin: a page could stamp its prompt as typed on an extension surface). Only the worker's own `hostRun` call
  *   (sw-run-start.ts) marks a run worker-built, and `makeWorkerRun` hands one over; a page's claim would give its run the
@@ -375,14 +392,11 @@ export const GATED_TOOL_NAMES: ReadonlySet<string> = GATED_BUILTINS;
  */
 export function pageStartPayload(payload: unknown, sender: chrome.runtime.MessageSender, cfg: Pick<MlConfig, "autoApprovePython" | "autoApproveReadonly" | "autoApproveSelfSource" | "selfIntrospection">): unknown {
     if (!payload || typeof payload !== "object") return payload;
-    const { builtBy: _b, display: _d, files: _f, sends: _n, origin: _p, pageOrigin: _o, pageUrl: _u, inputScrubbed: _i, ...rest } = payload as StartRunPayload;
+    const rest = withoutPersonFields(payload as StartRunPayload);
     // The budget RESUME_RUN honours, so a page cannot ask for an unbounded run; an invalid one is no budget, and the loop's default applies.
     const budget = stepBudget(rest.maxSteps);
     if (budget) rest.maxSteps = budget; else delete (rest as { maxSteps?: number }).maxSteps;
-    if (rest.rebuild && typeof rest.rebuild === "object") {
-        const { builtBy: _rb, ...rebuild } = rest.rebuild;
-        rest.rebuild = rebuild;
-    }
+    if (rest.rebuild && typeof rest.rebuild === "object") rest.rebuild = withoutPersonFields(rest.rebuild);
     rest.autoApprovePython = !!rest.autoApprovePython && !!cfg.autoApprovePython;
     rest.autoApproveReadonly = !!rest.autoApproveReadonly && !!cfg.autoApproveReadonly;
     delete (rest as { autoApproveSameOriginAuth?: unknown }).autoApproveSameOriginAuth;

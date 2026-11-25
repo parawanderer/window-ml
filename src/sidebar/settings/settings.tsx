@@ -1905,6 +1905,11 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                         onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("taskTurnChainMax", Number.isFinite(n) && n >= 1 && n <= 20 ? n : DEFAULT_CONFIG.taskTurnChainMax); }} />
                 </label>
                 <div class="set-hint">The most turns that finished tasks start one after another with no message from you between them. At the cap a finished task parks its result and the transcript says so; your next message resets the count. 1 to 20, default 5.</div>
+                <label data-setting="filesQuotaMB" class="set-field"><SettingLbl k="filesQuotaMB" />
+                    <input type="number" min="1" step="1" value={c.filesQuotaMB}
+                        onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("filesQuotaMB", Number.isFinite(n) && n >= 1 ? n : DEFAULT_CONFIG.filesQuotaMB); }} />
+                </label>
+                <div class="set-hint">How many MiB of files a session's runs may keep under /files/agent. Your own attachments do not count; files a run made count at their stored size. Whole number, at least 1, default 1024; no upper limit.</div>
                 </Section>
 
                 <Section id="fetch" title="Fetching (fetch_url / ml.fetch)">

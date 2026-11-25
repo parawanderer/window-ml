@@ -76,7 +76,7 @@ import { asIsTokens, forBackendFromPage, forPage, forTurn, scanTurn } from "./sw
 import { TurnUnreadable } from "./secret-registry";
 import { secretRegistryOp } from "./sw/sw-secret-registry";
 import { filesHideList, signalFilesHideChanges } from "./sw/sw-files-hide";
-import { pythonPrewarm, pythonExec, pythonInterrupt, relayPyStdout, deletePythonRun, dropPythonLibraries, pythonReaped, filesAttached, filesSecretForms, pythonStarted, pythonDone } from "./sw/sw-python";
+import { pythonPrewarm, pythonExec, pythonInterrupt, relayPyStdout, deletePythonRun, dropPythonLibraries, pythonReaped, filesAttached, filesSecretForms, filesQuota, filesLost, pythonStarted, pythonDone } from "./sw/sw-python";
 import { focusLineFor } from "./sw/sw-focus";
 import { chatHashFor, openChatPage } from "./sw/sw-open-chat";
 import { eventSession, pageMayWrite, withoutPageWhy, WORKER_ONLY_KINDS, type WorkerClaim } from "./event-admission";   // what a page may add to a session the worker speaks for
@@ -85,7 +85,7 @@ import { watchRedirects } from "./sw/sw-redirects";
 import { fetchImageDataUrl } from "./sw/sw-image-fetch";
 import { approvalKey } from "./approval-key";
 import { raiseAsk } from "./sw/sw-asks";
-import { probeShell, refreshShell, shellStatusRead } from "./sw/sw-shell";
+import { probeShell, refreshShell, shellStatus, shellStatusRead } from "./sw/sw-shell";
 import { toPageUi, notePage, forgetTab, syncAllPanels, servePanelPort, startGesture, tabHidden, cuePanel, panelOpen, HL_POSITIONS } from "./sw/sw-side-panel";
 import { checkReadPlan } from "./table/table-plan";
 
@@ -818,7 +818,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
                 // One session's effective view (docs/spec/POLICIES.md, "The effective view"): a read, so no change to answer with.
                 const hash = str(p.hash, 100);
                 if (!hash) { sendResponse({ error: "a session hash is needed" }); return; }
-                sendResponse({ data: sessionPolicies(hash) });
+                sendResponse({ data: sessionPolicies(hash, shellStatus().host?.platform) });
                 return;
             } else if (p.op === "removeChecked") {
                 // A removal from a session's view: a widening one needs `confirm: true`, and refuses with the entry and what it would expose.
@@ -826,7 +826,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
                 if (!hash || !id) { sendResponse({ error: "a session hash and a policy id are needed" }); return; }
                 const r = removeFromSession(hash, id, p.confirm === true);
                 if (!r.removed) { sendResponse(r.why === "confirm" ? { error: "confirm", data: { row: r.row } } : { error: "no such policy" }); return; }
-                sendResponse({ data: sessionPolicies(hash) });
+                sendResponse({ data: sessionPolicies(hash, shellStatus().host?.platform) });
                 return;
             } else if (p.op !== undefined && p.op !== "list") { sendResponse({ error: "unknown op" }); return; }
             sendResponse({ data: policyView() });
@@ -1074,6 +1074,8 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     if (message.type === "PY_REAPED") { pythonReaped(message, sender, noteRunLine); return false; }
     if (message.type === "FILES_ATTACHED") { sendResponse(filesAttached(message, sender)); return false; }
     if (message.type === "FILES_SECRET_FORMS") { void filesSecretForms(sender).then(sendResponse); return true; }
+    if (message.type === "FILES_QUOTA") { void filesQuota(sender).then(sendResponse); return true; }
+    if (message.type === "FILES_LOST") { filesLost(message, sender); return false; }
     if (message.type === "FILES_HIDE_LIST") { void filesHideList(message, sender).then(sendResponse); return true; }
     if (message.type === "SERVER_TOOL_EXEC") {
         // Run ONE OpenWebUI-configured tool. CHOKE POINT, and a real one: the fetch spends the user's API
