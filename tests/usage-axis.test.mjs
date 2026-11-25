@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
 import { createRequire } from "node:module";
 
-const { usageAxis, fracOfTime, timeOfFrac, idleLabel, nudgeWindow, pinchWindow, GAP_MS, GAP_SHARE } = await import("../src/chat/usage-axis.ts");
+const { usageAxis, fracOfTime, timeOfFrac, idleLabel, nudgeWindow, pinchWindow, GAP_MS, GAP_SHARE, GAPS_MAX_SHARE } = await import("../src/chat/usage-axis.ts");
 const { usageChart } = await import("../src/chat/session-resources.tsx");
 
 const DAY = 86_400_000, MIN = 60_000;
@@ -60,6 +60,27 @@ test("time to fraction and back is the identity on every call, and both ways are
     assert.ok(inGap > gap.t0 && inGap < gap.t1, "a fraction in a gap is a time between the gap's edges");
     const lone = a.pieces[a.pieces.length - 1];
     assert.ok(lone.f1 - lone.f0 > 0, "a one-call stretch has a width of its own, off the gap marker");
+});
+
+test("many idle gaps narrow each marker instead of the stretches: at 34 or more gaps the axis stays monotone and its own inverse", () => {
+    const DAY = 24 * 3_600_000;
+    for (const bursts of [34, 35, 42, 60, 200]) {
+        const ts = Array.from({ length: bursts }, (_, i) => T0 + i * DAY);
+        const a = usageAxis(ts);
+        const gaps = a.pieces.filter((p) => p.kind === "gap"), stretches = a.pieces.filter((p) => p.kind === "stretch");
+        assert.equal(gaps.length, bursts - 1);
+        for (const p of a.pieces) assert.ok(p.f1 > p.f0, `${bursts} bursts: every piece has positive width`);
+        for (let i = 1; i < a.pieces.length; i++) assert.ok(Math.abs(a.pieces[i].f0 - a.pieces[i - 1].f1) < 1e-9, "pieces tile the axis");
+        const gapTotal = gaps.reduce((s, p) => s + p.f1 - p.f0, 0);
+        assert.ok(gapTotal <= GAPS_MAX_SHARE + 1e-9, `${bursts} bursts: gaps take at most ${GAPS_MAX_SHARE} of the axis`);
+        assert.ok(stretches.reduce((s, p) => s + p.f1 - p.f0, 0) >= 1 - GAPS_MAX_SHARE - 1e-9, "the stretches keep the rest");
+        for (const t of ts) assert.equal(timeOfFrac(a, fracOfTime(a, t)), t, `${bursts} bursts: round trip at ${t - T0}`);
+        const fr = ts.map((t) => fracOfTime(a, t));
+        for (let i = 1; i < fr.length; i++) assert.ok(fr[i] > fr[i - 1], "monotone");
+        assert.equal(timeOfFrac(a, 0), ts[0], "a drag from the left edge starts at the first call");
+    }
+    const few = usageAxis([T0, T0 + 2 * GAP_MS, T0 + 4 * GAP_MS]).pieces.filter((p) => p.kind === "gap");
+    for (const g of few) assert.ok(Math.abs(g.f1 - g.f0 - GAP_SHARE) < 1e-9, "a few gaps keep the full marker width");
 });
 
 test("a session with no gap is one stretch on a linear axis, as before the fold", () => {

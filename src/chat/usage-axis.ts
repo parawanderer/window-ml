@@ -15,8 +15,11 @@ import { clampWindow, scrubNudge, scrubPinch } from "../resource/resource-axis";
 /** An inter-call interval longer than this is a gap: the session was idle, and the chart folds it away. */
 export const GAP_MS = 30 * 60_000;
 
-/** The share of the whole axis one gap marker takes (about 8 px of the summary's plot). */
+/** The share of the whole axis one gap marker takes (about 8 px of the summary's plot), while there are few gaps. */
 export const GAP_SHARE = 0.03;
+
+/** The most of the axis all gap markers together may take: past it each marker narrows, so the stretches keep the rest. */
+export const GAPS_MAX_SHARE = 0.6;
 
 /** The narrowest a window of a gesture may get, as a share of the whole axis. */
 const MIN_WINDOW_FRAC = 0.01;
@@ -32,7 +35,8 @@ export interface UsageAxis { t0: number; t1: number; pieces: AxisPiece[] }
  * The axis for calls stamped `ts`, or null when there are none. Stretches are runs of calls no more than `gapMs` apart.
  * A stretch's width is proportional to its duration; a stretch of one call (duration 0) gets a floor so its mark is not
  * on the gap marker beside it: the larger of the shortest non-zero stretch and 1% of the stretches' total (all equal
- * when no stretch has any duration). Each gap is `GAP_SHARE` of the axis. One stretch is the whole axis, linear.
+ * when no stretch has any duration). Each gap is `GAP_SHARE` of the axis, narrowed when there are so many that together
+ * they would pass `GAPS_MAX_SHARE`, so the stretches always keep at least the rest. One stretch is the whole axis, linear.
  * @param ts the calls' stamps, any order
  */
 export function usageAxis(ts: readonly number[], gapMs = GAP_MS): UsageAxis | null {
@@ -50,14 +54,15 @@ export function usageAxis(ts: readonly number[], gapMs = GAP_MS): UsageAxis | nu
     const weights = durs.map((d) => (d > 0 ? d : floor));
     const wSum = weights.reduce((a, b) => a + b, 0);
     const gaps = runs.length - 1;
-    const room = 1 - gaps * GAP_SHARE;
+    const share = Math.min(GAP_SHARE, GAPS_MAX_SHARE / Math.max(1, gaps));
+    const room = 1 - gaps * share;
     const pieces: AxisPiece[] = [];
     let f = 0;
     runs.forEach((r, i) => {
         const w = (weights[i] / wSum) * room;
         pieces.push({ kind: "stretch", t0: r.t0, t1: r.t1, f0: f, f1: f + w, calls: r.calls });
         f += w;
-        if (i < gaps) { pieces.push({ kind: "gap", t0: r.t1, t1: runs[i + 1].t0, f0: f, f1: f + GAP_SHARE, calls: 0 }); f += GAP_SHARE; }
+        if (i < gaps) { pieces.push({ kind: "gap", t0: r.t1, t1: runs[i + 1].t0, f0: f, f1: f + share, calls: 0 }); f += share; }
     });
     if (pieces.length) pieces[pieces.length - 1].f1 = 1;
     return { t0: sorted[0], t1: sorted[sorted.length - 1], pieces };
