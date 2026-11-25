@@ -292,3 +292,108 @@ test("a FULL-mode cell posts on a BroadcastChannel", async () => {
     expect(r.error, "a BroadcastChannel must be available in the full worker").toBeUndefined();
     expect(r.value).toBe("ok");
 });
+
+// --- the ROUTE BACK from the strip: what a READONLY cell can recover (RED_TEAM_WORKER_BOUNDARY.md, section 3) ------
+// Section 3's table is an UPPER BOUND: it was measured from a FULL worker, so it says what a bypass gains, not what
+// the strip leaves. These rows measure the other direction (ruling 118): a cell that runs inside the properly stripped
+// READONLY worker, as the agent's own `python_exec` does, trying to recover a "yes" through (1) a reference Pyodide or
+// Emscripten keeps, (2) the files mount's channel, or (3) a wasm import table. Every row carries a live control in the
+// same cell, and the FULL realm runs the same probe where a "no" would otherwise be indistinguishable from a probe
+// that cannot see anything.
+
+/** The net/IO names section 3's table records as reachable from a FULL worker; all of them are true there. */
+const NET_IO = ["fetch", "XMLHttpRequest", "WebSocket", "EventSource", "Worker", "BroadcastChannel", "MessageChannel", "MessagePort", "postMessage", "onmessage", "addEventListener", "importScripts", "indexedDB", "caches", "navigator", "Response", "Request", "Headers", "FileReader", "Blob", "File"];
+
+test("a READONLY cell reads NONE of the net/IO names, and the same probe finds every one in a FULL worker", async () => {
+    test.skip(!HAS_FORK, NEED_FORK);
+    const ro = await runCell(`import js
+_g = js.globalThis
+fam = ${JSON.stringify(NET_IO)}
+{"control": str(_g.Math.max(1, 2)), "URL": _g.URL is not None, "present": ",".join(n for n in fam if getattr(_g, n, None) is not None)}`, "route-back net/IO probe");
+    expect(ro.control, "the cell must run in the stripped worker realm").toBe("2");
+    expect(ro.URL, "positive control: an allow-listed constructor is readable, so the probe sees a realm").toBe(true);
+    expect(ro.present, `the strip must leave no net/IO name readable, found ${ro.present}`).toBe("");
+    // The control that makes the "no" mean something: the identical probe, in the realm section 3 measured.
+    const full = await runFullCell(`_fam = ${JSON.stringify(NET_IO)}\n_result = ",".join(n for n in _fam if getattr(_g, n, None) is not None)`);
+    expect(full.control, "the control cell must run in the real worker realm").toBe("2");
+    expect(full.value, "every net/IO name must be present in the FULL realm, or this probe cannot see them").toBe(NET_IO.join(","));
+});
+
+test("a READONLY cell cannot recover the Emscripten module through Pyodide's own exports (route 1)", async () => {
+    test.skip(!HAS_FORK, NEED_FORK);
+    // Route 1: the strip deletes names from the realm's global, so only a CAPTURED value survives it. Pyodide is the
+    // thing that captured most of them (its module object holds `fetch`, `indexedDB`, the FS, the wasm exports), so
+    // `pyodide_js` — a JS module a Python cell can import, which would carry the module object as `_module` — is the
+    // first place a recovery would come from. The probe lists what it finds; the control is a name the same probe
+    // MUST find (`Math`, kept), so an empty answer is the module's absence rather than the getattr never working.
+    const ro = await runCell(`import js, pyodide_js
+_g = js.globalThis
+names = ["_module", "FS", "API", "loadPackage", "version"]
+{"control": str(_g.Math.max(1, 2)), "Math": _g.Math is not None, "URL": _g.URL is not None,
+ "present": ",".join(n for n in names if getattr(pyodide_js, n, None) is not None)}`, "route-back pyodide_js probe");
+    expect(ro.control, "the cell must run in the stripped worker realm").toBe("2");
+    expect(ro.Math, "positive control: a kept name is readable through the same call").toBe(true);
+    expect(ro.present, `pyodide_js must carry no Emscripten reference, found ${ro.present}`).toBe("");
+    // The control that makes the "no" mean something: the identical probe in a FULL realm hands back the module, its
+    // FS and the API's own names, so the READONLY answer is the seal's doing, not a probe that cannot see anything.
+    const full = await runFullCell(`_pj = __import__("pyodide_js")\n_names = ["_module", "FS", "API", "loadPackage", "version"]\n_result = ",".join(n for n in _names if getattr(_pj, n, None) is not None)`);
+    expect(full.control, "the control cell must run in the real worker realm").toBe("2");
+    expect(full.value, `the FULL realm must reach the Emscripten module and its FS, got ${full.value}`).toBe("_module,FS,loadPackage,version");
+});
+
+test("a READONLY cell can compile its OWN wasm, but no host module, memory or import table is reachable (route 3)", async () => {
+    test.skip(!HAS_FORK, NEED_FORK);
+    // Route 3: Emscripten's module object is where the FS's IDBFS and the socket syscalls bind their imports to. A cell
+    // that can compile wasm is not the problem — compiling its own module only gives it the imports it PASSES. The
+    // problem would be reaching the host's Module, its memory or its exports table; the row compiles an empty module
+    // (the 8-byte header is a valid module) as the control that WebAssembly works at all, then lists those objects.
+    const r = await runCell(`import js
+_g = js.globalThis
+out = {"control": str(_g.Math.max(1, 2)), "URL": _g.URL is not None, "wasm": _g.WebAssembly is not None}
+try:
+    _m = js.WebAssembly.Module.new(js.Uint8Array.new([0, 97, 115, 109, 1, 0, 0, 0]))
+    out["compiled"] = _m is not None
+except BaseException as e:
+    out["compiled"] = type(e).__name__ + ": " + str(e)[:120]
+out["host"] = ",".join(n for n in ["Module", "wasmModule", "wasmExports", "wasmMemory"] if getattr(_g, n, None) is not None)
+out`, "route-back wasm probe");
+    expect(r.control, "the cell must run in the stripped worker realm").toBe("2");
+    expect(r.URL, "positive control: an allow-listed name is readable").toBe(true);
+    expect(r.wasm, "the WebAssembly constructor is kept, so a cell can compile its own module").toBe(true);
+    expect(r.compiled, `the cell's own module must compile (an empty module is valid), got ${r.compiled}`).toBe(true);
+    expect(r.host, `no host module, memory or exports table may be reachable, found ${r.host}`).toBe("");
+});
+
+test("no Pyodide module holds a JS object a READONLY cell can call (route 1, swept)", async () => {
+    test.skip(!HAS_FORK, NEED_FORK);
+    // The seal pops `pyodide_js` from `sys.modules`, but Pyodide's own modules bound things from it at THEIR import
+    // time (`webloop`'s scheduleCallback, the package loader). Route 1 survives only if one of those bindings still
+    // holds a JsProxy — a JS object the cell could call. So the row sweeps every attribute of every `pyodide*` module
+    // and asserts none is one; the control is that the SAME test answers yes for the global object itself, so an empty
+    // result is an empty realm, not an isinstance that never matches.
+    const SWEEP = `import sys
+from pyodide.ffi import JsProxy
+_g = __import__("js").globalThis
+_hits = []
+for _mname, _m in list(sys.modules.items()):
+    if _m is None or not (_mname.startswith("pyodide") or _mname.startswith("_pyodide")):
+        continue
+    for _n in dir(_m):
+        try:
+            _v = getattr(_m, _n)
+        except BaseException:
+            continue
+        if isinstance(_v, JsProxy):
+            _hits.append(_mname + "." + _n)
+_result = ",".join(sorted(_hits))
+_isProxy = isinstance(_g, JsProxy)`;
+    const r = await runCell(`${SWEEP}
+{"control": str(_g.Math.max(1, 2)), "URL": _g.URL is not None, "isProxy": _isProxy, "hits": _result}`, "route-back jsproxy sweep");
+    expect(r.control, "the cell must run in the stripped worker realm").toBe("2");
+    expect(r.isProxy, "positive control: the global object itself is a JsProxy, so the sweep's test can match").toBe(true);
+    expect(r.hits, `a Pyodide module kept a JS object a cell can call: ${r.hits}`).toBe("");
+    // The control in the other realm: the SAME sweep finds the module the seal took away.
+    const full = await runFullCell(SWEEP);
+    expect(full.control, "the control cell must run in the real worker realm").toBe("2");
+    expect(full.value, `the FULL realm's sweep must find the module's bindings, got ${full.value}`).toContain("pyodide_js._module");
+});
