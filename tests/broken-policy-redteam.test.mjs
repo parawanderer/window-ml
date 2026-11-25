@@ -37,9 +37,8 @@ const factsOf = (url = URL_, o) => P.fetchFacts(url, o);
 /**
  * Every kind of break `evalPolicy` can return, as a policy the store will accept: a field the call does not have, `==`,
  * a source that does not parse, a result that is not a boolean, a refused name (`throw` and `while` are not in the
- * policy realm), the step budget, and the call depth. The budget row's wording depends on which evaluator is on the
- * branch (a NotInDialect "over N steps" here, a ResourceStop's "used its whole step budget" once the exec budget lane
- * merges); the row below pins the SENTENCE, which is `brokenPhrase`'s business, not the evaluator's text.
+ * policy realm), the step budget, and the call depth. The budget row's text is the evaluator's ResourceStop ("used its
+ * whole step budget"); the row below pins the SENTENCE, which is `brokenPhrase`'s business, not the evaluator's text.
  */
 const BREAKS = [
     ["a field the call does not have", '(c) => c.smell'],
