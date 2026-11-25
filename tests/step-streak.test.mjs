@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { groupOwns, rowsSeen, foldStreaks, streakFacts, holdsSeq, foldedInView, groupedInView, FOLD_SEEN_MS, STREAK_MIN, STREAK_MIN_ALL } from "../src/sidebar/transcript/step-streak.tsx";
+import { groupOwns, rowsSeen, foldStreaks, splitTrailingThinking, MOVE_THINKING_MIN_TOKENS, streakFacts, holdsSeq, foldedInView, groupedInView, FOLD_SEEN_MS, STREAK_MIN, STREAK_MIN_ALL } from "../src/sidebar/transcript/step-streak.tsx";
 import { JUST_ARRIVED_MS } from "../src/sidebar/transcript/just-arrived.ts";
 
 /** One turn with a single tool call, which is the shape a streak is made of. */
@@ -373,4 +373,56 @@ test("the calm view hides the folded streak's failure count and the dev view kee
     assert.doesNotMatch(css, /(^|\n)\.astreak-bad\s*\{[^}]*display:\s*none/, "the base rule (the dev view) still draws it");
     const src = readFileSync(new URL("../src/sidebar/transcript/step-streak.tsx", import.meta.url), "utf8");
     assert.match(src, /\{failed \? <span class="astreak-bad">\{failed\} failed<\/span> : null\}/, "the element is still rendered, so the dev view has it");
+});
+
+// --- the thinking after a group's last call comes out, in front of the answer ---
+
+const think = (step, tokens, text = "x".repeat(tokens * 4)) => ({ step, localStep: step, tools: [], reasoning: text, reasoningTokens: tokens });
+const names = (ts) => ts.map(t => t.step);
+
+test("trailing thinking moves out when a final answer follows; the default threshold is 20 tokens", () => {
+    assert.equal(MOVE_THINKING_MIN_TOKENS, 20);
+    const turns = [think(1, 100), turn(2, "exec"), think(3, 50), turn(4, "exec"), think(5, 66)];
+    const { kept, moved } = splitTrailingThinking(turns, true);
+    assert.deepEqual(names(kept), [1, 2, 3, 4]);
+    assert.deepEqual(names(moved), [5]);
+});
+
+test("no final answer (stopped, failed, running): everything stays inside", () => {
+    const turns = [turn(1, "exec"), turn(2, "exec"), think(3, 66)];
+    const { kept, moved } = splitTrailingThinking(turns, false);
+    assert.equal(kept.length, 3);
+    assert.equal(moved.length, 0);
+});
+
+test("an empty or very short block does not move; thinking between calls stays", () => {
+    for (const t of [think(3, 19), think(3, 0, ""), { ...think(3, 40), reasoning: "  " }]) {
+        const turns = [turn(1, "exec"), turn(2, "exec"), t];
+        assert.equal(splitTrailingThinking(turns, true).moved.length, 0);
+    }
+    assert.equal(splitTrailingThinking([turn(1, "exec"), think(2, 90), turn(3, "exec")], true).moved.length, 0);
+    assert.deepEqual(names(splitTrailingThinking([turn(1, "exec"), turn(2, "exec"), think(3, 20)], true).moved), [3], "20 is enough");
+});
+
+test("the tokens are estimated from the text when the turn carries no count", () => {
+    const t = { step: 3, localStep: 3, tools: [], reasoning: "y".repeat(200) };
+    assert.deepEqual(names(splitTrailingThinking([turn(1, "exec"), turn(2, "exec"), t], true).moved), [3]);
+});
+
+test("foldStreaks: the lifted thinking follows the group, only in front of a final answer", () => {
+    const run = [turn(1, "exec"), turn(2, "look"), think(3, 66)];
+    const out = foldStreaks(run, { all: true, finals: [3] });
+    assert.equal(out.length, 2);
+    assert.equal(out[0].turns.length, 2);
+    assert.equal(out[1].step, 3);
+    assert.equal(out[1].reasoning.length, 264);
+    const no = foldStreaks(run, { all: true, finals: [] });
+    assert.equal(no.length, 1);
+    assert.equal(no[0].turns.length, 3);
+    // a streak the answer does not directly follow (a turn sits between) keeps its thinking, and so does one a reader's message follows
+    const between = [...run, { step: 4, localStep: 4, thought: "so", tools: [] }];
+    assert.equal(foldStreaks(between, { all: true, finals: [9], breaks: [9] })[0].turns.length, 3);
+    assert.equal(foldStreaks(run, { all: true, finals: [9], breaks: [3, 9] })[0].turns.length, 3);
+    // the ordinary mode never puts a no-call turn in a group, so nothing changes there
+    assert.deepEqual(kinds(foldStreaks([turn(1, "exec"), turn(2, "exec"), turn(3, "exec"), think(4, 66)], { finals: [4] })), ["exec×3", "·"]);
 });
