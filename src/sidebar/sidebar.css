@@ -1464,6 +1464,8 @@ html[data-calm] .appr-deny-wrap { border-radius: 999px; color: var(--fg-dim); }
 html[data-calm] .appr-note { border-bottom: 2px solid color-mix(in srgb, var(--fg) 14%, transparent); }
 html[data-calm] .appr-note svg { color: inherit; }
 .appr-note b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* The "Edit policy" button on a broken-policy approval line: opens that policy's editor in Settings. */
+.appr-askwhy-edit { flex: none; margin-left: auto; align-self: center; }
 
 /* Google Docs-style smart chip for a Sheet reference: icon + friendly name, hoverable for the id. */
 .sheet-chip { display: inline-flex; align-items: center; gap: 3px; vertical-align: middle;
