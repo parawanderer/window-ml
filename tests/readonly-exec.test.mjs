@@ -211,7 +211,7 @@ test("the copy of a DOM collection is charged its length before it is made: a hu
     // the read itself fits in many times over. Before, the copy came after the new-array charge and cost nothing.
     const big = new JSDOM(`<body>${"<i></i>".repeat(25_600)}</body>`).window.document;
     for (const js of [`document.querySelectorAll('i').length`, `document.body.children.length`, `document.getElementsByTagName('i').length`])
-        await assert.rejects(evalReadonly(js, big, ML, undefined, { stepBudget: 150 }), (e) => e instanceof NotInDialect && /over 150 steps/.test(e.message), js);
+        await assert.rejects(evalReadonly(js, big, ML, undefined, { stepBudget: 150 }), (e) => e instanceof ResourceStop && !(e instanceof NotInDialect) && /150 steps/.test(e.message), js);
     // A small collection still costs next to nothing.
     assert.equal((await evalReadonly(`document.querySelectorAll('input').length`, world(), ML, undefined, { stepBudget: 150 })).value, 2);
 });
