@@ -820,18 +820,40 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .set-section > summary.set-group:hover { color: var(--fg); }
 .set-field { display: flex; flex-direction: column; gap: 3px; padding-top: 4px; }
 .set-field > span { color: var(--fg-dim); font-size: 0.92em; }
-.set-field input, .set-field select {
+/* `.secrets-add`: the secrets form's name and value boxes. `.pol-source-input`: the multi-line source box of a policy or a
+   program manifest. Both take the text field skin below. */
+/* THE TEXT FIELD SKIN, one rule for the panel and the chat page's Extension tab (chat.css only sets the two size
+   variables on `.chat-settings-body`, bigger for a thumb): a filled rounded box with no visible border until focus,
+   the page's own `--panel` fill, a faint placeholder. Every text input and textarea of the settings form wears it:
+   a `.set-field`'s, the permission and policy boxes, the secrets form. A select keeps its own rule below. */
+.set-field input:where(:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"])),
+.set-field textarea, .perm-input, .perm-search, .pol-source-input, .secrets-add input {
+    box-sizing: border-box; min-height: var(--field-min, 34px); padding: var(--field-pad, 7px 12px);
+    border: 1px solid transparent; border-radius: var(--field-radius, 12px);
+    background-color: var(--panel); color: var(--fg); font: inherit;
+}
+.set-field textarea, .pol-source-input {
+    width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--code-fs, .92em); line-height: 1.5; resize: vertical;
+}
+.set-field textarea { padding: var(--field-pad-area, 8px 12px); }
+.set-field input:focus, .set-field textarea:focus, .perm-input:focus, .perm-search:focus, .pol-source-input:focus,
+/* The secrets form's name and value boxes (.secrets-add) take the same focus ring as every settings text field. */
+.secrets-add input:focus { outline: none; border-color: var(--panel-2-hover); }
+.set-field input::placeholder, .set-field textarea::placeholder, .perm-input::placeholder, .perm-search::placeholder,
+/* The multi-line source box of a policy or a program manifest (.pol-source-input) and the secrets form's boxes: the faint placeholder. */
+.pol-source-input::placeholder, .secrets-add input::placeholder { color: var(--fg-faint); }
+.set-field select {
     background: var(--bg); color: var(--fg); border: 1px solid var(--border);
     border-radius: 5px; padding: 5px 7px; font: inherit; width: 100%;
 }
-.set-field input:focus, .set-field select:focus { outline: none; border-color: var(--accent); }
-.set-field input:disabled { opacity: .5; cursor: not-allowed; }
+.set-field select:focus { outline: none; border-color: var(--accent); }
+.set-field input:disabled, .set-field textarea:disabled { opacity: .5; cursor: not-allowed; }
 /* A SECRET'S TEXT BOX: the input fills the row and the eye sits inside its right end, so the box is the same width as every other field. */
 .secret-input { position: relative; display: flex; }
 .secret-input > input { flex: 1; min-width: 0; padding-right: 34px; }
 .secret-input > .secret-eye { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); }
 .secret-input > .secret-eye:disabled { opacity: .4; cursor: default; }
-.set-field input.err { border-color: var(--err); }
+.set-field input.err, .perm-input.err { border-color: var(--err); }
 /* Model combobox (ModelPicker): a text input + a caret that drops the full server model list (filtered by
    what's typed). Replaces the native <datalist>, which hid non-matching entries + closed on re-render. */
 .model-pick { position: relative; }
@@ -3234,10 +3256,10 @@ html[data-focus] .action-verb { font-weight: 500; }
 .perm-add { display: flex; gap: 6px; margin-top: 8px; }
 /* The panel's TEXT BOXES outside a `.set-field`: the Permissions tab's add-a-domain input and its filter, and the
    Settings search above the tabs, so all three read as the same kind of box. */
-.perm-input, .perm-search, .set-search { box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--border);
+.set-search { box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--border);
     border-radius: 6px; background: var(--bg); color: var(--fg); font-size: 0.95em; }
 .perm-input { flex: 1; }
-.perm-input:focus, .perm-search:focus, .set-search:focus { outline: none; border-color: var(--accent); }
+.set-search:focus { outline: none; border-color: var(--accent); }
 .perm-search { width: 100%; margin-top: 6px; }
 .perm-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .perm-chip { display: inline-flex; align-items: center; gap: 4px; background: var(--panel-2);
@@ -3285,7 +3307,6 @@ html[data-focus] .action-verb { font-weight: 500; }
 .pol-add { margin-bottom: 10px; }
 .pol-edit select, .pol-add select { align-self: flex-start; font-size: 0.9em; padding: 2px 4px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--fg); }
 /* The textarea a policy's source is written in. */
-.pol-source-input { box-sizing: border-box; width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: 0.85em ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
 /* Save and cancel under a policy editor. */
 .pol-actions { display: flex; gap: 6px; }
 /* One session's run policies, under its hash. */
