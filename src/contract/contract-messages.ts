@@ -467,6 +467,9 @@ export interface StoredSession {
      *  The person's turns before it are scrubbed on the way to the model each turn. Absent in a record written before
      *  2026-11-20: every turn it holds then is before it. */
     scrubbedFrom?: number;
+    /** A worker-hosted chat's: how many tool calls (`read_pages`) it has made, the `step` and `seq` its next one
+     *  counts on from (SESSION_CONTRACT.md, "Session events"). Absent in a record written before 2026-11-24: none. */
+    toolSeq?: number;
 }
 
 /** A PDF a worker-hosted chat was sent, held for the chat's session (FILE_ATTACHMENTS.md, "Reading the pages held

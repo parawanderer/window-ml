@@ -608,6 +608,13 @@ function writeChat(s: Session, d: Sink): void {
             d.details("User · raw (as the model got it)", () => d.code(t.user || ""));
         }
         (t.images || []).forEach((img, j) => d.image(img, `turn-${i + 1}-img-${j + 1}`, `turn ${i + 1} image ${j + 1}`));
+        // The turn's tool calls (`read_pages`), raw: the arguments as the model wrote them, the result as it read it.
+        for (const st of (s.steps || []).filter((x) => x.turn === t.id)) {
+            if (st.reasoning) d.details("Thinking", () => d.prose(st.reasoning!));
+            if (st.thought) d.prose(st.thought);
+            d.block(`${st.tool || "?"} · in`, pretty(st.arguments ?? {}), "json");
+            d.block(`${st.tool || "?"} · out (as the model read it)`, st.pending ? "(still running)" : st.result ?? "");
+        }
         if (t.reasoning) d.details("Thinking", () => d.prose(t.reasoning!));
         if (t.status === "err") d.inline("Error", t.error || "(unknown)");
         else d.speech("Assistant", t.model || resolveModel(t.reqModel, t.extend), t.assistant || "(no reply)", !t.assistant);

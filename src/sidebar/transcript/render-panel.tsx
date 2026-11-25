@@ -28,7 +28,7 @@ import { parseLooseJson } from "../../json-repair";
 import { notesByLine } from "../code/annotate";
 import { followDrag } from "../drag";
 import {
-    openCtxMenu, ClickableImg, Code, CopyBtn, SheetChip, inlineText, stepKey, cursorTipOn, PointerChip, TipText,
+    openCtxMenu, ClickableImg, Code, panelCodeLinks, CopyBtn, SheetChip, inlineText, stepKey, cursorTipOn, PointerChip, TipText,
     highlightToken, highlightEl, clearHighlight, tokenHover, pickedHover,
 } from "../ui-kit";
 import { displaySource } from "../code-block";
@@ -649,6 +649,7 @@ function useNarrow(el: { current: HTMLElement | null }, min: number): boolean {
  *  `view` is the one it opens on, which a caller only sets to show a particular one (the gallery).
  *  @group transcript, code
  *  @gallery code view {"revision":{"ref":"9d3822f","tool":"exec","seq":1,"label":"the timeline survey","before":"const a = [1, 2, 3];\nconst n = a.length;\nreturn n;","claim":"Counts both lists."},"after":"const a = [1, 2, 3];\nconst b = [4, 5];\nconst n = a.length + b.length;\nreturn n;","lang":"javascript","view":"code"}
+ *  @gallery diff view with links {"revision":{"ref":"9d3822f","tool":"exec","seq":1,"before":"// docs: https://example.com/old\nconst n = 1;\nreturn n;"},"after":"// docs: https://example.com/new\nconst n = 2;\nreturn n; // javascript:alert(1)","lang":"javascript","view":"diff"}
  *  @gallery diff view {"revision":{"ref":"9d3822f","tool":"exec","seq":1,"label":"the timeline survey","before":"const a = [1, 2, 3];\nconst n = a.length;\nreturn n;","claim":"Counts both lists."},"after":"const a = [1, 2, 3];\nconst b = [4, 5];\nconst n = a.length + b.length;\nreturn n;","lang":"javascript","view":"diff"}
  *  @gallery split view {"revision":{"ref":"9d3822f","tool":"exec","seq":1,"label":"the timeline survey","before":"const a = [1, 2, 3];\nconst n = a.length;\nreturn n;","claim":"Counts both lists."},"after":"const a = [1, 2, 3];\nconst b = [4, 5];\nconst n = a.length + b.length;\nreturn n;","lang":"javascript","view":"split"}
  *  @gallery narrow, split falls back to diff {"revision":{"ref":"9d3822f","tool":"exec","seq":1,"label":"the timeline survey","before":"const a = [1, 2, 3];\nconst n = a.length;\nreturn n;","claim":"Counts both lists."},"after":"const a = [1, 2, 3];\nconst b = [4, 5];\nconst n = a.length + b.length;\nreturn n;","lang":"javascript","view":"split","splitMinPx":100000}
@@ -684,9 +685,9 @@ export function CodeDiff({ revision, after, lang, hash, failed, view: initial, s
     const stat = rows ? diffStat(rows) : { added: 0, removed: 0 };
     const shown: RevisionView = !rows ? "code" : picked === "split" && narrow ? "diff" : picked;
     const bodyOf = (v: RevisionView, plain: boolean): ComponentChildren => v === "code"
-        ? (plain || !children ? <Code text={after} lang={lang} /> : children)
-        : v === "split" ? <SplitLines rows={rows!} lang={lang} numbers={nums} class="r-diff-body" />
-        : <DiffLines rows={rows!} lang={lang} numbers={nums} class="r-diff-body" />;
+        ? (plain || !children ? <Code text={after} lang={lang} hash={hash} /> : children)
+        : v === "split" ? <SplitLines rows={rows!} lang={lang} numbers={nums} class="r-diff-body" links={panelCodeLinks(hash)} />
+        : <DiffLines rows={rows!} lang={lang} numbers={nums} class="r-diff-body" links={panelCodeLinks(hash)} />;
     const claim = shown !== "code" && revision.claim
         ? <div class="r-diff-claim"{...cursorTipOn("The model's own account of what it changed. The diff below is computed from the two sources; this is not.")}>
             <span class="r-diff-claim-tag">the model says:</span> <Prose md={revision.claim} steps={sessionMap.get(hash || "")?.steps} hash={hash} /></div>
@@ -794,7 +795,7 @@ function PythonInRender({ d, live, failLine, ctx, failed }: { d: Extract<RenderD
                         ref={block} tabIndex={0} onKeyDown={find.onKey}>
                         {find.bar ? <div class="code-find">{find.bar}</div> : null}
                         {ctx ? <CodeTools ctx={ctx} lang="python" src={fmt.text} /> : null}
-                        <Code text={fmt.text} lang="python" lineIds="pyline" markLine={failAt} markTitle={failNote} notes={notesForBlock(ctx, rv)} />
+                        <Code text={fmt.text} lang="python" hash={ctx?.hash} lineIds="pyline" markLine={failAt} markTitle={failNote} notes={notesForBlock(ctx, rv)} />
                     </div>);
                 return d.revision ? <CodeDiff revision={d.revision} after={fmt.text} lang="python" hash={ctx?.hash} failed={failed}>{blk}</CodeDiff> : blk;
             })()}
@@ -1635,6 +1636,7 @@ export function PyBenchOut({ d, running, marks }: { d: Extract<RenderDescriptor,
  *  purely because of where it was cited. Pass `ctx` to get the tools; without it this is just the block.
  *
  *  A descriptor with several `rules` (a policy proposal) draws one section per rule instead.
+ *  @gallery links in code {"d":{"type":"code","lang":"javascript","text":"// docs: https://example.com/docs/api\nconst base = \"https://example.com/v1/items?page=2\";\n// look-alike stays text: https://good.com@evil.com/login\n// not a link: javascript:alert(1)\nreturn fetch(base);"}}
  *  @gallery revising call {"d":{"type":"code","lang":"javascript","text":"const n = 1 + 1;\nreturn n;","revision":{"ref":"9d3822f","tool":"exec","seq":1,"label":"the timeline survey","before":"const n = 1;\nreturn n;","claim":"Counts both lists."}},"ctx":{"hash":"g1","seq":2}}
  *  @gallery {"d":{"type":"code","lang":"javascript","text":"// Rule 1 of 2: allow\nreturn true;\n\n// Rule 2 of 2: deny\nreturn false;","note":"Rule 1 of 2. Covers 3 of 3 fetches.\n\nRule 2 of 2. Covers none.","rules":[{"effect":"allow","source":"return c.host === \"a.example\";","note":"Covers 3 of 3 fetches."},{"effect":"deny","source":"return c.url.includes(\"/admin/\");","note":"Covers none."}]}} */
 export function CodeRender({ d, failLine, ctx, failed }: { d: Extract<RenderDescriptor, { type: "code" }>; failLine?: number | null; ctx?: CodeCtx; failed?: boolean }) {
@@ -1656,7 +1658,7 @@ export function CodeRender({ d, failLine, ctx, failed }: { d: Extract<RenderDesc
             {d.rules.map((r, i) => (
                 <section class="rule-section" data-effect={r.effect} key={i}>
                     <div class="rule-head"><span class="rule-n">Rule {i + 1} of {d.rules!.length}</span><span class={`rule-effect rule-${r.effect}`}>{r.effect}</span></div>
-                    <Code text={r.source} lang={d.lang} format={d.format} />
+                    <Code text={r.source} lang={d.lang} format={d.format} hash={ctx?.hash} />
                     <div class="rp-note">{r.note}</div>
                 </section>
             ))}
@@ -1672,7 +1674,7 @@ export function CodeRender({ d, failLine, ctx, failed }: { d: Extract<RenderDesc
                 statement across several rows, so the marked row is where the statement STARTS and the token
                 that actually threw can be a few lines down. Said only when the line really moved — an
                 unconditional caveat is noise that undermines the times it is true. */}
-            <Code text={d.text} lang={d.lang} format={d.format} marks={d.marks}
+            <Code text={d.text} lang={d.lang} format={d.format} marks={d.marks} hash={ctx?.hash}
                 lineIds="line" markLine={shownFail}
                 markTitle={shownFail != null && shownFail !== failLine
                     ? "This line failed. It is shown reflowed for reading — in the code as written this was one line, so the failure is somewhere in the statement starting here."

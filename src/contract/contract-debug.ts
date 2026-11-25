@@ -196,11 +196,14 @@ export interface AskWhy {
     /** Why it asks, as a slug: why the policy is gone (`archived`, `removed`, `narrowed`), `outside-dialect`, `ask-policy`
      *  (an `ask` policy matched, and the card offers no "remember"), `nav-only` (a read of an origin a policy lets the run go
      *  to, not read), `start-left` (a read of the start origin once the tab has left it), or `reveals` (a call whose program shows other
-     *  processes and is not in `shellRevealsAllow`, and would otherwise run unasked), or `sandbox-marked` (a python_exec
-     *  cell not tried inside the dialect because an earlier cell ran outside it in the same worker). */
+     *  processes and is not in `shellRevealsAllow`, and would otherwise run unasked), `sandbox-marked` (a python_exec
+     *  cell not tried inside the dialect because an earlier cell ran outside it in the same worker), or `broken-policy` (a
+     *  `deny` or an `ask` policy would not run, so the call asks and the card offers no "remember" but an edit of that policy). */
     cause: string;
     /** The gone policy's label, or for `ask-policy` the policy that asks; absent when no policy is involved. */
     policy?: string;
+    /** `broken-policy` only: the id of the policy that would not run, for the card's "Edit policy". */
+    policyId?: string;
     /** `reveals` only: the program "Always allow" adds to `shellRevealsAllow`, the manifest's `program`. */
     program?: string;
     /** `outside-dialect` only: an earlier cell of the run ran with the JavaScript bridges lifted, so this cell's namespace
@@ -272,7 +275,11 @@ export interface DebugAgentStep extends DebugBase {
      *  (pending: true, no result yet) with the completed DONE and patch the row in place. Thoughts
      *  have no seq. `pending` marks the START (render "running…" until the DONE arrives). */
     seq?: number; pending?: boolean;
-    /** Design A: a pending step whose background-hosted tool is BLOCKED on the human gate. The sidebar
+    /** In a CHAT session, the chat turn this tool call belongs to: that turn's `chat` event `id`. A step there carries
+     *  `step` and `seq` as the session's count of tool calls (SESSION_CONTRACT.md, "Session events"). Absent in an
+     *  agent run. */
+    turn?: string;
+    /** Design A:a pending step whose background-hosted tool is BLOCKED on the human gate. The sidebar
      *  renders approve/deny controls (instead of "running…") and posts the decision back via SET_APPROVAL. */
     awaitingApproval?: boolean;
     /** `thought` = the assistant's user-facing PROSE (content); `reasoning` = its separate thinking

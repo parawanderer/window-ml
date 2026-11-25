@@ -355,6 +355,14 @@ description, parameters); `propose_policy`'s is 1,199. Its description names `ml
 the old value; it quotes no setting's name or tooltip (those are the person's, on the card). The backend's
 `usage.prompt_tokens` delta is not measured yet: the next prompt review measures it with the bench, as for `task` above.
 
+## `read_pages` reaches a worker chat (2026-11-24)
+
+`read_pages` (FILE_ATTACHMENTS.md, "`read_pages`, as built") is the one tool a worker chat is offered, and only on a
+turn whose chat holds a page no message sent, to a model that says it takes tools; every other chat turn sends no
+tools and pays nothing. It is 428 characters as sent (name, description, parameters). The held-back note it replaces,
+"This chat cannot show them.", becomes "Read them with read_pages." on such a turn. The `usage.prompt_tokens` delta is
+measured at the next prompt review with the rest.
+
 ## `propose_policy` names consumer `setting` (2026-11-19)
 
 `propose_policy` gains consumer `setting` (MODEL_SETTINGS.md, "Proposing a `setting` policy"): one clause in the

@@ -366,3 +366,34 @@ test("UPGRADE: a step stored before `cell` existed prints no cell line (absent i
     const { md } = serializeSession(s);
     assert.doesNotMatch(md, /cell:|inside|outside/);
 });
+
+// --- a chat turn's tool calls (read_pages): under their turn, in and out as the model had them ---
+
+test("a chat's Markdown export writes each step's in and out blocks under its own turn, between the question and the answer", () => {
+    const s = {
+        hash: "chat1", kind: undefined, model: "m", tag: "session", createdTs: 1, lastTs: 9, status: "ok", config: { save: true },
+        turns: [
+            { id: "chat1-1", ts: 2, user: "QUESTION-ONE", assistant: "ANSWER-ONE", status: "ok", model: "m" },
+            { id: "chat1-2", ts: 5, user: "QUESTION-TWO", assistant: "ANSWER-TWO", status: "ok", model: "m" },
+        ],
+        steps: [{ step: 1, seq: 1, turn: "chat1-2", tool: "read_pages", arguments: { file: "a.pdf", pages: "3" }, result: "PAGE-THREE-AS-READ" }],
+    };
+    const { md } = serializeSession(s);
+    assert.match(md, /read_pages · in/);
+    assert.match(md, /read_pages · out \(as the model read it\)/);
+    assert.equal(md.match(/read_pages · in/g).length, 1, "one step, one pair of blocks");
+    assert.ok(md.includes('"file": "a.pdf"') && md.includes("PAGE-THREE-AS-READ"));
+    const at = (t) => md.indexOf(t);
+    assert.ok(at("QUESTION-TWO") < at("read_pages · in") && at("read_pages · in") < at("read_pages · out") && at("read_pages · out") < at("ANSWER-TWO"), "inside turn 2");
+    assert.ok(at("ANSWER-ONE") < at("read_pages · in"), "nothing under turn 1");
+    assert.ok(at("QUESTION-ONE") < at("ANSWER-ONE") && at("ANSWER-ONE") < at("QUESTION-TWO"));
+});
+
+test("a chat step still running exports as such, and one with no `turn` is not written into any turn", () => {
+    const base = { hash: "chat2", model: "m", tag: "session", createdTs: 1, lastTs: 9, status: "ok", config: { save: true },
+        turns: [{ id: "chat2-1", ts: 2, user: "Q", assistant: "A", status: "ok", model: "m" }] };
+    const running = serializeSession({ ...base, steps: [{ step: 1, seq: 1, turn: "chat2-1", tool: "read_pages", arguments: {}, pending: true }] }).md;
+    assert.match(running, /read_pages · out \(as the model read it\)[\s\S]*\(still running\)/);
+    const old = serializeSession({ ...base, steps: [{ step: 1, seq: 1, tool: "read_pages", arguments: {}, result: "R" }] }).md;
+    assert.doesNotMatch(old, /read_pages · in/);
+});

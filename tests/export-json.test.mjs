@@ -445,3 +445,28 @@ test("UPGRADE: a step stored before `cell` existed exports with no `cell` key (a
     for (const st of doc.session.steps) assert.equal("cell" in st && st.cell !== undefined, false);
     assert.doesNotMatch(JSON.stringify(doc), /"cell"/);
 });
+
+// --- a chat turn's tool calls carry their turn ---
+
+const chatWithStep = () => ({
+    hash: "def", kind: undefined, model: "m", tag: "session", createdTs: 1000, lastTs: 3000, status: "ok", config: { save: true },
+    turns: [{ id: "def-1", ts: 2000, user: "hi", images: null, assistant: "hello", model: "m", status: "ok" }],
+    steps: [{ step: 1, seq: 1, turn: "def-1", ts: 2100, tool: "read_pages", arguments: { file: "a.pdf", pages: "3" }, result: "text" }],
+});
+
+test("a step's `turn` is written through to its JSON row, and a step with none writes none", () => {
+    const withTurn = sessionToJson({ ...agentSession(), steps: [{ step: 1, seq: 1, turn: "abc-1", ts: 1_700_000_001_000, tool: "read_pages", arguments: {}, result: "r" }] });
+    assert.equal(withTurn.session.steps[0].turn, "abc-1");
+    const without = sessionToJson(agentSession());
+    assert.ok(without.session.steps.every((s) => s.turn === undefined));
+});
+
+// A chat's tool calls reach the JSON export with their `turn`, as the Markdown export writes them: the export carries
+// what the MODEL saw (AGENTS.md). A chat with no calls keeps no `steps` key (the test above).
+test("a chat's JSON export carries its tool calls, each with its `turn`", () => {
+    const doc = sessionToJson(chatWithStep());
+    assert.ok(Array.isArray(doc.session.steps), "a chat that made calls exports them");
+    assert.equal(doc.session.steps.length, 1);
+    assert.equal(doc.session.steps[0].turn, "def-1");
+    assert.equal(doc.session.steps[0].result, "text");
+});

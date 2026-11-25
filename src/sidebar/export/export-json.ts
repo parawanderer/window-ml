@@ -67,6 +67,7 @@ function stepToJson(st: AgentStep): ExportStep {
         step: st.step,
         localStep: st.localStep,
         seq: st.seq ?? st.step,
+        turn: st.turn,
         at: iso(st.ts),
         durationMs: st.toolMs,
         thought: st.thought,
@@ -374,7 +375,8 @@ export function sessionToJson(s: Session, prov?: ExportProvenance | string): Exp
         outcome: outcome(s, isAgent),
         totals: totals(s, steps, messages),
         messages,
-        steps: isAgent ? steps : undefined,
+        // A chat's steps are its turns' tool calls (`read_pages`, each with its `turn`); a chat that made none has no key.
+        steps: isAgent || steps.length ? steps : undefined,
         events: timeline(s, p.includeInFlight),
         // A resume is not a step and not a message: it is a fact about the session, and a differ that does not
         // know the session moved page reads the divergence that follows as the model behaving differently.

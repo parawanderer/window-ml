@@ -9,7 +9,10 @@ import { useState, useEffect, useRef } from "preact/hooks";
 import { signal } from "@preact/signals";
 import type { AnswerMedia, PkgRow } from "../contract/contract-render";
 import type { Status, AgentStep } from "./store";
-import { codeLineNumbers } from "./store";
+import { codeLineNumbers, sessionMap } from "./store";
+import { resolveTokenStep } from "../pointers/answer-tokens";
+import { scrollToStepSeq } from "./transcript/step-scroll";
+import type { CodeLinks } from "./code-links";
 import { shortStamp, fullStamp, pretty, truncate, mdInline } from "./format";
 import { hhmmss, fmtDur } from "./timestamps";
 import { services } from "./services";
@@ -58,8 +61,22 @@ export const Dot = ({ status, warn, hollow, tip, ts, ms }: {
     </span>
 );
 
-/** A code block as the panel draws one, with the panel's line-number setting and its cursor tooltip on a marked line. */
-export const Code = (props: CodeProps) => <CodeBlock {...props} lineNumbers={codeLineNumbers.value} markTip={cursorTipOn} />;
+/** What makes an address or `@tool:` pointer in code clickable in the panel: an address opens a tab through
+ *  `services().openLink`, a pointer scrolls to the step of run `hash` that it names (none, with no `hash`), and the tip is
+ *  the panel's cursor tip. */
+export const panelCodeLinks = (hash?: string): CodeLinks => ({
+    step: (id) => {
+        const step = hash ? resolveTokenStep(id, sessionMap.get(hash)?.steps ?? []) : null;
+        return step && step.seq != null ? { seq: step.seq, tip: `Go to step ${step.localStep ?? step.step} · ${step.tool || "tool"} — the call that produced this.` } : null;
+    },
+    open: (url) => services().openLink(url),
+    jump: (seq, slot) => scrollToStepSeq(seq, hash, slot),
+    tip: cursorTipOn,
+});
+
+/** A code block as the panel draws one, with the panel's line-number setting and its cursor tooltip on a marked line, and
+ *  an address or `@tool:` pointer in it clickable (`hash` is the run a pointer is resolved in). */
+export const Code = ({ hash, ...props }: CodeProps & { hash?: string }) => <CodeBlock {...props} lineNumbers={codeLineNumbers.value} markTip={cursorTipOn} links={panelCodeLinks(hash)} />;
 
 /** THE POINTER CHIP — the one shell every `@tool:` reference is drawn in: the copy chip under a step, the
  *  "revises" pill on a retry's diff, and whatever names a pointer next. It was a CSS copy for a while and
