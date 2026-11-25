@@ -56,6 +56,7 @@ import { createFilesSource } from "./python/files-source";
 import { RangedReader } from "./session/ranged-reader";
 import { AgentFiles } from "./session/agent-files";
 import { fsServer } from "./session/fs-serve";
+import { filesListServer, notifyingCommits } from "./session/files-list-serve";
 import { scanCode } from "./python/pkg-scan";
 import { readScan, type ScanResult } from "./python/pkg-scan-note";
 import { holdResult, takeResult } from "./python/py-held-results";
@@ -81,8 +82,9 @@ const store = (): ValueStore => values ??= new ValueStore({
 const filesHide = makeHideRule(async (session) => ((await chrome.runtime.sendMessage({ type: "FILES_HIDE_LIST", session })) as { entries?: HideEntry[] | null } | undefined)?.entries ?? null);   // state: plumbing — one rule for the one reader
 chrome.runtime.onMessage.addListener((msg: { type?: unknown } | undefined) => { if (msg?.type === "FILES_HIDE_CHANGED") filesHide.forget(); return false; });
 const agentFiles = new AgentFiles();   // state: plumbing — a handle to the ml-agent-files database, declared as session.files
+const filesSource = createFilesSource({ store, send: (m) => chrome.runtime.sendMessage(m) });   // state: plumbing — the shelf the one reader reads
 const filesReader = new RangedReader({ hidden: filesHide.rule,   // state: plumbing — the one reader, a channel per worker
-    source: createFilesSource({ store, send: (m) => chrome.runtime.sendMessage(m) }),
+    source: filesSource,
     agent: agentFiles,
     quotaBytes: async (session) => {
         const bytes = (await chrome.runtime.sendMessage({ type: "FILES_QUOTA", session }) as { bytes?: unknown } | undefined)?.bytes;
@@ -94,13 +96,23 @@ const filesReader = new RangedReader({ hidden: filesHide.rule,   // state: plumb
         try { chrome.runtime.sendMessage({ type: "FILES_LOST", ...rec }).catch(() => { /* no worker listening */ }); } catch { /* context gone */ }
     },
 });
-setFilesReader(() => filesReader.openChannel("files"));
+// A commit through Python's channel changed the session's files: the worker tells whoever watches it (`files-changed`).
+setFilesReader(() => notifyingCommits(filesReader.openChannel("files"), (session) => {
+    try { chrome.runtime.sendMessage({ type: "FILES_COMMITTED", session }).catch(() => { /* no worker listening */ }); } catch { /* context gone */ }
+}));
 // ml.fs (fs-serve.ts): a channel per isolated exec on the same reader, read ops only, its session the worker's word.
 const fsChannels = fsServer(() => filesReader.openChannel("files"));   // state: plumbing — an exec's channel, closed with it
+// files.list (files-list-serve.ts): one directory a request, a fresh channel each time, the session the worker's word.
+const filesList = filesListServer({
+    open: () => filesReader.openChannel("files"),
+    attachedCount: async (session) => (await filesSource.attached(session)).length,
+    agentCount: async (session) => (await agentFiles.stats(session)).files,
+});
 chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
     if (sender.id !== chrome.runtime.id || sender.tab) return undefined;   // the service worker's word only, like every message here
     if (msg?.type === "FS_CALL") { void fsChannels.call(msg.key, msg.session, msg.op, msg.args).then(sendResponse); return true; }
     if (msg?.type === "FS_END") fsChannels.end(msg.key);
+    if (msg?.type === "FILES_LIST") { void filesList.list(msg.session, msg.path, { cursor: msg.cursor, limit: msg.limit }).then(sendResponse); return true; }
     return undefined;
 });
 

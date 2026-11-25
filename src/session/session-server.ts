@@ -61,6 +61,16 @@ interface Client {
  */
 const KNOWN_COMMANDS: ReadonlySet<string> = new Set(Object.keys(COMMAND_SCOPE));
 
+/** The most directories one `files-changed` names; past it, it names none, which means every open one. */
+export const FILES_CHANGED_DIRS_MAX = 16;
+
+/** Does a person's turn event (a chat's, a run's start, a message to a run) carry an attached file in its display? */
+function attachesFiles(ev: MlDebugEvent): boolean {
+    if (ev.kind !== "chat" && ev.kind !== "agent" && ev.kind !== "agent-say") return false;
+    const ctx = (ev as { display?: { context?: unknown } }).display?.context;
+    return Array.isArray(ctx) && ctx.some((c) => !!c && typeof c === "object" && (c as { kind?: unknown }).kind === "file");
+}
+
 /** Something fed the whole index's changes and every session's stream, beside the connected pages. */
 export interface SessionSink {
     index(update: SessionIndexUpdate): void;
@@ -208,11 +218,29 @@ export class SessionServer {
         }
     }
 
+    /**
+     * Tell every page and sink watching a session that its `/files/` changed (`files-changed`): a live hint beside
+     * `gone`, never an event, so the index never holds it and no backfill or export replays it. `dirs` names at most
+     * `FILES_CHANGED_DIRS_MAX` shown directories to list again; more, or none, sends it without `dirs` (every open one).
+     */
+    filesChanged(hash: string, dirs?: readonly string[]): void {
+        const id = this.index.get(hash)?.id;
+        if (!id) return;
+        const named = dirs && dirs.length <= FILES_CHANGED_DIRS_MAX && dirs.every((d) => typeof d === "string") ? [...new Set(dirs)] : undefined;
+        const message: SessionStreamMessage = { type: "files-changed", session: id, ...(named ? { dirs: named } : {}) };
+        for (const sink of this.sinks) sink.stream(hash, message);
+        for (const client of this.clients) {
+            for (const [sub, s] of client.subs) if (s.hash === hash) this.post(client, { type: "stream", sub, message });
+        }
+    }
+
     /** Fold an event into the index and send what changed to every connected page. */
     ingest(event: MlDebugEvent, source: IngestSource): IngestOutcome {
         const out = this.index.ingest(event, source);
         if (!out.accepted) return out;
         const hash = out.session.hash;
+        // A person's turn that attached files changed the session's shelf: `files-changed` after it, once for the turn.
+        if (attachesFiles(event)) queueMicrotask(() => this.filesChanged(hash, ["", "attached"]));
         // A live event says where it sits in the session, which is what lets a client that got it from a short ring
         // (the hub's) page back from there with `session.backfill`.
         // ONE COUNTING for every session, kept or not: the index's own count of the session's events. It had been the

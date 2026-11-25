@@ -15,7 +15,7 @@ import { TurnUnreadable } from "../secret-registry";
 import { bytesToB64 } from "../pdf/pdf-wire";
 import { clientUiOf } from "../agent/current-client";
 import type { SessionHistory } from "./session-store";
-import type { Command, CommandError, CommandFrom, CommandResult, CommandType, ListedSession, ModelChoice, SessionId, SessionSummary, StorageReport, TabGroupInfo, TabInfo } from "./session-host";
+import type { Command, CommandError, CommandFrom, CommandResult, CommandType, FilesListing, ListedSession, ModelChoice, SessionId, SessionSummary, StorageReport, TabGroupInfo, TabInfo } from "./session-host";
 import type { SessionIndex } from "./session-index";
 import { capTitle } from "./session-title";
 import { approvalKey } from "../approval-key";
@@ -137,6 +137,9 @@ export interface CommandDeps {
     addFilesRule?(hash: string, r: { effect: "hide" | "show"; source: string; scope: "session" | "global" }): { id: string } | { refused: string };
     /** remove a hiding rule seen from a session; a widening removal waits for `confirmed` */
     removeFilesRule?(hash: string, id: string, confirmed: boolean): { removed: true } | { removed: false; why: "unknown" | "confirm"; exposes?: string[] };
+    /** one page of one directory of a session's `/files/`, under its shown names, read in the offscreen document
+     *  (files-list-serve.ts); the command's own failure with its sentence, or the page */
+    listFiles?(hash: string, path: string, opts: { cursor?: string; limit?: number }): Promise<{ ok: FilesListing } | { fail: "invalid" | "not-found"; message: string }>;
     /** name a session (a capped, non-empty title), or with null return it to a generated title */
     renameSession(hash: string, title: string | null): void;
     /** every event this runtime still holds for a session, oldest first; empty when it holds none */
@@ -812,6 +815,21 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
                 return r.why === "confirm" ? ok({ removed: false, confirm: { exposes: r.exposes ?? [] } }) : fail("not-found", "no such hiding rule in this session's view");
             }
             return fail("invalid", "op is add or remove");
+        },
+
+        "files.list": async (c) => {
+            const s = session(c);
+            if (s.error) return s.error;
+            if (!deps.listFiles) return fail("unsupported", "this runtime lists no files");
+            if (c.mount !== undefined && c.mount !== "files") return fail("unsupported", "the only mount listed is files");
+            if (typeof c.path !== "string") return fail("invalid", "path is a directory under /files/, \"\" for the root");
+            if (c.cursor !== undefined && typeof c.cursor !== "string") return fail("invalid", "the cursor is one this runtime gave");
+            if (c.limit !== undefined && (typeof c.limit !== "number" || !Number.isInteger(c.limit) || c.limit < 1 || c.limit > 500)) return fail("invalid", "limit is a whole number from 1 to 500");
+            let r;
+            try { r = await deps.listFiles(s.id.hash, c.path, { ...(c.cursor !== undefined ? { cursor: c.cursor } : {}), ...(c.limit !== undefined ? { limit: c.limit } : {}) }); }
+            catch { return fail("unavailable", "the session's files could not be read"); }
+            if (!r || typeof r !== "object") return fail("unavailable", "the session's files could not be read");
+            return "ok" in r ? ok(r.ok) : fail(r.fail, r.message);
         },
 
         "tab.focus": async (c) => {

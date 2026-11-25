@@ -139,6 +139,9 @@ export interface RuntimeCapabilities {
     /** `files` may carry a PDF's bytes (`{ name, type, data }`) on `chat.start` and on `session.send` to a chat: the
      *  runtime reads it page by page. A runtime without it refuses the field as malformed. */
     attachPdf?: boolean;
+    /** `files.list`: a session's `/files/` listed one directory a page, for the file browser. Absent means the client
+     *  shows no browser. */
+    listFiles?: boolean;
     /** the boxes this runtime uses */
     boxes?: BoxRef[];
     /** the long-term session archive, present while it is switched on (`sessionArchive`). Reachable through
@@ -401,7 +404,11 @@ export type SessionStreamMessage =
         from?: number;
     }
     /** the session was deleted; the subscription ends */
-    | { type: "gone"; session: SessionId };
+    | { type: "gone"; session: SessionId }
+    /** a live hint, with no cursor, never kept in the session's history, backfill or export: list these open directories
+     *  under `/files/` again (shown paths, at most 16), or every open one when `dirs` is absent. It carries no names, no
+     *  counts and no bytes; a client that does not know it loses only freshness. */
+    | { type: "files-changed"; session: SessionId; dirs?: string[] };
 
 /* ------------------------------ commands ------------------------------ */
 
@@ -660,6 +667,11 @@ export type Command =
      */
     | { type: "policy.files"; session: SessionId; op: "add"; effect: "hide" | "show"; source: string; scope: "session" | "global" }
     | { type: "policy.files"; session: SessionId; op: "remove"; id: string; confirm?: boolean }
+    /** One page of one directory under a session's `/files/` (FILE_ATTACHMENTS.md, "The file browser shows the mounts, and
+     *  its menu sends commands"): `path` is a shown path with no leading slash (`""` the root, `attached`, `agent/out`);
+     *  `cursor` is the opaque `next` of the page before; `limit` at most 500; `mount` defaults to `files`. From the
+     *  person's own clients only. */
+    | { type: "files.list"; session: SessionId; path: string; cursor?: string; limit?: number; mount?: string }
     /** A small model call on the client's behalf, for work the UI does about a session: its title, a block
      *  summary, `explain` notes. The runtime always uses its UTILITY model profile and caps `maxTokens`; the client
      *  cannot choose a model, so this cannot become a way to run arbitrary generations on someone's main model. */
@@ -669,6 +681,31 @@ export type Command =
         session?: SessionId;
         messages: NeutralMessage[]; schema?: JsonSchema; maxTokens: number;
     };
+
+/** One entry of a `files.list` page, under its SHOWN name: two entries of a page may share one, so a client keys rows
+ *  by position, never by name. */
+export interface FileListEntry {
+    name: string;
+    kind: "file" | "dir";
+    /** bytes, from stored metadata: a hidden entry's bytes are never read */
+    size: number;
+    mtimeMs: number;
+    hidden: boolean;
+    readonly: boolean;
+    /** The stored name where it differs from `name` (what the model sees it as), only to the extension's own pages on
+     *  this device, never to a hub client. Absent: `name` is the stored one. */
+    realName?: string;
+}
+
+/** The answer to `files.list`: at most 500 entries and 256 KiB of JSON a page. */
+export interface FilesListing {
+    entries: FileListEntry[];
+    /** an opaque cursor for the next page; absent on the last */
+    next?: string;
+    /** the root (`path: ""`) only: how many files the session holds. A client never presents `attached` alone as the
+     *  total; `agent` is absent where this runtime does not count the files a run made. */
+    count?: { attached: number; agent?: number };
+}
 
 export type CommandType = Command["type"];
 
@@ -719,6 +756,7 @@ export const COMMAND_SCOPE: { readonly [T in CommandType]: Scope } = {
     "page.highlight": "drive",
     // A `show` releases a held file to the model, so changing the list is answering for the person: `approve`, not `drive`.
     "policy.files": "approve",
+    "files.list": "view",
     "side.call": "drive",
 };
 
@@ -946,6 +984,7 @@ export interface CommandResultData {
     /** `add`: the entry's id. `remove`: `removed`, or `confirm` with the ids a widening removal would let decide, when
      *  `confirm` was not sent. */
     "policy.files": { id: string } | { removed: true } | { removed: false; confirm: { exposes: string[] } };
+    "files.list": FilesListing;
     /** `structured` is the parsed JSON when a `schema` was sent */
     "side.call": { content: string; structured?: unknown; usage?: TokenUsage | null };
 }
