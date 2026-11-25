@@ -51,6 +51,17 @@ test("an empty commit does nothing", T, async () => {
     assert.deepEqual(await store.all("s"), []);
 });
 
+test("stats counts a session's files, not its folders, and what they take; another session's are not counted", T, async () => {
+    const { store } = setup();
+    assert.deepEqual(await store.stats("s"), { files: 0, bytes: 0 }, "a session with no files");
+    await store.commit("s", [{ op: "mkdir", path: "d" }, { op: "mkdir", path: "d/e" }, put("d/a.txt", "hello"), put("d/e/b.txt", "xy"), put("c.txt", "")]);
+    await store.commit("t", [put("x.txt", "123456")]);
+    assert.deepEqual(await store.stats("s"), { files: 3, bytes: 7 });
+    assert.equal(await store.usage("s"), 7, "usage is stats' bytes");
+    await store.commit("s", [{ op: "unlink", path: "d/a.txt" }]);
+    assert.deepEqual(await store.stats("s"), { files: 2, bytes: 2 });
+});
+
 // --- last commit wins ---
 
 test("the last commit of a path wins, with a fresh version and the birth time kept", T, async () => {
