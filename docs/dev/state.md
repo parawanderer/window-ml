@@ -58,7 +58,7 @@ page-hosted one. Several stores exist once per host.
 | Who sent each user message (the channel, the verified scopes; PROPOSED, `CURRENT_CONTEXT.md`) | nowhere yet: the hub drops the sender after checking it, and a steer carries no origin | with `meta` | `client` |
 | Environment: debugger attached, tab pinned, navigation barrier, hub devices granted this session | `attachedDebuggees`, `ml_pinned_tabs`, `navBarrier`, `SessionPublisher.granted` | partly | `run` (new) |
 | Docs already shown to the model | `docsMemories` (`tool-exec.ts`, page; a worker-built run's: worker) | no | maybe |
-| An isolated exec's `state` | `globalThis.__mlState` in the run's user-script world `wml-<runId>` (`sw-isolated-exec.ts`); a CDP world's dies with the call | no | no |
+| An isolated exec's `state` | `globalThis.__mlState` in the run's world (`wml-<runId>`, `sw-isolated-exec.ts`), user-script or CDP: both persist for the run on a document, and the worker judges each call's requests (`iso-channel.ts`) | no | no |
 | Crops already seen (vision) | `VisionMemory`, made FRESH on every re-adopt | no | maybe |
 | Process-wide run flags: closed-shadow piercing, CDP clicks | `pierceClosed` (`dom.ts`), `cdpEnabled` (page module variables; the last run to start wins) | no | `init` can disagree with what is in effect |
 
