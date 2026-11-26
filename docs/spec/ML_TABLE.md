@@ -267,6 +267,8 @@ Outside a run the charge is nothing.
 - **One class leaks per cell.** The facade is built anew each cell, so `_ml_table_inside` registers `allow_kind` on that
   cell's facade class each time, and the fork's registry keeps an entry for each. Nothing bounds that within a
   worker's life but the number of cells it runs. Building the facade class once per worker removes it; not done here.
+  A facade kept from an earlier cell is refused with nothing sent, and the next cell's own facade reads normally
+  (`tests/redteam-python-table.test.mjs`, "a facade kept from an earlier cell never reaches the wire in the next").
 
 ## What a table keeps of its source
 
