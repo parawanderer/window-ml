@@ -1065,6 +1065,10 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 // A throw in any step that only DECIDES (the read-only try, auto-approve, the precheck) falls through to
                 // the gate: the person is asked, which is never less safe than the step that threw.
                 let ro: ToolRunResult | null = null;
+                // The try is a DISPATCH like runTool's: its own clock, so a step it answers records `toolMs` as every other
+                // approval does. Kept only when the try answered (a refused one is timed by the runTool that follows).
+                const roT0 = Date.now();
+                if (turnReturnedAt != null) lastDispatchMs = Math.max(0, roT0 - turnReturnedAt);
                 try {
                     const r = deps.tryReadonly ? await orStopped(deps.tryReadonly(call.name, args, fan ?? undefined, { seq: s, step })) : null;
                     // Stopped mid-try: its lines so far stay (they ran). An exec survey's host stops its interpreter
@@ -1073,6 +1077,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                     else ro = r ? withText(r) : null;
                 }
                 catch (e) { threw(call.name, "readonly", e); ro = null; }
+                if (ro) lastToolMs = Date.now() - roT0; else lastDispatchMs = undefined;
                 // A refused try leaves nothing behind, and lines it streamed are something (docs/dev/readonly-exec.md).
                 if (!ro) fan?.discard();
                 let autoRaw: AutoApproval = null;

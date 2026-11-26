@@ -50,6 +50,7 @@ import { workerLocate } from "./worker-locate";
 import { runVision, workerWroteVision, type RunVision } from "./run-vision";
 import { withUserWatches } from "./sw-shared-watches";
 import { closeTurnTasks, hydrateTasks, openTasks, taskDrained, withTasks } from "./sw-tasks";
+import { cancelRelease, rearmAfterTurn } from "./sw-release";
 import { routeExec, execNames, surveyMayEnterPage, withoutWorld, worldCardNote, type ExecRoute } from "./exec-routing";
 import { defaultExecWorld } from "../contract/contract-config";
 import { outputCapPrecheck } from "../contract/contract-pointers";
@@ -794,11 +795,13 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     let unhostAsks: (() => void) | undefined;   // set once the run's steps may raise nested asks (sw-asks.ts)
     let unwatchArrivals: (() => void) | undefined;   // set once the run judges its tab's arrivals (nav-arrival.ts)
     let rewatchArrivals: (() => void) | undefined;   // the same judge, moved to the turn's tab now
-    const settle = (): void => { turnTabCells.delete(runId); unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); closeTurnTasks(runId); untrackRun(tabId, runId); deleteRun(runId); endPythonTurn(runId); releaseDebugger(tabId); moveAfterTurn(runId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); the turn's end: the run's Python namespace stays, the shared full worker's dict goes
+    const settle = (): void => { turnTabCells.delete(runId); unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); closeTurnTasks(runId); void rearmAfterTurn(runId); untrackRun(tabId, runId); deleteRun(runId); endPythonTurn(runId); releaseDebugger(tabId); moveAfterTurn(runId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); the turn's end: the run's Python namespace stays, the shared full worker's dict goes
     /** Ends the run's session on every surface when the setup throws after its start event went out; set once the fan exists. */
     let endSession: ((error: string) => void) | undefined;
     try {
         runControllers.set(runId, abortCtl);
+        // A turn runs on a tab: a release deadline its tab's closing set is void (a turn's end sets a new one if it ends tabless).
+        void cancelRelease(runId);
         // The live controller takes over from any start registration: from here a CANCEL_RUN finds this one.
         for (const e of startingSet ?? []) endStart(runId, e.ctl);
         runInboxes.set(runId, { tabId, queue: [] });   // a.say() steering lands here while the run is live

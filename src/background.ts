@@ -56,6 +56,7 @@ import { bringableSessions, bringHere } from "./sw/bring-here";
 import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, contextByRun, turnByRun, workerRunsStarting, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, detachTabRuns, runHasNoTab, senderOwnsRun, reconcileTabPins, startingControllers, abortStart, startingOwnedBy } from "./sw/sw-runs";
 import { cancelPageTasks, detachTask, dropAllTaskMemory, resetTaskChain, taskAction, type TaskOutcome } from "./sw/sw-tasks";
 import { refreshTaskRow, setNoTabReader, setReleaseAtReader, syncTaskRows } from "./sw/sw-task-rows";
+import { onTabClosed, releaseAtOf, restoreReleases } from "./sw/sw-release";
 import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
 import { startBackgroundRun, delegateStreams, hostRun, WORKER_RUN_REFUSED } from "./sw/sw-run-host";
@@ -126,6 +127,9 @@ observeRequests(energyRequest);
 // A worker evicted mid-run leaves its tabs pinned against discard with nobody left who knows why. After the
 // rehydrate — so a run that came back keeps its own tab — release the ones that did not.
 void hydrationDone.then(() => reconcileTabPins());
+// A run whose tab closed while no worker ran (or whose deadline fell then) is released now; the session row shows a deadline that is set.
+setReleaseAtReader(releaseAtOf);
+void hydrationDone.then(() => restoreReleases());
 // The value store's idle sweep: now, and on an alarm, since a worker evicted mid-run never releases what its session held.
 startValueSweeps(liveHeldSessions);   // its first pass releases held rows no session can end any more
 
@@ -144,6 +148,7 @@ startValueSweeps(liveHeldSessions);   // its first pass releases held rows no se
     dropAllTaskMemory();
     await hydratePersistedRuns();
     await syncTaskRows();
+    await restoreReleases();
 };
 // TEST-ONLY: seed a minimal resumable bgRun for a tab, so a unit test can exercise the "don't wipe a tab that
 // still has a recoverable run" guard (resetDebug / tabHasBgRun) without driving a whole run to completion.
@@ -269,7 +274,10 @@ if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
 }
 if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
     chrome.tabs.onRemoved.addListener((tabId) => {
-        // First, while the runs still name the tab: a run the worker drives goes on with no tab (no-tab.ts), so its row is
+        // The release's deadline FIRST (sw-release.ts): it finds the runs held on this tab by their tabId, which the detach
+        // sets to NO_TAB, so after it no held run gets a release deadline. It reads them before its first await.
+        void onTabClosed(tabId);
+        // Then, while the runs still name the tab: a run the worker drives goes on with no tab (no-tab.ts), so its row is
         // not marked interrupted and the list says it is held with no tab.
         const noTab = detachTabRuns(tabId);
         for (const hash of noTab) void refreshTaskRow(hash);
