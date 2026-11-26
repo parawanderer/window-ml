@@ -74,7 +74,7 @@ export async function navigateFromNoTab(runId: string, url: string): Promise<{ r
         recordRunLog(runId, { level: "warn", subsystem: "tab", kind: "nav-open-failed", reason: "no-load", detail: { tab: tab.id } });
         return { result: `Error: the tab opened at ${dest.href} did not finish loading. The run still has no tab.` };
     }
-    queueNavMove(runId, tab.id);
+    queueNavMove(runId, tab.id, dest.href);
     recordRunLog(runId, { subsystem: "tab", kind: "nav-opened", detail: { tab: tab.id, url: dest.href } });
     return { result: `Opened ${dest.href} in a new tab. The run moves onto it before your next step, and you are told what is on it then.` };
 }

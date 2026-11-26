@@ -84,7 +84,7 @@ import { capPageAnswer, capPageContext } from "./page-answer-caps";
 import { firstUserTurn } from "../agent/run-assembly";
 import { hostAsks, raiseAsk, stepAsks, type StepAsk } from "./sw-asks";
 import { ARRIVAL_ASK, ARRIVAL_DENIED } from "../contract";
-import { arrivalAnsweredText, arrivalDeniedText, clickDeniedText, arrivalWaitingText, arrivalHold, arrivalLine, arrivalSettled, arrivalVerdict, clearArrival, holdArrival, judgeTurnStart, watchArrivals, watchBetweenTurns } from "./nav-arrival";
+import { arrivalAnsweredText, arrivalDeniedText, clickDeniedText, arrivalWaitingText, arrivalHold, arrivalLine, arrivalSettled, arrivalVerdict, clearArrival, holdArrival, judgeTurnStart, unfragmented, watchArrivals, watchBetweenTurns } from "./nav-arrival";
 import { adoptOnTab } from "./adopt-run";
 import { approvalFor, cancelReasons, gatePageTurn, noteRunEnd, noteRunStart, personClaimed } from "./sw-start-approval";
 import { pageTurnText } from "../agent-start";
@@ -711,7 +711,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             return { result: held.kind === "deny" ? arrivalDeniedText(held) : arrivalWaitingText(held) };
         }
         // A navigate from NO tab is the worker's (no-tab-nav.ts): its card is drawn here, and the call opens the tab the run
-        // moves onto at its next step. It reached here approved: the gate asks for every one (`navNeedsConsent`).
+        // moves onto at its next step. It reached here past the gate: a card (`navNeedsConsent`), or a person's `allow` policy.
         if (isNoTab(tabId) && payload.name === "navigate") {
             if (payload.renderOnly) return { renderIn: await noTabNavRender(String(payload.args?.url ?? "")) };
             if (payload.precheck || payload.readonlyTry) throw new Error("the run has no page");
@@ -859,7 +859,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             tabId: () => tabId,
             page: () => ({ title: p.pageTitle, url: tabUrlNow() }),
             rebuild: () => (p.crossPage === false ? undefined : runRebuilds.get(runId) ?? p.rebuild),
-            onPage: ({ origin, url, title }) => { p = { ...p, pageOrigin: origin, pageUrl: url, pageTitle: title }; consentedOrigins.add(origin); },
+            onPage: ({ origin, url, title }, judged) => { p = { ...p, pageOrigin: origin, pageUrl: url, pageTitle: title }; if (!judged) consentedOrigins.add(origin); },
+            // The tab a navigate from no tab opened: its named page passes, any other is judged as an arrival (`judgeHere`).
+            arrived: (url, named) => { namedNav = named; judgeHere(url); return !!arrivalHold(runId); },
         };
         // Origins an `allow` row let an arrival reach: consented for NAVIGATION only (POLICIES.md, ruling (b) as built). The
         // FETCH_URL choke point does not count them, so the gate does not either: a read there goes to its card.
@@ -996,8 +998,6 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // is that navigate's, already judged with the same facts, so it is not judged (or asked about) again. Any other
         // commit, a redirect included, clears it and is judged.
         let namedNav: string | undefined;
-        /** A URL without its fragment, for telling the named page from another: a fragment is not another read. */
-        const unfragmented = (url: string): string | undefined => { try { const u = new URL(url); u.hash = ""; return u.href; } catch { return undefined; } };
         // The ask hold's card, answered once for every call waiting on it: whether the run may act on the page, and what
         // the model reads of the answer.
         let askAnswer: Promise<{ allowed: boolean; text: string }> | undefined;

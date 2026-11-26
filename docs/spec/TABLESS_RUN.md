@@ -273,8 +273,19 @@ Shane asked for it by name (2026-11-23, through the coordinator), ahead of steps
   model is told so. A person's move that could not be made is written to the run log, and the model is not told.
 - **It asks unless a policy of the person's allows the destination; `crossOrigin` never waives it**:
   `navNeedsConsent` is true on `NO_TAB`, and the gate answers a person's `fetch` `allow` policy before it reads that
-  (`agent-host.ts`). With no tab there is no current site, so no navigation is same-site. The post-navigate commit wait (`navStalled`, `passArrival`) is
-  skipped there: no tab of the run's navigated.
+  (`agent-host.ts`). With no tab there is no current site, so no navigation is same-site.
+- **The page the tab lands on is judged before the move**, by the tab run's own arrival judge (`judgeHere`,
+  nav-arrival.ts; POLICIES.md, "A navigation the model did not name is judged on arrival"). The page the navigate named
+  passes as named: its gate already judged it. Any other (a server redirect, the page sending itself on) is judged as a
+  tab run's arrival is: a policy that denies or asks about it holds the run with the same `holdArrival`, card and texts,
+  and nothing of the run reaches the page (no `ADOPT_RUN_NOW`, no tool) until the person answers; an approved ask adopts
+  it then (`readoptHere`). An arrival no policy covers passes, as a tab run's does. A move after the turn judges it the
+  same way, as an arrival between turns (`holdStands`). The in-call commit wait (`navStalled`, `passArrival`) is not
+  run: the call opened a tab that is not the run's yet, and the move is where its page is judged.
+- **The as-you grant is for the page the person approved, only**: the card's approval grants the origin it named
+  (`grantRunOrigin`), as a tab run's approved navigate does. The move grants nothing, so a landed origin that differs
+  gets no as-you grant; an `allow` row covering it consents it for navigation only (`navOnlyOrigins`), and an approved
+  arrival card grants it as the person, as on a tab run.
 - **Only an absolute http(s) URL** (`noTabNavTarget`: a spelled `http://` or `https://`, then `new URL`): a relative,
   scheme-relative, `https:host` or `https:\\host` spelling and every other scheme are refused by the loop's
   `unrunnable`, before any card, and open nothing.

@@ -7,7 +7,7 @@ import { adoptOnTab } from "./adopt-run";
 import { delegateSend } from "./delegate-send";
 import { cancelPageTasks } from "./sw-tasks";
 import { pushReplay } from "../contract/contract-run";
-import { clearArrival, watchBetweenTurns } from "./nav-arrival";
+import { clearArrival, holdStands, markSpoken, unfragmented, watchBetweenTurns } from "./nav-arrival";
 import { grantRunOrigin } from "./worker-tools";
 import { recordRunLog } from "./sw-run-log";
 import { toPageUi } from "./sw-side-panel";
@@ -22,6 +22,9 @@ const REPLAY_CAP = 400;
 /** What the tab a run left is told, on its card and panel. Names no site: it is said on the old tab's page. */
 export const MOVED_AWAY = "This session was moved to another tab. Continue it there, or bring it back here with \"Bring a session here\".";
 
+/** The tab a run's own `navigate` from no tab opened: the page it named, judged already (no-tab-nav.ts). */
+export interface NavMove { named: string }
+
 /** What a move answers: done, queued until the running turn's current step ends, or refused, each with the sentence the
  *  person reads. */
 export type MoveOutcome = { moved: true } | { queued: string } | { refused: string };
@@ -34,8 +37,8 @@ const RUNNING = "That session is starting: wait for its turn to begin or end, th
 /** The moves the person asked for while the run's turn ran, by run: the destination tab. Applied at the turn's next step
  *  boundary ({@link applyLiveMove}) or, when the turn ends first, after it ({@link moveAfterTurn}); a later ask replaces
  *  an earlier one. `nav` marks the tab a run with no tab opened with `navigate` (no-tab-nav.ts), which the model is told
- *  as its own navigation. */
-const queuedMoves = new Map<string, { tab: number; nav?: true }>();
+ *  as its own navigation; `named` is the page that navigate's card or policy passed, without its fragment. */
+const queuedMoves = new Map<string, { tab: number; nav?: NavMove }>();
 defineState({
     id: "run.queuedMove", scope: "run", realm: "worker", audience: "human", lostOn: ["worker-eviction"],
     describe: "The tab the person moved the run to while its turn ran, which it moves to when its current step ends.",
@@ -101,7 +104,7 @@ export function takeMovedNote(runId: string): string | undefined {
  * @param toTabId the tab the person chose
  * @returns moved, or why not
  */
-export async function moveRun(runId: string, toTabId: number, opts: { nav?: true } = {}): Promise<MoveOutcome> {
+export async function moveRun(runId: string, toTabId: number, opts: { nav?: NavMove } = {}): Promise<MoveOutcome> {
     if (startingControllers.has(runId)) return { refused: RUNNING };
     if (runControllers.has(runId) || runInboxes.has(runId)) return queueLiveMove(runId, toTabId);
     const snap = bgRuns.get(runId);
@@ -121,8 +124,9 @@ export async function moveRun(runId: string, toTabId: number, opts: { nav?: true
     snap.tabId = toTabId;
     const origin = new URL(url).origin;
     snap.p = { ...snap.p, pageOrigin: origin, pageUrl: url, pageTitle: tab.title || undefined };
-    // The person choosing the tab is the consent the cross-domain gate asks for (agent-tools.md, "Variant B").
-    grantRunOrigin(runId, origin);
+    // The person choosing the tab is the consent the cross-domain gate asks for (agent-tools.md, "Variant B"). A tab the
+    // run's navigate opened is no one's choice: its card granted the page it named, and the page it landed on gets nothing.
+    if (!opts.nav) grantRunOrigin(runId, origin);
     snap.moved = opts.nav ? navigatedNote({ title: tab.title || url, url }) : movedNote(left, { title: tab.title || url, url });
     // Brought back to a tab it left, that tab is its own again.
     // From no tab there is no tab it left (no-tab.ts).
@@ -138,6 +142,12 @@ export async function moveRun(runId: string, toTabId: number, opts: { nav?: true
     // The old tab's page no longer holds the run, and the next turn's start judges the new tab's.
     clearArrival(runId);
     watchBetweenTurns(toTabId, runId);
+    // The page a navigate named was judged at its gate; any other it landed on is judged now, as an arrival between turns
+    // is, so a policy that denies or asks about it holds the run before anything of it reaches the page (nav-arrival.ts).
+    if (opts.nav) {
+        if (unfragmented(url) === opts.nav.named) markSpoken(runId, url);
+        else await holdStands(toTabId, runId);
+    }
     recordRunLog(runId, { subsystem: "tab", kind: "moved", detail: { from, to: toTabId } });
     // A run that had no tab has one now: its session row stops saying so.
     if (isNoTab(from)) void refreshTaskRow(runId);
@@ -193,9 +203,10 @@ async function queueLiveMove(runId: string, toTabId: number): Promise<MoveOutcom
  * replaces it.
  * @param runId the run
  * @param toTabId the tab the navigate opened
+ * @param named the page the navigate's gate passed
  */
-export function queueNavMove(runId: string, toTabId: number): void {
-    queuedMoves.set(runId, { tab: toTabId, nav: true });
+export function queueNavMove(runId: string, toTabId: number, named: string): void {
+    queuedMoves.set(runId, { tab: toTabId, nav: { named: unfragmented(named) ?? named } });
     recordRunLog(runId, { subsystem: "tab", kind: "move-queued", reason: "navigate", detail: { to: toTabId } });
 }
 
@@ -208,8 +219,12 @@ export interface LiveTurn {
     page: () => { title?: string; url?: string };
     /** what a page needs to rebuild the run's toolset; undefined for a run that opted out of cross-page persistence */
     rebuild: () => RebuildConfig | undefined;
-    /** re-point the turn's stored page (`pageOrigin`, `pageUrl`, `pageTitle`) and its turn-local consent at the destination */
-    onPage: (page: { origin: string; url: string; title?: string }) => void;
+    /** re-point the turn's stored page (`pageOrigin`, `pageUrl`, `pageTitle`) at the destination, and its turn-local
+     *  consent unless `judged` (a navigate's tab: the arrival judge decided what it consents) */
+    onPage: (page: { origin: string; url: string; title?: string }, judged?: boolean) => void;
+    /** judge the page a navigate's tab landed on with the turn's arrival judge, the page it named passing as named; true
+     *  when that holds the run there (nav-arrival.ts) */
+    arrived: (url: string, named: string) => boolean;
 }
 
 /**
@@ -240,20 +255,26 @@ export async function applyLiveMove(runId: string, turn: LiveTurn): Promise<{ no
     if (!tab || !/^https?:/i.test(url)) return drop("not-a-page");
     const rebuild = turn.rebuild();
     if (!rebuild) return drop("no-rebuild");
-    const r = await adoptOnTab(to, runId, rebuild).catch((e) => ({ error: String((e as Error)?.message || e) }));
-    if (r.error) return drop("no-adopt");
+    // The page a navigate's tab holds is judged before anything of the run reaches it, as a tab run's arrival is: a page
+    // other than the one it named (a redirect, the page sending itself on) that a policy denies or asks about holds the
+    // run, unadopted, until the person answers its card (sw-run-host.ts `passArrival`, `readoptHere`).
+    const held = nav ? turn.arrived(url, nav.named) : false;
+    const r = held ? {} : await adoptOnTab(to, runId, rebuild).catch((e) => ({ error: String((e as Error)?.message || e) }));
+    if ("error" in r && r.error) { if (nav) clearArrival(runId); return drop("no-adopt"); }
     const pageInfo = "pageInfo" in r ? r.pageInfo : undefined;
     // Filed under the destination before its replay arrives: a first turn's `trackRun` wipes an idle tab's ring.
     trackRun(to, runId, rebuild);
     const left = turn.page();
     for (const event of moveReplay(runId, from, to)) toPageUi(to, { type: "ML_DEBUG_TO_PAGE", event }, { frameId: 0 });
     releaseRunTab(from, runId);
-    // The old page's hold on the run goes; the cell re-arms the turn's arrival judge on the new tab.
-    clearArrival(runId);
+    // The old page's hold on the run goes (a run with no tab had none; a navigate's is the new page's); the cell re-arms
+    // the turn's arrival judge on the new tab.
+    if (!nav) clearArrival(runId);
     rekeyRunInbox(runId, to);
     const origin = new URL(url).origin;
-    grantRunOrigin(runId, origin);
-    turn.onPage({ origin, url, title: tab.title || undefined });
+    // A navigate's tab is granted nothing here: its card granted the page it named, and the arrival judge decides the rest.
+    if (!nav) grantRunOrigin(runId, origin);
+    turn.onPage({ origin, url, title: tab.title || undefined }, !!nav);
     const snap = bgRuns.get(runId);
     if (snap) {
         snap.tabId = to;
@@ -288,7 +309,7 @@ export function moveAfterTurn(runId: string): void {
     if (!queued) return;
     queuedMoves.delete(runId);
     const to = queued.tab;
-    void moveRun(runId, to, queued.nav ? { nav: true } : {}).then((r) => {
+    void moveRun(runId, to, queued.nav ? { nav: queued.nav } : {}).then((r) => {
         if ("refused" in r) recordRunLog(runId, { level: "warn", subsystem: "tab", kind: "move-dropped", reason: "after-turn", detail: { to } });
     }, () => recordRunLog(runId, { level: "warn", subsystem: "tab", kind: "move-dropped", reason: "after-turn", detail: { to } }));
 }

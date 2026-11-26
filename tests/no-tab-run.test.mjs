@@ -30,12 +30,16 @@ const shellOn = (tabId) => ({ tab: { id: tabId, url: SITE_URL }, url: SITE_URL, 
  * @returns the worker, the run id, `script`, `turns()`, `pageCalls()` (every RUN_TOOL_IN_PAGE call that is not a
  *  preview), `bodies()` (every model request), `rows()` (the session list as a chat page sees it)
  */
-async function run({ first = [exec], onExec, indexedDB, keep = false, detached = false, openCreated = false, deniedOrigins = [], holdFirst, onAdopt, req = {} } = {}) {
+async function run({ first = [exec], onExec, indexedDB, keep = false, detached = false, openCreated = false, deniedOrigins = [], holdFirst, onAdopt, req = {}, local, redirectTo, ask } = {}) {
     const script = [...first];
     let bg;
     let modelCalls = 0;
     bg = loadBackground({
         openCreated, deniedOrigins,
+        ...(local ? { local } : {}),
+        // `redirectTo`: the tab a navigate opens (4243) reports that page once loaded, as after a server redirect.
+        // A function is read at each answer, so a row can move the tab on.
+        ...(redirectTo ? { onTabsGet: (id, answer) => { const to = typeof redirectTo === "function" ? redirectTo() : redirectTo; if (id === 4243 && to) { answer.url = to; answer.title = new URL(to).host; } } } : {}),
         config: { chatUrl: "http://host/api/chat/completions", apiKey: "k", model: "m", apiFormat: "openai", debugMode: "off" },
         ...(indexedDB ? { indexedDB } : {}),
         openTabs: [
@@ -53,6 +57,8 @@ async function run({ first = [exec], onExec, indexedDB, keep = false, detached =
         onTabMessage: async (t, msg) => {
             if (msg.type === "ADOPT_RUN_NOW") return onAdopt ? onAdopt(t) : { pageInfo: "" };
             if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } }, shellOn(t));
+            // `ask(kind)`: a nested ask (an arrival's) answered as the card answers it; true approves.
+            if (ask && msg.type === "ML_DEBUG_TO_PAGE") for (const a of msg.event?.asks ?? []) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, ask: a.id, decision: ask(a.kind) === true } }, shellOn(t));
             if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
             if (msg.payload.finish || msg.payload.renderOnly || msg.payload.precheck || msg.payload.readonlyTry) return {};
             return onExec ? onExec(t, msg) : { result: `ran on ${t}` };
@@ -363,6 +369,93 @@ test("navigate as the turn's last step: the run moves onto the opened tab after 
     assert.deepEqual(await send(r, "go on", 2), { ok: true, data: { mode: "turn" } });
     assert.ok(r.bg.tabMessages.some(([t, m]) => t === 4243 && m?.type === "RUN_TOOL_IN_PAGE" && m.payload?.name === "exec"), "the next turn runs on the opened tab");
     assert.match(readText(r.bodies().at(-1)), /its navigate opened tab "news\.example"/);
+});
+
+// --- navigate from no tab: the page its tab lands on is judged before the move, and granted only what the judge grants ---
+
+const LANDED = "https://landed.example/home";
+/** A saved global policy over fetch, as the policy page stores one. */
+const policy = (id, effect, source, label) => ({ id, scope: "global", consumer: "fetch", effect, source, label, origin: "person", created: 1760000000000 });
+const credFetch = (url) => ({ name: "fetch_url", args: { url, credentials: true } });
+/** Every card the run raised, on the session channel or on a tab, once each (a moved run's replay shows a card again),
+ *  as [tool, text of the event]; a nested ask is [its kind, its text]. */
+function allCards(r) {
+    const seen = new Map();
+    const events = [
+        ...r.port.messages.filter((m) => m.type === "stream" && m.message?.type === "event").map((m) => m.message.event),
+        ...r.bg.tabMessages.filter(([, m]) => m?.type === "ML_DEBUG_TO_PAGE").map(([, m]) => m.event),
+    ];
+    for (const e of events) {
+        if (e?.awaitingApproval && !seen.has(`card:${e.seq}`)) seen.set(`card:${e.seq}`, [e.tool, JSON.stringify(e)]);
+        for (const a of e?.asks ?? []) if (!seen.has(`ask:${a.id}`)) seen.set(`ask:${a.id}`, [a.kind, JSON.stringify(a)]);
+    }
+    return [...seen.values()];
+}
+const adopted = (r) => r.bg.tabMessages.some(([t, m]) => t === 4243 && m?.type === "ADOPT_RUN_NOW");
+
+test("a navigate from no tab whose tab lands on another site no policy covers: the run moves, and the landed site gets no as-you grant", T, async () => {
+    // A tab run's arrival no policy covers passes as it is (tests/nav-arrival-host.test.mjs): so does this one. What the
+    // card granted is the page it named; a credentialed read of the landed site still asks, of the named one does not.
+    // The reads are made once the tab has gone on to a third page: a read of the page the tab is ON is free, whatever got it there.
+    let landed = LANDED;
+    const r = await run({ detached: true, first: [nav(), exec], openCreated: true, redirectTo: () => landed });
+    await answerCard(r, "navigate", "approve");
+    assert.ok(await until(() => !r.live()), "the turn ends");
+    assert.ok(adopted(r), "control: no policy holds it, so the run moved onto the tab");
+    assert.match(readText(r.bodies().at(-1)), /its navigate opened tab "landed\.example" \(https:\/\/landed\.example\/home\)/);
+    landed = "https://third.example/";
+    r.bg.commit?.(4243, { documentId: "doc-third", url: landed });
+    r.script.push(credFetch("https://landed.example/data"), credFetch("https://news.example/data"));
+    await send(r, "go on", 2);
+    const fetchCards = allCards(r).filter(([tool]) => tool === "fetch_url").map(([, e]) => e);
+    assert.equal(fetchCards.filter((e) => /landed\.example\/data/.test(e)).length, 1, "a credentialed read of the landed site asks");
+    assert.equal(fetchCards.filter((e) => /news\.example\/data/.test(e)).length, 0, "control: the site the card named was granted");
+});
+
+test("a navigate from no tab whose tab lands on a page a policy asks about: held, unadopted, until the person answers the arrival card", T, async () => {
+    const ASK = policy("p-ask", "ask", '(c) => c.host === "landed.example"', "Check with me on landed.example");
+    // An ungated tool, as tests/nav-arrival-host.test.mjs uses: a gated one's card answers the arrival first.
+    const r = await run({ detached: true, first: [nav(), { name: "scroll", args: {} }], openCreated: true, redirectTo: LANDED, local: { ml_policies_global: [ASK] }, ask: () => true });
+    await answerCard(r, "navigate", "approve");
+    assert.ok(await until(() => !r.live()), "the turn ends");
+    // A nested ask rides on the step's event (`asks`), not as a card of its own.
+    const arrival = r.bg.tabMessages.findIndex(([t, m]) => t === 4243 && m?.type === "ML_DEBUG_TO_PAGE" && (m.event?.asks ?? []).some((a) => a.kind === "arrival" && /Check with me on landed\.example/.test(JSON.stringify(a))));
+    const adopt = r.bg.tabMessages.findIndex(([t, m]) => t === 4243 && m?.type === "ADOPT_RUN_NOW");
+    assert.ok(arrival >= 0, "the arrival card names the policy that asks");
+    assert.ok(adopt > arrival, `nothing of the run reached the page before the person answered (card at ${arrival}, adopt at ${adopt})`);
+    assert.ok(toolResults(r.bodies().at(-1)).some((t) => /^The tab moved to https:\/\/landed\.example, a page the run did not open by name, which the policy "Check with me on landed\.example" asks about\. The person approved the run acting on it\./.test(t)), "the model reads the tab run's own answer");
+    assert.ok(r.bg.tabMessages.some(([t, m]) => t === 4243 && m?.type === "RUN_TOOL_IN_PAGE" && m.payload?.name === "scroll"), "approved, the scroll runs there");
+});
+
+test("a navigate from no tab whose tab lands on a page a policy denies: held, never adopted, and no tool runs there", T, async () => {
+    const DENY = policy("p-deny", "deny", '(c) => c.host === "landed.example"', "Not landed.example");
+    const r = await run({ detached: true, first: [nav(), exec], openCreated: true, redirectTo: LANDED, local: { ml_policies_global: [DENY] } });
+    await answerCard(r, "navigate", "approve");
+    assert.ok(await until(() => !r.live()), "the turn ends");
+    assert.ok(!adopted(r), "the denied page was never given the run's tools");
+    assert.ok(!r.bg.tabMessages.some(([t, m]) => t === 4243 && m?.type === "RUN_TOOL_IN_PAGE" && m.payload?.name === "exec"), "and the exec never reached it");
+    assert.ok(toolResults(r.bodies().at(-1)).some((t) => /^The tab is now on https:\/\/landed\.example\/home, which the policy "Not landed\.example" denies: no tool runs on this page\./.test(t)), "the model reads the tab run's deny text");
+});
+
+test("a navigate from no tab to a page a policy asks about: its card is the one ask, and its arrival on the named page is not asked about again", T, async () => {
+    const ASK = policy("p-ask", "ask", '(c) => c.host === "news.example"', "Check with me on news.example");
+    const r = await run({ detached: true, first: [nav(), exec], openCreated: true, local: { ml_policies_global: [ASK] } });
+    await answerCard(r, "navigate", "approve");
+    assert.ok(await until(() => !r.live()), "the turn ends");
+    assert.deepEqual(allCards(r).filter(([tool]) => tool !== "exec").map(([tool]) => tool), ["navigate"], "no arrival card after the navigate's own");
+    assert.ok(adopted(r), "the named page took the run");
+});
+
+test("navigate as the turn's last step onto a page a policy denies: the move after the turn holds the run, and its next turn runs nothing there", T, async () => {
+    const DENY = policy("p-deny", "deny", '(c) => c.host === "landed.example"', "Not landed.example");
+    const r = await run({ detached: true, first: [nav()], openCreated: true, redirectTo: LANDED, local: { ml_policies_global: [DENY] } });
+    await answerCard(r, "navigate", "approve");
+    assert.ok(await until(() => !r.live()), "the turn ends");
+    assert.ok(await until(() => r.rows().get(r.hash)?.background === undefined), "moved after the turn");
+    r.script.push(exec);
+    await send(r, "go on", 2);
+    assert.ok(!r.bg.tabMessages.some(([t, m]) => t === 4243 && m?.type === "RUN_TOOL_IN_PAGE" && m.payload?.name === "exec"), "the exec never reached the denied page");
+    assert.ok(toolResults(r.bodies().at(-1)).some((t) => /"Not landed\.example" denies: no tool runs on this page/.test(t)), "the model reads why");
 });
 
 test("a run with no tab that has navigate is told how it gets a page: at its start, and when a page tool needs one", T, async () => {

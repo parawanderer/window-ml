@@ -156,6 +156,12 @@ export async function holdStands(tabId: number, runId: string): Promise<boolean>
     return holds.has(runId);
 }
 
+/** Note that the run's judge has spoken on `url` without judging it: a page a gate already passed (a navigate's named page). */
+export function markSpoken(runId: string, url: string): void { spoke.set(runId, url); }
+
+/** A URL without its fragment, for telling a named page from another: a fragment is not another read. */
+export const unfragmented = (url: string): string | undefined => { try { const u = new URL(url); u.hash = ""; return u.href; } catch { return undefined; } };
+
 /** Forget a run whose session is released: its next life starts as a first turn. */
 export function forgetArrivalRun(runId: string): void { quiet.get(runId)?.(); quiet.delete(runId); holds.delete(runId); spoke.delete(runId); }
 
