@@ -54,8 +54,9 @@ asks about. What changes is the branch it runs, because `navigate` today assumes
   `noPageText` (`no-tab.ts`, a page tool's answer with no tab), each only for a run that has `navigate`, and not in
   `navigate`'s description, which every run pays for and a run with a tab never needs.
 
-Its tests are `navigate` tests, written to fail first: from the detached state it always asks, a relative URL is
-refused, a refused approval opens no tab, and a page cannot start it (no `HANDLE_MAP` entry, as for a move).
+Its tests are `navigate` tests, written to fail first: from the detached state it asks unless a policy of the
+person's allows the destination (`crossOrigin` never waives it), a relative URL is refused, a refused approval opens
+no tab, and a page cannot start it (no `HANDLE_MAP` entry, as for a move).
 
 ## `ml.sh` with no page
 
@@ -270,8 +271,9 @@ Shane asked for it by name (2026-11-23, through the coordinator), ahead of steps
   step (`moveAfterTurn`), as a person's move is. The model reads a note that its navigate put it there, not that the
   person moved it. A tab that does not load, or will not take the run's tools, leaves the run with no tab, and the
   model is told so. A person's move that could not be made is written to the run log, and the model is not told.
-- **It always asks**: `navNeedsConsent` is true on `NO_TAB`, whatever `crossOrigin` says: with no tab there is no
-  current site, so no navigation is same-site. The post-navigate commit wait (`navStalled`, `passArrival`) is
+- **It asks unless a policy of the person's allows the destination; `crossOrigin` never waives it**:
+  `navNeedsConsent` is true on `NO_TAB`, and the gate answers a person's `fetch` `allow` policy before it reads that
+  (`agent-host.ts`). With no tab there is no current site, so no navigation is same-site. The post-navigate commit wait (`navStalled`, `passArrival`) is
   skipped there: no tab of the run's navigated.
 - **Only an absolute http(s) URL** (`noTabNavTarget`: a spelled `http://` or `https://`, then `new URL`): a relative,
   scheme-relative, `https:host` or `https:\\host` spelling and every other scheme are refused by the loop's
