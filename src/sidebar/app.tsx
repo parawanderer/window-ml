@@ -34,7 +34,7 @@ import { ModelStatusDot } from "./resource/model-status";
 import { fetchModels, pollPs, connectResourceStream, pollBackendHealth, BACKEND_HEALTH_MS } from "./resource/resource-feed";
 import { PythonBench, BenchDrawer, BenchVer } from "./vram-bench";
 import { CardApp, endActiveCardDrag } from "./card/hud-card";
-import { releaseAxisHold } from "./resource/chart-interaction";
+import { releaseAxisHold, panelStorage } from "./resource/chart-interaction";
 import {
     composerOpen, composerElement, composerTarget, selectedRun, cardSteerHash, setCardCollapsed,
     cardSelectedHash, cardDetail, undismissCardRun, startRefused,
@@ -537,6 +537,7 @@ function mount(): void {
     // The shared session components reach the background and this frame's parent through the services seam; in an
     // extension frame that is the same messaging they used to call inline (services-ext.ts).
     installServices(extensionServices);
+    panelStorage.write = (secs) => { try { chrome.storage.local.set({ [RESWIN_KEY]: secs }); } catch { /* opaque origin */ } };   // the panel's window width outlives the page (chart-interaction.ts)
     initThemeStyle();
     // ```mermaid fences in model text become diagrams (mermaid-client.ts), drawn by a frame loaded from its per-session URL
     installMermaid(document, services().assetUrl("mermaid.html"));

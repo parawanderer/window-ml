@@ -303,7 +303,12 @@ worker drives with `autoApprovePython` on:
    indexer and never writes one: the barrier would judge the indexer, not the Series. `Series.dtype` and
    `DataFrame.dtypes` are not listed: `str()` of a numpy dtype imports from C under the cell's frame, which has no
    `__builtins__`, so it raises KeyError (#2040). `tests/python-dialect-vocab.test.mjs` holds every listed stdlib name to a call
-   that runs inside or a reason. Both functions go when the fork does this itself.
+   that runs inside or a reason. Both functions go when the fork does this itself. **`pd.read_csv` runs inside over a
+   `/files/` file or the cell's own buffer** (`_ml_read_csv_inside`; the rules are docs/spec/ML_TABLE.md's). The fork's
+   `load_manifests` leaves `read_csv` out, and `allow_module` replaces a module's names, so pandas is re-admitted with
+   it. The registered callable is the one a cell reaches: the prelude's loader redirect (`LOADERS_INSTALL`), which the
+   worker installs before `dialectSetup`, since a worker's first cell can be an inside one. The check runs lifted
+   before the call and charges the input's bytes to the budget with `_restricted.charge`.
    **The `os` subset (ruling 112)** is `_ml_os_reads`: the names `DIALECT_OS_READS` lists of `os`, `os.path`, `glob`
    and `pathlib` (reads and scans, `os.chdir`/`os.getcwd`, `os.environ` read and written through its methods), each
    registered lifted, and the kinds they return readable. Every other name of `os` asks, which
