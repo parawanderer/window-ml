@@ -7,7 +7,7 @@ import { isExtensionSender } from "./sw-site-access";
 import { recordHousekeeping } from "./sw-housekeeping";
 import { ensureOffscreen, forgetOffscreen, isOffscreenSender } from "./sw-offscreen";
 import { secretFormsNow } from "./sw-scrub";
-import type { SecretForm } from "../secret-mask";
+import { maskName, type SecretForm } from "../secret-mask";
 import { activeRuns, attachedFilesOf, execReads, isWorkerRun, onSessionRelease, pageValueSession, runControllers, type ReleaseReason } from "./sw-runs";
 import { valueHolders, budgetBytes as valueBudgetBytes, claimValue } from "./sw-values";
 import { PY_PACKAGE_LOADS } from "../python/python-env";
@@ -461,13 +461,18 @@ export async function filesQuota(sender: chrome.runtime.MessageSender): Promise<
 /**
  * FILES_LOST: the offscreen document discarded a file a run was writing, because the channel it came over ended with
  * the file still open (FILE_ATTACHMENTS.md, "A worker evicted mid-file"). Recorded in the session's run log; the
- * document keeps the readable note itself (agent-files.ts). Only from the offscreen document.
+ * document keeps the readable note itself (agent-files.ts). Only from the offscreen document. The path is recorded
+ * with its secrets masked, as `/files` lists it.
  * @param message `{ session, path, at, reason }`
  * @param sender who sent it
  */
-export function filesLost(message: any, sender: chrome.runtime.MessageSender): void {
+export async function filesLost(message: any, sender: chrome.runtime.MessageSender): Promise<void> {
     if (!isOffscreenSender(sender) || typeof message?.session !== "string" || !message.session || typeof message.path !== "string") return;
-    recordRunLog(message.session, { subsystem: "files", kind: "discarded", level: "error", reason: "channel-ended", detail: { path: message.path.slice(0, 512) } });
+    // The run log is the model's to read (`ml.current.log`), so the path is shown as a listing shows it
+    // (FILE_ATTACHMENTS.md, "Names under `/files`"); with no forms to show it by, only `agent/…` is recorded.
+    let path: string;
+    try { path = maskName(message.path, await secretFormsNow()); } catch { path = "agent/…"; }
+    recordRunLog(message.session, { subsystem: "files", kind: "discarded", level: "error", reason: "channel-ended", detail: { path: path.slice(0, 512) } });
 }
 
 /** The leased cells this worker sent and is still waiting on, and the last ones it settled: a `PY_DONE` naming neither
