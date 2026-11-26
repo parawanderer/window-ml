@@ -166,7 +166,7 @@ test("RED TEAM: a page cannot write its events into a no-tab run's session, on a
 
 // --- a page tool of a run with no tab reaches no tab ---
 
-test("RED TEAM: every page-realm tool the run offers is answered with how the run gets a page, and not one message reaches any tab", T, async () => {
+test("RED TEAM: every page tool that needs a page is answered with how the run gets a page, and not one message reaches any tab; `navigate`, which opens one, is refused without an absolute URL", T, async () => {
     const r = await run();
     const { hash } = await r.bg.context.__mlStartUserRunForTest(7, { task: "probe", surface: "hud", maxSteps: 40 });
     await until(() => r.bodies().length >= 1);
