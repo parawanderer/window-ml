@@ -365,10 +365,10 @@ test("@security SITE_PRESENCE step 5: W7a: the sheet's accounts.google.com hop i
         // lands on the same pinned hostname at startup, so the log is cleared and the assertion is the hop's URL.
         const signIn = () => h.site.requestsTo("accounts.google.com").filter((q) => q.path.startsWith("/ServiceLogin"));
         // The CALLER is the page's own table loader, not a run: FETCH_SHEET (and the redirect judgement inside
-        // `fetchSheetCsv`) is the same worker code whichever caller asks — `_loadTable` is reachable from a
+        // `fetchSheetCsv`) is the same worker code whichever caller asks — `_hoistTable` is reachable from a
         // self-approving page with no approval gate and no python boot in the way, which is the stronger surface.
         h.site.clear();
-        const r = await h.page.evaluate((u) => window.ml._loadTable("t", u).then((t) => ({ ok: true, rows: t.data.rows }), (e) => ({ ok: false, err: String(e) })), exportUrl);
+        const r = await h.page.evaluate((u) => window.ml._hoistTable(u).then((t) => ({ ok: true, rows: t.data.rows }), (e) => ({ ok: false, err: String(e) })), exportUrl);
         expect(h.site.requestsTo("docs.google.com").length, "the export itself is requested first (the anchor)").toBeGreaterThan(0);
         if (holeOpen("step5worker", "the sheet fetch follows the sign-in hop and requests accounts.google.com")) {
             expect(signIn().length, "today's leak: the sign-in hop is requested").toBeGreaterThan(0);
@@ -392,7 +392,7 @@ test("@security SITE_PRESENCE step 5: W7b: the sheet's declared-pair hop to *.go
         // Port-free for the same reason as W7a: the sheet-id extraction rejects a port.
         const exportUrl = "https://docs.google.com/spreadsheets/d/hop-cdn/export?format=csv&gid=0";
         h.site.clear();
-        const r = await h.page.evaluate((u) => window.ml._loadTable("t", u).then((t) => ({ ok: true, rows: t.data.rows }), (e) => ({ ok: false, err: String(e) })), exportUrl);
+        const r = await h.page.evaluate((u) => window.ml._hoistTable(u).then((t) => ({ ok: true, rows: t.data.rows }), (e) => ({ ok: false, err: String(e) })), exportUrl);
         expect(h.site.requestsTo("u0.googleusercontent.com").map((q) => q.path.split("?")[0]), "the declared-pair hop is requested (the anchor)").toContain("/uc");
         expect(r.ok, `the table loads on both sides: ${r.err}`).toBe(true);
         expect(JSON.stringify(r.rows), "and its rows come back").toContain("Ada");
