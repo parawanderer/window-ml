@@ -1896,6 +1896,11 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                         onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("detachedTaskMaxMin", Number.isFinite(n) && n >= 1 && n <= 60 ? n : DEFAULT_CONFIG.detachedTaskMaxMin); }} />
                 </label>
                 <div class="set-hint">The longest a detached task runs before it is ended: a python_exec cell that outran its lease (the sandbox ends it) or an ml.sh call (its timeoutMs is held to this). 1 to 60; 60 is the ceiling and the default. A task keeps running after the model answers, and its result is read at the next turn.</div>
+                <label data-setting="closedRunGraceMin" class="set-field"><SettingLbl k="closedRunGraceMin" />
+                    <input type="number" min="0" max="1440" step="1" value={c.closedRunGraceMin}
+                        onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("closedRunGraceMin", Number.isFinite(n) && n >= 0 ? Math.min(n, 1440) : DEFAULT_CONFIG.closedRunGraceMin); }} />
+                </label>
+                <div class="set-hint">When the tab a run is on closes, the run keeps its Python names, stored values and background tasks for this many minutes, then they are released. Reopening the session or sending it a message within that time keeps them. 0 releases at once. The session and its transcript are kept either way; a later Continue starts with a fresh namespace. A run with a task still running is released this long after the task ends.</div>
                 <label data-setting="taskNotifyOnly" class="set-check">
                     <input type="checkbox" checked={c.taskNotifyOnly}
                         onChange={(e: any) => setField("taskNotifyOnly", e.target.checked)} />

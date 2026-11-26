@@ -12,6 +12,7 @@ import { DEFAULT_STATE, WIDTHS, formatHash, parseHash, type GalleryState } from 
 import { ComponentTile, CustomTile, calls, entryLog, entryPoints, statusKey, statuses, type GalleryItem, type StageContext } from "./gallery-stage";
 import { installServices } from "../sidebar/services";
 import { installTooltipLayer } from "../sidebar/tooltip-layer";
+import { CursorTipLayer } from "../sidebar/ui-kit";
 import { initThemeStyle } from "../sidebar/prefs";
 import { markdown } from "../sidebar/format";
 import { Disclosure } from "../sidebar/disclosure";
@@ -84,6 +85,14 @@ function currentVariant(item: GalleryItem, s: GalleryState): GalleryVariant {
     return item.variants.find((v) => v.name === s.variant) ?? item.variants[0];
 }
 
+/** Take down the cursor-tip layer `mountTipLayer` mounted: the gallery drives every item in ONE page, so a flow's page-level mount must not outlive its tile. */
+function unmountTipLayer(): void {
+    const host = document.getElementById("gl-tip-layer");
+    if (!host) return;
+    render(null, host);
+    host.remove();
+}
+
 /** The theme on `<html>`, and the calm view through the chat page's own switch. */
 function useSurface(s: GalleryState): void {
     useEffect(() => {
@@ -97,6 +106,8 @@ function useSurface(s: GalleryState): void {
         return () => mq.removeEventListener("change", apply);
     }, [s.theme]);
     useEffect(() => { setCalm(s.view === "calm"); }, [s.view]);
+    // Leaving an item (or its variant) takes down what its flow mounted at page level.
+    useEffect(() => unmountTipLayer, [s.id, s.variant]);
 }
 
 /** Every CSS custom property the stylesheets define on `:root`, in order of first appearance. */
@@ -327,6 +338,17 @@ function Gallery() {
         const load = c && loaders[c.file];
         return load ? load() : Promise.reject(new Error(`no component module for ${id}`));
     },
+    /** Mount the cursor-tip layer the panel's app mounts (the page has none, so a flow that HOVERS a `cursorTipOn`
+     *  trigger and shoots the tip asks for one). Once; a tile that sets the signal itself does not call it. */
+    mountTipLayer: () => {
+        if (document.getElementById("gl-tip-layer")) return;
+        const host = document.createElement("div");
+        host.id = "gl-tip-layer";
+        document.body.appendChild(host);
+        render(<CursorTipLayer />, host);
+    },
+    /** Take down what `mountTipLayer` mounted, so the next flow on the shared page starts without it. */
+    unmountTipLayer,
     status: (id: string, variant: string) => statuses.peek()[statusKey(id, variant)] ?? null,
     statuses: () => statuses.peek(),
     log: () => entryLog.peek(),
