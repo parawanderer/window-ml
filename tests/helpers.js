@@ -528,7 +528,11 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 },
                 remove: async (id) => { tabsRemoved.push(id); },
                 update: async (...args) => { tabsUpdated.push(args); return { id: args[0] }; },
-                goBack: async (id) => { tabsBack.push(id); },
+                // A tab `create` opened has one entry and no page to go back to: Chrome rejects, in these words.
+                goBack: async (id) => {
+                    tabsBack.push(id);
+                    if (tabsCreated.some((_, i) => 4243 + i === id)) throw new Error("Cannot find a next page in history.");
+                },
                 onRemoved: { addListener: (fn) => tabRemovedListeners.push(fn) },
                 onActivated: { addListener: (fn) => tabActivatedListeners.add(fn), removeListener: (fn) => tabActivatedListeners.delete(fn) },
                 onReplaced: { addListener: (fn) => tabReplacedListeners.add(fn), removeListener: (fn) => tabReplacedListeners.delete(fn) },

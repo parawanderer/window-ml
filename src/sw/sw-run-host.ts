@@ -65,7 +65,7 @@ import { grantRunFetch, grantRunOrigin, runOriginGranted, runOrigins, runFetchCo
 import { autoApprovePython } from "../agent/auto-approve";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
 import { applyLiveMove, moveAfterTurn, takeMovedNote, type LiveTurn } from "./move-run";
-import { WORKER_ONLY_TOOLS, withoutWorkerOnly, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, firstTurnLeftTabs, runControllers, runInboxes, trackRun, persistRun, keptOnRebuild, turnTabCells, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
+import { WORKER_ONLY_TOOLS, withoutWorkerOnly, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, firstTurnLeftTabs, runControllers, runInboxes, trackRun, persistRun, keptOnRebuild, turnTabCells, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart, rekeyRunInbox, releaseRunTab } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { drawStoredPages } from "./sw-attach";
 import { claimValue, runMayClaim, valueHolders, readStoredBytes, readStoredColumns, readStoredText, withHeldValuesOnly } from "./sw-values";
@@ -76,7 +76,8 @@ import { focusLineFor } from "./sw-focus";
 import { delegateSend, CHANNEL_GONE } from "./delegate-send";
 import { NAV_COMMIT_MS } from "./nav-barrier";
 import { GATED_BUILTINS } from "../tools/tool-registry";
-import { isNoTab, needsPage, noPageText } from "./no-tab";
+import { isNoTab, needsPage, noPageText, NO_TAB } from "./no-tab";
+import { refreshTaskRow } from "./sw-task-rows";
 import { navigateFromNoTab, NO_TAB_RELATIVE, noTabNavRender, noTabNavTarget } from "./no-tab-nav";
 import { checkVerifyRequest, verifyAsked, verifyVerb, withoutPageVision, workerVerify, VERIFY_REFUSED, VERIFY_WITHHELD, type VerifyOutcome, type WorkerVerify } from "./worker-verify";
 import { topDocument } from "./worker-vision";
@@ -84,7 +85,7 @@ import { capPageAnswer, capPageContext } from "./page-answer-caps";
 import { firstUserTurn } from "../agent/run-assembly";
 import { hostAsks, raiseAsk, stepAsks, type StepAsk } from "./sw-asks";
 import { ARRIVAL_ASK, ARRIVAL_DENIED } from "../contract";
-import { arrivalAnsweredText, arrivalDeniedText, clickDeniedText, arrivalWaitingText, arrivalHold, arrivalLine, arrivalSettled, arrivalVerdict, clearArrival, holdArrival, judgeTurnStart, unfragmented, watchArrivals, watchBetweenTurns } from "./nav-arrival";
+import { arrivalAnsweredText, arrivalNoBackText, arrivalDeniedText, clickDeniedText, arrivalWaitingText, arrivalHold, arrivalLine, arrivalSettled, arrivalVerdict, clearArrival, holdArrival, judgeTurnStart, unfragmented, watchArrivals, watchBetweenTurns } from "./nav-arrival";
 import { adoptOnTab } from "./adopt-run";
 import { approvalFor, cancelReasons, gatePageTurn, noteRunEnd, noteRunStart, personClaimed } from "./sw-start-approval";
 import { pageTurnText } from "../agent-start";
@@ -1004,6 +1005,25 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // That answer when no call waited on it (the person answered while the step that moved the tab still ran): the
         // next call's result carries it, so the model reads it once.
         let unreadAnswer: string | undefined;
+        /**
+         * Take the run's tab back a page, for a declined arrival or a deny card's Go back. A tab with no page to go back to
+         * (one a navigate from no tab opened: TABLESS_RUN.md, part 3) is left open and untouched, and the run goes on with
+         * no tab, as a closed tab leaves it.
+         * @returns true when the tab went back; false when the run has no tab now
+         */
+        const backOrNoTab = async (): Promise<boolean> => {
+            const from = tabId;
+            const back = await Promise.resolve(chrome.tabs.goBack?.(from)).then(() => true, () => false);
+            if (back || isNoTab(from)) return true;
+            clearArrival(runId);
+            rekeyRunInbox(runId, NO_TAB);
+            releaseRunTab(from, runId);
+            const snap = bgRuns.get(runId);
+            if (snap) snap.tabId = NO_TAB;
+            recordRunLog(runId, { subsystem: "tab", kind: "no-tab", reason: "no-back", detail: { wasTab: from } });
+            void refreshTaskRow(runId);
+            return false;
+        };
         /** The deny hold's card: Go back takes the tab back (that arrival is judged in turn), End run stops the run. */
         const raiseDenyCard = (seq = runningSeq()): void => {
             const h = arrivalHold(runId);
@@ -1012,7 +1032,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             const line = arrivalLine(h);
             void raiseAsk(runId, seq, { kind: ARRIVAL_DENIED, facts: { url: h.url }, why: { line, detail: line, cause: "deny-policy", policy: h.label } }).then(async (o) => {
                 if (arrivalHold(runId) !== h) return;
-                if (o.allowed) { await Promise.resolve(chrome.tabs.goBack?.(tabId)).catch(() => {}); return; }
+                if (o.allowed) { await backOrNoTab(); return; }
                 if (o.state === "denied") { endRun(); return; }
                 denyCarded = false;   // nobody answered: the next call raises it again
             });
@@ -1037,8 +1057,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     if (arrivalHold(runId) === h) clearArrival(runId);
                     return a;
                 }
-                if (o.state !== "cancelled") await Promise.resolve(chrome.tabs.goBack?.(tabId)).catch(() => {});
-                return answered({ allowed: false, text: arrivalAnsweredText(h, false, o.state === "denied" ? o.note : undefined) });
+                const note = o.state === "denied" ? o.note : undefined;
+                if (o.state !== "cancelled" && !await backOrNoTab()) return answered({ allowed: false, text: arrivalNoBackText(note) });
+                return answered({ allowed: false, text: arrivalAnsweredText(h, false, note) });
             });
             return askAnswer;
         };

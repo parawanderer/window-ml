@@ -437,6 +437,30 @@ test("a navigate from no tab whose tab lands on a page a policy denies: held, ne
     assert.ok(toolResults(r.bodies().at(-1)).some((t) => /^The tab is now on https:\/\/landed\.example\/home, which the policy "Not landed\.example" denies: no tool runs on this page\./.test(t)), "the model reads the tab run's deny text");
 });
 
+test("a declined arrival on the tab a navigate from no tab opened: it has no page to go back to, so the run has no tab again and the tab is left as it is", T, async () => {
+    const ASK = policy("p-ask", "ask", '(c) => c.host === "landed.example"', "Check with me on landed.example");
+    const r = await run({ detached: true, first: [nav(), { name: "scroll", args: {} }, exec], openCreated: true, redirectTo: LANDED, local: { ml_policies_global: [ASK] }, ask: () => false });
+    await answerCard(r, "navigate", "approve");
+    assert.ok(await until(() => !r.live()), "the turn ends");
+    const read = toolResults(r.bodies().at(-1));
+    assert.ok(read.includes("The person declined. The run has no page again."), read.join("\n"));
+    assert.ok(read.some((t) => t.startsWith('Error: "exec" needs a page, and this run has no tab.')), "the next page tool is answered with no tab");
+    assert.ok(!adopted(r), "the page never took the run");
+    assert.ok(!r.bg.tabMessages.some(([t, m]) => t === 4243 && m?.type === "RUN_TOOL_IN_PAGE" && m.payload?.name && !m.payload.finish), "no call reached the tab");
+    assert.deepEqual(r.bg.tabsRemoved ?? [], [], "the tab is left open");
+    assert.ok(await until(() => r.rows().get(r.hash)?.background?.noTab === true), "the row says no tab again");
+    assert.ok((await tabLog(r)).some((e) => e.kind === "no-tab" && e.reason === "no-back"), "the log records why");
+});
+
+test("Go back on a deny card on the tab a navigate from no tab opened: the run has no tab again, and its next page tool says so", T, async () => {
+    const DENY = policy("p-deny", "deny", '(c) => c.host === "landed.example"', "Not landed.example");
+    const r = await run({ detached: true, first: [nav(), { name: "scroll", args: {} }, exec], openCreated: true, redirectTo: LANDED, local: { ml_policies_global: [DENY] }, ask: () => true });
+    await answerCard(r, "navigate", "approve");
+    assert.ok(await until(() => !r.live()), "the turn ends");
+    assert.ok(toolResults(r.bodies().at(-1)).some((t) => t.startsWith('Error: "exec" needs a page, and this run has no tab.')), toolResults(r.bodies().at(-1)).join("\n"));
+    assert.ok(!r.bg.tabMessages.some(([t, m]) => t === 4243 && m?.type === "RUN_TOOL_IN_PAGE" && m.payload?.name && !m.payload.finish), "no call reached the tab");
+});
+
 test("a navigate from no tab to a page a policy asks about: its card is the one ask, and its arrival on the named page is not asked about again", T, async () => {
     const ASK = policy("p-ask", "ask", '(c) => c.host === "news.example"', "Check with me on news.example");
     const r = await run({ detached: true, first: [nav(), exec], openCreated: true, local: { ml_policies_global: [ASK] } });

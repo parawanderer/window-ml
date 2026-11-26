@@ -279,7 +279,10 @@ Shane asked for it by name (2026-11-23, through the coordinator), ahead of steps
   passes as named: its gate already judged it. Any other (a server redirect, the page sending itself on) is judged as a
   tab run's arrival is: a policy that denies or asks about it holds the run with the same `holdArrival`, card and texts,
   and nothing of the run reaches the page (no `ADOPT_RUN_NOW`, no tool) until the person answers; an approved ask adopts
-  it then (`readoptHere`). An arrival no policy covers passes, as a tab run's does. A move after the turn judges it the
+  it then (`readoptHere`). A declined ask, or Go back on a deny card, takes the tab back a page; the tab a navigate
+  opened has none (`chrome.tabs.goBack` refuses), so the tab is left open and untouched, the run goes on with no tab as
+  a closed tab leaves it (`backOrNoTab`), the log records `no-back`, and the model reads "The person declined. The run
+  has no page again." An arrival no policy covers passes, as a tab run's does. A move after the turn judges it the
   same way, as an arrival between turns (`holdStands`). The in-call commit wait (`navStalled`, `passArrival`) is not
   run: the call opened a tab that is not the run's yet, and the move is where its page is judged.
 - **The as-you grant is for the page the person approved, only**: the card's approval grants the origin it named
