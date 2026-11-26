@@ -5,8 +5,8 @@
 // node:vm, tests/helpers.js `loadBackground`), the chat page by the `ml-sessions` port, the model by `script`.
 //
 // The hazard throughout is the two-step shape: the card is drawn from one string and the tab is opened from another, and
-// the run then takes whatever page the tab lands on. Every row below turns one of those three into a claim. The last row
-// is # open: it asserts the defect, so this file fails until the redirect case is decided (see its comment).
+// the run then takes whatever page the tab lands on. Every row below turns one of those three into a claim. The last two
+// rows are # open: they assert the defect, so this file fails until the redirect case is fixed (see their comments).
 
 import { test } from "node:test";
 import assert from "node:assert";
@@ -30,11 +30,12 @@ const nav = (url) => ({ name: "navigate", args: { url } });
  * chrome.tabs.get reports it (the tab holds the last document the browser committed).
  * @returns the worker, the run id, its session port, and readers for the cards, the model requests and the run's log
  */
-async function run({ first = [], redirectTo, maxSteps = 6 } = {}) {
+async function run({ first = [], redirectTo, maxSteps = 6, policies = [] } = {}) {
     const script = [...first];
     let bg;
     bg = loadBackground({
         openCreated: true,
+        ...(policies.length ? { local: { ml_policies_global: policies } } : {}),
         config: { chatUrl: "http://host/api/chat/completions", apiKey: "k", model: "m", apiFormat: "openai", debugMode: "off" },
         onFetch: async (call) => {
             if (call.url.endsWith("/api/models")) return jsonResponse({ data: [{ id: "m" }] });
@@ -208,4 +209,24 @@ test("RED TEAM: a navigate from no tab whose tab lands on another site than the 
     const askedOthers = approvals.filter((e) => /other\.example/.test(JSON.stringify(e)));
     assert.ok(moved?.kind !== "moved" || askedOthers.length > 0,
         `the run moved onto ${OTHER}, a site the card never named, without a card or an ask about it (cards: ${approvals.map((e) => e.tool).join(", ") || "none"})`);
+});
+
+// (RED TEAM, open: the same gap with no card at all. A person's `fetch` `allow` policy covers the destination, so the
+// gate consents without asking (the sentence "It always asks" in TABLESS_RUN.md's "As built, part 3" is false when a
+// policy answers: src/agent/agent-host.ts returns `consented` on `allow` before `navNeedsConsent` is consulted). The
+// person's standing policy is about news.example; the tab lands on other.example; the run must be held there as any
+// redirect's arrival is, and granted nothing. Measured 2026-11-26: it is moved there with no card and no ask.)
+test("RED TEAM: a policy-approved navigate from no tab that lands on another site is held on arrival, and granted nothing there", T, async () => {
+    const OTHER = "https://other.example/landing";
+    const allowNews = { id: "p-allow-news", scope: "global", consumer: "fetch", effect: "allow", source: '(c) => c.host === "news.example"', label: "Allow news.example", origin: "person", created: 1 };
+    const r = await run({ first: [nav(NEWS)], redirectTo: OTHER, policies: [allowNews] });
+    assert.ok(await until(() => !r.live()), "the turn ends");
+    assert.equal(r.cards().length, 0, "control: the person's policy answered the navigate, with no card");
+    assert.equal(r.bg.tabsCreated.map((t) => t.url)[0], NEWS, "the tab was opened at the policy's site");
+    const moved = (await r.tabLog()).find((e) => e.kind === "moved" || e.kind === "move-dropped");
+    assert.match(readText(r.bodies().at(-1)), /other\.example/, "control: the run's own note says where the tab landed");
+    const approvals = r.port.messages.filter((m) => m.type === "stream" && m.message?.type === "event" && m.message.event?.awaitingApproval).map((m) => m.message.event);
+    const askedOthers = approvals.filter((e) => /other\.example/.test(JSON.stringify(e)));
+    assert.ok(moved?.kind !== "moved" || askedOthers.length > 0,
+        `the run moved onto ${OTHER}, which no policy covered and nobody was asked about (cards: ${approvals.map((e) => e.tool).join(", ") || "none"})`);
 });
