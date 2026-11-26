@@ -7,8 +7,8 @@ import { isExtensionSender } from "./sw-site-access";
 import { recordHousekeeping } from "./sw-housekeeping";
 import { ensureOffscreen, forgetOffscreen, isOffscreenSender } from "./sw-offscreen";
 import { secretFormsNow } from "./sw-scrub";
-import type { SecretForm } from "../secret-mask";
-import { activeRuns, attachedFilesOf, execReads, isWorkerRun, onSessionRelease, pageValueSession, runControllers } from "./sw-runs";
+import { maskName, type SecretForm } from "../secret-mask";
+import { activeRuns, attachedFilesOf, execReads, isWorkerRun, onSessionRelease, pageValueSession, runControllers, type ReleaseReason } from "./sw-runs";
 import { valueHolders, budgetBytes as valueBudgetBytes, claimValue } from "./sw-values";
 import { PY_PACKAGE_LOADS } from "../python/python-env";
 import { defineJob } from "../job-registry";
@@ -366,14 +366,15 @@ export function endPythonTurn(runId: string): void {
  * Callables the run's last cell handed to JavaScript that fired after its result come back in the answer, since no
  * next cell will carry them (cell-gate.ts), and go to the run log like a cell's.
  * @param runId the run whose namespace to drop
+ * @param reason why, when the run is released but its session stays (`tab-closed`, `person`); sent with the message
  */
-export function deletePythonRun(runId: string): void {
+export function deletePythonRun(runId: string, reason?: ReleaseReason): void {
     if (!runId) return;
     keptRuns.delete(runId);
     void forgetPythonBridged(runId);
     void dropRunInstalls(runId);
     try {
-        chrome.runtime.sendMessage({ type: "PY_DELETE_RUN", run: runId, principal: `run:${runId}` })
+        chrome.runtime.sendMessage({ type: "PY_DELETE_RUN", run: runId, principal: `run:${runId}`, ...(reason ? { reason } : {}) })
             .then((res: { dropped?: { count: number; afterCell: number } } | undefined) => {
                 const dropped = res?.dropped;
                 if (dropped) recordRunLog(runId, { subsystem: "python", kind: "dropped", reason: "after-last-cell", detail: { count: dropped.count, afterCell: dropped.afterCell } });
@@ -460,13 +461,18 @@ export async function filesQuota(sender: chrome.runtime.MessageSender): Promise<
 /**
  * FILES_LOST: the offscreen document discarded a file a run was writing, because the channel it came over ended with
  * the file still open (FILE_ATTACHMENTS.md, "A worker evicted mid-file"). Recorded in the session's run log; the
- * document keeps the readable note itself (agent-files.ts). Only from the offscreen document.
+ * document keeps the readable note itself (agent-files.ts). Only from the offscreen document. The path is recorded
+ * with its secrets masked, as `/files` lists it.
  * @param message `{ session, path, at, reason }`
  * @param sender who sent it
  */
-export function filesLost(message: any, sender: chrome.runtime.MessageSender): void {
+export async function filesLost(message: any, sender: chrome.runtime.MessageSender): Promise<void> {
     if (!isOffscreenSender(sender) || typeof message?.session !== "string" || !message.session || typeof message.path !== "string") return;
-    recordRunLog(message.session, { subsystem: "files", kind: "discarded", level: "error", reason: "channel-ended", detail: { path: message.path.slice(0, 512) } });
+    // The run log is the model's to read (`ml.current.log`), so the path is shown as a listing shows it
+    // (FILE_ATTACHMENTS.md, "Names under `/files`"); with no forms to show it by, only `agent/…` is recorded.
+    let path: string;
+    try { path = maskName(message.path, await secretFormsNow()); } catch { path = "agent/…"; }
+    recordRunLog(message.session, { subsystem: "files", kind: "discarded", level: "error", reason: "channel-ended", detail: { path: path.slice(0, 512) } });
 }
 
 /** The leased cells this worker sent and is still waiting on, and the last ones it settled: a `PY_DONE` naming neither

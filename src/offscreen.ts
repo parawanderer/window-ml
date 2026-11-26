@@ -1014,6 +1014,7 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
     if (msg?.type !== "PY_DELETE_RUN" || typeof msg.run !== "string" || !msg.run) return undefined;
     if (sender.id !== chrome.runtime.id || sender.tab) return undefined;   // the service worker's word only, like every message here
     const run = String(msg.run);
+    // `msg.reason` (`tab-closed`, `person`, absent for a session's end) is accepted and not read yet: the namespace-drop record that uses it is a later change.
     endedRuns.delete(run); endedRuns.add(run);   // re-added last: the oldest is evicted first
     if (endedRuns.size > ENDED_RUNS_MAX) endedRuns.delete(endedRuns.values().next().value as string);
     const principals = new Set(runPrincipals.get(run) ?? []);

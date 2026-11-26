@@ -3,7 +3,7 @@
 // two mounts". The reader's use of it (the widened window, a match across reads) is in ranged-reader.test.mjs.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { maskSecretBytes, maskOverlap, MASK_BYTE } from "../src/secret-mask.ts";
+import { maskSecretBytes, maskOverlap, maskName, MASK_BYTE } from "../src/secret-mask.ts";
 
 const enc = (s) => new TextEncoder().encode(s);
 const dec = (b) => new TextDecoder().decode(b);
@@ -57,4 +57,44 @@ test("the overlap is the longest form's UTF-8 length less one, at least the GitH
     assert.equal(maskOverlap([{ find: "short" }]), 265);
     assert.equal(maskOverlap([{ find: "x".repeat(400) }, { find: "y" }]), 399);
     assert.equal(maskOverlap([{ find: "é".repeat(200) }]), 399, "counted in bytes, not characters");
+});
+
+// --- maskName: a file name as /files shows it ---
+
+test("a form in a name becomes its put", () => {
+    assert.equal(maskName("dump-hunter2.txt", [{ find: "hunter2", put: "[REDACTED:DB_PASS]" }]), "dump-[REDACTED:DB_PASS].txt");
+});
+
+test("two forms in one name are each replaced by their own put", () => {
+    const forms = [{ find: "alpha-secret", put: "[REDACTED:A]" }, { find: "beta-secret", put: "[REDACTED:B]" }];
+    assert.equal(maskName("alpha-secret_beta-secret", forms), "[REDACTED:A]_[REDACTED:B]");
+});
+
+test("the longest form at a position wins over a shorter one that is its prefix", () => {
+    const forms = [{ find: "abc", put: "[S]" }, { find: "abcdef", put: "[L]" }];
+    assert.equal(maskName("x-abcdef-y", forms), "x-[L]-y");
+    assert.equal(maskName("x-abcdef-y", [...forms].reverse()), "x-[L]-y", "the order of the forms does not matter");
+});
+
+test("a ci form matches in any ASCII case, a case-sensitive one does not", () => {
+    assert.equal(maskName("a-HuNtEr2-b", [{ find: "hunter2", ci: true, put: "[P]" }]), "a-[P]-b");
+    assert.equal(maskName("a-HuNtEr2-b", [{ find: "hunter2", put: "[P]" }]), "a-HuNtEr2-b");
+});
+
+test("a form with no put shows [REDACTED]", () => {
+    assert.equal(maskName("k-secretval.txt", [{ find: "secretval" }]), "k-[REDACTED].txt");
+});
+
+test("a GitHub token in a name shows [a GitHub token]", () => {
+    assert.equal(maskName(`t-ghp_${"a1B2".repeat(9)}.txt`, []), "t-[a GitHub token].txt");
+});
+
+test("a name with no match is returned unchanged", () => {
+    assert.equal(maskName("plain.txt", [{ find: "nothere", put: "[X]" }]), "plain.txt");
+    assert.equal(maskName("plain.txt", []), "plain.txt");
+});
+
+test("an empty find is ignored", () => {
+    assert.equal(maskName("plain.txt", [{ find: "", put: "[X]" }]), "plain.txt");
+    assert.equal(maskName("a-s3-b", [{ find: "", put: "[X]" }, { find: "s3", put: "[Y]" }]), "a-[Y]-b");
 });

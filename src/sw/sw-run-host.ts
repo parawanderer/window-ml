@@ -50,6 +50,7 @@ import { workerLocate } from "./worker-locate";
 import { runVision, workerWroteVision, type RunVision } from "./run-vision";
 import { withUserWatches } from "./sw-shared-watches";
 import { closeTurnTasks, hydrateTasks, openTasks, taskDrained, withTasks } from "./sw-tasks";
+import { cancelRelease, rearmAfterTurn } from "./sw-release";
 import { routeExec, execNames, surveyMayEnterPage, withoutWorld, worldCardNote, type ExecRoute } from "./exec-routing";
 import { defaultExecWorld } from "../contract/contract-config";
 import { outputCapPrecheck } from "../contract/contract-pointers";
@@ -65,7 +66,7 @@ import { grantRunFetch, grantRunOrigin, runOriginGranted, runOrigins, runFetchCo
 import { autoApprovePython } from "../agent/auto-approve";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
 import { applyLiveMove, moveAfterTurn, takeMovedNote, type LiveTurn } from "./move-run";
-import { WORKER_ONLY_TOOLS, withoutWorkerOnly, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, firstTurnLeftTabs, runControllers, runInboxes, trackRun, persistRun, keptOnRebuild, turnTabCells, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
+import { WORKER_ONLY_TOOLS, withoutWorkerOnly, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, firstTurnLeftTabs, runControllers, runInboxes, trackRun, persistRun, keptOnRebuild, turnTabCells, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart, rekeyRunInbox, releaseRunTab } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { drawStoredPages } from "./sw-attach";
 import { claimValue, runMayClaim, valueHolders, readStoredBytes, readStoredColumns, readStoredText, withHeldValuesOnly } from "./sw-values";
@@ -76,14 +77,16 @@ import { focusLineFor } from "./sw-focus";
 import { delegateSend, CHANNEL_GONE } from "./delegate-send";
 import { NAV_COMMIT_MS } from "./nav-barrier";
 import { GATED_BUILTINS } from "../tools/tool-registry";
-import { isNoTab, needsPage, noPageText } from "./no-tab";
+import { isNoTab, needsPage, noPageText, NO_TAB } from "./no-tab";
+import { refreshTaskRow } from "./sw-task-rows";
+import { navigateFromNoTab, NO_TAB_RELATIVE, noTabNavRender, noTabNavTarget } from "./no-tab-nav";
 import { checkVerifyRequest, verifyAsked, verifyVerb, withoutPageVision, workerVerify, VERIFY_REFUSED, VERIFY_WITHHELD, type VerifyOutcome, type WorkerVerify } from "./worker-verify";
 import { topDocument } from "./worker-vision";
 import { capPageAnswer, capPageContext } from "./page-answer-caps";
 import { firstUserTurn } from "../agent/run-assembly";
 import { hostAsks, raiseAsk, stepAsks, type StepAsk } from "./sw-asks";
 import { ARRIVAL_ASK, ARRIVAL_DENIED } from "../contract";
-import { arrivalAnsweredText, arrivalDeniedText, clickDeniedText, arrivalWaitingText, arrivalHold, arrivalLine, arrivalSettled, arrivalVerdict, clearArrival, holdArrival, judgeTurnStart, watchArrivals, watchBetweenTurns } from "./nav-arrival";
+import { arrivalAnsweredText, arrivalNoBackText, arrivalDeniedText, clickDeniedText, arrivalWaitingText, arrivalHold, arrivalLine, arrivalSettled, arrivalVerdict, clearArrival, holdArrival, judgeTurnStart, unfragmented, watchArrivals, watchBetweenTurns } from "./nav-arrival";
 import { adoptOnTab } from "./adopt-run";
 import { approvalFor, cancelReasons, gatePageTurn, noteRunEnd, noteRunStart, personClaimed } from "./sw-start-approval";
 import { pageTurnText } from "../agent-start";
@@ -709,11 +712,18 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             if (payload.renderOnly || payload.precheck || payload.readonlyTry) throw new Error("the run is held on this page");
             return { result: held.kind === "deny" ? arrivalDeniedText(held) : arrivalWaitingText(held) };
         }
+        // A navigate from NO tab is the worker's (no-tab-nav.ts): its card is drawn here, and the call opens the tab the run
+        // moves onto at its next step. It reached here past the gate: a card (`navNeedsConsent`), or a person's `allow` policy.
+        if (isNoTab(tabId) && payload.name === "navigate") {
+            if (payload.renderOnly) return { renderIn: await noTabNavRender(String(payload.args?.url ?? "")) };
+            if (payload.precheck || payload.readonlyTry) throw new Error("the run has no page");
+            return navigateFromNoTab(runId, String(payload.args?.url ?? ""));
+        }
         // Nor anything at all for a run with NO tab (no-tab.ts): a page tool is answered with how the run gets a page, and
         // stays in the tool list so the model learns there is one (TABLESS_RUN.md). The worker's own tools run as ever.
         if (isNoTab(tabId) && needsPage(payload.name, payload.args, p.tools.some((t) => t.name === payload.name && !!t.remote))) {
             if (payload.renderOnly || payload.precheck || payload.readonlyTry) throw new Error("the run has no page");
-            return { result: noPageText(payload.name) };
+            return { result: noPageText(payload.name, p.tools.some((t) => t.name === "navigate")) };
         }
         // A call built for the page-built run, whose run is the worker's now: built again (`againIfHandedOver`).
         const handedSince = (): void => { if (pageRouted && byWorker()) throw new HandedOverMidCall(); };
@@ -793,11 +803,13 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     let unhostAsks: (() => void) | undefined;   // set once the run's steps may raise nested asks (sw-asks.ts)
     let unwatchArrivals: (() => void) | undefined;   // set once the run judges its tab's arrivals (nav-arrival.ts)
     let rewatchArrivals: (() => void) | undefined;   // the same judge, moved to the turn's tab now
-    const settle = (): void => { turnTabCells.delete(runId); unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); closeTurnTasks(runId); untrackRun(tabId, runId); deleteRun(runId); endPythonTurn(runId); releaseDebugger(tabId); moveAfterTurn(runId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); the turn's end: the run's Python namespace stays, the shared full worker's dict goes
+    const settle = (): void => { turnTabCells.delete(runId); unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); closeTurnTasks(runId); void rearmAfterTurn(runId); untrackRun(tabId, runId); deleteRun(runId); endPythonTurn(runId); releaseDebugger(tabId); moveAfterTurn(runId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); the turn's end: the run's Python namespace stays, the shared full worker's dict goes
     /** Ends the run's session on every surface when the setup throws after its start event went out; set once the fan exists. */
     let endSession: ((error: string) => void) | undefined;
     try {
         runControllers.set(runId, abortCtl);
+        // A turn runs on a tab: a release deadline its tab's closing set is void (a turn's end sets a new one if it ends tabless).
+        void cancelRelease(runId);
         // The live controller takes over from any start registration: from here a CANCEL_RUN finds this one.
         for (const e of startingSet ?? []) endStart(runId, e.ctl);
         runInboxes.set(runId, { tabId, queue: [] });   // a.say() steering lands here while the run is live
@@ -851,7 +863,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             tabId: () => tabId,
             page: () => ({ title: p.pageTitle, url: tabUrlNow() }),
             rebuild: () => (p.crossPage === false ? undefined : runRebuilds.get(runId) ?? p.rebuild),
-            onPage: ({ origin, url, title }) => { p = { ...p, pageOrigin: origin, pageUrl: url, pageTitle: title }; consentedOrigins.add(origin); },
+            onPage: ({ origin, url, title }, judged) => { p = { ...p, pageOrigin: origin, pageUrl: url, pageTitle: title }; if (!judged) consentedOrigins.add(origin); },
+            // The tab a navigate from no tab opened: its named page passes, any other is judged as an arrival (`judgeHere`).
+            arrived: (url, named) => { namedNav = named; judgeHere(url); return !!arrivalHold(runId); },
         };
         // Origins an `allow` row let an arrival reach: consented for NAVIGATION only (POLICIES.md, ruling (b) as built). The
         // FETCH_URL choke point does not count them, so the gate does not either: a read there goes to its card.
@@ -872,6 +886,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         /** Whether a read of the start origin still counts as consented: the tab is on that origin, or the person granted it. */
         const startOriginRead = (url: string): boolean => fetchOnPageOrigin(url) || (byWorker() && runsInWorker(p, "fetch_url") && runOriginGranted(runId, url));
         const navNeedsConsent = (url: string): boolean => {
+            // From NO tab every destination is another site, whatever `crossOrigin` says: there is no site for it to be the
+            // same as, and no origin consented before counts (TABLESS_RUN.md). One it refuses (a relative URL) never gets here (`unrunnable`).
+            if (isNoTab(tabId)) return true;
             if (!p.crossOrigin) return false;   // can't cross origins → tool refuses cross-origin; same-site fine → no gate
             try {
                 // Judged on where the browser goes, never on the spelling: a backslash, a scheme with too few slashes and a
@@ -985,14 +1002,31 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // is that navigate's, already judged with the same facts, so it is not judged (or asked about) again. Any other
         // commit, a redirect included, clears it and is judged.
         let namedNav: string | undefined;
-        /** A URL without its fragment, for telling the named page from another: a fragment is not another read. */
-        const unfragmented = (url: string): string | undefined => { try { const u = new URL(url); u.hash = ""; return u.href; } catch { return undefined; } };
         // The ask hold's card, answered once for every call waiting on it: whether the run may act on the page, and what
         // the model reads of the answer.
         let askAnswer: Promise<{ allowed: boolean; text: string }> | undefined;
         // That answer when no call waited on it (the person answered while the step that moved the tab still ran): the
         // next call's result carries it, so the model reads it once.
         let unreadAnswer: string | undefined;
+        /**
+         * Take the run's tab back a page, for a declined arrival or a deny card's Go back. A tab with no page to go back to
+         * (one a navigate from no tab opened: TABLESS_RUN.md, part 3) is left open and untouched, and the run goes on with
+         * no tab, as a closed tab leaves it.
+         * @returns true when the tab went back; false when the run has no tab now
+         */
+        const backOrNoTab = async (): Promise<boolean> => {
+            const from = tabId;
+            const back = await Promise.resolve(chrome.tabs.goBack?.(from)).then(() => true, () => false);
+            if (back || isNoTab(from)) return true;
+            clearArrival(runId);
+            rekeyRunInbox(runId, NO_TAB);
+            releaseRunTab(from, runId);
+            const snap = bgRuns.get(runId);
+            if (snap) snap.tabId = NO_TAB;
+            recordRunLog(runId, { subsystem: "tab", kind: "no-tab", reason: "no-back", detail: { wasTab: from } });
+            void refreshTaskRow(runId);
+            return false;
+        };
         /** The deny hold's card: Go back takes the tab back (that arrival is judged in turn), End run stops the run. */
         const raiseDenyCard = (seq = runningSeq()): void => {
             const h = arrivalHold(runId);
@@ -1001,7 +1035,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             const line = arrivalLine(h);
             void raiseAsk(runId, seq, { kind: ARRIVAL_DENIED, facts: { url: h.url }, why: { line, detail: line, cause: "deny-policy", policy: h.label } }).then(async (o) => {
                 if (arrivalHold(runId) !== h) return;
-                if (o.allowed) { await Promise.resolve(chrome.tabs.goBack?.(tabId)).catch(() => {}); return; }
+                if (o.allowed) { await backOrNoTab(); return; }
                 if (o.state === "denied") { endRun(); return; }
                 denyCarded = false;   // nobody answered: the next call raises it again
             });
@@ -1026,8 +1060,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     if (arrivalHold(runId) === h) clearArrival(runId);
                     return a;
                 }
-                if (o.state !== "cancelled") await Promise.resolve(chrome.tabs.goBack?.(tabId)).catch(() => {});
-                return answered({ allowed: false, text: arrivalAnsweredText(h, false, o.state === "denied" ? o.note : undefined) });
+                const note = o.state === "denied" ? o.note : undefined;
+                if (o.state !== "cancelled" && !await backOrNoTab()) return answered({ allowed: false, text: arrivalNoBackText(note) });
+                return answered({ allowed: false, text: arrivalAnsweredText(h, false, note) });
             });
             return askAnswer;
         };
@@ -1506,7 +1541,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         // webNavigation.onCommitted, which can lose the race to the loop's next (fast, local)
                         // model call + tool delegation, letting the next tool fire into the dying document.
                         // The next delegateSend then waits for the new page to re-adopt. Skip an errored nav.
-                        if (name === "navigate" && !String(env?.result || "").startsWith("Error")) {
+                        // From NO tab the worker opened the tab and waited for its load (no-tab-nav.ts): no tab of the run's navigates.
+                        if (name === "navigate" && !isNoTab(tabId) && !String(env?.result || "").startsWith("Error")) {
                             navBarrier.noteNavigating(tabId, sentTo); hasNavigated = true;
                             // Orient-on-nav: WAIT for the new document to re-adopt, then fold its pageInfo into
                             // THIS tool's result — so the model's next turn already knows where it landed instead
@@ -1901,7 +1937,10 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     return name === "click" ? clickLinkRefusal(env?.href) ?? null : null;
                 },
                 // A page tool of a run with no tab: answered before the gate, which would ask on a card no tab shows.
-                unrunnable: (name, args) => (isNoTab(tabId) && needsPage(name, args, p.tools.some((t) => t.name === name && !!t.remote)) ? noPageText(name) : null),
+                unrunnable: (name, args) => (!isNoTab(tabId) ? null
+                    : needsPage(name, args, p.tools.some((t) => t.name === name && !!t.remote)) ? noPageText(name, p.tools.some((t) => t.name === "navigate"))
+                    // A navigate from no tab to a URL it cannot go to (a relative one) is refused before any card (no-tab-nav.ts).
+                    : name === "navigate" && !noTabNavTarget(String(args.url ?? "")) ? NO_TAB_RELATIVE : null),
                 approve: async ({ tool, arguments: args, seq, step, askWhy: gateWhy }) => {
                     // A page the run is held on is answered first (nav-arrival.ts): this call's card follows only if the
                     // person lets the run act there.

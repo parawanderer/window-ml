@@ -166,7 +166,7 @@ test("RED TEAM: a page cannot write its events into a no-tab run's session, on a
 
 // --- a page tool of a run with no tab reaches no tab ---
 
-test("RED TEAM: every page-realm tool the run offers is answered with how the run gets a page, and not one message reaches any tab", T, async () => {
+test("RED TEAM: every page tool that needs a page is answered with how the run gets a page, and not one message reaches any tab; `navigate`, which opens one, is refused without an absolute URL", T, async () => {
     const r = await run();
     const { hash } = await r.bg.context.__mlStartUserRunForTest(7, { task: "probe", surface: "hud", maxSteps: 40 });
     await until(() => r.bodies().length >= 1);
@@ -175,12 +175,15 @@ test("RED TEAM: every page-realm tool the run offers is answered with how the ru
     // Enumerate, never sample: every tool whose realm is the page. The loop's own tools (chat_metadata) are not a page
     // tool even though their realm says so, and are asserted on their own below.
     // The wire carries no `capabilities`, so the loop's own tool is named: chat_metadata (ml-tool-factories.ts, `meta`).
-    const caps = (r.bodies()[0].tools ?? []).filter((t) => builtinTool(t.function?.name ?? t.name)?.realm === "page" && (t.function?.name ?? t.name) !== "chat_metadata").map((t) => t.function?.name ?? t.name);
+    // `navigate` from no tab is the worker's (no-tab-nav.ts, TABLESS_RUN.md §As built, part 3): asserted on its own below.
+    const caps = (r.bodies()[0].tools ?? []).filter((t) => builtinTool(t.function?.name ?? t.name)?.realm === "page" && !["chat_metadata", "navigate"].includes(t.function?.name ?? t.name)).map((t) => t.function?.name ?? t.name);
     assert.ok(caps.length > 8, `only ${caps.length} page tools offered (${caps.join(", ")}), too few to be the run's page set`);
     r.bg.closeTab(7);
     assert.ok(await until(() => r.rows().get(hash)?.background?.noTab === true));
     const since = r.bg.tabMessages.length;
     for (const name of caps) r.script.push({ name, args: {} });
+    assert.ok(offered.includes("navigate"), "the run offers navigate");
+    r.script.push({ name: "navigate", args: {} });
     await send(r, hash, "try them all", 3);
     assert.deepEqual(r.bg.tabMessages.slice(since), [], "a page tool of a run with no tab reached a tab");
     const read = toolResults(r.bodies().at(-1));
@@ -188,6 +191,8 @@ test("RED TEAM: every page-realm tool the run offers is answered with how the ru
         assert.ok(read.some((t) => t.includes(`"${name}" needs a page`)), `"${name}" was not answered with how the run gets a page: ${read.find((t) => t.includes(name)) ?? "no result"}`);
     }
     assert.equal(read.filter((t) => /needs a page, and this run has no tab/.test(t)).length, caps.length, "a page tool ran instead of being answered");
+    // A navigate with no URL is refused before any card, and reaches no tab (the slice above is empty).
+    assert.ok(read.some((t) => t.startsWith("Error: this run has no tab, so navigate needs an absolute http(s) URL")), "navigate with no URL was not refused");
     assert.equal(r.state().activeRuns.length, 0, "the detached run registered on a tab");
 });
 

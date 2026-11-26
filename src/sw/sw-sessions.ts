@@ -40,6 +40,7 @@ import { forgetAgentFiles } from "./sw-agent-files";
 import { readPdfOffscreen } from "./sw-attach";
 import type { PdfMessage } from "../pdf/pdf-wire";
 import { pythonBundlePresent, deletePythonRun } from "./sw-python";
+import { cancelRelease, releaseRun } from "./sw-release";
 import { endTasks } from "./sw-tasks";
 import { recordHousekeeping, senderOrigin } from "./sw-housekeeping";
 import { archiveCall, lastFolderReport, onFolderChange, scheduleFolderSync, syncFolder } from "./sw-archive";
@@ -413,6 +414,7 @@ export function configureSessionCommands(run: RunDeps): void {
         setRunModel: run.setRunModel,
         cancelRun: run.cancelRun,
         resolveApproval: run.resolveApproval,
+        releaseRun: (hash) => releaseRun(hash, "person"),
         forgetStored: async (hash) => {
             run.forgetRun(hash);
             forgetBackgroundChat(hash);
@@ -497,6 +499,8 @@ export function configureSessionCommands(run: RunDeps): void {
             trackRun(tabId, hash, rebuild);
             const reply = rebuild ? await run.adoptOnTab(tabId, hash, rebuild) : { error: "no toolset to rebuild" };
             const outcome: PageOutcome | "adopted" = !reply.error ? "adopted" : "unanswered" in reply && reply.unanswered ? "no-answer" : "none";
+            // On a tab again: a release deadline set when its tab closed is void.
+            if (!reply.error) void cancelRelease(hash);
             // A page that did not take it must not leave a run hydrated against a tab that is not holding it: the
             // next thing to read `bgRuns` would believe that tab owns this session.
             if (outcome !== "adopted") { bgRuns.delete(hash); untrackRun(tabId, hash); }
