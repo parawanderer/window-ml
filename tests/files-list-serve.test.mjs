@@ -112,23 +112,25 @@ test("files.list refuses a limit outside 1..500 or not a whole number, and a cur
 
 test("files.list: a cursor is checked by its shape only, and one written by hand still lists only the named session's own entries", T, async () => {
     const { server } = setup();
-    const r = await server.list("s1", "attached", { cursor: "c:" });
-    assert.deepEqual(r.ok.entries.map((e) => e.name), ["h1", "h2"]);
-    assert.deepEqual((await server.list("s1", "attached", { cursor: "c:h1" })).ok.entries.map((e) => e.name), ["h2"]);
+    // The reader's form is `c:<ordinal>:<shown name>`; anything else is refused before a name is read.
+    for (const cursor of ["c:", "c:h1", "c:x:h1", "c:1234567:h1", "h1"]) assert.equal((await server.list("s1", "attached", { cursor })).fail, "invalid", cursor);
+    assert.deepEqual((await server.list("s1", "attached", { cursor: "c:0:" })).ok.entries.map((e) => e.name), ["h1", "h2"]);
+    assert.deepEqual((await server.list("s1", "attached", { cursor: "c:0:h1" })).ok.entries.map((e) => e.name), ["h2"]);
+    assert.deepEqual((await server.list("s1", "attached", { cursor: "c:999999:h0" })).ok.entries.map((e) => e.name), ["h1", "h2"]);
 });
 
 test("files.list: a cursor cannot change the session or the path of the command that carries it", T, async () => {
     const { server } = setup();
     // A cursor taken from s2's listing, or written to name another path or session, lists s1's `attached/` after it.
     const s2page = await server.list("s2", "attached", { limit: 1 });
-    const fromS2 = s2page.ok.next ?? "c:h0";
-    for (const cursor of [fromS2, "c:../s2/attached", "c:agent", "c:/files/attached/h9", "c:s2:attached/h9", "c:h0/../../s2"]) {
+    const fromS2 = s2page.ok.next ?? "c:0:h0";
+    for (const cursor of [fromS2, "c:0:../s2/attached", "c:0:agent", "c:0:/files/attached/h9", "c:0:s2:attached/h9", "c:0:h0/../../s2", "c:../s2/attached", "c:s2:attached/h9"]) {
         const r = await server.list("s1", "attached", { cursor });
         if (r.fail) { assert.equal(r.fail, "invalid", cursor); continue; }
         for (const e of r.ok.entries) assert.ok(["h1", "h2"].includes(e.name), `${cursor} listed ${e.name}`);
     }
     // And in s1's agent/ (empty here), a cursor naming attached entries lists nothing of attached/.
-    const r = await server.list("s1", "agent", { cursor: "c:" });
+    const r = await server.list("s1", "agent", { cursor: "c:0:" });
     assert.deepEqual(r.ok.entries, []);
 });
 
