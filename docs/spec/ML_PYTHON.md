@@ -154,14 +154,18 @@ list above: where the two differ, this section rules.
   exists. What a person writes is one tag on the member's JSDoc saying Python has it.
 - **No member is Python-only.** Every Python member is a member JavaScript has under the same name (`ml.table`
   included: `src/ml/ml-table.ts`, an awaited call that answers a `Table`). The two languages differ in at most three
-  things, and the tag carries them: whether the call is awaited, the return type, and an argument one language has
-  alone.
+  things: the call form (below), the return type, and an argument one language has alone. The tag carries the last
+  two.
+- **No Python member is awaited** (ML_WIRE.md, "Step 1", which this section follows: the facade blocks on the wire's
+  answer through JSPI, as ruling 77 decided for `table`, and `await ml.x()` is an error that names the plain call).
+  It is the Python form of what the JavaScript dialect does, where a facade call is awaited for the script
+  (`docs/dev/readonly-exec.md`). So the table's `sync` field (above, "The table") is dropped: it has one value.
 - **One graph, a signature per language.** `agent_api_docs` holds one graph: a member names types, and a type names
   types (`src/tools/api-docs-query.ts`, the breadth-first walk). A member has a JavaScript signature and a Python one,
   and a query for Python starts its walk from the types the Python signature names.
-  - *The default Python signature* is derived from the JavaScript one by one rule. OPEN, for the builder to read
-    before the rule is written: how a member that is passed through takes an options object in Python (keyword
-    arguments or one dict).
+  - *The default Python signature* is derived from the JavaScript one by ML_WIRE.md's rule: the same name and
+    argument order, a keyword where JavaScript takes an options object, and the type a promise answers as the return
+    type.
   - *An override* is for a member with its own Python implementation (`ml.table` and `ml.fetch`, ML_TABLE.md): the
     tag states the Python signature and return type.
 - **The Python walk is cut at a Python type.** A type that is plain data crossing the wire serves both languages
@@ -169,9 +173,9 @@ list above: where the two differ, this section rules.
   Python: an override names a Python type in its place (`pandas.DataFrame` for `ml.table`), which is a leaf with no
   section, and the walk stops there.
 - **The form the model reads is a Python stub, not TypeScript.**
-  - A member is a `def`, or an `async def` when it is awaited, with type hints, its docstring and no body. `async
-    def` against `def` is what tells the model to await; the sentence about `help` marking the ones not awaited
-    (above, "The description") is dropped, and so is the facade's printed advice to await every member.
+  - A member is a `def` with type hints, its docstring and no body. No stub says `async def`, which is what tells
+    the model not to await; the sentence about `help` marking the members not awaited (above, "The description") is
+    dropped, and so is the facade's printed advice to await every member.
   - A plain-data type is rendered as what a cell receives. A JSON value arrives in a cell as a dict (ML_WIRE.md), so
     it is a `TypedDict`, and the model reads `r["url"]`, never `r.url`. Not an abstract base class: nothing is
     inherited, and a class would teach attribute access.
@@ -179,8 +183,8 @@ list above: where the two differ, this section rules.
   - No padding, as above. Its size is counted in PROMPT_BUDGET.md with the description.
 - **Rows, added to the list below, each by enumeration over every member, never a sample:**
   1. For each member with an override, the tag's signature equals the signature of the function the worker serves,
-     read from a running worker (`inspect.signature`), and `async def` in the stub equals whether the call must be
-     awaited there.
+     read from a running worker (`inspect.signature`), and no member the worker serves is a coroutine
+     function.
   2. No type reachable in the Python walk holds a method or a promise. A member whose JavaScript form answers such a
      type and has no override fails this row, by name.
   3. For each plain-data type reachable from Python, a value of it arriving in a cell is of the rendered form (a
