@@ -1032,7 +1032,10 @@ export function RunStatsBar({ s }: { s: Session }) {
 }
 
 /** A whole agent run, as a transcript: the task, each turn's thinking and tool steps, and the answer.
- *  A multi-turn session reads as a chat log, with the follow-ups interleaved where they arrived. */
+ *  A multi-turn session reads as a chat log, with the follow-ups interleaved where they arrived.
+ *  @gallery grouped, thinking before the answer {"s":{"hash":"abc12345","model":"model","tag":"session","createdTs":1,"lastTs":2,"status":"done","kind":"agent","task":"Write an exec so I see how it renders","config":{"system":"s","model":"model","think":true,"schema":false,"toolIds":[],"maxTokens":1,"save":false},"turns":[],"steps":[{"step":1,"seq":1,"reasoning":"The timeline needs its comments read, so survey the page first and look at what the markup gives.","usage":{"reasoningTokens":136}},{"step":1,"seq":1,"tool":"exec","args":{"code":"document.title"},"result":"ok","ts":1,"status":"ok"},{"step":2,"seq":2,"reasoning":"That selector matched nothing, so anchor on the id prefix instead.","usage":{"reasoningTokens":51}},{"step":2,"seq":2,"tool":"exec","args":{"code":"document.title"},"result":"ok","ts":1,"status":"ok"},{"step":3,"seq":3,"reasoning":"Both calls agree now; say what the second revised and why, then show the code.","usage":{"reasoningTokens":66}}],"answers":[{"text":"Here is a read-only survey of the page.","ts":2,"atStep":3,"status":"done"}]}}
+ *  @gallery grouped, no final answer {"s":{"hash":"abc12345","model":"model","tag":"session","createdTs":1,"lastTs":2,"status":"done","kind":"agent","task":"Write an exec so I see how it renders","config":{"system":"s","model":"model","think":true,"schema":false,"toolIds":[],"maxTokens":1,"save":false},"turns":[],"steps":[{"step":1,"seq":1,"reasoning":"The timeline needs its comments read, so survey the page first and look at what the markup gives.","usage":{"reasoningTokens":136}},{"step":1,"seq":1,"tool":"exec","args":{"code":"document.title"},"result":"ok","ts":1,"status":"ok"},{"step":2,"seq":2,"reasoning":"That selector matched nothing, so anchor on the id prefix instead.","usage":{"reasoningTokens":51}},{"step":2,"seq":2,"tool":"exec","args":{"code":"document.title"},"result":"ok","ts":1,"status":"ok"},{"step":3,"seq":3,"reasoning":"Both calls agree now; say what the second revised and why, then show the code.","usage":{"reasoningTokens":66}}],"answers":[{"text":"Stopped at the step cap.","ts":2,"atStep":3,"status":"done","hitCap":true}]}}
+ */
 export function AgentRunView({ s }: { s: Session }) {
     // Skip an empty step group — one carrying only a usage sample (final-answer token counts), no
     // thought/reasoning/tool. KEEP a reasoning-only turn (the final-answer turn shows its thinking here).
@@ -1112,7 +1115,7 @@ export function AgentRunView({ s }: { s: Session }) {
         // reader's own messages. A fold that spans one leaves that item rendering below the whole block, which is
         // how a "stopped at its step cap" seam ended up under the seven steps it sat in the middle of.
         ...((runGoing => focusMode.value
-            ? foldStreaks(groups, { live: runGoing, all: groupAllTools.value, settling: (st) => isSettling(s.hash, st), breaks: [...answers.map(a => a.atStep), ...(s.says || []).map(m => m.atStep)] })
+            ? foldStreaks(groups, { live: runGoing, all: groupAllTools.value, finals: answers.filter(a => !a.hitCap && !a.cancelled && !a.error && a.text).map(a => a.atStep), settling: (st) => isSettling(s.hash, st), breaks: [...answers.map(a => a.atStep), ...(s.says || []).map(m => m.atStep)] })
             : groups)(s.status === "pending" && runLive)).map(g =>
             "kind" in g
                 // `live` is the same answer `foldStreaks` is given, and it is what lets the streak tell a fold

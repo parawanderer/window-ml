@@ -1031,6 +1031,22 @@ RULED 2026-11-17 (Shane's idea, the details the coordinator's calls, in the coor
    listing and the commands are host-neutral and already reach the phone through the hub, so its view needs no
    contract change when it comes. Built first for the desktop renderer hosts: the extension, and a later VS Code
    extension.
+8. **A folder on the person's disk is listed and followed as the shelf is, in its own slice** (Shane, 2026-11-26, in
+   the coordinator's session; the details the coordinator's calls). NOT BUILT. Slices 1 and 1b list the `/files/` shelf
+   only: the listing command answers any other mount as `unsupported`, so no `ml.sh` root is in the tree, and a change
+   on disk reaches no tree. The slice after 1b adds both halves, and neither ships without the other:
+   - **The listing.** The same command with `mount` naming an `ml.sh` root, answered by the host through the
+     runtime, one directory a page under the same bounds, with each entry's hidden state from the hide list. A root
+     the session does not hold is refused as a path outside the mount is. With the host away the root answers
+     `unsupported`, and the tree says the folder is not connected; it never draws the last listing as current.
+   - **The change hint.** A change the host's watch sees under a listed root ("The sync", below: FSEvents on macOS,
+     inotify on Linux) sends the same `files-changed` hint a commit to the shelf sends, with the same rule: coalesced,
+     at most 16 directories or none, no names and no bytes. The end of an `ml.sh` call sends it once for what the call
+     changed. The watch is the host's one watch; the tree adds none.
+   - **Named cost.** The hint is a hint: a change made while no client is connected, or while the host is away, is
+     seen at the next listing, never replayed. A tree may be out of date between a change and its hint.
+   - **Open, for the slice's own spec:** the coalescing window, which roots are watched beyond the session's own
+     folder (the sync watches that folder only), and what a watch that overflows or dies reports.
 
 #### A `python_install` candidate worker
 

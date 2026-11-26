@@ -130,6 +130,21 @@ never copied: `.copy()` always returns an editable table the caller owns.
 
 pandas parses the kept bytes, and the cell owns the frame. A URL the run did not fetch asks.
 
+**Built:** the `/files/` path and the owned buffer (`_ml_read_csv_inside`, `python-dialect-run.ts`). The two URL sources
+wait for the kept-bytes store (§10, step 3), and ask until then. As built:
+- a path is normalized against the working directory. It must stay under `/files/`, lead out through no link, and name
+  no compressed file (pandas decompresses by suffix). A URL of any scheme, `file://` included, and a `~` path ask.
+- A separator or delimiter longer than one character asks: pandas reads it as a regular expression with the python
+  engine. So do a callable `usecols` or `skiprows`.
+- The input's bytes are charged to the cell's step budget before the parse (`_restricted.charge`), at 2 bytes a step, so
+  a step of parse costs no less time than a step of interpreter work (on the fork core: 20.2 ns a step, 6-10 ns a byte
+  parsed). So the budget bounds a loop of calls too, and a parse that cannot fit asks with nothing read: with the
+  15,000,000-step budget, any input past about 30 MB. A file or buffer over the 64 MB table read cap asks.
+- With `tables` loaded, the call asks. The prelude's redirect returns an injected table for any name it does not know,
+  a `/files` path included, so the result might not be the file. That redirect is a defect on the full path today, and
+  goes with `tables` (step 3).
+- A hidden file is listed by the mount and refused at open, so an inside read raises the PermissionError a full run gets.
+
 - **Keywords allowed:** `sep`, `delimiter`, `header`, `names`, `index_col`, `usecols`, `dtype`, `parse_dates`,
   `nrows`, `skiprows`, `na_values`, `keep_default_na`, `thousands`, `decimal`.
 - **Refused:** `chunksize` and `iterator`; callable `converters` and `on_bad_lines`; `storage_options`, `memory_map`,

@@ -16,7 +16,7 @@
 
 import { PY_PACKAGE_LOADS, PY_LAZY_LOADS, PY_BENCH_BASE_NAMES, PY_STARTUP_PREPARE, pyodideLoadOptions, pinEnvironment } from "./python-env";
 import { DIALECT_FILES, DIALECT_MODULES, DIALECT_NODES } from "./dialect-data";
-import { wrapUserSetup, wrapUserScript, COMPLETE_HELPER, completeIn, RESET, injectInputs, stdoutWriter, injectStoredTable, takeIpc, releaseNamespace, hostRunScript, cancelPath, type PyCompletion } from "./python-runtime";
+import { wrapUserSetup, wrapUserScript, LOADERS_INSTALL, COMPLETE_HELPER, completeIn, RESET, injectInputs, stdoutWriter, injectStoredTable, takeIpc, releaseNamespace, hostRunScript, cancelPath, type PyCompletion } from "./python-runtime";
 import { dialectSetup, libraryLoad, libraryShape, listingSteps, type DialectLibrary } from "./python-dialect-run";
 import { lockdownReadonly } from "./lockdown";
 import { makeFilesMount, FILES_OPEN_WORDS } from "./files-mount";
@@ -256,7 +256,10 @@ let dialectReady: Promise<string> | null = null;
  * @returns "" when it can, else the reason (a stock or old core, or a load that failed), so the cell asks
  */
 function dialectReason(py: any): Promise<string> {
-    return dialectReady ??= Promise.resolve().then(() => py.runPythonAsync(dialectSetup(DIALECT_FILES)))
+    // The loader redirects first, in a dict of their own: the setup registers the `pd.read_csv` a cell will reach, and
+    // a worker's first inside cell can come before any prelude has installed them.
+    const loaders = () => py.runPythonAsync("import pandas as pd\nfrom PIL import Image\n" + LOADERS_INSTALL, { globals: py.globals.get("dict")() });
+    return dialectReady ??= Promise.resolve().then(loaders).then(() => py.runPythonAsync(dialectSetup(DIALECT_FILES)))
         .then((r: unknown) => String(r ?? ""), (e: any) => `the dialect's manifests could not be loaded (${String((e && e.message) || e).split("\n").filter(Boolean).pop()})`);
 }
 

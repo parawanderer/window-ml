@@ -217,6 +217,8 @@ type WireStamp = { client: string; run: string | null };
 // service worker, its cap is the detached ceiling, its output is kept in `ring` for `task tail`, and a cancel reaches it
 // by that id. `stopOnStart` is a cancel that came before the cell started, done when it does.
 const pending = new Map<number, { resolve: (r: PyResult) => void; timer: ReturnType<typeof setTimeout>; streamId?: string; armOnStart?: boolean; principal: string; wire?: WireStamp; spending?: boolean; bench?: boolean; started?: boolean; stopping?: boolean; cell?: string; detachedMaxMs?: number; ring?: string; stopOnStart?: () => void; markSet?: boolean }>();   // state: plumbing
+/** One pending run, as `pending` holds it. */
+type PendingEntry = typeof pending extends Map<number, infer E> ? E : never;
 // THE `ml` WIRE (ML_WIRE.md): which worker a client handle's answers go back to. The handle is this
 // document's to stamp — the worker never sees it (LANE_1_PR2_DESIGN.md "Who stamps the handle"). An
 // `ask` first answer is NOT relayed down: the cell's `send` stays pending until the later `ML_ANSWER`
@@ -402,6 +404,21 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
     if (respawned.delete(principal)) {
         reportHousekeeping({ subsystem: "pyodide", kind: "respawn", key: principal, detail: { mode: readonly ? "readonly" : "full" } });
     }
+    /**
+     * The pending run a message from THIS worker names, or undefined. `pending` is one map over every principal, keyed by
+     * a sequential id any worker can name, so a worker may act only on its own principal's runs: another's id is refused,
+     * recorded once with nothing of the message, and leaves that run as it was. Every branch below that reads an entry
+     * reads it through here (tests/offscreen-worker-ids.test.mjs enumerates them).
+     * @param id the id the message names
+     * @param branch which branch asked, for the record
+     * @returns the entry, when it is this worker's
+     */
+    const own = (id: unknown, branch: string): PendingEntry | undefined => {
+        const entry = typeof id === "number" ? pending.get(id) : undefined;
+        if (!entry || entry.principal === principal) return entry;
+        reportHousekeeping({ subsystem: "pyodide", kind: "foreign-id", reason: branch, key: principal });
+        return undefined;
+    };
     w.onmessage = (e: MessageEvent) => {
         // A `/files` request from the mount: served by the run's channel, never a reply to a run.
         if (filesMessage(principal, e.data)) return;
@@ -413,7 +430,7 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
         // A `partial` message is a LIVE stdout chunk (opt-in streaming) — forward it to the background keyed by
         // this run's streamId (the page requestId), which relays it to the page; DON'T resolve the run.
         if (e.data?.partial) {
-            const entry = pending.get(e.data.id);
+            const entry = own(e.data.id, "partial");
             // A leased cell's output is kept here, bounded, for `task tail`: the service worker keeps no copy.
             if (entry?.cell !== undefined) entry.ring = ringAppend(entry.ring ?? "", String(e.data.chunk ?? ""));
             if (entry?.streamId) chrome.runtime.sendMessage({ type: "PY_STDOUT", streamId: entry.streamId, chunk: String(e.data.chunk ?? ""), ts: e.data.ts }).catch(() => { /* no receiver → drop */ });
@@ -421,13 +438,13 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
         }
         // The cell's own code is done and its cancel is spending the tasks it left: a kill from here on is named for it.
         if (e.data?.spending) {
-            const entry = pending.get(e.data.id);
+            const entry = own(e.data.id, "spending");
             if (entry) entry.spending = true;
             return;
         }
         // The USER'S CELL is starting (runtime up, prelude done, this run's turn): its own 15s begins now.
         if (e.data?.started) {
-            const entry = pending.get(e.data.id);
+            const entry = own(e.data.id, "started");
             if (entry) entry.started = true;   // the one a bench Stop may interrupt (`PY_INTERRUPT`)
             // A LEASED cell: the service worker starts its lease now (it detaches the call past it), and the sandbox holds
             // it to the detached ceiling instead of the 15 s, which the lease replaces.
@@ -447,7 +464,8 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
         // THE `ml` WIRE CALL (ML_WIRE.md): the cell's request, stamped HERE with the client handle and the run
         // this document is executing for it. The worker never sees either — it posts `{ seq, call, args }` only.
         if (e.data?.mlCall && typeof e.data.id === "number") {
-            const entry = pending.get(e.data.id);
+            // Another principal's id has no wire here: the sender is answered as a cell with none, and the victim's stamp is never used.
+            const entry = own(e.data.id, "ml-call");
             const wire = entry?.wire;
             const { seq, call, args } = e.data.mlCall as { seq: number; call: string; args: unknown[] };
             if (!wire) {
@@ -467,7 +485,7 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
             return;
         }
         const { id, ...result } = e.data as { id: number } & PyResult;
-        const entry = pending.get(id);
+        const entry = own(id, "result");
         // The mark's two fields are this document's alone: whatever the worker sent under those names is dropped.
         delete result.marked;
         delete result.markSet;
@@ -984,6 +1002,7 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
     if (msg?.type !== "PY_DELETE_RUN" || typeof msg.run !== "string" || !msg.run) return undefined;
     if (sender.id !== chrome.runtime.id || sender.tab) return undefined;   // the service worker's word only, like every message here
     const run = String(msg.run);
+    // `msg.reason` (`tab-closed`, `person`, absent for a session's end) is accepted and not read yet: the namespace-drop record that uses it is a later change.
     endedRuns.delete(run); endedRuns.add(run);   // re-added last: the oldest is evicted first
     if (endedRuns.size > ENDED_RUNS_MAX) endedRuns.delete(endedRuns.values().next().value as string);
     const principals = new Set(runPrincipals.get(run) ?? []);
