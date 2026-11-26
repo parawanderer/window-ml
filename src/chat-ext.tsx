@@ -35,7 +35,8 @@ import { PythonBench } from "./sidebar/vram-bench";
 import type { RuntimeId } from "./session/session-host";
 import { BACKUP_BLOCK_ID, BACKUP_TAB, Settings, searchSettings, showSettingsSection } from "./sidebar/settings/settings";
 import { addressHash } from "./sidebar/links";
-import { config, psError, holdScope } from "./sidebar/store";
+import { config, psError, holdScope, RESWIN_KEY } from "./sidebar/store";
+import { panelStorage } from "./sidebar/resource/chart-interaction";
 import { residentNow } from "./sidebar/resource/panel-facts";
 import { residentReader } from "./sidebar/resident-reader";
 import { askScan } from "./sidebar/scan-ask";
@@ -174,6 +175,7 @@ host.runtimes((list) => {
     for (const r of list) localRuntimes.add(r.id);
 });
 
+panelStorage.write = (secs) => { try { chrome.storage.local.set({ [RESWIN_KEY]: secs }); } catch { /* opaque origin */ } };   // the panel's window width outlives the page (chart-interaction.ts)
 installServices(hostServices(store, extensionPlatform, {
     modelResident: residentHere,
     // The spend chip: this page is an extension page, so this browser's worker prices calls for it (PRICE_CALLS).

@@ -186,4 +186,7 @@ so its next page call, its events and its settle go to the restored tab. `tests/
 - Whether a crash ends the turn, or offers a move (the hook: the crashed branch in `delegate-send.ts` and
   `page-reachable.ts`'s watch). To be decided on how models behave against the failing tool.
 - A move between runtimes (another browser through the hub), after this exists.
-- A move from NO tab: a run started detached ([`TABLESS_RUN.md`](TABLESS_RUN.md)) skips the source tab's three steps.
+- ~~A move from NO tab~~ **Built** (2026-11-25; [`TABLESS_RUN.md`](TABLESS_RUN.md), §As built, part 3): from the sentinel
+  `NO_TAB` a move, between turns or between steps, skips the source tab's three steps (the leave note to its card and
+  DevTools, the old page's `finish`, a `leftTabs` entry) and takes the run's own replay ring (`noTabReplay`). A first
+  turn's live move is queued as any other (`bringHere` no longer sends it to `session.resume`).

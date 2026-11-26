@@ -133,7 +133,12 @@ if _tsj:
             tables[_alias] = _df
 
 `;
-const PRELUDE_LOADERS = /* python */ `
+/**
+ * Install the loader redirects once per interpreter (the guard is on the patched module), with `pd` and `Image` bound.
+ * The prelude runs it before every cell; a worker runs it before the dialect's setup too, so the `pd.read_csv` the setup
+ * registers for inside cells is the one a cell reaches (python-dialect-run.ts, `_ml_read_csv_inside`).
+ */
+export const LOADERS_INSTALL = /* python */ `
 # --- Loader interception (DX, not a security boundary) ---------------------------------------
 # Models have strong pre-training habits — Image.open(path), pd.read_csv(name), pd.read_html(
 # selector) — and reach for them with the SELECTOR/name they passed to the tool (observed:
@@ -192,6 +197,8 @@ if not hasattr(pd, "_ml_loaders_installed"):
     _ml_install_loaders(Image, pd)
     pd._ml_loaders_installed = True
 del _ml_install_loaders
+`;
+const PRELUDE_LOADERS = LOADERS_INSTALL + /* python */ `
 import __main__ as _ml_m
 _ml_m._ml_load_ns = globals()
 del _ml_m
