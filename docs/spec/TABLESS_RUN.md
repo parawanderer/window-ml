@@ -50,9 +50,13 @@ asks about. What changes is the branch it runs, because `navigate` today assumes
 - **The approval card checks the site's access before the tab opens**, the start page's `blankStart` check moved to
   the moment it is needed.
 - **The description the model reads** gains one clause for the detached state (PROMPT_BUDGET applies).
+  Ruled (2026-11-25): that clause lives in `NO_TAB_CONTEXT` (`sw-run-start.ts`, a detached start's page line) and
+  `noPageText` (`no-tab.ts`, a page tool's answer with no tab), each only for a run that has `navigate`, and not in
+  `navigate`'s description, which every run pays for and a run with a tab never needs.
 
-Its tests are `navigate` tests, written to fail first: from the detached state it always asks, a relative URL is
-refused, a refused approval opens no tab, and a page cannot start it (no `HANDLE_MAP` entry, as for a move).
+Its tests are `navigate` tests, written to fail first: from the detached state it asks unless a policy of the
+person's allows the destination (`crossOrigin` never waives it), a relative URL is refused, a refused approval opens
+no tab, and a page cannot start it (no `HANDLE_MAP` entry, as for a move).
 
 ## `ml.sh` with no page
 
@@ -258,12 +262,50 @@ Shane asked for it by name (2026-11-23, through the coordinator), ahead of steps
   anything is sent to the sentinel. `senderOwnsRun` takes a sender with no tab only when its URL is this
   extension's, and its id where the browser gives one.
 
+## As built, part 3 (2026-11-25): `navigate` from no tab, and a move from no tab mid-turn
+
+- **The worker runs it** (`no-tab-nav.ts`): `sendTool` answers a `navigate` of a run on `NO_TAB` itself. The card's In
+  is drawn there (`noTabNavRender`: "open a new tab at <the URL as the browser reads it>"), and the approved call opens
+  the tab (`chrome.tabs.create`), waits up to 15 s for its load, and QUEUES the run's move onto it (`queueNavMove`).
+  The move is made at the turn's next step boundary (`applyLiveMove`), or after the turn when the navigate was its last
+  step (`moveAfterTurn`), as a person's move is. The model reads a note that its navigate put it there, not that the
+  person moved it. A tab that does not load, or will not take the run's tools, leaves the run with no tab, and the
+  model is told so. A person's move that could not be made is written to the run log, and the model is not told.
+- **It asks unless a policy of the person's allows the destination; `crossOrigin` never waives it**:
+  `navNeedsConsent` is true on `NO_TAB`, and the gate answers a person's `fetch` `allow` policy before it reads that
+  (`agent-host.ts`). With no tab there is no current site, so no navigation is same-site.
+- **The page the tab lands on is judged before the move**, by the tab run's own arrival judge (`judgeHere`,
+  nav-arrival.ts; POLICIES.md, "A navigation the model did not name is judged on arrival"). The page the navigate named
+  passes as named: its gate already judged it. Any other (a server redirect, the page sending itself on) is judged as a
+  tab run's arrival is: a policy that denies or asks about it holds the run with the same `holdArrival`, card and texts,
+  and nothing of the run reaches the page (no `ADOPT_RUN_NOW`, no tool) until the person answers; an approved ask adopts
+  it then (`readoptHere`). A declined ask, or Go back on a deny card, takes the tab back a page; the tab a navigate
+  opened has none (`chrome.tabs.goBack` refuses), so the tab is left open and untouched, the run goes on with no tab as
+  a closed tab leaves it (`backOrNoTab`), the log records `no-back`, and the model reads "The person declined. The run
+  has no page again." An arrival no policy covers passes, as a tab run's does. A move after the turn judges it the
+  same way, as an arrival between turns (`holdStands`). The in-call commit wait (`navStalled`, `passArrival`) is not
+  run: the call opened a tab that is not the run's yet, and the move is where its page is judged.
+- **The as-you grant is for the page the person approved, only**: the card's approval grants the origin it named
+  (`grantRunOrigin`), as a tab run's approved navigate does. The move grants nothing, so a landed origin that differs
+  gets no as-you grant; an `allow` row covering it consents it for navigation only (`navOnlyOrigins`), and an approved
+  arrival card grants it as the person, as on a tab run.
+- **Only an absolute http(s) URL** (`noTabNavTarget`: a spelled `http://` or `https://`, then `new URL`): a relative,
+  scheme-relative, `https:host` or `https:\\host` spelling and every other scheme are refused by the loop's
+  `unrunnable`, before any card, and open nothing.
+- **Site access is checked on the card, before the tab opens** (`chrome.permissions.contains` for the origin, the start
+  page's `blankStart` check moved to the approval): a site the browser keeps the extension off gets a note on the card,
+  and approving it opens nothing.
+- **A page cannot start it**: it is a tool call of the run, with no message type and no `HANDLE_MAP` entry.
+- **A move from no tab mid-turn** (MOVE_RUN shape (b)): the source tab's steps are skipped on the sentinel, and a first
+  turn's move is queued instead of being refused as a resume (`bringHere`).
+- Tests: `tests/no-tab-run.test.mjs`, "navigate from no tab" and "a running turn with no tab, brought to a tab".
+
 ## Order
 
 1. MOVE_RUN shape (a) on main.
 2. The detached host, the snapshot form, and where its events render. "No tab" in the start form. Attach from no tab.
    A closed tab detaches its run, with the grace period: the async lane's task predicate first, then the release.
-3. `navigate` from the detached state, with its tests.
+3. `navigate` from the detached state, with its tests. Built (§As built, part 3).
 4. Resuming with no page: the closed-tab bar goes, the composer resumes detached, the kernel line, the person's tab
    pick. It needs 2 and the async lane's release; the pick needs only 2.
 5. The `ml.sh` bench, and a worker `exec` world only if it says so.

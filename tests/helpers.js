@@ -161,7 +161,7 @@ function workerTimers() {
 // lets a test declare contextMenus, which GET_INVOCATION reads as "the right-click entry exists".
 // `holdPolicies` is a promise the policy store's first storage read waits on.
 // `holdRestore` is a promise the worker's read of ALL of local storage (its run restore) waits on.
-function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, onPdfRead, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, siteAgents = "always", userScripts, onTabsGet, holdRestore, onNative, dialectInside, pyInside, holdPolicies, onPyDelete, extensionTabs = [], onPyInstallTest, onFsCall, playTables = false, alarms = false }) {
+function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, onPdfRead, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, siteAgents = "always", userScripts, onTabsGet, holdRestore, onNative, dialectInside, pyInside, holdPolicies, onPyDelete, extensionTabs = [], onPyInstallTest, onFsCall, playTables = false, openCreated = false, deniedOrigins = [], alarms = false }) {
     const calls = [];
     // chrome.runtime.connectNative: each host name asked for, in order. With `onNative(name, end)`, the test plays the
     // native host: `end.send(msg)` delivers a message to the worker's port, `end.close(why)` disconnects it, and the
@@ -454,7 +454,8 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 // Track named permissions (debugger); treat origin grants as present (FETCH_SHEET only
                 // contains()-checks Google origins, and the harness assumes those are granted).
                 // `allSites: false` withholds `<all_urls>`, as site access "On click" does.
-                contains: async ({ permissions = [], origins = [] }) => permissions.every(p => permsHeld.has(p)) && (allSites || !origins.includes("<all_urls>")),
+                // `deniedOrigins` withholds those origin patterns (`https://x.example/*`), as a site set to "never" does.
+                contains: async ({ permissions = [], origins = [] }) => permissions.every(p => permsHeld.has(p)) && (allSites || !origins.includes("<all_urls>")) && !origins.some((o) => deniedOrigins.includes(o)),
                 request: async ({ permissions = [] }) => { permissions.forEach(p => permsHeld.add(p)); for (const fn of permAddedListeners) fn({ permissions }); return true; },
                 onAdded: { addListener: (fn) => permAddedListeners.push(fn) },
                 onRemoved: { addListener: () => {} },
@@ -533,10 +534,20 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                     tabMessages.push(args); return onTabMessage ? await onTabMessage(...args) : undefined;
                 },
                 // The PDF-print flow opens a print.html tab and later removes it by id.
-                create: async (props) => { tabsCreated.push(props); return { id: 4242 + tabsCreated.length }; },
+                // `openCreated`: the created tab is open from then on (`openTabs`), loaded, titled by its URL's host.
+                create: async (props) => {
+                    tabsCreated.push(props);
+                    const id = 4242 + tabsCreated.length;
+                    if (openCreated) openTabs.push({ id, windowId: 3, active: !!props.active, url: props.url, title: new URL(props.url).host, status: "complete" });
+                    return { id };
+                },
                 remove: async (id) => { tabsRemoved.push(id); },
                 update: async (...args) => { tabsUpdated.push(args); return { id: args[0] }; },
-                goBack: async (id) => { tabsBack.push(id); },
+                // A tab `create` opened has one entry and no page to go back to: Chrome rejects, in these words.
+                goBack: async (id) => {
+                    tabsBack.push(id);
+                    if (tabsCreated.some((_, i) => 4243 + i === id)) throw new Error("Cannot find a next page in history.");
+                },
                 onRemoved: { addListener: (fn) => tabRemovedListeners.push(fn) },
                 onActivated: { addListener: (fn) => tabActivatedListeners.add(fn), removeListener: (fn) => tabActivatedListeners.delete(fn) },
                 onReplaced: { addListener: (fn) => tabReplacedListeners.add(fn), removeListener: (fn) => tabReplacedListeners.delete(fn) },
