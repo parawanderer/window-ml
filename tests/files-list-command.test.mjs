@@ -121,6 +121,21 @@ test("a person's turn that attached a file sends one files-changed naming the ro
     assert.deepEqual(hints(), [{ type: "files-changed", session: SESSION, dirs: ["", "attached"] }]);
 });
 
+test("a run whose FIRST turn attaches a file sends one files-changed, to a page subscribed before it started and to the hub sink", T, async () => {
+    const server = new SessionServer(new SessionIndex({ runtime: "local", spawn: "w1" }), { runtime: () => ({ id: "local" }), command: async () => ({ ok: true, data: {} }) });
+    const posted = [];
+    let listen;
+    server.attach({ postMessage: (m) => posted.push(m), onMessage: { addListener: (fn) => { listen = fn; } }, onDisconnect: { addListener: () => {} }, disconnect: () => {} });
+    listen({ type: "events", sub: 1, hash: HASH });
+    const sunk = [];
+    server.watch({ index: () => {}, stream: (hash, m) => sunk.push([hash, m]) });
+    server.ingest(startEvent(HASH, { display: { typed: "t", context: [{ kind: "file", file: { name: "a.txt" } }] } }), { tabId: 1, trusted: true });
+    await new Promise((r) => setTimeout(r, 0));
+    const hint = { type: "files-changed", session: SESSION, dirs: ["", "attached"] };
+    assert.deepEqual(posted.filter((m) => m.type === "stream" && m.message.type === "files-changed").map((m) => m.message), [hint]);
+    assert.deepEqual(sunk.filter(([, m]) => m.type === "files-changed"), [[HASH, hint]]);
+});
+
 // --- files-changed over a hub: the sealed frame ---
 
 test("a files-changed frame decodes with its dirs; more than 16, or a dir that is not a string, is not one", T, () => {
