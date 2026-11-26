@@ -37,7 +37,7 @@ import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
 import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, grantOnceFetch, consentFetch, fetchConsent, resolveApproval } from "./sw-consent";
 import { settingBeforeCard, settingCard, settingFacts, settingMeasureDeps, holdSettingChange, releaseSettingChange, noteSettingDeclined, watchSetting, settingEntries, surveySettings, settingChangedElsewhere, type SettingChange } from "./sw-change-setting";
-import { ASK_POLICY_CAUSE, navOnlyWhy, startLeftWhy, judgeCall, fetchFacts, navigateFacts, actFacts, noteAct, dropActs, actsOf, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
+import { ASK_POLICY_CAUSE, BROKEN_POLICY_CAUSE, navOnlyWhy, startLeftWhy, judgeCall, fetchFacts, navigateFacts, actFacts, noteAct, dropActs, actsOf, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
 import { checkProposals, recordedFetches, measureBreadth, breadthNote, measureActBreadth, actBreadthNote, measureSettingBreadth, measureSettingRows, settingBreadthNote, recordedSettingKeys, type PolicyProposal, type SettingBreadth } from "./policy-proposal";
 import { approveManifest, checkManifestProposal, draftCardNote, type CheckedManifest } from "./sw-manifest-proposal";
 import { approveLibrary, checkLibraryProposal, isLibraryDraft, precheckLibrary, type CheckedLibrary } from "./sw-library-proposal";
@@ -50,6 +50,7 @@ import { workerLocate } from "./worker-locate";
 import { runVision, workerWroteVision, type RunVision } from "./run-vision";
 import { withUserWatches } from "./sw-shared-watches";
 import { closeTurnTasks, hydrateTasks, openTasks, taskDrained, withTasks } from "./sw-tasks";
+import { cancelRelease, rearmAfterTurn } from "./sw-release";
 import { routeExec, execNames, surveyMayEnterPage, withoutWorld, worldCardNote, type ExecRoute } from "./exec-routing";
 import { defaultExecWorld } from "../contract/contract-config";
 import { outputCapPrecheck } from "../contract/contract-pointers";
@@ -656,7 +657,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         const j = judgeCall(runId, "act", actFacts(url, name, element));
         for (const b of j.broken) recordRunLog(runId, { level: "warn", subsystem: "policy", kind: "broken", reason: b.reason, detail: { policy: b.policy.id, tool: name } });
         if (j.decision && j.by && j.by !== "builtin") {
-            recordRunLog(runId, { subsystem: "policy", kind: j.decision, reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: name, url, element: element.name ?? "" } });
+            recordRunLog(runId, { subsystem: "policy", kind: j.brokenAsk ? BROKEN_POLICY_CAUSE : j.decision, reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: name, url, element: element.name ?? "" } });
             return { decision: j.decision, label: j.by.label };
         }
         if (!j.decision && url && await senderSelfApproves({ url }).catch(() => false)) return { decision: "allow" as const, label: "this site is on the self-approval list" };
@@ -793,11 +794,13 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     let unhostAsks: (() => void) | undefined;   // set once the run's steps may raise nested asks (sw-asks.ts)
     let unwatchArrivals: (() => void) | undefined;   // set once the run judges its tab's arrivals (nav-arrival.ts)
     let rewatchArrivals: (() => void) | undefined;   // the same judge, moved to the turn's tab now
-    const settle = (): void => { turnTabCells.delete(runId); unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); closeTurnTasks(runId); untrackRun(tabId, runId); deleteRun(runId); endPythonTurn(runId); releaseDebugger(tabId); moveAfterTurn(runId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); the turn's end: the run's Python namespace stays, the shared full worker's dict goes
+    const settle = (): void => { turnTabCells.delete(runId); unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); closeTurnTasks(runId); void rearmAfterTurn(runId); untrackRun(tabId, runId); deleteRun(runId); endPythonTurn(runId); releaseDebugger(tabId); moveAfterTurn(runId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); the turn's end: the run's Python namespace stays, the shared full worker's dict goes
     /** Ends the run's session on every surface when the setup throws after its start event went out; set once the fan exists. */
     let endSession: ((error: string) => void) | undefined;
     try {
         runControllers.set(runId, abortCtl);
+        // A turn runs on a tab: a release deadline its tab's closing set is void (a turn's end sets a new one if it ends tabless).
+        void cancelRelease(runId);
         // The live controller takes over from any start registration: from here a CANCEL_RUN finds this one.
         for (const e of startingSet ?? []) endStart(runId, e.ctl);
         runInboxes.set(runId, { tabId, queue: [] });   // a.say() steering lands here while the run is live
@@ -1013,7 +1016,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             if (askAnswer || seq === undefined) return askAnswer;
             const line = arrivalLine(h);
             const answered = (a: { allowed: boolean; text: string }) => { unreadAnswer = a.text || undefined; return a; };
-            askAnswer = raiseAsk(runId, seq, { kind: ARRIVAL_ASK, facts: { url: h.url }, why: { line, detail: line, cause: h.label !== undefined ? ASK_POLICY_CAUSE : "policies-unread", ...(h.label !== undefined ? { policy: h.label } : {}) } }).then(async (o) => {
+            askAnswer = raiseAsk(runId, seq, { kind: ARRIVAL_ASK, facts: { url: h.url }, why: { line, detail: line, cause: h.broken ? BROKEN_POLICY_CAUSE : h.label !== undefined ? ASK_POLICY_CAUSE : "policies-unread", ...(h.label !== undefined ? { policy: h.label } : {}), ...(h.broken ? { policyId: h.broken.id } : {}) } }).then(async (o) => {
                 if (arrivalHold(runId) !== h) return { allowed: true, text: "" };   // judged again meanwhile: the new judgement holds or not
                 if (o.allowed) {
                     // A person on a card: the origin is consented, and as the person for a fetch the worker runs.
@@ -2007,7 +2010,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // A cell outside the dialect in a run whose earlier cell ran with the bridges lifted: its card says what that
                     // cell may have kept. Read here, where a wait is allowed: the mark outlives an evicted worker (sw-python.ts).
                     if (tool === "python_exec" && askWhy?.cause === "outside-dialect" && await pythonRunBridged(runId)) askWhy = { ...askWhy, bridged: true };
-                    if (askWhy?.policy !== undefined && !askedByPolicy(askWhy)) recordRunLog(runId, { subsystem: "policy", kind: "lapsed", reason: askWhy.cause, detail: { tool, policy: askWhy.policy, ...(tool === "fetch_url" ? { url: String((args as { url?: unknown }).url ?? "") } : {}) } });
+                    if (askWhy?.cause === BROKEN_POLICY_CAUSE) recordRunLog(runId, { subsystem: "policy", kind: BROKEN_POLICY_CAUSE, reason: askWhy.cause, detail: { tool, policy: askWhy.policy ?? "", id: askWhy.policyId ?? "" } });
+                    else if (askWhy?.policy !== undefined && !askedByPolicy(askWhy)) recordRunLog(runId, { subsystem: "policy", kind: "lapsed", reason: askWhy.cause, detail: { tool, policy: askWhy.policy, ...(tool === "fetch_url" ? { url: String((args as { url?: unknown }).url ?? "") } : {}) } });
                     // A worker tool's approval is granted to the run's state in this worker (worker-tools.ts), rebuilt here
                     // if an eviction took it, so the decision below has somewhere to put it.
                     if (byWorker() && runsInWorker(p, tool)) await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "", pyMedia).catch(() => { /* nothing granted: fails closed */ });
@@ -2153,7 +2157,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     if (j.decision === "ask" && !j.by) return "unknown";
                     for (const b of j.broken) recordRunLog(runId, { level: "warn", subsystem: "policy", kind: "broken", reason: b.reason, detail: { policy: b.policy.id, tool: "navigate" } });
                     if (!j.decision || !j.by || j.by === "builtin") return undefined;
-                    recordRunLog(runId, { subsystem: "policy", kind: j.decision, reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: "navigate", url: dest.href } });
+                    if (!j.brokenAsk) recordRunLog(runId, { subsystem: "policy", kind: j.decision, reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: "navigate", url: dest.href } });
                     return { decision: j.decision, label: j.by.label };
                 },
                 fetchNeedsConsent: (spelled) => { const url = fetchJudgedAs(spelled); return !(runFetchConsented(runId, url) ?? fetchConsent.get(tabId)?.has(url)); },   // a NEW url → gate; an already-approved one → auto
@@ -2191,7 +2195,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // An `ask` policy puts the call to the person where a free tier or a remembered consent would run it; it
                     // judges any run the loop gates, as a `deny` does.
                     if (j.decision === "allow" && !(byWorker() && runsInWorker(p, "fetch_url"))) return undefined;
-                    recordRunLog(runId, { subsystem: "policy", kind: j.decision, reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: "fetch_url", url } });
+                    if (!j.brokenAsk) recordRunLog(runId, { subsystem: "policy", kind: j.decision, reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: "fetch_url", url } });
                     return { decision: j.decision, label: j.by.label };
                 },
                 // An UNCREDENTIALED fetch to an origin the run is at / has been consented to (relative, or in

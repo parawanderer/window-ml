@@ -147,7 +147,13 @@ the run's `ml.chat` with `images` is the vision chat `look` uses (`workerVisionC
 a worker-hosted run (`run:<id>`), a page (`page:<tabId>`), or one of our own surfaces (`own`). A cell inside the
 read-only dialect runs with no card; one outside it asks, and gets the full gated `ml`. A principal change spawns a new worker;
 the old one's kept bench namespace dies with it (the bench's "sandbox restarted" banner), and a
-respawn writes the `pyodide/respawn` housekeeping record (`docs/dev/housekeeping.md`). The
+respawn writes the `pyodide/respawn` housekeeping record (`docs/dev/housekeeping.md`). A worker's message acts only
+on its OWN principal's pending runs: the offscreen document keeps one `pending` map over every principal, keyed by a
+sequential id any worker can name, so each branch of a worker's `onmessage` (a reply, a `partial` chunk, `started`,
+`spending`, an `mlCall`) reads its entry through `own`, which refuses another principal's id and records
+`pyodide/foreign-id` (reason the branch, key the sender's principal, nothing of the message) once. Before it, a
+full-mode cell could answer another run's cell, write into its stream or call `ml` under its wire stamp
+(`tests/offscreen-worker-ids.test.mjs`, one row per branch; `tests/redteam-worker-ids.test.mjs`, the attacks). The
 lockdown is `lockdownReadonly` (`src/python/lockdown.ts`), one boot step that never undoes:
 (1) Agoric `ses` `lockdown()` with `overrideTaming: "severe"`, after one `runPythonAsync("1")` warmup. Pyodide's
 `getPyProxyClass` assigns `.constructor` on a plain object, which a frozen `Object.prototype` refuses for every PyProxy

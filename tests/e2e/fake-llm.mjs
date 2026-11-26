@@ -119,6 +119,9 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
     let infoDelayMs = 0;
     /** @type {any} */
     let boxInfo = null;
+    /** What `/api/show` reports as the model's `capabilities` (ollama's list); null: no route, as before. */
+    /** @type {string[] | null} */
+    let showCaps = null;
     // The event stream (a PATCHED ollama only — docs/FORKED-BACKENDS.md). `frames` is what a new subscriber
     // is backfilled with; `pushFrame` sends to everyone connected NOW. Frames go out verbatim, so a fixture
     // captured off the real box exercises the real shapes — fully-qualified model names included, which is
@@ -256,6 +259,7 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
             return;
         }
         if (req.method === "GET" && path === "/api/version") return json(res, 200, { version: "fake" });
+        if (req.method === "POST" && showCaps && (path === "/api/show" || path === "/ollama/api/show")) return json(res, 200, { capabilities: showCaps, model_info: {} });
         // The patched OpenWebUI's tool surface: the bundle list, and running ONE function from a bundle
         // ourselves. `setServerTools()` scripts both — the list, and what each call streams.
         if (req.method === "GET" && path === "/api/v1/tools/") {
@@ -402,6 +406,8 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
                 setInfoDelay: (/** @type {number} */ ms) => { infoDelayMs = ms; },
                 /** What /api/info reports as capacity; null = a server that doesn't serve the route at all. */
                 setCapacity: (/** @type {any} */ info) => { boxInfo = info; },
+                /** What `/api/show` reports as every model's capabilities (`["completion", "tools"]`); null removes the route. */
+                setCapabilities: (/** @type {string[] | null} */ caps) => { showCaps = caps; },
                 /**
                  * Turn the event stream ON and seed the retained ring. Frames are the server's own shape
                  * (`{v, kind, t, model?, …}`) with `t` NEGATIVE for backfill — capture a real one with

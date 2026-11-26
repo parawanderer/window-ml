@@ -58,6 +58,7 @@ export const SETTING_TEXT: Readonly<Partial<Record<keyof MlConfig, SettingText>>
     autoApprovePython: { name: "Auto-approve readonly python_exec calls", tip: "Experimental, off by default while the Python sandbox is being hardened. Run a run's python_exec cells that the read-only Python dialect covers without an approval prompt. Python a page starts by itself always asks, and so does every cell outside the dialect. Code with hidden/bidi characters also still asks." },
     pythonIdleMinutes: { name: "Python namespace idle limit (minutes)" },
     detachedTaskMaxMin: { name: "Detached task limit (minutes)" },
+    closedRunGraceMin: { name: "Closed-tab run grace (minutes)" },
     taskNotifyOnly: { name: "Finished tasks only notify" },
     taskTurnChainMax: { name: "Turns finished tasks may start in a row" },
     filesQuotaMB: { name: "Files a session's runs may keep (MiB)" },

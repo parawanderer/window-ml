@@ -47,7 +47,7 @@ const notesFor = (numbered, pairs) => ({
     }).filter(Boolean),
 });
 
-const setup = async () => {
+const setup = async ({ chatPage = false } = {}) => {
     const fake = await startFakeLlm({ model: "fake-model" });
     let asked = 0;
     fake.setSide((body) => {
@@ -88,7 +88,16 @@ const setup = async () => {
             approvalRouting: "both", extraTools: [window.ml.pythonTool()], toolTokens: true,
         });
     });
-    const frame = await openRunInSidebar(page, { task: "total the quarters" });
+    // The sidebar's frame, or (chatPage) the chat page in its default CALM view, where the run is a row to open.
+    let frame;
+    if (chatPage) {
+        frame = await ext.context.newPage();
+        await frame.setViewportSize({ width: 1200, height: 950 });
+        await frame.goto(`chrome-extension://${ext.extensionId}/chat.html`);
+        await frame.locator(".chat").waitFor();
+        await frame.bringToFront();
+        await frame.locator(".chat-row", { hasText: "total the quarters" }).click();
+    } else frame = await openRunInSidebar(page, { task: "total the quarters" });
     // APPROVAL IS NOT A LOOP WITH A BUDGET. The old `for (i < 60) { approve; if finished break; sleep(400) }`
     // stopped resolving gates when its 24s ran out, and a gate that opened after that stayed open forever: the
     // run never finished and every later `.r-diff` wait was waiting on a diff that would never be drawn. On
@@ -356,5 +365,108 @@ test("the revises pill scrolls to the OLD call's code, not to the top of its ste
         // coverage.
         // (The pulse that marks WHICH step you were sent to lasts about a second, so it is long gone by the
         // time the assertions above have settled. It has its own coverage; this test is about WHERE.)
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// THE MAXIMISED VIEW IS A MODAL OVER THE PANEL, whatever it is mounted under. It was rendered inline in the transcript, and an
+// ancestor that makes a containing block for `position: fixed` offset and clipped its card ("s exec: the timeline survey").
+test("the maximised revises view fits the panel, starts at its title, and its tips draw above it", async () => {
+    const { fake, ext, frame } = await setup();
+    try {
+        const step = frame.locator(".astep").nth(1);
+        if (!(await step.locator(".r-py-in").count())) await step.locator(".astep-head").click();
+        await expect(step.locator(".r-diff-max")).toBeVisible({ timeout: 30000 });
+        await step.locator(".r-diff-segbtn", { hasText: "split" }).click();
+        await step.locator(".r-diff-max").click();
+        const card = frame.locator(".chat-dialog:has(.r-max)");
+        await expect(card).toBeVisible();
+        await frame.locator(".r-max-head button[aria-label=Close]").hover();
+        await expect(frame.locator(".cursor-tip")).toBeVisible({ timeout: 5000 });
+        const m = await frame.locator("body").evaluate(() => {
+            const r = (el) => el.getBoundingClientRect();
+            const card = document.querySelector(".chat-dialog:has(.r-max)"), back = card.closest(".chat-dialog-back");
+            const tip = document.querySelector(".cursor-tip");
+            const walk = [];
+            for (let el = back.parentElement; el; el = el.parentElement) {
+                const cs = getComputedStyle(el);
+                const hit = ["transform", "filter", "contain", "contentVisibility", "willChange", "perspective", "overflow"].filter((k) => !["none", "visible", "auto", "normal", ""].includes(cs[k]));
+                if (hit.length) walk.push(`${el.tagName.toLowerCase()}.${el.className}: ${hit.map((k) => `${k}=${cs[k]}`).join(" ")}`);
+            }
+            const c = r(card), h = r(card.querySelector(".r-max-head h2"));
+            // A tip takes no pointer events, so `elementFromPoint` would skip it: compare the stacking instead (both are
+            // `position: fixed` in the one root, so the larger z-index is drawn last).
+            const z = (el) => Number(getComputedStyle(el).zIndex) || 0;
+            return { vw: innerWidth, vh: innerHeight, card: [c.left, c.top, c.right, c.bottom].map(Math.round), titleTop: Math.round(h.top - c.top),
+                     tipOnTop: !!tip && z(tip) > z(back), walk, parent: back.parentElement.className };
+        });
+        console.log("MAXIMISED", JSON.stringify(m));
+        await frame.locator("body").page().screenshot({ path: process.env.MAX_SHOT || "test-results/maximised.png" });
+        expect(m.card[0], "card left edge inside the panel").toBeGreaterThanOrEqual(0);
+        expect(m.card[2], "card right edge inside the panel").toBeLessThanOrEqual(m.vw);
+        expect(m.card[1]).toBeGreaterThanOrEqual(0);
+        expect(m.card[3]).toBeLessThanOrEqual(m.vh);
+        expect(m.titleTop, "the title row sits at the card's top").toBeLessThanOrEqual(20);
+        expect(m.tipOnTop, "the tip draws above the modal").toBe(true);
+        await frame.locator(".r-max-head .r-diff-segbtn", { hasText: "code" }).click();
+        await expect(frame.locator(".r-max-head .r-diff-segbtn.on")).toHaveText("code");
+        await expect(step.locator(".r-diff-segbtn.on")).toHaveText("code");
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// THE SAME IN THE CALM CHAT PAGE, where the tool block sits inside the prose (`.md`): `.chat.calm .md h2` gives every heading under
+// it a 1.1em top margin, and a popout mounted there put that above its title. The card must keep its own look wherever it is drawn.
+test("calm chat: the maximised revises view's title is flush at the card's top and the card keeps the page's look", async () => {
+    test.setTimeout(120_000);
+    const { fake, ext, frame } = await setup({ chatPage: true });
+    try {
+        await expect(frame.locator("html[data-calm]")).toHaveCount(1);
+        // A finished turn stops being "fresh" and the calm chat re-draws it, folding its calls into a streak: open the popout
+        // only after, or the step it belongs to folds away under it.
+        await expect(frame.locator(".aturn.fresh")).toHaveCount(0, { timeout: 30000 });
+        await frame.locator(".astreak-head").first().click();   // the finished run folds its calls into one streak
+        const step = frame.locator(".astep").nth(1);
+        if (!(await step.locator(".r-py-in").count())) await step.locator(".astep-head").click();
+        await expect(step.locator(".r-diff-max")).toBeVisible({ timeout: 30000 });
+        const look = (sel) => frame.locator(sel).first().evaluate((el) => { const c = getComputedStyle(el); return { panel: c.getPropertyValue("--panel").trim(), font: c.fontFamily, size: c.fontSize, bg: c.backgroundColor }; });
+        // A tool block in calm can sit inside the prose, where `.chat.calm .md h2` gives a heading 1.1em above it: make this one's
+        // ancestor prose, in place (a class the render does not rewrite), so a card mounted there would inherit it.
+        await step.evaluate((el) => el.classList.add("md"));
+        await step.locator(".r-diff-max").click();
+        const card = frame.locator(".chat-dialog:has(.r-max)");
+        await expect(card).toBeVisible();
+        // Settled: every animation on the backdrop and the card has finished, so what is drawn is what is stacked.
+        await frame.evaluate(() => Promise.all(document.getAnimations().filter((a) => a.effect?.target?.closest?.(".chat-dialog-back")).map((a) => a.finished.catch(() => {}))));
+        const m = await frame.locator("body").evaluate(() => {
+            const card = document.querySelector(".chat-dialog:has(.r-max)"), h2 = card.querySelector(".r-max-head h2");
+            const c0 = card.getBoundingClientRect();
+            const hit = (x, y) => { const el = document.elementFromPoint(x, y); return !!el?.closest(".chat-dialog"); };
+            const tr = document.querySelector(".chat-transcript")?.getBoundingClientRect(), cp = document.querySelector(".chat-composer, .chat-dock, textarea")?.getBoundingClientRect();
+            // The points are the card's centre, its title, and two over the page behind (the card spans it, so they must land on the card too).
+            const hits = { centre: hit(c0.left + c0.width / 2, c0.top + c0.height / 2), title: hit(h2.getBoundingClientRect().left + 20, h2.getBoundingClientRect().top + 6),
+                           transcript: tr ? hit(Math.min(Math.max(tr.left + tr.width / 2, c0.left + 5), c0.right - 5), Math.min(Math.max(tr.top + tr.height / 2, c0.top + 5), c0.bottom - 5)) : null,
+                           composer: cp ? hit(Math.min(Math.max(cp.left + cp.width / 2, c0.left + 5), c0.right - 5), Math.min(Math.max(cp.top + cp.height / 2, c0.top + 5), c0.bottom - 5)) : null,
+                           backdropOpacity: getComputedStyle(card.closest(".chat-dialog-back")).opacity, cardOpacity: getComputedStyle(card).opacity,
+                           backdropOnTop: !!document.elementFromPoint(2, 2)?.closest(".chat-dialog-back") };
+            const cs = getComputedStyle(card), hs = getComputedStyle(h2);
+            const c = card.getBoundingClientRect(), h = h2.getBoundingClientRect();
+            return { hits, marginTop: hs.marginTop, titleTop: Math.round(h.top - c.top), card: [c.left, c.top, c.right, c.bottom].map(Math.round), vw: innerWidth, vh: innerHeight,
+                     inProse: !!card.closest(".md"), panel: cs.getPropertyValue("--panel").trim(), font: cs.fontFamily, size: cs.fontSize, bg: cs.backgroundColor };
+        });
+        console.log("CALM", JSON.stringify(m), JSON.stringify(await look(".chat-transcript")));
+        await frame.screenshot({ path: process.env.MAX_SHOT || "test-results/maximised-calm.png" });
+        expect(m.inProse, "the card is not inside the prose").toBe(false);
+        expect(m.hits.backdropOnTop, "the backdrop covers the page: a click outside lands on it").toBe(true);
+        expect([m.hits.centre, m.hits.title], "the card is on top at its centre and its title").toEqual([true, true]);
+        expect(m.hits.transcript, "the card is on top where the transcript sits").not.toBe(false);
+        expect(m.hits.composer, "the card is on top where the composer sits").not.toBe(false);
+        expect([m.hits.backdropOpacity, m.hits.cardOpacity], "settled, nothing is still fading in").toEqual(["1", "1"]);
+        expect(m.marginTop).toBe("0px");
+        expect(m.titleTop).toBeLessThanOrEqual(20);
+        expect(m.card[0]).toBeGreaterThanOrEqual(0);
+        expect(m.card[2]).toBeLessThanOrEqual(m.vw);
+        const page = await look(".chat-transcript");
+        expect(m.panel, "the card keeps the page's --panel").toBe(page.panel);
+        expect(m.font, "the card keeps the page's font").toBe(page.font);
+        expect(m.size, "the card keeps the calm page's text size").toBe(page.size);
     } finally { await ext.context.close(); await fake.stop(); }
 });

@@ -536,7 +536,9 @@ Recorded as each slice lands, with the reason.
 - **Part 4 (first part): an approved exec of a worker-built run runs isolated where it must** (`exec-routing.ts`,
   `sw-isolated-exec.ts`). Isolated when the page is not approved, or when the script names `ml.current` or a pointer;
   otherwise the page's main world, as before. The mechanism is a user-script world of the run's own
-  (`wml-<runId>`), else a CDP isolated world created per call. Owner's decision (2026-10-08) for when neither is
+  (`wml-<runId>`), else a CDP isolated world named for the run (`wml-<runId>`). Both persist across the run's execs on
+  one document, and a navigation gives a new one (measured, docs/plan/repl/RED_TEAM_JS_PAGE_REALM.md). Owner's decision
+  (2026-10-08) for when neither is
   available (the CDP setting turned off and user scripts not allowed; since #467 CDP is on by default, so a default
   install runs these isolated through CDP): refuse on
   an unapproved page and for `ml.current` (which the main world never had), but run a pointer-naming script on an
@@ -556,8 +558,12 @@ Recorded as each slice lands, with the reason.
   - The script runs as one source, with no `eval` in the page, so neither the page's CSP nor the world's matters. Like
     `cdpEval`, it is tried as an expression, then as a statement body: a multi-statement script's value is what it
     `return`s, where the main world's `eval` gives the last statement's.
-  - `state` persists across calls in the user-script world, not in a CDP world (a new one per call), and is never the
-    page's `state`.
+  - `state` persists across calls in both mechanisms (each names its world for the run, and a world lives as long as
+    its document), and is never the page's `state`.
+  - The approval is per call, the realm per run: two approved execs of one run on one document share every global
+    there, so an earlier script can replace the built-ins the later wrapper calls and either channel's entry points.
+    Every request that reaches the worker is still judged for the call that made it (`iso-channel.ts`); what the
+    earlier script can and cannot reach is measured in docs/plan/repl/RED_TEAM_JS_PAGE_REALM.md.
   - Found by the red-team pass on it: the route was decided on one page and the exec delivered to whichever document
     the tab held at send time, so a navigation in between put an approved script (or a pointer fallback's values) in
     an unapproved page's main world, and a stopped isolated script was run again on the next page. The route now reads

@@ -276,7 +276,9 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* The SURFACE is the anchored layer's (`.tt-layer`) to the value — fill, size, line height, radius, shadow — so a
    tooltip looks the same whether it is pinned to a button or following the pointer. They had drifted a shade and a
    size apart, which reads as two products rather than one tooltip that moves. */
-.rc-tip { position: fixed; top: 4px; left: 4px; z-index: 30; display: flex; align-items: center; flex-wrap: wrap;
+/* z-index above everything the panel stacks (the shared modal's backdrop is 80, the context menu's 1000), as the anchored
+   layer's is: a tip is about what the pointer is on, so it is never the thing that sits behind it. */
+.rc-tip { position: fixed; top: 4px; left: 4px; z-index: 2147483000; display: flex; align-items: center; flex-wrap: wrap;
           max-width: min(300px, 92vw);
           gap: 4px 5px; padding: 4px 7px; font-size: calc(var(--fs) * 0.83); line-height: 1.35; pointer-events: none;
           color: var(--fg); background: var(--tip-bg); border: 1px solid var(--tip-line); border-radius: 5px;
@@ -638,7 +640,7 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    own scrolling would otherwise clip it. */
 /* The row tip carries .rc-tip for the shared look; it only differs in being FIXED (the row is outside the
    plot) and in stacking its lines. */
-.vram-rowtip { position: fixed; z-index: 40; flex-direction: column; align-items: stretch; gap: 1px; }
+.vram-rowtip { position: fixed; flex-direction: column; align-items: stretch; gap: 1px; }
 /* The name and its badges WRAP AS A LINE, and the name itself does not break mid-token. As a plain flex row
    a long id ("qwen3.8-flash-next:vision") was broken across two lines while "on CUDA0 87.70 GiB" and "chat
    model" sat beside it as further columns — three ragged columns instead of a sentence. */
@@ -1464,6 +1466,8 @@ html[data-calm] .appr-deny-wrap { border-radius: 999px; color: var(--fg-dim); }
 html[data-calm] .appr-note { border-bottom: 2px solid color-mix(in srgb, var(--fg) 14%, transparent); }
 html[data-calm] .appr-note svg { color: inherit; }
 .appr-note b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* The "Edit policy" button on a broken-policy approval line: opens that policy's editor in Settings. */
+.appr-askwhy-edit { flex: none; margin-left: auto; align-self: center; }
 
 /* Google Docs-style smart chip for a Sheet reference: icon + friendly name, hoverable for the id. */
 .sheet-chip { display: inline-flex; align-items: center; gap: 3px; vertical-align: middle;
@@ -2145,6 +2149,9 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
    so a log full of them does not turn into a wall of blue. */
 a.out-link { color: inherit; text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 2px; cursor: pointer; }
 a.out-link:hover { text-decoration-thickness: 2px; }
+/* A markdown link target in a raw view that holds no link we draw (a relative path, a data: URI, a refused address): the
+   theme underlines `.hljs-link` as if it were clickable, so it loses that (code-links.ts). */
+.hljs-link.hljs-link-dead { text-decoration: none; }
 a.out-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
 /* Midnight: the gutter shows time only, so a day change gets its own divider — without it 00:00:01 sits
    directly under 23:59:58 and reads as one second later. */
@@ -3954,9 +3961,12 @@ button.ui-step-now:hover { background: var(--panel-2); color: var(--fg); }
 .scell .dno { border-right: 1px solid var(--border); margin-right: 8px; }
 /* THE MAXIMISED VIEW, in the shared modal (dialog.tsx): the card grows to the room the panel has and scrolls inside. */
 .chat-dialog:has(.r-max) { width: min(1200px, 100%); max-height: calc(100vh - 32px); overflow: auto; padding: 12px; }
-/* The maximised revises view's title row: what is shown, and the close button. */
-.r-max-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
-.r-max-head h2 { margin: 0; font-size: 0.95em; font-weight: 600; word-break: break-word; }
+/* The maximised revises view's title row: what is shown, the code | diff | split switch, and the close button. The title's
+   rule outweighs the shared modal's own `h2` margin (`0 0 8px`). */
+.r-max-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 8px; }
+/* The class is doubled so a prose heading rule (the calm chat's `.chat.calm .md h2`, 1.1em on top) cannot win wherever the card is mounted. */
+.chat-dialog .r-max-head .r-max-title.r-max-title { margin: 0; font-size: 0.95em; line-height: 1.3; font-weight: 600; word-break: break-word; }
+.r-max-head .r-diff-tools { margin-left: 0; }
 /* The content of the maximised revises view (the code, the diff or the split) in the shared modal: the claim keeps its frame. */
 .r-max .r-diff-claim { margin-bottom: 8px; border: 1px solid var(--border); border-radius: 6px; }
 /* The maximised view itself, flush in the modal card. */

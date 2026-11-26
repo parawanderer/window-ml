@@ -2317,8 +2317,8 @@ test("_rebuildToolset rebuilds every builtin a run can delegate to the page, enu
     const base = { model: "m", driverSees: false, visionModel: "vm", groundingModel: null, groundingRange: 1000, pierceClosed: false };
     for (const d of builtinTools()) {
         const names = ml._rebuildToolset({ ...base, toolNames: [d.name] }).map(t => t.name);
-        // propose_policy, propose_manifest, python_install, change_setting and task are built in the worker alone (worker-tools.ts) and never offered by a page's run: the page has no factory for them.
-        assert.deepEqual(names, d.realm === "loop" || d.name === "propose_policy" || d.name === "propose_manifest" || d.name === "python_install" || d.name === "change_setting" || d.name === "task" ? [] : [d.name], `${d.name} (realm ${d.realm})`);
+        // propose_policy, propose_manifest, python_install, change_setting, task and read_pages (a worker chat's tool) are built in the worker alone (worker-tools.ts) and never offered by a page's run: the page has no factory for them.
+        assert.deepEqual(names, d.realm === "loop" || d.name === "propose_policy" || d.name === "propose_manifest" || d.name === "python_install" || d.name === "change_setting" || d.name === "task" || d.name === "read_pages" ? [] : [d.name], `${d.name} (realm ${d.realm})`);
     }
     // A name the registry does not declare is the site's own tool: never conjured on the new page.
     assert.equal(isBuiltinTool("my_site_tool"), false);

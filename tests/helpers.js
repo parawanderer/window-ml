@@ -161,7 +161,7 @@ function workerTimers() {
 // lets a test declare contextMenus, which GET_INVOCATION reads as "the right-click entry exists".
 // `holdPolicies` is a promise the policy store's first storage read waits on.
 // `holdRestore` is a promise the worker's read of ALL of local storage (its run restore) waits on.
-function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, onPdfRead, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, siteAgents = "always", userScripts, onTabsGet, holdRestore, onNative, dialectInside, pyInside, holdPolicies, onPyDelete, extensionTabs = [], onPyInstallTest, onFsCall, playTables = false }) {
+function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, onPdfRead, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, siteAgents = "always", userScripts, onTabsGet, holdRestore, onNative, dialectInside, pyInside, holdPolicies, onPyDelete, extensionTabs = [], onPyInstallTest, onFsCall, playTables = false, alarms = false }) {
     const calls = [];
     // chrome.runtime.connectNative: each host name asked for, in order. With `onNative(name, end)`, the test plays the
     // native host: `end.send(msg)` delivers a message to the worker's port, `end.close(why)` disconnects it, and the
@@ -213,6 +213,10 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     const listeners = [];
     const connectListeners = [];
     const tabRemovedListeners = [];   // chrome.tabs.onRemoved listeners; fired by bg.closeTab(id)
+    // chrome.alarms, present only when a test passes `alarms: true` (the release deadline's alarm): what is set, by name, and the
+    // listeners `bg.alarms.fire(name)` calls. Absent otherwise, as in the tests that predate it.
+    const alarmsSet = new Map();
+    const alarmListeners = [];
     const tabActivatedListeners = new Set();   // chrome.tabs.onActivated listeners; fired by bg.activateTab(id)
     const tabReplacedListeners = new Set();   // chrome.tabs.onReplaced listeners; fired by bg.replaceTab(oldId, newId)
     const badges = new Map();   // tabId (or "default") → { text, title }: what chrome.action was told for each tab (the toolbar badge)
@@ -504,6 +508,12 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 getLastFocused: async () => (typeof focusedWindow === "function" ? focusedWindow() : focusedWindow) ?? { focused: false, tabs: [] },
                 update: async (...args) => { windowsUpdated.push(args); return {}; },
             },
+            ...(alarms ? { alarms: {
+                create: async (name, info) => { alarmsSet.set(name, { name, ...info }); },
+                get: async (name) => alarmsSet.get(name),
+                clear: async (name) => alarmsSet.delete(name),
+                onAlarm: { addListener: (fn) => alarmListeners.push(fn) },
+            } } : {}),
             tabs: {
                 // Records args so tests can assert the windowId; onCaptureTab (if
                 // given) provides the data URL or throws to simulate a failure.
@@ -639,6 +649,8 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         },
         /** Grant a permission the way the browser's prompt does: held, then permissions.onAdded. */
         grantPermission: (name) => { permsHeld.add(name); for (const fn of permAddedListeners) fn({ permissions: [name] }); },
+        /** The alarms set (by name) and a way to fire one, when the test asked for `alarms: true`. */
+        alarms: { set: alarmsSet, fire: (name) => { for (const fn of [...alarmListeners]) fn({ name }); } },
         stored,
         localStore,   // chrome.storage.local contents — tests assert a snapshot was kept/removed
         sessionStore,   // chrome.storage.session contents — the housekeeping log lives here

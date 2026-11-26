@@ -124,7 +124,18 @@ export class AgentFiles {
 
     /** What a session's files take, at their stored size: what the quota counts. */
     async usage(session: string): Promise<number> {
-        return (await this.all(session)).reduce((n, x) => n + (x.kind === "file" ? x.size : 0), 0);
+        return (await this.stats(session)).bytes;
+    }
+
+    /**
+     * How many files a session's runs made under `agent/`, folders not counted, and what they take: one read of the
+     * session's nodes, never a walk of its folders. What the files panel's header shows.
+     * @param session the session
+     */
+    async stats(session: string): Promise<{ files: number; bytes: number }> {
+        let files = 0, bytes = 0;
+        for (const x of await this.all(session)) if (x.kind === "file") { files++; bytes += x.size; }
+        return { files, bytes };
     }
 
     /** A stored file's bytes, by its node's `blob`. Throws when they are gone. */

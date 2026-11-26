@@ -25,11 +25,12 @@ import { ImagesRefused, namedNote, readerNote, type ImagePlan } from "../image-g
 import { fitPages, pageSections, planPages, wantsImage, type PageAim, type PageOutcome } from "../pdf/pdf-frame";
 import type { PdfDoc } from "../pdf/pdf-read";
 import { b64ToBytes, type PdfReadReply, type PdfRenderReply } from "../pdf/pdf-wire";
-import { type LlmResult, type NeutralMessage } from "../contract/contract-chat";
+import { type LlmResult, type NeutralMessage, type TokenUsage, type ToolCall } from "../contract/contract-chat";
 import { type ChatHeldFile, type StoredSession } from "../contract/contract-messages";
 import { type MlDebugEvent } from "../contract/contract-debug";
 import { defineState } from "../state-registry";
 import type { TurnScrub } from "./sw-scrub";
+import { READ_PAGES, READ_PAGES_MAX_CALLS, READ_PAGES_RECOVERY, READ_PAGES_TOOL, offersReadPages, readPages, type ReadableFile } from "../tools/read-pages-tool";
 
 /** Live background chats. Small on purpose: each holds a whole history, and the worker's memory is shared with
  *  every run. The oldest idle chat is dropped when a new one would exceed it; a SAVED chat is only dropped from
@@ -61,7 +62,8 @@ export function pdfTextBudget(contextTokens: number | null): number {
 
 /** The scale a page is drawn at for a model or a reader: 144 dpi, legible small print on a letter page. */
 export const PAGE_IMAGE_SCALE = 2;
-/** What a chat says can get a page it held back: nothing yet (slice 3's `look` on a page is an agent run's). */
+/** What a chat says can get a page it held back on a turn that offers no tool: `read_pages` is offered only to a
+ *  model that says it takes tools ({@link READ_PAGES_RECOVERY} otherwise). */
 export const CHAT_PAGE_RECOVERY = "This chat cannot show them.";
 
 /** The least time between two live `chat-stream` previews of one turn: the cadence an agent run streams at
@@ -70,6 +72,9 @@ export const CHAT_STREAM_EMIT_MS = 90;
 
 /** One model request of a background chat's turn. */
 export interface ChatRequest { messages: NeutralMessage[]; model: string | null; think: boolean | null; hint: RequestHint }
+
+/** What a model call that was offered tools came back with: its text, the calls it made, and what it cost. */
+export interface ToolTurn { content: string | null; tool_calls: ToolCall[]; reasoning: string | null; usage: TokenUsage | null }
 
 /** What a background chat needs from the worker, injected so the module is testable without `chrome`. */
 export interface ChatDeps {
@@ -102,6 +107,18 @@ export interface ChatDeps {
     /** the scrub for what the person sends (`forTurn`, ruling 39), read once a message; throws `TurnUnreadable` when the
      *  registered secrets cannot be read, and the message is then not sent (ruling 44) */
     scrub(asIs?: string[]): Promise<TurnScrub>;
+    /** whether `model` (null: the default) says it takes tools (`MODEL_CAPS`'s `tools`); false when it does not say.
+     *  Absent, like the three below: `read_pages` is never offered. */
+    takesTools?(model: string | null): Promise<boolean>;
+    /** one model call offered `tools` (null: none, the turn's last call past the bound), streamed: `onLive` gets the
+     *  reply and its thinking SO FAR; `streamAgentTurn` in the worker */
+    callTools?(req: ChatRequest & { tools: unknown[] | null }, onLive: (live: { content: string; reasoning: string }) => void, signal: AbortSignal): Promise<ToolTurn>;
+    /** the text of one value-store row the chat's session holds (`readStoredText`, sw-values.ts): the ONE place a chat
+     *  reads a held row back, to be pointed at the session store's ranged reader (rulings 22/23) */
+    readHeld?(key: string, session: string): Promise<string>;
+    /** a tool's result as the model reads it, scrubbed of the config's secrets and every registered value, with the line
+     *  that says what was taken (`forModel`, `redactedNote`: what an agent run's tool results go through) */
+    scrubResult?(text: string): Promise<string>;
 }
 
 /** A message's files once its PDFs are read: a text file as sent, a PDF with its pages, what each page sends, and how
@@ -128,6 +145,8 @@ interface BgChat {
     files: ChatHeldFile[];
     /** the index from which its messages are as the model read them (`StoredSession.scrubbedFrom`) */
     scrubbedFrom: number;
+    /** tool calls made so far, which a tool call's `step` and `seq` count on from (`StoredSession.toolSeq`) */
+    toolSeq: number;
 }
 
 let deps: ChatDeps | null = null;
@@ -216,6 +235,7 @@ export async function startBackgroundChat(opts: {
         lastTs: d.now(),
         files: [],
         scrubbedFrom: 0,
+        toolSeq: 0,
     };
     chats.set(hash, chat);
     void turn(chat, opts.text, opts.images, prep, scrub);
@@ -340,6 +360,7 @@ async function turn(chat: BgChat, text: string, images: string[] | undefined, pr
     const controller = new AbortController();
     chat.running = controller;
     chat.lastTs = d.now();
+    const seqAtStart = chat.toolSeq;
     // Images go to the model only when it sees (or the client claims it does, `vision: true`); otherwise each is replaced by a note the
     // model reads, the reader's transcription or a line naming it as not sent (image-gate.ts).
     const shown = images ?? [];
@@ -357,11 +378,19 @@ async function turn(chat: BgChat, text: string, images: string[] | undefined, pr
     // A PDF's pages are drawn and read now, inside the turn the person is waiting on; their images follow the pasted
     // ones, numbered in the `<page image="…">` that carries each (pdf-frame.ts).
     const reader = plan.route === "reader" || plan.route === "model" ? plan.reader ?? null : null;
+    // Each PDF of this message as the model reads it and the chat holds it: scrubbed by registered value.
+    const docs = new Map<ReadFile, PdfDoc>();
+    for (const f of prep.files ?? []) if ("pdf" in f) docs.set(f, scrub.deep(f.doc));
+    // `read_pages` is offered only while the chat holds a page no message sent and the model says it takes tools: a
+    // backend refuses a whole request that lists tools to a model without them (FILE_ATTACHMENTS.md). The held-back
+    // note names it only on a turn that offers it.
+    const readable = readableFiles(d, chat, prep.files ?? [], docs);
+    const offered = await offersTool(d, chat.model, readable);
     const files: FramedFile[] = [];
     for (const f of prep.files ?? []) {
         if (!("pdf" in f)) { files.push(f); continue; }
         const outcomes = await drawPages(d, f, reader, controller.signal);
-        const s = pageSections(f.doc, f.aims, outcomes, { firstImage: pictures.length + 1, reader, recovery: CHAT_PAGE_RECOVERY });
+        const s = pageSections(f.doc, f.aims, outcomes, { firstImage: pictures.length + 1, reader, recovery: offered ? READ_PAGES_RECOVERY : CHAT_PAGE_RECOVERY });
         pictures.push(...s.images);
         files.push({ name: f.pdf.name, type: f.pdf.type, bytes: b64Bytes(f.pdf.data), pages: f.doc.pageCount, body: s.body, escaped: s.escaped });
     }
@@ -402,7 +431,9 @@ async function turn(chat: BgChat, text: string, images: string[] | undefined, pr
             // RequestUse). An agent run says "agent"; a title or a summary says "utility".
             hint: { use: "interactive", session: hintSession(chat.hash) },
         };
-        const result = d.stream ? await d.stream(req, preview(chat, id, session, controller.signal), controller.signal) : await d.call(req, controller.signal);
+        const result = offered
+            ? await toolLoop(chat, { id, session, req, readable, signal: controller.signal })
+            : d.stream ? await d.stream(req, preview(chat, id, session, controller.signal), controller.signal) : await d.call(req, controller.signal);
         // A cancel that landed while the fetch was resolving: the turn is over either way, and reporting a result
         // the person cancelled would put an answer in a transcript they stopped.
         if (controller.signal.aborted) throw new Error("cancelled");
@@ -411,7 +442,7 @@ async function turn(chat: BgChat, text: string, images: string[] | undefined, pr
         chat.messages = [...chat.messages, user, answer];
         chat.lastTs = d.now();
         // A PDF's pages are held as the model read them, scrubbed; its bytes as attached.
-        for (const f of prep.files ?? []) if ("pdf" in f) chat.files.push(await holdPdf(d, chat.hash, { ...f, doc: scrub.deep(f.doc) }));
+        for (const f of prep.files ?? []) if ("pdf" in f) chat.files.push(await holdPdf(d, chat.hash, { ...f, doc: docs.get(f)! }));
         if (chat.save) await persist(chat);
         d.emit({
             kind: "chat-result", id, ts: d.now(), save: chat.save, session, content: result.content,
@@ -424,6 +455,8 @@ async function turn(chat: BgChat, text: string, images: string[] | undefined, pr
         // make the next turn re-send a question that was never asked properly. It is in the transcript as the
         // failed turn's own event, so nothing is lost to the reader.
         chat.lastTs = d.now();
+        // The count of tool calls is kept even so: the clients hold this turn's steps, and the next call must not reuse one.
+        if (chat.save && chat.toolSeq !== seqAtStart) await persist(chat);
         d.emit({ kind: "chat-error", id, ts: d.now(), save: chat.save, session, error: String((err as Error)?.message || err) });
     } finally {
         if (chat.running === controller) chat.running = null;
@@ -437,11 +470,20 @@ async function turn(chat: BgChat, text: string, images: string[] | undefined, pr
  * piece and supersedes every preview. Nothing goes out once the turn is cancelled.
  */
 function preview(chat: BgChat, id: string, session: { hash: string; turn: number }, signal: AbortSignal): (delta: { content?: string; reasoning?: string }) => void {
-    const d = need();
-    let content = "", reasoning = "", last = -Infinity;
+    let content = "", reasoning = "";
+    const show = previewSoFar(chat, id, session, signal);
     return (delta) => {
         if (delta.content) content += delta.content;
         if (delta.reasoning) reasoning += delta.reasoning;
+        show({ content, reasoning });
+    };
+}
+
+/** {@link preview} for a call that reports what it has SO FAR rather than each new piece (`callTools`). */
+function previewSoFar(chat: BgChat, id: string, session: { hash: string; turn: number }, signal: AbortSignal): (live: { content: string; reasoning: string }) => void {
+    const d = need();
+    let last = -Infinity;
+    return ({ content, reasoning }) => {
         if (signal.aborted || (!content && !reasoning)) return;
         const now = d.now();
         if (now - last < CHAT_STREAM_EMIT_MS) return;
@@ -449,6 +491,80 @@ function preview(chat: BgChat, id: string, session: { hash: string; turn: number
         chat.lastTs = now;
         d.emit({ kind: "chat-stream", id, ts: now, save: false, session, ...(content ? { content } : {}), ...(reasoning ? { reasoning } : {}) });
     };
+}
+
+/** The PDFs a turn can read pages of, in the order sent: the chat's held ones, then this message's. A held one is read
+ *  back from its `paged` row; one listed with no rows answers that it is no longer held. */
+function readableFiles(d: ChatDeps, chat: BgChat, files: readonly ReadFile[], docs: ReadonlyMap<ReadFile, PdfDoc>): ReadableFile[] {
+    const held = chat.files.map((f): ReadableFile => ({
+        name: f.name, pages: f.pages, sent: f.sent, held: !!f.doc && !!d.readHeld,
+        doc: async () => (f.doc && d.readHeld ? storedDoc(await d.readHeld(f.doc, chat.hash)) : null),
+    }));
+    const now = files.flatMap((f): ReadableFile[] => {
+        const doc = docs.get(f);
+        return "pdf" in f && doc ? [{ name: f.pdf.name, pages: doc.pageCount, sent: f.sent, held: true, doc: async () => doc }] : [];
+    });
+    return [...held, ...now];
+}
+
+/** A held `paged` row's text as a read document, or null when it is not one. */
+function storedDoc(text: string): PdfDoc | null {
+    try {
+        const doc = JSON.parse(text) as PdfDoc;
+        return doc && Array.isArray(doc.pages) && Number.isFinite(doc.pageCount) ? doc : null;
+    } catch { return null; }
+}
+
+/** Whether this turn offers `read_pages`: the worker can run it, a held PDF has a page no message sent, and the model
+ *  says it takes tools. Unknown is no. */
+async function offersTool(d: ChatDeps, model: string | null, readable: readonly ReadableFile[]): Promise<boolean> {
+    if (!d.takesTools || !d.callTools || !d.readHeld || !d.scrubResult || !offersReadPages(readable)) return false;
+    return await d.takesTools(model).catch(() => false);
+}
+
+/** A tool call's arguments as an object: the openai format sends them as a JSON string, the ollama one as an object. */
+function callArgs(raw: ToolCall["arguments"]): Record<string, unknown> {
+    if (raw && typeof raw === "object") return raw;
+    try { const v = JSON.parse(String(raw)); return v && typeof v === "object" && !Array.isArray(v) ? v : {}; } catch { return {}; }
+}
+
+/**
+ * A turn that offers `read_pages`: model calls until one answers without calling a tool. Each call it makes is
+ * answered, scrubbed as any tool result is, and emitted as a step of the turn (`agent-step` with `turn`), its `step`
+ * and `seq` the chat's count of tool calls. Past {@link READ_PAGES_MAX_CALLS} calls a call is answered with the bound,
+ * and the next model call offers no tools, so the turn ends in an answer. Only the question and the answer stay in the
+ * chat's history: a later turn that needs a page reads it again.
+ */
+async function toolLoop(chat: BgChat, t: { id: string; session: { hash: string; turn: number }; req: ChatRequest; readable: readonly ReadableFile[]; signal: AbortSignal }): Promise<LlmResult> {
+    const d = need();
+    const budget = pdfTextBudget(d.contextTokens ? await d.contextTokens(chat.model).catch(() => null) : null);
+    const tools = [{ type: "function", function: READ_PAGES_TOOL }];
+    const live = previewSoFar(chat, t.id, t.session, t.signal);
+    let messages = t.req.messages, calls = 0;
+    for (;;) {
+        const offer = calls < READ_PAGES_MAX_CALLS;
+        const r = await d.callTools!({ ...t.req, messages, tools: offer ? tools : null }, live, t.signal);
+        if (t.signal.aborted) throw new Error("cancelled");
+        if (!offer || !r.tool_calls?.length) return { content: r.content ?? "", reasoning: r.reasoning, usage: r.usage, model: chat.model };
+        messages = [...messages, { role: "assistant", content: r.content ?? "", tool_calls: r.tool_calls, ...(r.reasoning ? { reasoning: r.reasoning } : {}) }];
+        for (const [i, call] of r.tool_calls.entries()) {
+            calls++;
+            const seq = ++chat.toolSeq;
+            const args = callArgs(call.arguments);
+            // What the model wrote with its calls goes on the first call's step, in both of its events.
+            const said = i === 0 ? { ...(r.content ? { thought: r.content } : {}), ...(r.reasoning ? { reasoning: r.reasoning } : {}) } : {};
+            const step = { kind: "agent-step" as const, id: t.id, save: chat.save, session: t.session, step: seq, seq, turn: t.id, tool: call.name, arguments: args, ...said };
+            d.emit({ ...step, ts: d.now(), pending: true });
+            const t0 = d.now();
+            const text = call.name !== READ_PAGES ? `This chat has no tool named ${JSON.stringify(call.name)}: read_pages is its only one.`
+                : calls > READ_PAGES_MAX_CALLS ? `Not read: a turn makes at most ${READ_PAGES_MAX_CALLS} read_pages calls. Answer from the pages read so far.`
+                : await readPages(t.readable, args, budget);
+            const last = calls === READ_PAGES_MAX_CALLS ? "\n\n(That was this turn's last read_pages call: answer from the pages read so far.)" : "";
+            const seen = await d.scrubResult!(text + last);
+            d.emit({ ...step, ts: d.now(), toolMs: d.now() - t0, result: seen, ...(i === 0 && r.usage ? { usage: r.usage } : {}) });
+            messages = [...messages, { role: "tool", content: seen, tool_call_id: call.id }];
+        }
+    }
 }
 
 /**
@@ -489,6 +605,7 @@ async function persist(chat: BgChat): Promise<void> {
             think: chat.think, schema: null, toolIds: null, maxTokens: null, save: true,
             ...(chat.files.length ? { files: chat.files } : {}),
             scrubbedFrom: chat.scrubbedFrom,
+            ...(chat.toolSeq ? { toolSeq: chat.toolSeq } : {}),
         });
     } catch { /* storage full or unavailable: the turn still happened, and resume just will not have it */ }
 }
@@ -512,6 +629,8 @@ async function rehydrate(hash: string): Promise<BgChat | null> {
         files: heldFiles(stored.files),
         // A record from before `scrubbedFrom` holds turns that may be raw: every one of them stays behind the line.
         scrubbedFrom: Number.isInteger(stored.scrubbedFrom) && stored.scrubbedFrom! >= 0 ? Math.min(stored.scrubbedFrom!, stored.messages.length) : stored.messages.length,
+        // A tool call's `seq` must not repeat one the clients already hold: the count goes on from the record's.
+        toolSeq: Number.isInteger(stored.toolSeq) && stored.toolSeq! > 0 ? stored.toolSeq! : 0,
     };
     chats.set(hash, chat);
     return chat;
