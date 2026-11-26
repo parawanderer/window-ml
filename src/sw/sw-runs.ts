@@ -675,14 +675,20 @@ function dropTokenStore(runId: string): void {
 
 /** What else is released with a session, registered by modules that cannot be imported here (sw-python's Python namespace).
  *  A `var` with no initializer: sw-python registers while this module is still loading (an import cycle through the router), and a `const` would be unreachable then. */
-var sessionReleaseHooks: ((runId: string) => void)[] | undefined;   // state: fixed — registered at module load
-/** Register something to release with every session ({@link releaseSessionTokens}). @param hook called with the session's run id */
-export function onSessionRelease(hook: (runId: string) => void): void { (sessionReleaseHooks ??= []).push(hook); }
+var sessionReleaseHooks: ((runId: string, reason?: ReleaseReason) => void)[] | undefined;   // state: fixed — registered at module load
+/** Why a run was released while its session lives on (docs/spec/ASYNC_CALLS.md, "A run whose tab closed: the release"):
+ *  its tab closed and the grace ran out, or the person pressed Stop. A release that ends the session carries none. */
+export type ReleaseReason = "tab-closed" | "person";
+
+/** Register something to release with every session ({@link releaseSessionTokens}). @param hook called with the session's run id, and the reason when the run is released but its session stays */
+export function onSessionRelease(hook: (runId: string, reason?: ReleaseReason) => void): void { (sessionReleaseHooks ??= []).push(hook); }
 
 /** Release a SESSION's pointers — only when the session itself is gone (its bgRuns entry dropped, or its store pushed
  *  out by newer sessions), never at the end of a turn. Paired with every `bgRuns.delete` so the two lifetimes cannot
- *  drift apart again. The stored values those pointers named go with them: nothing can address them any more. */
-export function releaseSessionTokens(runId: string): void { for (const hook of sessionReleaseHooks ?? []) hook(runId); tokensByRun.delete(runId); noTabReplay.delete(runId); releaseSessionValues(runId); dropLocalTools(runId); releaseShOutputs(runId); forgetArrivalRun(runId); }
+ *  drift apart again. The stored values those pointers named go with them: nothing can address them any more. `reason` is
+ *  given only by a release that leaves the session in place (the closed tab's deadline, the person's Stop): the hooks read
+ *  it, and a task's result no turn has read is kept through it. */
+export function releaseSessionTokens(runId: string, reason?: ReleaseReason): void { for (const hook of sessionReleaseHooks ?? []) hook(runId, reason); tokensByRun.delete(runId); noTabReplay.delete(runId); releaseSessionValues(runId); dropLocalTools(runId); releaseShOutputs(runId); forgetArrivalRun(runId); }
 
 // The navigation SENSOR: a committed MAIN-frame navigation on a tab that hosts a live run means its document
 // (and registered toolset) is going away → engage the barrier so the next delegated tool waits for re-adopt.

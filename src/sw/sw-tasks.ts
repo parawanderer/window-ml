@@ -94,6 +94,8 @@ export interface StoredTask {
     v: 1; id: string; tool: string; startedMs: number; leaseMs: number; expectMs: number | null; status: TaskStatus;
     result: string | null; text: string | null; delivered: boolean; endedMs?: number; code: number | null;
     value?: string; chars?: number; image?: string; ref?: TaskRef;
+    /** Set when a release (the closed tab's deadline, the person's Stop) kept this ended row and cleared its `result` pointer. */
+    releasedAt?: number;
 }
 
 interface Task extends Omit<TaskSpec, "exec"> {
@@ -110,6 +112,8 @@ interface Task extends Omit<TaskSpec, "exec"> {
     value?: string;
     chars?: number;
     image?: string;
+    /** When a release kept this row and dropped the value its `result` pointer named (`endTasks` with `keepUndelivered`). */
+    releasedAt?: number;
     /** An await waiting on it now: answered instead of the inbox, by its end or by a page change's cancel (which can
      *  leave it orphaned). */
     waiter?: (o: AwaitAnswer) => void;
@@ -276,7 +280,7 @@ export function openTasks(runId: string, fan: (text: string, id: string, end: Ta
  * @param t the ended task
  */
 function inboxItem(t: Task): { text: string; task: string; value?: string; chars?: number; images?: string[] } {
-    return { text: `[task ${t.id} ${t.status} after ${secs(t.endedMs! - t.startedMs)}: ${t.text}]`, task: t.id, ...carried(t) };
+    return { text: `[task ${t.id} ${t.status} after ${secs(t.endedMs! - t.startedMs)}: ${t.text}${releasedNote(t)}]`, task: t.id, ...carried(t) };
 }
 
 /**
@@ -322,7 +326,7 @@ function rowOf(t: Task): StoredTask {
         v: 1, id: t.id, tool: t.tool, startedMs: t.startedMs, leaseMs: t.leaseMs, expectMs: t.expectMs, status: t.status,
         result: t.result, text: t.text, delivered: t.delivered, ...(t.endedMs !== undefined ? { endedMs: t.endedMs } : {}), code: t.code,
         ...(t.value ? { value: t.value } : {}), ...(t.chars !== undefined ? { chars: t.chars } : {}), ...(t.image ? { image: t.image } : {}),
-        ...(t.ref ? { ref: t.ref } : {}),
+        ...(t.ref ? { ref: t.ref } : {}), ...(t.releasedAt !== undefined ? { releasedAt: t.releasedAt } : {}),
     };
 }
 
@@ -420,7 +424,8 @@ async function readBack(runId: string): Promise<void> {
         const r = row as StoredTask;
         const base = { id: r.id, tool: r.tool, startedMs: Number(r.startedMs) || now, leaseMs: Number(r.leaseMs) || 0, expectMs: r.expectMs ?? null, status: r.status, result: r.result ?? null, text: r.text ?? null,
             delivered: r.delivered === true, ...(r.endedMs !== undefined ? { endedMs: r.endedMs } : {}), code: r.code ?? null,
-            ...(r.value ? { value: r.value } : {}), ...(r.chars !== undefined ? { chars: r.chars } : {}), ...(r.image ? { image: r.image } : {}), ...(r.ref ? { ref: r.ref } : {}) };
+            ...(r.value ? { value: r.value } : {}), ...(r.chars !== undefined ? { chars: r.chars } : {}), ...(r.image ? { image: r.image } : {}), ...(r.ref ? { ref: r.ref } : {}),
+            ...(typeof r.releasedAt === "number" ? { releasedAt: r.releasedAt } : {}) };
         if (r.status !== "running") {
             // Ended: as it was. Its executor has nothing left to do.
             mine.set(r.id, { ...base, exec: { cancel: async () => ({ confirmed: true, text: "it had already ended." }), tail: () => null, tailAbsent: "", settled: new Promise<TaskOutcome>(() => { /* ended: never settles */ }) } });
@@ -518,6 +523,11 @@ async function finish(runId: string, t: Task, o: TaskOutcome): Promise<void> {
     inbox.queue.push(inboxItem(t));
 }
 
+/** The sentence a delivered row adds when a release dropped its value: empty for any other row. */
+function releasedNote(t: Task): string {
+    return t.releasedAt === undefined ? "" : `; its value was released at ${new Date(t.releasedAt).toISOString()}`;
+}
+
 /**
  * What a finished task's result carries beside its text: the key and length of its stored whole, and its figure.
  * @param t the task
@@ -558,22 +568,38 @@ export function taskDrained(runId: string, id: string, text: string): boolean {
 }
 
 /**
- * End a run's tasks for good: each still running is cancelled by its executor, and one whose cancel is not confirmed is
- * reported as an orphan. The table is dropped, so a result that arrives later is dropped. Called at session release and
- * archive (a turn's end is {@link closeTurnTasks}).
+ * End a run's tasks: each still running is cancelled by its executor, and one whose cancel is not confirmed is reported as an
+ * orphan. The table is dropped, so a result that arrives later is dropped. Called at session release and archive (a turn's
+ * end is {@link closeTurnTasks}). With `keepUndelivered` (a release that leaves the session in place) an ended row whose result
+ * no turn has read stays in the table, persisted: its `result` pointer names a value the release dropped, so it is cleared and
+ * the row stamped `releasedAt`, and the inbox says so when the row is delivered. The rest goes.
  * @param runId the run
  * @param reason what ended them, for the run log: "session-release" (the default), "archived" or "deleted"
+ * @param opts `keepUndelivered`: keep the ended rows no turn has read (the release); archive and delete keep nothing
  */
-export async function endTasks(runId: string, reason = "session-release"): Promise<void> {
+export async function endTasks(runId: string, reason = "session-release", opts: { keepUndelivered?: boolean } = {}): Promise<void> {
     sinks.delete(runId);
     resetTaskChain(runId);
     // A worker started since the tasks were detached holds none in memory: they are read back first, so a cell still running
     // is cancelled and not left to run to its ceiling with no run to take its result.
     if (!tasks.has(runId)) await hydrateTasks(runId);
     const mine = tasks.get(runId);
-    tasks.delete(runId);
-    announceCounts(runId);
-    try { void Promise.resolve(chrome.storage.session.remove(KEY(runId))).catch(() => { /* nothing stored */ }); } catch { /* no storage */ }
+    const kept = new Map<string, Task>();
+    if (opts.keepUndelivered && mine) {
+        const at = Date.now();
+        for (const [id, t] of mine) {
+            if (t.status === "running" || t.delivered || t.endedMs === undefined || t.text === null) continue;
+            // What the call drew and the key of the whole it was cut from go with the value: the row keeps only its text.
+            t.result = null; delete t.image; delete t.value; delete t.chars; t.releasedAt = at;
+            kept.set(id, t);
+        }
+    }
+    if (kept.size) { tasks.set(runId, kept); persist(runId); announceCounts(runId); }
+    else {
+        tasks.delete(runId);
+        announceCounts(runId);
+        try { void Promise.resolve(chrome.storage.session.remove(KEY(runId))).catch(() => { /* nothing stored */ }); } catch { /* no storage */ }
+    }
     if (!mine) return;
     await Promise.all([...mine.values()].filter((t) => t.status === "running").map(async (t) => {
         t.waiter = undefined;
@@ -582,7 +608,8 @@ export async function endTasks(runId: string, reason = "session-release"): Promi
         recordRunLog(runId, { level: "warn", subsystem: "task", kind: c.confirmed ? "cancelled" : "orphaned", reason, detail: { id: t.id, tool: t.tool } });
     }));
 }
-onSessionRelease((runId) => { void endTasks(runId); });
+// A release that leaves the session in place (a reason is given) keeps the results no turn has read; the session's end keeps nothing.
+onSessionRelease((runId, reason) => { void endTasks(runId, reason ? `released:${reason}` : undefined, { keepUndelivered: !!reason }); });
 
 /**
  * The run's page changed (a same-tab navigation of a worker-hosted run): each page-bound task still running is cancelled
@@ -630,7 +657,7 @@ export async function taskAction(runId: string, args: Record<string, unknown>): 
     const op = args.op;
     if (op === "tail") {
         const n = Math.max(1, Math.min(TASK_TAIL_MAX_LINES, Math.floor(Number(args.lines) || 20)));
-        if (t.status !== "running") return `task ${t.id} ${t.status}: ${t.text ?? ""}`;
+        if (t.status !== "running") return `task ${t.id} ${t.status}: ${t.text ?? ""}${releasedNote(t)}`;
         const tail = await t.exec.tail(n, true);
         if (tail === null) return `task ${t.id} running for ${secs(Date.now() - t.startedMs)}. ${t.exec.tailAbsent}`;
         if (typeof tail === "string") return (await forModel(tail)).text;
@@ -642,7 +669,7 @@ export async function taskAction(runId: string, args: Record<string, unknown>): 
         return `task ${t.id}: ${c.text}`;
     }
     if (op === "await") {
-        if (t.status !== "running") { t.delivered = true; persist(runId); return answered(t, `task ${t.id} ${t.status}: ${t.text ?? ""}`); }
+        if (t.status !== "running") { t.delivered = true; persist(runId); return answered(t, `task ${t.id} ${t.status}: ${t.text ?? ""}${releasedNote(t)}`); }
         if (t.waiter) return `task ${t.id}: another await is already waiting on it.`;
         const given = Number(args.timeout_ms);
         const expect = Number.isFinite(given) && given > 0 ? Math.min(Math.floor(given), TASK_AWAIT_MAX_MS) : null;

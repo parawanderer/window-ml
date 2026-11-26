@@ -477,6 +477,12 @@ export type Command =
     | { type: "session.continue"; session: SessionId; maxSteps?: number }
     | { type: "session.delete"; session: SessionId }
     /**
+     * Release what a run holds in this browser's memory (its Python names, `@tool:` values, background tasks) while the
+     * session and its transcript stay: the Stop button of a run whose tab closed (ASYNC_CALLS.md, "A run whose tab
+     * closed: the release"). From this browser's own extension pages only; refused while a turn runs.
+     */
+    | { type: "session.release"; session: SessionId }
+    /**
      * Keep a session, or stop keeping it. It is the runtime's because eviction is: a pin kept only on one device
      * cannot stop the runtime dropping the session. Unpinning leaves the session saved, and subject to the usual caps
      * and retention again. The runtime bounds how many sessions may be pinned and answers `conflict` past it.
@@ -688,6 +694,7 @@ export const COMMAND_SCOPE: { readonly [T in CommandType]: Scope } = {
     "session.cancel": "drive",
     "session.continue": "drive",
     "session.delete": "drive",
+    "session.release": "drive",
     "session.pin": "drive",
     "session.rename": "drive",
     "session.model": "drive",
@@ -882,6 +889,7 @@ export interface CommandResultData {
     /** the cap the run is carrying on under, which is the one asked for unless the runtime lowered it */
     "session.continue": { maxSteps?: number };
     "session.delete": Record<string, never>;
+    "session.release": Record<string, never>;
     /** the row changes through the index, as an `upsert`, like every other change to a session */
     "session.pin": Record<string, never>;
     /** the title as the runtime stored it (trimmed and capped); empty when it went back to being generated */

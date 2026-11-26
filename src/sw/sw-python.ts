@@ -8,7 +8,7 @@ import { recordHousekeeping } from "./sw-housekeeping";
 import { ensureOffscreen, forgetOffscreen, isOffscreenSender } from "./sw-offscreen";
 import { secretFormsNow } from "./sw-scrub";
 import type { SecretForm } from "../secret-mask";
-import { activeRuns, attachedFilesOf, execReads, isWorkerRun, onSessionRelease, pageValueSession, runControllers } from "./sw-runs";
+import { activeRuns, attachedFilesOf, execReads, isWorkerRun, onSessionRelease, pageValueSession, runControllers, type ReleaseReason } from "./sw-runs";
 import { valueHolders, budgetBytes as valueBudgetBytes, claimValue } from "./sw-values";
 import { PY_PACKAGE_LOADS } from "../python/python-env";
 import { defineJob } from "../job-registry";
@@ -366,14 +366,15 @@ export function endPythonTurn(runId: string): void {
  * Callables the run's last cell handed to JavaScript that fired after its result come back in the answer, since no
  * next cell will carry them (cell-gate.ts), and go to the run log like a cell's.
  * @param runId the run whose namespace to drop
+ * @param reason why, when the run is released but its session stays (`tab-closed`, `person`); sent with the message
  */
-export function deletePythonRun(runId: string): void {
+export function deletePythonRun(runId: string, reason?: ReleaseReason): void {
     if (!runId) return;
     keptRuns.delete(runId);
     void forgetPythonBridged(runId);
     void dropRunInstalls(runId);
     try {
-        chrome.runtime.sendMessage({ type: "PY_DELETE_RUN", run: runId, principal: `run:${runId}` })
+        chrome.runtime.sendMessage({ type: "PY_DELETE_RUN", run: runId, principal: `run:${runId}`, ...(reason ? { reason } : {}) })
             .then((res: { dropped?: { count: number; afterCell: number } } | undefined) => {
                 const dropped = res?.dropped;
                 if (dropped) recordRunLog(runId, { subsystem: "python", kind: "dropped", reason: "after-last-cell", detail: { count: dropped.count, afterCell: dropped.afterCell } });

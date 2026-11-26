@@ -286,10 +286,15 @@ export function actBreadthNote(p: PolicyProposal, b: ActBreadth): string {
 
 /** How many random values a sampled key's `from` (and an unbounded number's `to`) is drawn, beside the current value. */
 export const SETTING_RANDOM_SAMPLES = 4;
-/** The widest integer range whose every value is tried as `to`. */
-export const SETTING_ENUMERATE_MAX = 2048;
+/** The widest integer range whose every value is tried as `to`; a wider one is sampled (ruling 117). It bounds the pairs a
+ *  key adds, (named values) x (this), not the steps: an evaluation's steps grow with the rule's length, so the cost is
+ *  about quadratic in the numbers a rule names. Measured, a rule naming 40 numbers spends 816,478 of
+ *  {@link SETTING_MEASURE_STEPS} on `detachedTaskMaxMin` (60 wide) and 498,946 on `closedRunGraceMin` (sampled). What
+ *  refuses a future key that would exhaust the budget is the 40-number row over SETTING_CLASSES
+ *  (tests/propose-policy-setting.test.mjs), not this cap. */
+export const SETTING_ENUMERATE_MAX = 256;
 /** The steps every `setting` rule of one `propose_policy` call may spend being measured, shared across its rows: a
- *  predicate over the facts costs 8 to 16 steps an evaluation, 40k to 81k for a whole measure; a call that spends this
+ *  predicate over the facts costs 8 to 16 steps an evaluation, 41k to 83k for a whole measure; a call that spends this
  *  is refused (MODEL_SETTINGS.md, "Size"). Counted in steps, never in wall time. */
 export const SETTING_MEASURE_STEPS = 1_000_000;
 
