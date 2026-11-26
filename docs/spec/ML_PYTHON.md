@@ -143,6 +143,51 @@ One table is the source, and everything a model can ask reads it.
   run needs Shane's yes in the bench lane's own session.
 - *No padding.* The summaries and `help`'s output are model-facing: no alignment spaces.
 
+### The table is generated, and Python reads the same graph (ruling 129)
+
+RULED 2026-11-26 (Shane, in the coordinator's session; the details the coordinator's calls). NOT BUILT. It amends the
+list above: where the two differ, this section rules.
+
+- **`ML_MEMBERS` is generated, not written by hand.** A row comes from the member's own declaration in the contract:
+  its JSDoc's first sentence is the summary, and its signature gives the arguments and the return type. The generator
+  is the one that writes the JavaScript reference (`scripts/gen-api-docs.mjs`); no second copy of a member's text
+  exists. What a person writes is one tag on the member's JSDoc saying Python has it.
+- **No member is Python-only.** Every Python member is a member JavaScript has under the same name (`ml.table`
+  included: `src/ml/ml-table.ts`, an awaited call that answers a `Table`). The two languages differ in at most three
+  things, and the tag carries them: whether the call is awaited, the return type, and an argument one language has
+  alone.
+- **One graph, a signature per language.** `agent_api_docs` holds one graph: a member names types, and a type names
+  types (`src/tools/api-docs-query.ts`, the breadth-first walk). A member has a JavaScript signature and a Python one,
+  and a query for Python starts its walk from the types the Python signature names.
+  - *The default Python signature* is derived from the JavaScript one by one rule. OPEN, for the builder to read
+    before the rule is written: how a member that is passed through takes an options object in Python (keyword
+    arguments or one dict).
+  - *An override* is for a member with its own Python implementation (`ml.table` and `ml.fetch`, ML_TABLE.md): the
+    tag states the Python signature and return type.
+- **The Python walk is cut at a Python type.** A type that is plain data crossing the wire serves both languages
+  from one section. A JavaScript object with methods, or anything that answers a promise, is not reachable from
+  Python: an override names a Python type in its place (`pandas.DataFrame` for `ml.table`), which is a leaf with no
+  section, and the walk stops there.
+- **The form the model reads is a Python stub, not TypeScript.**
+  - A member is a `def`, or an `async def` when it is awaited, with type hints, its docstring and no body. `async
+    def` against `def` is what tells the model to await; the sentence about `help` marking the ones not awaited
+    (above, "The description") is dropped, and so is the facade's printed advice to await every member.
+  - A plain-data type is rendered as what a cell receives. A JSON value arrives in a cell as a dict (ML_WIRE.md), so
+    it is a `TypedDict`, and the model reads `r["url"]`, never `r.url`. Not an abstract base class: nothing is
+    inherited, and a class would teach attribute access.
+  - `help(ml.x)` in a cell prints the same stub for `x`, from what was handed with the cell.
+  - No padding, as above. Its size is counted in PROMPT_BUDGET.md with the description.
+- **Rows, added to the list below, each by enumeration over every member, never a sample:**
+  1. For each member with an override, the tag's signature equals the signature of the function the worker serves,
+     read from a running worker (`inspect.signature`), and `async def` in the stub equals whether the call must be
+     awaited there.
+  2. No type reachable in the Python walk holds a method or a promise. A member whose JavaScript form answers such a
+     type and has no override fails this row, by name.
+  3. For each plain-data type reachable from Python, a value of it arriving in a cell is of the rendered form (a
+     dict for a `TypedDict`), with the rendered keys.
+  4. The generated table equals the wire's set for each realm and host (row 1 of the list below, unchanged), and a
+     member with no tag is absent from Python's `dir` and marked JavaScript-only in `agent_api_docs`.
+
 ## Rows, for whoever builds it
 
 1. The table against the wire, by enumeration: for each realm and host, the names the wire serves equal the table's
