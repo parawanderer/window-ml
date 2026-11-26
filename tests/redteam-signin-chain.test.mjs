@@ -4,8 +4,8 @@
 // The property these rows pin is what the MODEL and the run get from the landing, not a defence of their own: the
 // arrival note carries the landed URL exactly as the browser reports it (query and fragment, so an authorization code
 // or an implicit flow's access token), an arrival no policy covers passes as the 2026-10-24 rule has it, and the
-// landing grants the origin the CARD named, never another. The rule question the code and state raise (whether an
-// authorization URL should reach the model at all) is docs/plan/repl/SIGNIN_CHAIN_RESULT.md, for Shane.
+// landing grants the origin the CARD named, never another. The rule questions these rows raised, and Shane's rulings
+// on them (Q1 keep, Q2 ruling 130), are docs/plan/repl/RED_TEAM_SIGNIN_CHAIN.md.
 //
 // Each test is a run in the real bundle (`dist/background.js` in node:vm, tests/helpers.js `loadBackground`), the page
 // played by `onTabMessage` and the model by `script`, one reply per model call.
@@ -131,6 +131,9 @@ test("RED TEAM: an identity-provider landing is an uncovered arrival — the run
     assert.equal(arrival.length, 0, "no policy record: an uncovered arrival writes none");
 });
 
+// MEASURED TODAY, RULED TO CHANGE: ruling 130 (2026-11-26) holds the free fetch tier to an origin the person CHOSE, so
+// an origin a redirect put the run on needs its own grant. This row asserts today's behaviour and is restated to expect
+// the card when ruling 130 is built (spec: docs/spec/POLICIES.md, "One free tier", #2189).
 test("RED TEAM: a landing on the identity provider makes a CREDENTIALED read of the run's own page free — the bounce hands it a read the card never asked about", T, async () => {
     const IDP = "https://idp.example/auth?client_id=c1";
     const r = await run({ first: [nav(LOGIN), credFetch("https://idp.example/session")], redirectTo: IDP });
