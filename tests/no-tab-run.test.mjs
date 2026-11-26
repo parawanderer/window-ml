@@ -115,7 +115,10 @@ test("a settled run whose tab closes is held with no tab: its row says so, keeps
     r.bg.closeTab(7);
     assert.ok(await until(() => r.rows().get(r.hash)?.background?.noTab === true), "the row is marked held with no tab");
     const row = r.rows().get(r.hash);
-    assert.deepEqual(row.background, { running: 0, waiting: 0, noTab: true });
+    // The closing also set the release's deadline (sw-release.ts), which the same row carries.
+    const { releaseAt, ...rest } = row.background;
+    assert.deepEqual(rest, { running: 0, waiting: 0, noTab: true });
+    assert.equal(typeof releaseAt, "number", "the release deadline is on the row too");
     assert.equal(row.page?.tabId, undefined, "no tab is named");
     assert.equal(row.page?.url, SITE_URL, "the page it worked on still is");
     assert.notEqual(row.status, "interrupted", "a held run is not over");

@@ -9,6 +9,7 @@ import { cancelPageTasks } from "./sw-tasks";
 import { pushReplay } from "../contract/contract-run";
 import { clearArrival, holdStands, markSpoken, unfragmented, watchBetweenTurns } from "./nav-arrival";
 import { grantRunOrigin } from "./worker-tools";
+import { cancelRelease } from "./sw-release";
 import { recordRunLog } from "./sw-run-log";
 import { toPageUi } from "./sw-side-panel";
 import { relayDebugEvent } from "./sw-debug";
@@ -149,6 +150,8 @@ export async function moveRun(runId: string, toTabId: number, opts: { nav?: NavM
         else await holdStands(toTabId, runId);
     }
     recordRunLog(runId, { subsystem: "tab", kind: "moved", detail: { from, to: toTabId } });
+    // On a tab again: a release deadline its old tab's closing set is void.
+    void cancelRelease(runId);
     // A run that had no tab has one now: its session row stops saying so.
     if (isNoTab(from)) void refreshTaskRow(runId);
     return { moved: true };
