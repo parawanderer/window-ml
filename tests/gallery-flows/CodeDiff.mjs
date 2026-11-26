@@ -5,13 +5,21 @@
 export default async ({ page, tile, shot }) => {
     // The page is shared with the flows that run after this one: give back the viewport, close the card and take the tip layer down.
     const viewport = page.viewportSize();
+    // The gallery prints only the FIRST line of a flow's error (scripts/gallery.mjs), and a `waitFor` timeout carries none of the
+    // page it timed out on: the state that matters — where the tile is, whether the card exists and is visible, whether the tip
+    // layer is up — goes in that line.
+    const probe = async (why) => new Error(`${why}; ${await page.evaluate(() => {
+        const rect = (e) => (e ? ["x", "y", "width", "height"].map((k, i) => Math.round(e.getBoundingClientRect()[k])).join(",") : "none");
+        const sel = document.querySelector(".gl-tile.sel"), rm = [...document.querySelectorAll(".r-max")];
+        return `tile=${rect(sel)} frame=${rect(sel?.querySelector(".gl-frame"))} dialogs=${document.querySelectorAll(".chat-dialog-back").length} rmax=${rm.length} [${rm.map((e) => { const r = e.getBoundingClientRect(); return `${rect(e)}:${r.width > 0 && r.height > 0 ? "shown" : "hidden"}`; }).join(" ")}] close=${document.querySelectorAll(".r-max-head button[aria-label=Close]").length} tips=${document.querySelectorAll(".cursor-tip").length} scrollY=${Math.round(scrollY)} vp=${innerWidth}x${innerHeight}`;
+    })}`);
     try {
         await page.evaluate(() => globalThis.__gallery.mountTipLayer());
         await page.setViewportSize({ width: 1000, height: 640 });
         await tile.locator(".r-diff-max").click();
-        await page.locator(".r-max").waitFor({ timeout: 5_000 });
+        try { await page.locator(".r-max").waitFor({ timeout: 5_000 }); } catch { throw await probe("no visible .r-max after the maximise click"); }
         await page.locator(".r-max-head button[aria-label=Close]").hover();
-        await page.locator(".cursor-tip").waitFor({ timeout: 5_000 });
+        try { await page.locator(".cursor-tip").waitFor({ timeout: 5_000 }); } catch { throw await probe("no .cursor-tip after hovering Close"); }
         await shot("maximised, close tip");
         if (process.env.CODEDIFF_SHOTS) await page.screenshot({ path: `${process.env.CODEDIFF_SHOTS}-maximised.png` });
         const tipAbove = await page.evaluate(() => {
