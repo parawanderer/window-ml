@@ -83,7 +83,15 @@ async function runCell(code, task) {
     const content = fake.calls().flatMap((c) => c.messages || []).filter((m) => m.role === "tool").at(-1)?.content;
     expect(typeof content, `the cell must return a tool result: ${JSON.stringify(fake.calls().at(-1)?.messages?.slice(-2))}`).toBe("string");
     expect(content, "the person-approved cell must actually reach the JS bridge").not.toContain("js is refused");
-    return JSON.parse(content.split("\n")[0]);
+    let out;
+    try {
+        out = JSON.parse(content.split("\n")[0]);
+    } catch {
+        throw new Error(`the cell did not return its JSON object: ${content.slice(0, 600)}`);
+    }
+    // The tool result says when a construct put the cell outside the read-only dialect; a row measuring what the
+    // dialect leaves must know it ran inside, and which construct did it when it did not.
+    return { ...out, inside: !content.includes("asked because"), outsideWhy: (content.match(/outside the read-only Python dialect \(([^)]*)\)/) || [])[1] || "" };
 }
 
 // --- under CI a fetched fork core must be the one shipped --------------------------------------------
@@ -396,4 +404,146 @@ _isProxy = isinstance(_g, JsProxy)`;
     const full = await runFullCell(SWEEP);
     expect(full.control, "the control cell must run in the real worker realm").toBe("2");
     expect(full.value, `the FULL realm's sweep must find the module's bindings, got ${full.value}`).toContain("pyodide_js._module");
+});
+
+test("a READONLY cell's prototype WALKS find none of the net/IO names, and the same walk in FULL finds them (route 0)", async () => {
+    test.skip(!HAS_FORK, NEED_FORK);
+    // A worker's `fetch`, `postMessage`, `importScripts`, `indexedDB`, `caches` and `navigator` are Web IDL members on
+    // WorkerGlobalScope.prototype / DedicatedWorkerGlobalScope.prototype / EventTarget.prototype, not own properties of
+    // the global — so deleting the global's own names would leave them readable by `Object.getPrototypeOf`. The strip
+    // walks that chain too (`lockdown.ts` step 3's loop), and this row measures it in the real worker: every prototype
+    // up to null, the NET_IO names among its own properties, and the count of names each still has. (The cell is an
+    // approved OUTSIDE cell, because `import js` is not in the dialect's allow list — the strip is the worker's boot
+    // step, not the dialect's, so every cell in this worker shares the realm this walks.) A name found on ANY
+    // prototype is a finding — the walk failing to see any is the defended outcome — so no getter is invoked and no
+    // method is called (`close`, `postMessage` would act on the worker). The FULL realm runs the identical walk as the
+    // control that a walk can see these members at all. The constructors a walk reaches are the next row's subject.
+    const WALK = `import js
+_g = js.globalThis
+_o = js.Object
+_fam = ${JSON.stringify(NET_IO)}
+_chain = []
+_p = _o.getPrototypeOf(_g)
+for _i in range(12):
+    if _p:
+        _own = _o.getOwnPropertyNames(_p).to_py()
+        _names = [n for n in _fam if n in _own]
+        _chain.append(str(_i) + ":" + ",".join(_names) + "|" + str(len(_own)))
+        _p = _o.getPrototypeOf(_p)
+{"control": str(_g.Math.max(1, 2)), "URL": _g.URL is not None, "chain": ";".join(_chain)}`;
+    const r = await runCell(WALK, "route-back prototype walk");
+    // The cell asked for the JS bridge (nothing in the dialect holds `js`), so it ran as an approved outside cell in
+    // this same stripped worker — which is the realm the row is about.
+    expect(r.outsideWhy, "the cell must have asked for the JS bridge, or it is not touching the realm this row measures").toMatch(/import 'js'/);
+    expect(r.control, "the cell must run in the stripped worker realm").toBe("2");
+    expect(r.URL, "positive control: an allow-listed constructor is readable, so the cell holds JS objects").toBe(true);
+    // The walk itself ran: the global's chain was entered, not an empty loop.
+    expect(r.chain, `the prototype walk did not reach a second prototype: ${r.chain}`).toMatch(/(^|;)1:/);
+    for (const entry of r.chain.split(";")) {
+        const [, idx, names, count] = entry.match(/^(\d+):([^|]*)\|(\d+)$/) || [];
+        expect(idx, `an unreadable walk entry: ${JSON.stringify(entry)} (${r.chain})`).toBeDefined();
+        expect(names, `prototype ${idx} carries a net/IO name: ${names} (${r.chain})`).toBe("");
+        expect(Number(count), `prototype ${idx} has no own name at all, so the walk saw nothing there`).toBeGreaterThan(0);
+    }
+    // The control: the identical walk in the realm a bypass gives finds the members on the prototypes.
+    const full = await runFullCell(`${WALK}\n_result = json.dumps({"control": str(_g.Math.max(1, 2)), "chain": ";".join(_chain)})`);
+    expect(full.control, "the control cell must run in the real worker realm").toBe("2");
+    const f = JSON.parse(full.value);
+    expect(f.chain, `the FULL realm's walk must find the net/IO members, got ${f.chain}`).toMatch(/fetch|postMessage|importScripts/);
+});
+
+test("a READONLY cell's walk reaches the global chain's CONSTRUCTORS but no live net/IO member or evaluator (route 0b)", async () => {
+    test.skip(!HAS_FORK, NEED_FORK);
+    // What a walk reaches CONSTRUCTORS, in the same stripped worker. MEASURED, and not what the first draft assumed:
+    // the strip deletes net/IO NAMES from each prototype, but `constructor` is not one of those names, so each
+    // prototype's `.constructor` still reads (`DedicatedWorkerGlobalScope`, `WorkerGlobalScope`, `EventTarget`,
+    // `Object`). The row therefore measures what those constructors can be made to YIELD: an instance's own/prototype
+    // names for the `NET_IO` family (a name counts as live only if its descriptor has a real value or getter — the
+    // strip's shadow is a `value: undefined`), the global-scope constructor's refusal to construct, a kept instance's
+    // `.constructor` (Module, kept with WebAssembly), and `Function` through `Object.constructor`, whose string call
+    // the extension origin's CSP must refuse. Needs `try`, which also leaves the dialect outside; the realm is the
+    // same worker's.
+    const CTOR_PROBE = `import js
+_g = js.globalThis
+_o = js.Object
+_undef = js.undefined
+_fam = ${JSON.stringify(NET_IO)}
+
+def _live(_obj):
+    _out_names = []
+    for _n in _fam:
+        _d = _o.getOwnPropertyDescriptor(_obj, _n)
+        if _d is not _undef and (_d.value is not _undef or _d.get is not _undef):
+            _out_names.append(_n)
+    return _out_names
+
+def _chain_live(_root):
+    _found = []
+    _p = _root
+    for _i in range(12):
+        if _p:
+            _here = _live(_p)
+            if _here:
+                _found.append(str(_i) + ":" + ",".join(_here))
+            _p = _o.getPrototypeOf(_p)
+    return ";".join(_found)
+
+_ctors, _et_ctor, _fn, _err = [], _undef, "", ""
+try:
+    _p = _o.getPrototypeOf(_g)
+    for _i in range(12):
+        if _p:
+            try:
+                _name = str(_p.constructor.name)
+                _ctors.append(str(_i) + ":" + _name)
+                if _name == "EventTarget":
+                    _et_ctor = _p.constructor
+            except BaseException as _e:
+                _ctors.append(str(_i) + "!" + type(_e).__name__)
+            _p = _o.getPrototypeOf(_p)
+    try:
+        _et_live = _chain_live(_et_ctor.new())
+        _et_ok = str(_et_live == "")
+    except BaseException as _e:
+        _et_ok, _et_live = "construct!" + type(_e).__name__, ""
+    try:
+        _o.getPrototypeOf(_g).constructor.new()
+        _scope = "constructed!"
+    except BaseException as _e:
+        _scope = type(_e).__name__
+    try:
+        _m = js.WebAssembly.Module.new(js.Uint8Array.new([0, 97, 115, 109, 1, 0, 0, 0]))
+        _ctors.append("instance:" + str(_m.constructor.name))
+    except BaseException as _e:
+        _ctors.append("instance!" + type(_e).__name__)
+    try:
+        _fn = "called:" + str(js.Object.constructor("return 1"))
+    except BaseException as _e:
+        _fn = type(_e).__name__ + ": " + str(_e)[:200]
+except BaseException as _e:
+    _err = type(_e).__name__ + ": " + str(_e)[:200]
+{"control": str(_g.Math.max(1, 2)), "ctors": ",".join(_ctors), "et_ok": _et_ok, "et_live": _et_live, "scope": _scope, "fn": _fn, "err": _err}`;
+    const c = await runCell(CTOR_PROBE, "route-back constructor walk");
+    expect(c.control, "the constructor cell must run in the stripped worker realm").toBe("2");
+    expect(c.err, `the constructor walk raised: ${c.err}`).toBe("");
+    // The chain's constructors ARE readable (the measured fact this row exists to keep honest), and none of them is a
+    // net/IO capability's constructor: those names were deleted, so no reference to them survives to read `.constructor` off.
+    expect(c.ctors, `the walk did not reach the global chain's constructors: ${c.ctors}`).toContain("EventTarget");
+    expect(c.ctors, `a net/IO capability's constructor is readable off the chain: ${c.ctors}`).not.toMatch(/MessagePort|BroadcastChannel|XMLHttpRequest|WebSocket|EventSource|RTCPeerConnection|:Worker\b/);
+    // The constructible members of that chain yield inert objects: no live NET_IO name on an EventTarget or its chain.
+    expect(c.et_ok, `the EventTarget constructor did not construct for the probe: ${c.et_ok}`).toBe("True");
+    expect(c.et_live, `an EventTarget built off the walk carries a live net/IO name: ${c.et_live}`).toBe("");
+    // The chain's top constructor is the worker's own global scope, and it cannot be constructed into another one.
+    expect(c.scope, `the global-scope constructor made an object: ${c.scope}`).not.toBe("constructed!");
+    expect(c.ctors, `a kept instance's .constructor does not read: ${c.ctors}`).toContain("instance:Module");
+    // `Function` is kept (Pyodide needs it) and tamed: the string call is refused by the extension origin's CSP, so a
+    // walk reaches no evaluator. The refusal is asserted by KIND, not only by the absence of a result.
+    expect(c.fn, `Function reached through .constructor evaluated a string: ${c.fn}`).not.toMatch(/^called:/);
+    expect(c.fn, `Function through .constructor refused with something other than the CSP's EvalError: ${c.fn}`).toMatch(/EvalError/);
+    expect(c.fn, `the CSP refusal must be the eval directive, not a generic error: ${c.fn}`).toMatch(/unsafe-eval/);
+    // The control: the identical probe in the realm a bypass gives sees the members it looks for on the same instance.
+    const full = await runFullCell(`${CTOR_PROBE}\n_result = json.dumps({"control": str(_g.Math.max(1, 2)), "et_live": _et_live})`);
+    expect(full.control, "the control cell must run in the real worker realm").toBe("2");
+    const f = JSON.parse(full.value);
+    expect(f.et_live, `the FULL realm's EventTarget must carry the net/IO members, got ${JSON.stringify(f)}`).toMatch(/addEventListener/);
 });
