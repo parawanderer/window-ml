@@ -5,7 +5,10 @@
 // extension, and a message with no sender are answered nothing and never reach the reader — no channel is opened and
 // no FILES_ATTACHED/FILES_HIDE_LIST ask goes out, so the refusal is before any work, not after it. And a listing never
 // turns a hidden path visible: a `hide` that matches a DIRECTORY holds what is under it, a failed hide-list ask hides
-// everything, and no listing reads a byte of any file.
+// everything, and no listing reads a byte of any file. Last, the names a listing SHOWS are the marker a registered
+// value is shown by (#2166, rules 1-4 and 9): a stored name never reaches the answer, an unreadable registry fails the
+// listing rather than list one, and the page cursor is an ordinal plus the shown name, so two entries shown alike are
+// both listed and neither stored name is in a page.
 //
 // src/offscreen.ts is imported for real under a mocked `chrome` and a fake `Worker` (the scaffolding of
 // python-bench-stop-offscreen.test.mjs); the listing rows run the real filesListServer over the real RangedReader.
@@ -16,6 +19,9 @@ import assert from "node:assert/strict";
 
 const listeners = [];
 const sentToWorker = [];   // chrome.runtime.sendMessage payloads (the offscreen document talking to the service worker)
+// The secrets' forms, as the document's own reader asks for them at every listing (FILES_SECRET_FORMS). A test replaces
+// this to make the ask fail, which must fail the listing, never list a stored name.
+let formsAnswer = () => ({ forms: [] });
 class FakeWorker { constructor() { this.posts = []; } postMessage(m) { this.posts.push(m); } terminate() {} }
 globalThis.Worker = FakeWorker;
 // The idle reap arms a clock of minutes on every idle worker; a live timer would hold this process open.
@@ -28,6 +34,7 @@ globalThis.chrome = {
         onMessage: { addListener: (fn) => listeners.push(fn) },
         sendMessage: (m) => {
             sentToWorker.push(m);
+            if (m?.type === "FILES_SECRET_FORMS") return Promise.resolve(formsAnswer());
             if (m?.type === "FILES_HIDE_LIST") return Promise.resolve({ entries: [] });   // nothing is hidden
             if (m?.type === "FILES_ATTACHED") return Promise.resolve({ files: [] });
             if (m?.type === "FILES_QUOTA") return Promise.resolve({ bytes: 12 * 1024 * 1024 });
@@ -72,6 +79,17 @@ test("RED TEAM: a tab's content script and another extension get no answer to FI
     assert.equal(asks().length, before);
 });
 
+test("RED TEAM: with the secrets' forms unreadable, the document's FILES_LIST refuses rather than list a stored name — the fail-closed path, through the real wiring", T, async () => {
+    const before = sentToWorker.length;
+    formsAnswer = () => ({ forms: null });   // what the worker answers when the registry cannot be read
+    try {
+        const r = await send({ type: "FILES_LIST", session: "s1", path: "" });
+        assert.equal(r.ok, undefined, "no page: a listing that cannot show its names safely shows none");
+        assert.ok(r.fail === "invalid" || r.fail === "not-found", `a refusal, not a page: ${JSON.stringify(r)}`);
+        assert.ok(sentToWorker.slice(before).some((m) => m?.type === "FILES_SECRET_FORMS"), "the document asked the worker for the forms, and its empty answer is what refused");
+    } finally { formsAnswer = () => ({ forms: [] }); }
+});
+
 test("RED TEAM: the service worker's FILES_LIST is answered, and so is the offscreen document's own page — the gate's positive control", T, async () => {
     const before = asks().length;
     const r = await send({ type: "FILES_LIST", session: "s1", path: "" });
@@ -89,8 +107,9 @@ test("RED TEAM: the service worker's FILES_LIST is answered, and so is the offsc
  * directory: `.ssh/id_rsa` (a credential directory, held by its built-in shape) and `notes/a.txt`, `notes/b.txt`.
  * `agent.blob` throws, so any listing that read a byte fails the test that made it.
  */
-function setup(entries, { rule } = {}) {
-    const spec = { ".ssh": null, ".ssh/id_rsa": 546, notes: null, "notes/a.txt": 12, "notes/b.txt": 34 };
+function setup(entries, { rule, forms, spec: given, formsFail } = {}) {
+    const spec = given ?? { ".ssh": null, ".ssh/id_rsa": 546, notes: null, "notes/a.txt": 12, "notes/b.txt": 34 };
+    const stats = { formsCalls: 0 };
     const kids = (rel) => Object.keys(spec).filter((k) => k !== rel && k.startsWith(rel === "" ? "" : `${rel}/`) && !k.slice(rel === "" ? 0 : rel.length + 1).includes("/")).map((path) => ({ path }));
     const agent = {
         children: async (s, rel) => kids(rel),
@@ -104,14 +123,19 @@ function setup(entries, { rule } = {}) {
         commit: async () => ({}),
     };
     const reader = new RangedReader({
-        source: { attached: async () => [], secretForms: async () => [], blob: async () => { throw new Error("no attachment is read"); } },
+        source: {
+            attached: async () => [],
+            secretForms: async () => { stats.formsCalls++; if (formsFail) throw new Error("the registry at https://secret.example refused"); return forms ?? []; },
+            blob: async () => { throw new Error("no attachment is read"); },
+        },
         agent,
         hidden: rule ?? ((s, p) => Promise.resolve().then(() => resolveHidden(p === "" ? "/files" : `/files/${p}`, entries).hidden)),
         now: () => 123,
     });
     const server = filesListServer({ open: () => reader.openChannel("files"), attachedCount: async () => 0 });
+    const answer = (path, opts) => server.list("s1", path, opts);
     const names = async (path) => (await server.list("s1", path)).ok.entries.map((e) => [e.name, e.hidden]).sort();
-    return { server, names };
+    return { server, names, answer, stats };
 }
 
 test("RED TEAM: a hide on a DIRECTORY holds what is under it — the directory's own listing marks every child hidden, so no name a person held is offered as visible", T, async () => {
@@ -147,4 +171,53 @@ test("RED TEAM: a hide-list ask that cannot be answered hides everything — an 
     // Positive control: with no rule at all, the same tree lists its names as visible.
     const noRule = setup([]);
     assert.deepEqual(await noRule.names("agent"), [[".ssh", false], ["notes", false]]);
+});
+
+// --- names under /files: the listing shows the marker, never the stored name (#2166, rules 1-4 and 9) ---
+
+const K = "[REDACTED:K]";
+const twoSecrets = [{ find: "sekret-one", put: K }, { find: "sekret-two", put: K }];
+
+test("RED TEAM: a file named after a registered value lists by its marker, and the page carries no part of the stored name", T, async () => {
+    const { answer, stats } = setup([], { forms: [{ find: "sekret-one", put: "[REDACTED:DB_PASS]" }], spec: { "sekret-one.txt": 7 } });
+    const a = await answer("agent");
+    assert.deepEqual(a.ok.entries.map((e) => e.name), ["[REDACTED:DB_PASS].txt"]);
+    assert.ok(!JSON.stringify(a).includes("sekret-one"), "the stored name is nowhere in the answer");
+    assert.deepEqual(Object.keys(a.ok.entries[0]).sort(), ["hidden", "kind", "mtimeMs", "name", "readonly", "size"],
+        "the entry is the six fields the panel draws: no realName, whatever the reader later grows");
+    assert.ok(stats.formsCalls >= 1, "the forms were asked of the worker at this listing");
+});
+
+test("RED TEAM: two entries sharing one shown name are both listed and both pages fit — the cursor is the ordinal and the shown name, never a stored one", T, async () => {
+    const { answer, stats } = setup([], { forms: twoSecrets, spec: { "sekret-oney": 1, "sekret-twoy": 2 } });
+    const p1 = await answer("agent", { limit: 1 });
+    assert.equal(p1.ok.entries.length, 1);
+    assert.equal(p1.ok.entries[0].name, `${K}y`);
+    assert.equal(p1.ok.next, `c:0:${K}y`, "the cursor is the ordinal among the ties, then the shown name");
+    const p2 = await answer("agent", { limit: 1, cursor: p1.ok.next });
+    assert.equal(p2.ok.entries.length, 1, "the second page lists the other tie, not to the folder's end");
+    assert.equal(p2.ok.entries[0].name, `${K}y`);
+    assert.equal(p2.ok.next, undefined, "the folder ends: a shared shown name does not lose the second entry");
+    for (const page of [p1, p2]) assert.ok(!JSON.stringify(page).includes("sekret"), "no stored name in a page or in its cursor");
+    assert.ok(stats.formsCalls >= 2, "each page asked the forms again");
+});
+
+test("RED TEAM: a directory whose shown name two entries share cannot be entered by it, and the refusal names neither stored name", T, async () => {
+    const { answer } = setup([], { forms: twoSecrets, spec: { "sekret-onedir": null, "sekret-onedir/x": 1, "sekret-twodir": null, "sekret-twodir/y": 2 } });
+    // Both directories list under one shown name; neither is reachable by it.
+    const parent = await answer("agent");
+    assert.deepEqual(parent.ok.entries.map((e) => e.name).sort(), [`${K}dir`, `${K}dir`]);
+    const a = await answer(`agent/${K}dir`);
+    assert.equal(a.ok, undefined, "no listing of an ambiguous directory");
+    assert.ok(a.fail === "invalid" || a.fail === "not-found");
+    assert.ok(!JSON.stringify(a).includes("sekret"), "the refusal names the path as the caller wrote it, never a stored name");
+});
+
+test("RED TEAM: an unreadable registry fails the listing, and the error's text is the reader's own sentence, not the throw's", T, async () => {
+    const { answer } = setup([], { formsFail: true, spec: { "sekret-one.txt": 7 } });
+    const a = await answer("agent");
+    assert.equal(a.ok, undefined);
+    assert.ok(a.fail === "invalid" || a.fail === "not-found");
+    assert.ok(!JSON.stringify(a).includes("secret.example"), "the registry's address in the throw never reaches the answer");
+    assert.ok(!JSON.stringify(a).includes("sekret"), "and no stored name does either");
 });
