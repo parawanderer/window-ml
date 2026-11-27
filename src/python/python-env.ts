@@ -120,36 +120,25 @@ const preludeBinding = (line: string): string | null => {
     return m ? m[1] : null;
 };
 
-// Globals the offscreen PRELUDE binds — a `python_exec` `tables` variable name must not clobber
-// these (it would shadow pd/np/img/etc. and break the run with a confusing error). Lives HERE,
+// Globals the offscreen PRELUDE binds, which tell the prelude's names from the user's. Lives HERE,
 // beside the package + prelude source, so it can't drift: the library names (np/Image/pd) are
 // DERIVED from PY_PACKAGES; the rest are the prelude's fixed bindings — the stdlib imports
 // (`io, base64, sys, contextlib`), the injected-image vars (`img`/`img_np`/`H`/`W`), the
 // `to_base64` helper, and the `result` return-capture global. Keep in sync with offscreen.ts's
-// PRELUDE if you add a fixed binding there. (`df` is intentionally NOT reserved — a tables entry
-// may name one `df`, overriding the single-source default.)
+// PRELUDE if you add a fixed binding there.
 export const PY_RESERVED_NAMES: string[] = [
-    "io", "base64", "sys", "contextlib", "to_base64", "img", "img_np", "H", "W", "result", "tables",
+    "io", "base64", "sys", "contextlib", "to_base64", "img", "img_np", "H", "W", "result",
     "ml", "MlError",
     ...PY_PACKAGES.map(p => preludeBinding(p.prelude)).filter((n): n is string => !!n),
 ];
 
 /** What the persistent bench's OWN prelude binds (`PRELUDE_BASE`): the stdlib imports, the library aliases and
  *  `to_base64`, plus `result`. Everything else in a bench namespace is the user's, which is how the bench
- *  lists "your variables". Narrower than PY_RESERVED_NAMES on purpose: the bench injects no image or tables,
- *  so `img`/`df`/`tables`/`H`/`W` are ordinary names a user may bind there. */
+ *  lists "your variables". Narrower than PY_RESERVED_NAMES on purpose: the bench injects no image,
+ *  so `img`/`H`/`W` are ordinary names a user may bind there. */
 export const PY_BENCH_BASE_NAMES: string[] = [
     "io", "base64", "sys", "contextlib", "to_base64", "result",
     "ml", "MlError",   // the `ml` facade, bound in every cell the worker gave a wire
     ...PY_PACKAGES.map(p => preludeBinding(p.prelude)).filter((n): n is string => !!n),
 ];
 
-const PY_IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const PY_RESERVED = new Set(PY_RESERVED_NAMES);
-/** Validate a user-supplied `python_exec` `tables` variable name (it becomes a sandbox global):
- *  must be a valid Python identifier and must not clobber a preloaded name. Returns an error
- *  message, or null if the name is OK. */
-export const pyVarNameError = (name: string): string | null =>
-    !PY_IDENT_RE.test(name) ? `"${name}" isn't a valid Python variable name.`
-    : PY_RESERVED.has(name) ? `"${name}" is a preloaded/reserved name — pick another.`
-    : null;

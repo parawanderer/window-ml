@@ -206,8 +206,8 @@ export const ApprovalBadge = ({ approval }: { approval: keyof typeof APPROVAL })
     );
 };
 
-// The distinct EXTERNAL Google Sheet ids a python_exec call will load — read from the ARGS (`tables`),
-// NOT the rendered In: at approval time the tables aren't fetched yet (the pre-run preview is code-only),
+// The distinct EXTERNAL Google Sheet ids a python_exec call will load — read from the ARGS (the code's
+// `ml.table("…")` literals), NOT the rendered In: at approval time the tables aren't fetched yet (the pre-run preview is code-only),
 // so the render has no sheet source. Approving grants the run those spreadsheets for the rest of the
 // page-session, so the gate discloses it. Same detection as the background's escalation (externalSheetIds).
 export function externalSheetGrant(args?: Record<string, unknown>): string[] {
