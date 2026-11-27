@@ -177,6 +177,8 @@ test("RED TEAM: after the bounce, the origin the card named keeps its free crede
         }
         await tick();
     }
+    assert.ok(r.bg.calls.some((c) => c.url === "https://app.example/data"),
+        "the named origin's read was ISSUED: free is a read that was made, never one that was refused");
     const fetchCards = r.cards().filter((e) => e.tool === "fetch_url").map((e) => JSON.stringify(e));
     assert.equal(fetchCards.filter((t) => /idp\.example\/data/.test(t)).length, 1, "a credentialed read of the site the tab was sent on to asks");
     assert.equal(fetchCards.filter((t) => /app\.example\/data/.test(t)).length, 0, "the origin the card named keeps its as-you grant, and the run is on app.example besides");
