@@ -842,6 +842,17 @@ try {
     });
 } catch { /* no storage (a test harness) */ }
 
+/**
+ * FILES_COMMITTED: a commit through Python's channel changed a session's `/files/`, so every page and hub watching it
+ * hears `files-changed`. Only the offscreen document's word, and only for a session the index holds.
+ * @param message `{ session }`, the channel's session hash
+ * @param sender the message's sender
+ */
+export function filesCommitted(message: { session?: unknown }, sender: chrome.runtime.MessageSender): void {
+    if (!isOffscreenSender(sender) || typeof message.session !== "string") return;
+    sessionServer.filesChanged(message.session);
+}
+
 /** Sessions asked for before the index had heard of them. A run mints its hash just BEFORE its first event, so a
  *  request to keep it can arrive first; a hash is held here until an event for it turns up. Bounded, because the
  *  request reaches the worker from a page and a page can name a hash that never arrives. */
@@ -857,17 +868,6 @@ const MAX_PENDING_KEEP = 32;
  * rather than dropped: the hash is minted a moment before the first event, so arriving early is the common case,
  * not the exception.
  */
-/**
- * FILES_COMMITTED: a commit through Python's channel changed a session's `/files/`, so every page and hub watching it
- * hears `files-changed`. Only the offscreen document's word, and only for a session the index holds.
- * @param message `{ session }`, the channel's session hash
- * @param sender the message's sender
- */
-export function filesCommitted(message: { session?: unknown }, sender: chrome.runtime.MessageSender): void {
-    if (!isOffscreenSender(sender) || typeof message.session !== "string") return;
-    sessionServer.filesChanged(message.session);
-}
-
 export function keepSession(hash: string): void {
     const summary = sessionServer.index.get(hash);
     if (!summary) {
