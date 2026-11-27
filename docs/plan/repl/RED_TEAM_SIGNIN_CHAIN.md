@@ -12,18 +12,25 @@ below is a row or a line of source.
 
 The harness starts the run the chat page's way with "No tab" (`agent.start`, a `detached` target), the model's first
 call is `navigate("https://app.example/login")`, the person approves the card, and the tab the call opens reports a
-SERVER redirect as its URL (`chrome.tabs.get` is answered with the landed page, as `no-tab-nav.ts` reads it). The move
-is made at the step boundary by `applyLiveMove` (`src/sw/move-run.ts`), the run's page is judged by `judgeHere`
-(`src/sw/sw-run-host.ts`), and the model gets `navigatedNote` (`src/sw/move-run.ts:77`).
+SERVER redirect as its URL (`chrome.tabs.get` is answered with the landed page, as `no-tab-nav.ts` reads it). The
+browser's own commit of that landing is fired too (`bg.commit(4243, …)`, the event `tabPageUrl` is set from), so the
+worker judges tools against the page the tab HOLDS, not the page the card named. The move is made at the step boundary
+by `applyLiveMove` (`src/sw/move-run.ts`), the run's page is judged by `judgeHere` (`src/sw/sw-run-host.ts`), and the
+model gets `navigatedNote` (`src/sw/move-run.ts:77`).
+
+**Which rows depend on the commit.** Only row 4's claim (a free read that is MADE, versus a refusal) needs it: with the
+commit suppressed, row 4 fails on its positive control and rows 1-3 and 5 pass unchanged. Rows 1-2 read the note from
+`chrome.tabs.get`, row 3 is about the move and the cards, and row 5 keys on the ORIGIN (which is `app.example` whether
+the run is on `/login` or `/callback`), so none of them turns on `tabPageUrl`.
 
 **What the harness measures, and what it does not.** The rows run on the unit harness (`node:vm`, `helpers.js`), whose
-`chrome.tabs.get` answers ONE landed URL: what is measured is the FIRST landing after the card, as a server redirect
-gives it. NOT measured: a real browser's chain of several COMMITTED pages (the identity provider's page where the
-person signs in, then the navigation back to the callback), which a tab run's arrival judge sees as separate arrivals;
-and what a read-only survey of the provider's page shows (an account chooser's email addresses). Row 1 therefore stands
-for "the first landing is the callback" only — the redirect resolved before any page the run acted on. Row 3 and row 4
-do land the run ON the provider page and measure it as a first landing; the two-step sign-in-then-back flow is not
-measured anywhere.
+`chrome.tabs.get` answers ONE landed URL and whose commit reports that same URL: what is measured is the FIRST landing
+after the card, as a server redirect gives it. NOT measured: a real browser's chain of several COMMITTED pages (the
+identity provider's page where the person signs in, then the navigation back to the callback), which a tab run's
+arrival judge sees as separate arrivals; and what a read-only survey of the provider's page shows (an account
+chooser's email addresses). Row 1 therefore stands for "the first landing is the callback" only — the redirect resolved
+before any page the run acted on. Row 3 and row 4 do land the run ON the provider page and measure it as a first
+landing; the two-step sign-in-then-back flow is not measured anywhere.
 
 ## 2. What the model reads: the landed URL, whole
 
@@ -52,10 +59,11 @@ does", part 3, as built 2026-11-25), now measured in the sign-in shape:
   Row 5.
 - **The page the run is ON is free in every fetch mode, so the bounce hands the run a credentialed read it was never
   asked about — ALLOWED TODAY, RULED TO CHANGE (ruling 130).** After landing on `idp.example`, a credentialed
-  `fetch_url` to `https://idp.example/session` raises NOTHING (row 4). The run did not have that read before the bounce:
-  the card named `app.example`, and a read of `idp.example` while the run was anywhere else asks (row 5's control). The
-  rule itself is not new — "the page you are ON is free in every fetch mode" (wire-and-fetch.md) — but a sign-in
-  redirect is the cheapest way to put a run on a third party, and the person approved a page at a different host.
+  `fetch_url` to `https://idp.example/session` is MADE and raises NOTHING (row 4 asserts both: `bg.calls` carries the
+  request, and no card was raised). The run did not have that read before the bounce: the card named `app.example`, and
+  a read of `idp.example` while the run was anywhere else asks (row 5's control). The rule itself is not new — "the page
+  you are ON is free in every fetch mode" (wire-and-fetch.md) — but a sign-in redirect is the cheapest way to put a run
+  on a third party, and the person approved a page at a different host.
   **RULING 130** (Shane, 2026-11-26, through the coordinator): the free fetch tier holds only on an origin the person
   CHOSE; an origin a redirect put the run on gets no free credentialed read and needs its own grant. Shane: "You
   approved to go to the website, not the credential provider. The credential provider website would need a separate
@@ -99,8 +107,10 @@ The coordinator's condition was to report it if an uncovered arrival SHOULD NOT 
 
 ## 6. Recorded so they are not re-derived
 
-- **The redirect HOP is never judged; only the final URL is**, at the move. A chain `login → tracker.invalid → idp` is
-  judged on what `chrome.tabs.get` reports at load. The browser's own redirect hops are not pages the run acts on.
+- **The redirect HOP is never judged; only the final URL is**, at the landing: it is carried by the note
+  (`chrome.tabs.get`) and judged as the tab's page (the browser's commit, `bg.commit`). A chain
+  `login → tracker.invalid → idp` is judged on the URL the tab reports when it loads. The browser's own redirect hops
+  are not pages the run acts on.
 - **A detached run's session row carries no `page` after the move** (`page` names where a session STARTED; the live tab
   is `bgRuns.tabId`, and `refreshTaskRow` only drops `background.noTab`). The sidebar shows the run without a page; the
   page is the tab. No row: `page` is not a run's-now field for any run shape, and `hasTab` reads the live map.
@@ -113,5 +123,6 @@ The coordinator's condition was to report it if an uncovered arrival SHOULD NOT 
 
 `node scripts/test-slot.mjs run --kind unit -- node --import tsx --test tests/redteam-signin-chain.test.mjs`, with
 `dist/` built at the head under test. The file imports no other test file (its own harness, the shape of
-`tests/no-tab-run.test.mjs`'s `run`), and `chrome.tabs.get` is answered with the landed URL the way `helpers.js`'
-`onTabsGet` does it.
+`tests/no-tab-run.test.mjs`'s `run`); `chrome.tabs.get` is answered with the landed URL the way `helpers.js`'
+`onTabsGet` does it, and the commit of that URL is fired with `bg.commit`, which is `helpers.js`' model of
+`webNavigation.onCommitted`.

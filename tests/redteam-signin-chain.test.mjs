@@ -8,7 +8,9 @@
 // on them (Q1 keep, Q2 ruling 130), are docs/plan/repl/RED_TEAM_SIGNIN_CHAIN.md.
 //
 // Each test is a run in the real bundle (`dist/background.js` in node:vm, tests/helpers.js `loadBackground`), the page
-// played by `onTabMessage` and the model by `script`, one reply per model call.
+// played by `onTabMessage` and the model by `script`, one reply per model call. The landing is reported twice, as a
+// browser reports it: `chrome.tabs.get` answers the URL the note carries, and `bg.commit` fires the commit the worker's
+// `tabPageUrl` is set from — without the commit the run would be judged to be on the page the card named.
 import { test } from "node:test";
 import assert from "node:assert";
 import { createRequire } from "node:module";
@@ -25,16 +27,29 @@ const credFetch = (url) => ({ name: "fetch_url", args: { url, credentials: true 
 
 /**
  * A worker-built run with NO tab (`agent.start`, a `detached` target), whose `navigate` opens tab 4243 with `redirectTo`
- * reporting where the site sent it, as after a server redirect. `script` is the model's replies.
+ * reporting where the site sent it, as after a server redirect. The browser's own commit of that landing is fired too
+ * (`bg.commit`), where the tab first reports it: without it the worker judges the run to be on the page the card named,
+ * not the page the tab holds. `script` is the model's replies.
  * @returns the worker, the run, `bodies()` (every model request), `cards()` (every approval event raised, by seq),
  *  `adoptions()` (ADOPT_RUN_NOW to the opened tab), `pageCalls()` (page tool calls that are not previews),
  *  `runLog()` (the run's execution-log records)
  */
 async function run({ first = [], redirectTo } = {}) {
     const script = [...first];
-    const bg = loadBackground({
+    let committed = false;
+    let bg;
+    bg = loadBackground({
         openCreated: true,
-        ...(redirectTo ? { onTabsGet: (id, answer) => { if (id === 4243) { answer.url = redirectTo; answer.title = new URL(redirectTo).host; } } } : {}),
+        ...(redirectTo ? {
+            onTabsGet: (id, answer) => {
+                if (id !== 4243) return;
+                answer.url = redirectTo;
+                answer.title = new URL(redirectTo).host;
+                // The load check is the first report of the landing; the commit is what sets tabPageUrl (background.ts),
+                // so the run is judged on the page the tab holds, as a browser redirect makes it.
+                if (!committed) { committed = true; bg.commit(4243, { documentId: "doc-4243", url: redirectTo }); }
+            },
+        } : {}),
         config: { chatUrl: "http://host/api/chat/completions", apiKey: "k", model: "m", apiFormat: "openai", debugMode: "off" },
         onFetch: async (call) => {
             if (call.url.endsWith("/api/models")) return jsonResponse({ data: [{ id: "m" }] });
@@ -140,6 +155,8 @@ test("RED TEAM: a landing on the identity provider makes a CREDENTIALED read of 
     await answerCard(r);
     assert.ok(await until(() => !r.live()), "the turn ends");
     assert.equal(r.adoptions(), 1, "the uncovered arrival passed");
+    assert.ok(r.bg.calls.some((c) => c.url === "https://idp.example/session"),
+        "the read was ISSUED: no card is only a free read when the request was made, never when it was refused");
     const fetchCards = r.cards().filter((e) => e.tool === "fetch_url");
     assert.equal(fetchCards.length, 0, "MEASURED, for Shane: the page the run is ON is free in every fetch mode, so the credential-bearing read of idp.example asks nobody");
     assert.match(readText(r.bodies().at(-1)), /idp\.example/, "control: the run really is on the identity provider");
@@ -147,7 +164,7 @@ test("RED TEAM: a landing on the identity provider makes a CREDENTIALED read of 
 
 // --- the landing grants what the card named, never another origin ---
 
-test("RED TEAM: after the bounce, a credentialed read asks at the site the tab went on to, and not at the origin the card named", T, async () => {
+test("RED TEAM: after the bounce, the origin the card named keeps its free credentialed read, and another origin asks", T, async () => {
     const CALLBACK = "https://app.example/callback?code=CODE123&state=st456";
     const r = await run({ first: [nav(LOGIN), credFetch("https://app.example/data"), credFetch("https://idp.example/data")], redirectTo: CALLBACK });
     await answerCard(r);
