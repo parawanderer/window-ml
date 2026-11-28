@@ -76,10 +76,12 @@ async function runCell(code, task) {
         { content: "Done." },
     ]);
     await ext.sw.evaluate(({ id, task: name }) => globalThis.__mlStartUserRunForTest(id, { task: name, hud: "quiet", surface: "overlay" }, { approvalRouting: "both" }), { id: tabId, task });
-    await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).some((g) => g.tool === "python_exec"), { timeout: 90000 }).toBe(true);
+    // Each cap stays under the per-test budget (playwright.config.mjs's `timeout: 60_000`), so a stalled run reports
+    // the poll that gave up, never Playwright's generic timeout. The two-run rows measured 10.9-11.6 s end to end.
+    await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).some((g) => g.tool === "python_exec"), { timeout: 20000 }).toBe(true);
     const frame = await openRunInSidebar(page, { task });
-    await frame.locator(".appr-btn.yes:not(.remember)").click({ timeout: 20000 });
-    await expect.poll(() => fake.calls().length, { timeout: 90000 }).toBe(beforeCalls + 2);
+    await frame.locator(".appr-btn.yes:not(.remember)").click({ timeout: 10000 });
+    await expect.poll(() => fake.calls().length, { timeout: 20000 }).toBe(beforeCalls + 2);
     const content = fake.calls().flatMap((c) => c.messages || []).filter((m) => m.role === "tool").at(-1)?.content;
     expect(typeof content, `the cell must return a tool result: ${JSON.stringify(fake.calls().at(-1)?.messages?.slice(-2))}`).toBe("string");
     expect(content, "the person-approved cell must actually reach the JS bridge").not.toContain("js is refused");
@@ -167,8 +169,11 @@ test.afterAll(async () => {
 });
 
 /**
- * One FULL-mode cell: a raw PY_RUN from the service worker (the bench's own path, `hardened: false`), its RT_PROBE
- * line decoded. `body` is Python statements ending by setting `_result`; top-level await works (runPythonAsync).
+ * One FULL-mode cell: a raw PY_RUN posted as extension code from the service worker's realm with `hardened: false`,
+ * its RT_PROBE line decoded. No product surface sends false — the router hardcodes true (`sw-python.ts:325`), the
+ * prewarm sends true, and so do Settings and the benchmark page — so this cell is a stand-in for a bypass of the
+ * strip, not a path a person can take. `body` is Python statements ending by setting `_result`; top-level await
+ * works (runPythonAsync).
  */
 async function runFullCell(body) {
     const code = `import json, js
@@ -312,7 +317,7 @@ test("a FULL-mode cell posts on a BroadcastChannel", async () => {
 /** The net/IO names section 3's table records as reachable from a FULL worker; all of them are true there. */
 const NET_IO = ["fetch", "XMLHttpRequest", "WebSocket", "EventSource", "Worker", "BroadcastChannel", "MessageChannel", "MessagePort", "postMessage", "onmessage", "addEventListener", "importScripts", "indexedDB", "caches", "navigator", "Response", "Request", "Headers", "FileReader", "Blob", "File"];
 
-test("a READONLY cell reads NONE of the net/IO names, and the same probe finds every one in a FULL worker", async () => {
+test("a READONLY cell reads NONE of the net/IO names, and the same probe finds every one in a FULL worker (route 1)", async () => {
     test.skip(!HAS_FORK, NEED_FORK);
     const ro = await runCell(`import js
 _g = js.globalThis
@@ -327,7 +332,7 @@ fam = ${JSON.stringify(NET_IO)}
     expect(full.value, "every net/IO name must be present in the FULL realm, or this probe cannot see them").toBe(NET_IO.join(","));
 });
 
-test("a READONLY cell cannot recover the Emscripten module through Pyodide's own exports (route 1)", async () => {
+test("a READONLY cell cannot recover the Emscripten module through Pyodide's own exports (route 2)", async () => {
     test.skip(!HAS_FORK, NEED_FORK);
     // Route 1: the strip deletes names from the realm's global, so only a CAPTURED value survives it. Pyodide is the
     // thing that captured most of them (its module object holds `fetch`, `indexedDB`, the FS, the wasm exports), so
@@ -349,7 +354,7 @@ names = ["_module", "FS", "API", "loadPackage", "version"]
     expect(full.value, `the FULL realm must reach the Emscripten module and its FS, got ${full.value}`).toBe("_module,FS,loadPackage,version");
 });
 
-test("a READONLY cell can compile its OWN wasm, but no host module, memory or import table is reachable (route 3)", async () => {
+test("a READONLY cell can compile its OWN wasm, but no host module, memory or import table is reachable (route 4)", async () => {
     test.skip(!HAS_FORK, NEED_FORK);
     // Route 3: Emscripten's module object is where the FS's IDBFS and the socket syscalls bind their imports to. A cell
     // that can compile wasm is not the problem — compiling its own module only gives it the imports it PASSES. The
@@ -372,7 +377,7 @@ out`, "route-back wasm probe");
     expect(r.host, `no host module, memory or exports table may be reachable, found ${r.host}`).toBe("");
 });
 
-test("no Pyodide module holds a JS object a READONLY cell can call (route 1, swept)", async () => {
+test("no Pyodide module holds a JS object a READONLY cell can call (route 2, swept)", async () => {
     test.skip(!HAS_FORK, NEED_FORK);
     // The seal pops `pyodide_js` from `sys.modules`, but Pyodide's own modules bound things from it at THEIR import
     // time (`webloop`'s scheduleCallback, the package loader). Route 1 survives only if one of those bindings still
