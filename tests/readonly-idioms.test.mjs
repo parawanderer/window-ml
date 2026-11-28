@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
-import { evalReadonly, NotInDialect, Denied } from "../src/readonly-exec.ts";
+import { evalReadonly, NotInDialect, Denied, ResourceStop } from "../src/readonly-exec.ts";
 import { kindOf, methodAllowed, offeredMethods, MUTATING_METHODS } from "../src/readonly-exec/policy.ts";
 
 const current = () => ({ messages: [{ role: "user", content: "hi" }, { role: "assistant", content: "yo" }], meta: [{}, {}], log: [], run: { id: "r" } });
@@ -89,7 +89,7 @@ test("ADVERSARIAL: NumberCtor is this realm's Number by identity, lists no mutat
     // parseFloat coerces with toString: the script's own arrow runs mediated, and an array is walked first.
     assert.equal((await run("Number.parseFloat({ toString: () => '2.5' })")).value, 2.5);
     await assert.rejects(run("Number.parseFloat({ toString: () => fetch('https://evil.example/') })"), refused);
-    await assert.rejects(run("let d = [1]; for (const i of Array(40).keys()) d = [d, d]; Number.parseFloat(d)"), refused, "a shared array expands past the limit before parseFloat joins it");
+    await assert.rejects(run("let d = [1]; for (const i of Array(40).keys()) d = [d, d]; Number.parseFloat(d)"), (e) => refused(e) || e instanceof ResourceStop, "a shared array expands past the limit before parseFloat joins it");
 });
 
 test("ADVERSARIAL: a for…of pattern reads through the same guard as a const pattern", async () => {

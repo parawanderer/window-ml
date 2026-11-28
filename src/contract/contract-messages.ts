@@ -180,6 +180,10 @@ export interface StartRunPayload {
      *  turns again. Absent on a session stored before the input scrub, whose user turns a resume scrubs on the way to the
      *  model. Stripped from a page's payload. */
     inputScrubbed?: boolean;
+    /** The worker's: the run was offered `ml.sh` at its start (`shellOffered`, sw-run-start.ts), so a read-only survey's
+     *  budget stop names it as the way on, as the prompt does. Absent on a payload written before it was recorded, read
+     *  then as not offered. Stripped from a page's payload. */
+    shell?: boolean;
     /** trusted config flag → the background may auto-approve an in-dialect exec survey */
     autoApproveReadonly: boolean;
     /** agent option → surface `@tool:<id>` tokens on rich tool results (so the model can cite exact outputs) */

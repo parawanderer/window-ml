@@ -3,7 +3,7 @@
 
 import { isTable } from "../table/table-brand";   // a table facade is recognised by BRAND, and the brand module is itself dependency-free
 import { isEmbedding } from "../ml/embedding";   // an embedding is recognised by BRAND too; embedding.ts imports nothing
-import { Denied, riskyRegex, PIPE_CHARS_PER_STEP, MAX_STRING, NotInDialect, NeedsPage, EMBED_SURVEY_CHARS, EMBED_SURVEY_CALLS, EMBED_CALL_INPUTS, HOST_SCAN_CHARS_PER_STEP } from "./limits";
+import { Denied, ResourceStop, riskyRegex, PIPE_CHARS_PER_STEP, MAX_STRING, NotInDialect, NeedsPage, EMBED_SURVEY_CHARS, EMBED_SURVEY_CALLS, EMBED_CALL_INPUTS, HOST_SCAN_CHARS_PER_STEP } from "./limits";
 
 // Property names that can walk back to the realm (window/Function/…). Denied on
 // every read, static or computed. `constructor`/`__proto__` kill the
@@ -662,7 +662,7 @@ export function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown,
                 charge: (chars: number) => meter?.charge(Math.ceil(chars / PIPE_CHARS_PER_STEP)),
                 ...(meter ? { steps: (n: number) => meter.charge(n) } : {}),
                 maxChars: MAX_STRING,
-                tooLarge: (msg: string): never => { throw new NotInDialect(`${msg}, too much to build without asking`); },
+                tooLarge: (_msg: string, stage: string): never => { throw new ResourceStop("string", { stage }); },
             });
         };
     }

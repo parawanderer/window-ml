@@ -222,6 +222,9 @@ reached the tab's ledger for a worker-hosted run. The remember button never help
 
 ## Traps
 
+- A policy has no `while` or `do…while`: the loop forms are for exec scripts only (docs/dev/readonly-exec.md), and a
+  policy containing one is broken when it is parsed (`not allowed in a policy`). They will stay out of policies when
+  `break`, `continue` and the classic `for` join the exec dialect. A policy loops with `for (const x of …)`.
 - A page-built run's "remember" does not skip its later cards. Its fetch runs in the page, and skipping the card would
   mean lending a run policy to the tab. It is still stored; a `deny` still applies to it.
 - Never lend a run policy to the tab (`consentFetch`, `fetchConsent`, `credFetchGrants`). The tab's grants belong to

@@ -20,15 +20,59 @@ export class NeedsPage extends NotInDialect {}
  *  which on a run that was NOT stopped (a page forging the stop) asks the human. */
 export class Stopped extends NotInDialect {}
 
+/** Why a script was stopped by a RESOURCE bound, which is not a refusal. `steps`: the step budget is spent; `steps-left`:
+ *  a step that would not fit in what is left of it; `string` and `collection`: a value over {@link MAX_STRING} or
+ *  {@link MAX_COLLECTION}; `expanded` and `expanded-chars`: a walk over {@link MAX_EXPANDED} or {@link MAX_EXPANDED_CHARS};
+ *  `cells`: {@link MAX_STORED_CELLS}; `depth`: {@link MAX_CALL_DEPTH}; `loop`: a loop that could not end, found when parsed. */
+export type StopKind = "steps" | "steps-left" | "string" | "collection" | "expanded" | "expanded-chars" | "cells" | "depth" | "loop";
+
+/** The script was stopped by a resource bound (the step budget, a size cap, the call depth) or found to be a loop that
+ *  cannot end. NOT a {@link NotInDialect}, on purpose: that class sends the script to a person, and asking one about
+ *  work that does not end, or about a value too big, is the wrong question (docs/dev/readonly-exec.md, "Halting", ruling
+ *  104). A caller that does not know this class reads it as the script's own error and returns the message to the
+ *  model, which is the right default. Uncatchable by the script (the evaluator's `try` lets it through, as it does a
+ *  refusal), and it leaves nothing behind: the evaluator is rolled back as for any failed attempt. Each text names the
+ *  bound with its figure, that nothing the script computed, printed or added was kept, and the way on; none of it depends
+ *  on anything but the bound, so the same script stops at the same step with the same words. */
+export class ResourceStop extends Error {
+    /** @param kind which bound
+     *  @param o `budget` the steps allowed (steps kinds), `left` what was left when a step would not fit (`steps-left`),
+     *    `stage` the `ml.pipe` stage that built too big a string (kind `string` only); `shell` the run is offered `ml.sh`, so the way on may name running a script detached through it (steps kinds only) */
+    constructor(readonly kind: StopKind, o: { budget?: number; left?: number; shell?: boolean; stage?: string } = {}) {
+        super(stopText(kind, o));
+        this.name = "ResourceStop";
+    }
+}
+
+const num = (n: number): string => n.toLocaleString("en-US");
+const KEPT = "and nothing it computed, printed or added was kept";
+function stopText(kind: StopKind, o: { budget?: number; left?: number; shell?: boolean; stage?: string }): string {
+    switch (kind) {
+        case "steps":
+        case "steps-left": {
+            const cause = kind === "steps" ? `the script used its whole step budget (${num(o.budget ?? 0)} steps)`
+                : `the script reached a step that needs more than the ${num(Math.max(0, o.left ?? 0))} steps left of its ${num(o.budget ?? 0)}-step budget`;
+            return `Stopped: ${cause} ${KEPT}. Bound the loop or narrow the work${o.shell ? "; for a long computation, run a script detached through ml.sh" : ""}.`;
+        }
+        case "string": return `Stopped: the script built a string of over ${num(MAX_STRING)} characters${o.stage ? ` in the ${o.stage} stage` : ""}, the most one step may hold, ${KEPT}. Narrow the selection or work in pieces.`;
+        case "collection": return `Stopped: the script built an array, set or map of over ${num(MAX_COLLECTION)} elements, the most one step may hold, ${KEPT}. Narrow the selection or work in pieces.`;
+        case "expanded": return `Stopped: the script used a value that expands to over ${num(MAX_EXPANDED)} parts (an array holding the same array twice counts it twice), the most one step may walk, ${KEPT}. Narrow the selection or work in pieces.`;
+        case "expanded-chars": return `Stopped: the script used a value whose strings expand to over ${num(MAX_EXPANDED_CHARS)} characters, the most one step may walk, ${KEPT}. Narrow the selection or work in pieces.`;
+        case "cells": return `Stopped: the script read over ${num(MAX_STORED_CELLS)} cells of stored tables, the most one script may read, ${KEPT}. Read fewer rows or columns, or work in pieces.`;
+        case "depth": return `Stopped: the script's own functions nested past the depth limit (${MAX_CALL_DEPTH} calls) ${KEPT}. Write the recursion as a loop.`;
+        case "loop": return "Not run: the loop has a test that is always true and no `return` in its body, so it never ends. Add a `return` or give it a test that can turn false.";
+    }
+}
+
 // HALTING. Two properties, deliberately kept apart (docs/dev/readonly-exec.md, "Halting"):
 //
-//   A. HALTING BY CONSTRUCTION, a property of the language. No script can express an infinite loop: there is no
-//      `while`/`for(;;)`/generator/custom iterator, a collection cannot change while it is being iterated (so a
-//      loop's trip count is fixed when it starts), and calls nest at most MAX_CALL_DEPTH deep (so recursion is a
-//      tree of bounded depth whose every node does finitely much, which is finite). The collection rule went
-//      missing when script-created containers became mutable, and `for (const x of a) a.push(x)` ran forever.
+//   A. HALTS WITHIN THE BUDGET, a property of the language. Every evaluated node and iterated element spends a step
+//      from a counter no script can read or reset, so every run ends within STEP_BUDGET steps, `while` included
+//      (ruling 104). A loop whose test is constant-true and whose body has no exit is refused before it runs
+//      (parser.ts); a collection still cannot change while it is being iterated, and calls nest at most
+//      MAX_CALL_DEPTH deep. Running out of steps is a {@link ResourceStop}, an error the model reads.
 //   B. BOUNDED COST, a resource policy. A script that halts can still take very long. The step budget and the size
-//      caps below send it to the human gate instead of freezing the page's main thread, a regex that could
+//      caps below stop it instead of freezing the page's main thread (each with a {@link ResourceStop}, an error the model reads, not a question to the person), a regex that could
 //      backtrack exponentially (one host call, unbounded) is refused before it runs, and every regex SEARCH is priced
 //      on its input before it runs (regex-cost.ts), since one quantifier is enough to make it quadratic. A step is only a fair unit if
 //      no single step does unbounded work, so a host call is also charged for the size of what it scans or expands

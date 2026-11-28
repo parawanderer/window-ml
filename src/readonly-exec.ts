@@ -12,7 +12,8 @@
 // are never in scope and are unreachable through the object graph.
 //
 // Anything outside the dialect throws `NotInDialect`; any blocked access throws
-// `Denied`. Callers treat BOTH as "fall back to the normal approval + eval path"
+// `Denied`; running out of steps throws `ResourceStop`, which is NOT a refusal: the caller returns it to the model as the
+// call's error. Callers treat the first two as "fall back to the normal approval + eval path"
 // — safe because the interpreter is side-effect-free, so a failed attempt does
 // nothing observable. See docs/spec/READONLY_EXEC_SPEC.md.
 //
@@ -35,7 +36,7 @@ import { DENIED_PROPS, ReadonlyRealm, mlFacade, tokenListBrand } from "./readonl
 import { PrintSwap, safeStr } from "./readonly-exec/print";
 import { Evaluator, runAsync } from "./readonly-exec/evaluator";
 
-export { NotInDialect, Denied, NeedsPage, Stopped, STEP_BUDGET, MAX_COLLECTION, MAX_STORED_CELLS, MAX_STRING, MAX_CALL_DEPTH, PIPE_CHARS_PER_STEP, riskyRegex } from "./readonly-exec/limits";
+export { NotInDialect, Denied, NeedsPage, Stopped, ResourceStop, STEP_BUDGET, MAX_COLLECTION, MAX_STORED_CELLS, MAX_STRING, MAX_CALL_DEPTH, PIPE_CHARS_PER_STEP, riskyRegex } from "./readonly-exec/limits";
 export { ML_READONLY_METHODS } from "./readonly-exec/policy";
 export type { ReadonlyRealm } from "./readonly-exec/policy";
 export { ABRIDGE_OVER, describeSwaps } from "./readonly-exec/print";
@@ -63,12 +64,14 @@ export type { PrintSwap } from "./readonly-exec/print";
  * @param opts.onLog Called with each console line as it is printed, the SAME string that goes into `logs` (abridged by
  *   the print boundary), so a live view shows what the model will be given. A survey that is then refused has
  *   streamed lines from a run that did not happen: the caller must discard them (agent-loop.ts, `LiveOutput`).
+ * @param opts.shell The run is offered `ml.sh` (the same condition as the prompt's shell clause): a budget trip then names running
+ *   a script detached through it as a way on.
  * @param opts.signal The run's Stop. Once it aborts the script is not resumed again, at its next await or at once if
  *   it is awaiting, and the call throws {@link Stopped} (a refusal), after the checkpoint is restored.
  */
 export async function evalReadonly(code: string, doc: Document | null, ml?: unknown, answerFacade?: unknown,
     opts: { checkpoint?: () => () => void; stepBudget?: number; realm?: ReadonlyRealm; current?: CurrentSnapshot; onLog?: (line: string) => void; signal?: AbortSignal;
-        globals?: Record<string, unknown>; hidden?: ReadonlyMap<string, string> } = {}): Promise<{ value: unknown; logs: string[]; dropped: number; reused: string[]; prints: { console: PrintSwap[]; value: PrintSwap[] } }> {
+        globals?: Record<string, unknown>; hidden?: ReadonlyMap<string, string>; shell?: boolean } = {}): Promise<{ value: unknown; logs: string[]; dropped: number; reused: string[]; prints: { console: PrintSwap[]; value: PrintSwap[] } }> {
     const realm: ReadonlyRealm = opts.realm ?? "page";
     // Bounded (output-clip.ts): past OUTPUT_CEILING a line is counted, not kept. The step budget bounds the WORK, and a
     // string may be 10 million characters, so without this 200 prints of one were 1.8 GB held and then an
@@ -139,6 +142,7 @@ export async function evalReadonly(code: string, doc: Document | null, ml?: unkn
     // The DOMTokenList brand: this realm's own, or (only where this realm has none) the document's, read before the script runs.
     if (realm !== "worker") ev.isTokenList = tokenListBrand(doc?.defaultView);
     if (opts.hidden) ev.hidden = opts.hidden;
+    if (opts.shell) ev.shell = true;
     charge = (n) => ev.spend(n);
     if (opts.current && facade) facade.current = ev.adoptCurrent(opts.current);
     printable = (v, swaps, where) => ev.printable(v, swaps, where);
@@ -154,6 +158,7 @@ export async function evalReadonly(code: string, doc: Document | null, ml?: unkn
         // throw is about one statement, and "line 4" is the difference between a targeted fix and a rewrite
         // — which the model used to get for free, because a throwing survey escalated and the approved path
         // read the line off a real stack. It is answered here now, so the line has to come from here.
+        // A ResourceStop is reported WITH its line, like a runtime error: where the budget ran out is deterministic.
         if (!(e instanceof NotInDialect) && !(e instanceof Denied) && e instanceof Error && ev.line) {
             (e as Error & { mlLine?: number }).mlLine = ev.line;
             // On a long line, the piece of it that threw (exec-trace.ts, `lineExcerpt`): a model reads tokens, so

@@ -14,7 +14,7 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { Worker } from "node:worker_threads";
-import { evalReadonly, NotInDialect, Denied, STEP_BUDGET } from "../src/readonly-exec.ts";
+import { evalReadonly, NotInDialect, Denied, ResourceStop, STEP_BUDGET } from "../src/readonly-exec.ts";
 import { regexWork, regexSteps, REGEX_UNITS_PER_STEP } from "../src/readonly-exec/regex-cost.ts";
 import { riskyRegex } from "../src/readonly-exec/limits.ts";
 import { kindOf, methodAllowed, offeredMethods, MUTATING_METHODS } from "../src/readonly-exec/policy.ts";
@@ -82,11 +82,13 @@ test("CHARGE: the bound's own scan is billed too, and the unit constant is pinne
     assert.equal(REGEX_UNITS_PER_STEP, 512, "the measured units-per-step; a recalibration updates this pin in the same breath");
 });
 
-// --- HALTING: the dialect refuses the quadratic exact-count search before it runs ------------------------------------
+// --- HALTING: the quadratic exact-count search is STOPPED before it runs, not sent to a person ------------------------
 //
-// regexCharge (evaluator.ts) prices the search and throws NotInDialect over what is left of the budget, BEFORE the
-// host call runs. If that charge stops firing, V8 holds the thread for minutes: these run in a worker with the
-// halting watchdog, so a regression fails instead of hanging the runner.
+// regexCharge (evaluator.ts) prices the search against what is left of the step budget and, over it, throws
+// ResourceStop("steps-left") BEFORE the host call runs. It is a resource bound, not a refusal: ruling 104 sends the
+// model a reason, and asking a person about a search that is merely too big is the wrong question. If that charge
+// stops firing, V8 holds the thread for minutes: these run in a worker with the halting watchdog, so a regression
+// fails instead of hanging the runner.
 
 const RO_URL = new URL("../src/readonly-exec.ts", import.meta.url).href;
 const TSX_API = import.meta.resolve("tsx/esm/api");
@@ -119,13 +121,25 @@ function inWorker(src, { stepBudget = 200_000, ms } = {}) {
     });
 }
 
-test("HALTING: an exact-count shape that backtracks quadratically is refused before the engine runs, at 20k and at 300k", async () => {
+test("HALTING: an exact-count shape that backtracks quadratically is stopped before the engine runs, at 20k and at 300k", async () => {
     for (const [src, n] of [[`"1".repeat(20000).search(/(\\d{3})+b/)`, 20_000], [`"1".repeat(300000).search(/(\\d{3})+b/)`, 300_000]]) {
         const r = await inWorker(src, { stepBudget: STEP_BUDGET, ms: 8000 });
         assertNotHung(r, `(\d{3})+b over ${n} digits`, STEP_BUDGET);
-        assert.equal(r.threw, "NotInDialect", `${src}: ${JSON.stringify(r)}`);
-        assert.match(r.message, /could backtrack for too long/, src);
+        assert.equal(r.threw, "ResourceStop", `${src}: ${JSON.stringify(r)}`);
+        // The kind's text names the bound and its figure, says nothing was kept, and offers a way on. The figures are
+        // not pinned: how many steps are LEFT when the host call is reached depends on the surrounding nodes (measured:
+        // 2,999,833–2,999,837 for the same search in different wrappers), and the budget is the part that is fixed.
+        assert.match(r.message, /reached a step that needs more than the [\d,]+ steps left of its 3,000,000-step budget/, src);
+        assert.match(r.message, /nothing it computed, printed or added was kept/, src);
     }
+    // Not a refusal, and not catchable by the script: the class is what a caller routes on, so a switch that made this
+    // a NotInDialect would send a person a question about work that does not end, and a `try` would get the search
+    // back. In-process, where the class itself is visible. That the promise rejected at all is the other half: a
+    // `catch` or a `finally` that ran would have returned "CAUGHT"/"FINALLY" instead.
+    const e = await run(`try { return "1".repeat(20000).search(/(\\d{3})+b/) } catch (x) { return "CAUGHT" } finally { return "FINALLY" }`).catch((x) => x);
+    assert.ok(e instanceof ResourceStop, `not a resource stop: ${JSON.stringify(e?.value ?? `${e?.constructor?.name}: ${e?.message}`)}`);
+    assert.equal(e.kind, "steps-left", "the kind a caller and the model read");
+    assert.ok(!(e instanceof NotInDialect), "a resource stop was routed as a refusal, so a person is asked about it");
 });
 
 test("HALTING: the non-matching charge leaves an ordinary exact-count search alone", async () => {

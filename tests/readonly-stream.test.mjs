@@ -9,7 +9,7 @@ import assert from "node:assert";
 import { JSDOM } from "jsdom";
 import { runAgentLoop } from "../src/agent/agent-loop.ts";
 import { snapshotCurrent, UNRECORDED } from "../src/agent/current-context.ts";
-import { evalReadonly, NotInDialect, Denied } from "../src/readonly-exec.ts";
+import { evalReadonly, NotInDialect, Denied, ResourceStop } from "../src/readonly-exec.ts";
 import { evalReadonlyInWorker, WORKER_STREAM_HOLD_MS } from "../src/sw/sw-readonly.ts";
 import { registerRun, runDelegatedTool, endRun } from "../src/agent/run-delegation.ts";
 import { formatReadonlyExec } from "../src/agent/approval.ts";
@@ -62,11 +62,11 @@ test("onLog streams BEFORE the survey finishes: a line printed before an await a
 
 // --- HALTING: a survey that logs until the step budget trips stops streaming when it trips -----------------------------
 
-test("HALTING: a logging loop that trips the step budget is refused, and nothing streams after the refusal", async () => {
+test("HALTING: a logging loop that trips the step budget is stopped, and nothing streams after the trip", async () => {
     const seen = [];
     // 5,000, not more: the array `ml.range` builds is charged its size, and the budget here is 500.
     await assert.rejects(evalReadonly(`for (const i of ml.range(5000)) console.log("tick " + i)`, null,
-        { range: (n) => Array.from({ length: n }, (_, i) => i) }, undefined, { stepBudget: 500, onLog: (l) => seen.push(l) }), outOfDialect);
+        { range: (n) => Array.from({ length: n }, (_, i) => i) }, undefined, { stepBudget: 500, onLog: (l) => seen.push(l) }), ResourceStop);
     const n = seen.length;
     assert.ok(n > 0 && n < 500, `some lines streamed before the trip (${n})`);
     await tick(20);

@@ -130,8 +130,8 @@ export interface PipeLimits {
      *  the cost: `sed` (one replacement per match, a match per character with `g`) and the JSON stages that
      *  pretty-print (quadratic in nesting depth). */
     maxChars?: number;
-    /** How an exceeded `maxChars` is reported. Absent: an ordinary Error. */
-    tooLarge?(message: string): never;
+    /** How an exceeded `maxChars` is reported, with the name of the stage that hit it. Absent: an ordinary Error. */
+    tooLarge?(message: string, stage: string): never;
 }
 /** Split on newlines, dropping a single trailing "\n" so a text that ends in a newline isn't seen as having a
  *  phantom empty last line (matches how the shell tools treat a trailing line terminator). */
@@ -357,7 +357,7 @@ function sed(lines: string[], argv: string[], limits?: PipeLimits): string[] {
         if (total + bound > max) bound = replaceSize(l, re, replacement, re.global, max - total).size;
         if (total + bound > max) {
             const msg = `sed: this substitution would produce over ${max.toLocaleString("en-US")} characters`;
-            if (limits?.tooLarge) limits.tooLarge(msg);
+            if (limits?.tooLarge) limits.tooLarge(msg, "sed");
             throw new Error(msg);
         }
         const next = l.replace(re, replacement);
@@ -484,7 +484,7 @@ const emit = (v: unknown): string[] => toLines(typeof v === "string" ? v : JSON.
  *  one overflows the stack at the same depth `JSON.stringify` does): every node costs at most its indentation and a
  *  newline, so the result is at most `compact + nodes x (2 x depth + 2)`. Exact for the deep-array case, loose for
  *  ordinary JSON, where it is far under the cap anyway. */
-function emitWithin(v: unknown, compact: number, limits?: PipeLimits): string[] {
+function emitWithin(v: unknown, compact: number, limits?: PipeLimits, stage = "path"): string[] {
     const max = limits?.maxChars;
     if (max != null && v !== null && typeof v === "object") {
         let nodes = 0, depth = 0;
@@ -496,7 +496,7 @@ function emitWithin(v: unknown, compact: number, limits?: PipeLimits): string[] 
         }
         if (compact + nodes * (2 * depth + 2) > max) {
             const msg = `this would print over ${max.toLocaleString("en-US")} characters (${nodes.toLocaleString("en-US")} values nested ${(depth + 1).toLocaleString("en-US")} levels deep)`;
-            if (limits?.tooLarge) limits.tooLarge(msg);
+            if (limits?.tooLarge) limits.tooLarge(msg, stage);
             throw new Error(msg);
         }
     }
@@ -609,7 +609,7 @@ export function runPipe(text: string, pipe: string | string[], limits?: PipeLimi
             case "values": {
                 const j = parseJson(lines, "values");
                 if (!isObj(j)) throw new Error(`\`values\` needs an object; this is ${describeValue(j)}.`);
-                lines = emitWithin(Object.values(j), read, limits); break;
+                lines = emitWithin(Object.values(j), read, limits, "values"); break;
             }
             // The SHAPE, not the data — the cheapest read of a big structure, and what to reach for first.
             // `jsonschema` is accepted as the same thing: models reach for that name.
@@ -632,7 +632,7 @@ export function runPipe(text: string, pipe: string | string[], limits?: PipeLimi
             const made = charsOf(lines);
             if (limits.maxChars != null && made > limits.maxChars) {
                 const msg = `\`${cmd}\` produced over ${limits.maxChars.toLocaleString("en-US")} characters`;
-                if (limits.tooLarge) limits.tooLarge(msg);
+                if (limits.tooLarge) limits.tooLarge(msg, cmd);
                 throw new Error(msg);
             }
             limits.charge?.(made);

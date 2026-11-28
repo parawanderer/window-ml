@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import { evalReadonly, NotInDialect, Denied, NeedsPage } from "../src/readonly-exec.ts";
+import { evalReadonly, NotInDialect, Denied, NeedsPage, ResourceStop } from "../src/readonly-exec.ts";
 import { EMBED_SURVEY_CHARS, EMBED_SURVEY_CALLS, EMBED_CALL_INPUTS } from "../src/readonly-exec/limits.ts";
 import { Embedding, isEmbedding } from "../src/ml/embedding.ts";
 import { AnswerSet, makeAnswerFacade } from "../src/pointers/answer-set.ts";
@@ -135,7 +135,7 @@ test("the caps are per survey: each survey gets its own", async () => {
 
 test("ADVERSARIAL: the inputs are charged to the step budget before the call", async () => {
     const h = host();
-    await assert.rejects(run(`ml.embed("a".repeat(400000))`, h.ml, { stepBudget: 1000 }), NotInDialect);
+    await assert.rejects(run(`ml.embed("a".repeat(400000))`, h.ml, { stepBudget: 1000 }), ResourceStop);
     assert.equal(h.calls.length, 0);
 });
 
@@ -173,7 +173,7 @@ test("ADVERSARIAL: dot and rank are charged their dimensions before they run", a
     h.ml.embed = async (xs) => (Array.isArray(xs) ? xs : [xs]).map(() => Embedding.from(Array.from({ length: 4096 }, (_, i) => (i === 0 ? 1 : 0))));
     const many = `const [q] = await ml.embed(["q"]); const c = ml.range(600).map(k => ({ key: k, embedding: q }));`;
     assert.equal((await run(`${many} return q.rank(c).length`, h.ml)).value, 600);
-    await assert.rejects(run(`${many} return q.rank(c).length`, h.ml, { stepBudget: 9000 }), NotInDialect, "600 x 4096 at 256 a step is 9,600");
+    await assert.rejects(run(`${many} return q.rank(c).length`, h.ml, { stepBudget: 9000 }), ResourceStop, "600 x 4096 at 256 a step is 9,600");
 });
 
 test("ADVERSARIAL: the vector cannot be changed, and no route reaches its class or the realm", async () => {

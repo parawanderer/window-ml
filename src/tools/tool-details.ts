@@ -37,7 +37,7 @@ export const EXEC_SHORT = (cap: number, ceiling: number): string =>
     "value (`await` and `return` work). Each is cut to " + cap + " chars, with a note saying how much you got: " +
     "return a compact summary, or `ml.schema(x)` for a big value's shape; `maxChars` (up to " + ceiling + ") with a " +
     "`maxCharsReason` asks the human for more room. Read-only code (queries plus `.map`/`.filter`/`.reduce`/`for…of`/" +
-    "`ml.range`; no mutation, `.push`, `+=`, `while`/`for(;;)` or `for…in`) runs with NO approval prompt; anything " +
+    "`ml.range`; no mutation, `.push`, `+=`, `for(;;)` or `for…in`) runs with NO approval prompt; anything " +
     "else asks the user first. `@tool:<id>` written in the code is that output as a plain value (no `await`). On " +
     "`ml`: `ml.pipe(text, \"grep x | head\")` filters any string; `ml.queryAll('host >>> inner')` pierces shadow " +
     "roots and same-origin iframes; `ml.a11y(el)` gives a control's role, name and the selector for click/type; " +
@@ -157,7 +157,7 @@ export const TOOL_DETAILS: Readonly<Record<string, string>> = {
         "Auto-run: read-only BY CONSTRUCTION means only queries/reads and pure computation, including the read-only " +
         "`ml.*` reads. It runs in a mediated interpreter with no prompt; anything else falls back to real `eval` and " +
         "asks. So for a survey prefer `.map`/`.filter`/`.reduce`/`for…of` with `ml.range(n)`, and reach for mutation " +
-        "or a while-loop only when the task needs it.",
+        "only when the task needs it.",
         "Pointers: `@tool:abc1234`, `@tool:fetch_url` (the latest call of that tool) or `@tool:\"a label\"`. Every " +
         "pointer you name is resolved before the script starts, so `const rows = @tool:abc1234.split(\"\\n\");` works " +
         "as written. Inside a string or a comment it stays literal text.",

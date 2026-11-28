@@ -682,8 +682,8 @@ test("HALTING: a loop that tries to grow the messages it iterates ends at once, 
 test("HALTING: a survey over a large context is bounded by the step budget, not by how big the context is", async () => {
     const r = await inThread(`ml.current.messages.map(a => ml.current.messages.map(b => a.content + b.content).length).length`, 2000);
     assertNotHung(r, "the survey", 200_000);
-    assert.equal(r.threw, "NotInDialect", "4 million pairs: over budget, so it goes to the human");
-    assert.match(r.message, /too much work/);
+    assert.equal(r.threw, "ResourceStop", "4 million pairs: over budget, so it stops with an error the model reads");
+    assert.match(r.message, /^(Error: )?Stopped: the script /);
 });
 
 test("HALTING: a watch that loops, recurses or multiplies over caller-bound data (`globals`) is stopped by the step budget", async () => {
@@ -704,7 +704,7 @@ test("HALTING: a loop over ml.current.debug cannot grow it, and multiplying over
     for (const [src, want] of [
         ["for (const w of ml.current.debug.userWatches) ml.current.debug.userWatches.push(w); 0", "TypeError"],
         ["ml.current.debug.userWatches.forEach(w => ml.current.debug.userWatches.push(w)); 0", "TypeError"],
-        ["ml.current.debug.userWatches.map(a => ml.current.debug.userWatches.map(b => a.value.i + b.value.i).length).length", "NotInDialect"],
+        ["ml.current.debug.userWatches.map(a => ml.current.debug.userWatches.map(b => a.value.i + b.value.i).length).length", "ResourceStop"],
     ]) {
         const r = await inThread(src, 3, 5000, false, true);
         assertNotHung(r, src, 200_000);
@@ -721,18 +721,18 @@ test("HALTING: dates, the clock and number formatting in a long map are stopped 
     ]) {
         const r = await inThread(src);
         assertNotHung(r, src, 200_000);
-        assert.equal(r.threw, "NotInDialect", src);
+        assert.equal(r.threw, "ResourceStop", src);
     }
 });
 
 test("HALTING: the Number statics, number keys and for…of patterns in a long loop are stopped by the step budget", async () => {
     for (const [src, want] of [
         // Ten billion iterations over collections under MAX_COLLECTION, so the budget is what stops each, not the size cap.
-        ["const xs = [...Array(100000).keys()]; xs.map((a) => xs.filter((b) => Number.isNaN(a + b) || Number.isInteger(b)).length).length", "NotInDialect"],
-        ["const xs = [...Array(100000).keys()]; xs.map((a) => xs.map((b) => ({ 1: a, 2.5: b })).length).length", "NotInDialect"],
-        ["const xs = [...Array(100000).keys()].map((i) => [i, i]); let n = 0; for (const x of xs) for (const [k, v] of xs) n += k + v; n", "NotInDialect"],
+        ["const xs = [...Array(100000).keys()]; xs.map((a) => xs.filter((b) => Number.isNaN(a + b) || Number.isInteger(b)).length).length", "ResourceStop"],
+        ["const xs = [...Array(100000).keys()]; xs.map((a) => xs.map((b) => ({ 1: a, 2.5: b })).length).length", "ResourceStop"],
+        ["const xs = [...Array(100000).keys()].map((i) => [i, i]); let n = 0; for (const x of xs) for (const [k, v] of xs) n += k + v; n", "ResourceStop"],
         // A pattern over a string copies its characters, charged each iteration: 1,000,000 of them, 1,000,000 times.
-        ["const s = 'x'.repeat(1000000); for (const i of Array(1000000).keys()) for (const [c] of [s]) {} 0", "NotInDialect"],
+        ["const s = 'x'.repeat(1000000); for (const i of Array(1000000).keys()) for (const [c] of [s]) {} 0", "ResourceStop"],
         // A pattern does not unhold what it iterates: the loop still cannot grow its own collection.
         ["const xs = [[1]]; for (const [a] of xs) xs.push([a]); 0", "Denied"],
         ["for (const { content } of ml.current.messages) ml.current.messages.push({ role: 'user', content }); 0", "TypeError"],

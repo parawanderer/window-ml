@@ -358,7 +358,7 @@ export const GATED_TOOL_NAMES: ReadonlySet<string> = GATED_BUILTINS;
  * The keys a page's START_RUN may not set, at the payload's top level and inside its `rebuild` alike: the person's
  * fields and the sender's (`pageStartPayload`). One list for both levels, so a key added here is stripped at each.
  */
-export const PAGE_STRIPPED_KEYS = ["builtBy", "display", "files", "sends", "origin", "pageOrigin", "pageUrl", "inputScrubbed"] as const;
+export const PAGE_STRIPPED_KEYS = ["builtBy", "display", "files", "sends", "origin", "pageOrigin", "pageUrl", "inputScrubbed", "shell"] as const;
 
 /**
  * A shallow copy of `o` without any of `PAGE_STRIPPED_KEYS`.
@@ -374,7 +374,7 @@ function withoutPersonFields<T extends object>(o: T): T {
 /**
  * A page's START_RUN payload as the worker may trust it. A page's payload may ask for MORE gating, never less.
  * - Removed, the worker's to set, at the top level and inside `rebuild` alike (`PAGE_STRIPPED_KEYS`): `builtBy`, `display`, `files` (pointers naming value-store rows), `sends`,
- *   `inputScrubbed` (a page's claim would spare a stored session's raw user turns the scrub on resume)
+ *   `inputScrubbed` (a page's claim would spare a stored session's raw user turns the scrub on resume), `shell`
  *   and `origin` (the PromptOrigin: a page could stamp its prompt as typed on an extension surface). Only the worker's own `hostRun` call
  *   (sw-run-start.ts) marks a run worker-built, and `makeWorkerRun` hands one over; a page's claim would give its run the
  *   worker's tool routing, grants, vision and answer, and lock the run as the person's.
@@ -1833,12 +1833,15 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     const sh = typeof args.js === "string" && call && byWorker() && execNames(args.js).sh
                         ? surveySh({ runId, seq: seqBase + call.seq, local: call, signal: abortCtl.signal, tokens: sessionTokens(runId), origin: () => turnByRun.get(runId)?.()?.origin })
                         : undefined;
+                    // The prompt's own condition for naming `ml.sh` (a run the worker built, offered it at its start): a budget trip then names it.
+                    const shellOffered = byWorker() && !!p.shell;
                     const w = await guardSurvey(sh, () => evalReadonlyInWorker(args, {
                         ...(snap ? { current: () => current ?? snap({ model: modelNow(), log }) } : {}),
                         // ml.settings: a free read, only in a run the worker built (decided from its record, never the script).
                         ml: { ...workerReadonlyMl(tabPageUrl.get(tabId) ?? "", derefByRun.get(runId), runId), ...(byWorker() ? { settings: surveySettings } : {}), ...(sh ? { sh: sh.host } : {}) },
                         live,
                         signal: abortCtl.signal,
+                        ...(shellOffered ? { shell: true } : {}),
                     }));
                     if (w.kind === "stopped") {
                         recordRunLog(runId, { subsystem: "routing", kind: "readonly-sh-stopped", reason: w.why, detail: { tool: name, calls: sh?.started.length ?? 0 } });

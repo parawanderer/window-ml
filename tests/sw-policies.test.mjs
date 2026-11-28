@@ -594,6 +594,8 @@ test("each phrase reads inside the model's parentheses, and no label or detail c
         assert.equal((d.match(/"/g) ?? []).length, 2, "only the two quotes around the label");
     }
     assert.equal(P.brokenPhrase("calls nested more than 256 deep"), "it is nested too deep");
+    assert.equal(P.brokenPhrase("Stopped: the script used its whole step budget (50000 steps) and nothing it computed, printed or added was kept. Bound the loop or narrow the work."), "it ran out of steps");
+    assert.equal(P.brokenPhrase("Stopped: the script reached a step that needs more than the 120 steps left of its 50,000-step budget"), "it ran out of steps");
     assert.equal(P.brokenPhrase("Stopped: the script's own functions nested too deep for the read-only dialect (at most 256 calls)"), "it is nested too deep");
 });
 

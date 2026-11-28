@@ -485,7 +485,7 @@ test("HALTING: recursion past the call depth is refused, directly and mutually",
         const r = await inWorker(v.js, FACTS);
         assertNotHung(r, v.name, 50_000);
         assert.equal(r.decision, undefined, v.name);
-        assert.match(r.broken, /nested more than|budget|steps|too much/i, v.name);
+        assert.match(r.broken, /depth limit|budget|steps|too much/i, v.name);
     }
 });
 

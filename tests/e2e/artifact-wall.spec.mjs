@@ -200,6 +200,6 @@ test("the read-only evaluator runs in the frame's blob worker: the realm's reads
         expect(r.todo).toMatchObject({ ok: true, value: ["run spike", "estimate"] });
         expect(r.current).toMatchObject({ ok: true, value: "user: plan the week\nassistant: ok" });
         for (const k of ["fetch", "global", "self", "budget"]) expect(r[k].ok, `${k} is refused`).toBe(false);
-        expect(r.budget.error).toMatch(/too much work/);
+        expect(r.budget.error).toMatch(/Stopped: the script used its whole step budget/);
     } finally { await ext.close(); fs.rmSync(dist, { recursive: true, force: true }); }
 });

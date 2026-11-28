@@ -143,7 +143,8 @@ test("a console entry that does not end is stopped by its step budget, with a se
     const started = Date.now();
     const r = await W.evalConsole(t, "let n = 0; for (const a of inspector.big) for (const b of inspector.big) for (const c of inspector.big) n++; n", js);
     assert.match(r.error, /step/i, "a billion steps are stopped by the budget, not run");
-    assert.match((await W.evalConsole(t, "while (true) {}", js)).error, /while/, "and an unbounded loop is not in the dialect at all");
+    assert.match(r.error, /^(Error: )?Stopped: the script /, "with the budget's own sentence");
+    assert.match((await W.evalConsole(t, "while (true) {}", js)).error, /always true/, "and a loop that cannot end is refused before it runs");
     assert.ok(Date.now() - started < 10_000, "within seconds");
     assert.match((await W.evalConsole(t, "ml.current.run", js)).error, /'ml' is not available/, "between turns there is no ml.current");
 });

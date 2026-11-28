@@ -109,7 +109,7 @@ const GENRES = {
     readonly: {
         about: "the read-only exec dialect (src/readonly-exec.ts) and the free members a survey calls",
         files: ["readonly-exec.test.mjs", "readonly-pipe.test.mjs", "readonly-jsonpath.test.mjs", "readonly-current.test.mjs",
-            "readonly-stream.test.mjs", "readonly-globals.test.mjs", "readonly-dates.test.mjs", "readonly-idioms.test.mjs", "readonly-soundness.test.mjs", "readonly-convert.test.mjs",
+            "readonly-stream.test.mjs", "readonly-globals.test.mjs", "readonly-dates.test.mjs", "readonly-idioms.test.mjs", "readonly-soundness.test.mjs", "readonly-while.test.mjs", "readonly-convert.test.mjs",
             "readonly-tokenlist.test.mjs", "readonly-sh.test.mjs", "sw-survey-sh.test.mjs", "readonly-ml-table.test.mjs"],
     },
     // The run's curated answer: the set and its tool's core, the pointers it designates and their dedup against the

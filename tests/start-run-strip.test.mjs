@@ -25,7 +25,7 @@ const RESTAMPED = new Set(["pageOrigin", "pageUrl"]);
 
 test("PAGE_STRIPPED_KEYS is the person's fields and the sender's, and nothing was dropped from it", async () => {
     const { PAGE_STRIPPED_KEYS } = await runHost();
-    assert.deepEqual([...PAGE_STRIPPED_KEYS].sort(), ["builtBy", "display", "files", "inputScrubbed", "origin", "pageOrigin", "pageUrl", "sends"]);
+    assert.deepEqual([...PAGE_STRIPPED_KEYS].sort(), ["builtBy", "display", "files", "inputScrubbed", "origin", "pageOrigin", "pageUrl", "sends", "shell"]);
 });
 
 test("ADVERSARIAL: each stripped key a page writes, at the top level and inside `rebuild`, is gone from both; the control keys stay", async () => {

@@ -4,7 +4,7 @@
 import type { CurrentSnapshot } from "../agent/current-context";
 import { isEmbedding } from "../ml/embedding";   // by brand, as a table is; embedding.ts imports nothing
 import { isTable, isStoredTable, isFrozenTablePart, isEditableTable, READ_ONLY_TABLE } from "../table/table-brand";   // a table facade is recognised by BRAND, and the brand module is itself dependency-free
-import { NotInDialect, Stopped, MAX_STRING, MAX_COLLECTION, Denied, riskyRegex, MAX_STORED_CELLS, STEP_BUDGET, NeedsPage, MAX_CALL_DEPTH, HOST_CHARS_PER_STEP, HOST_SCAN_CHARS_PER_STEP, FIXED_SLICE_FREE_CHARS, HOST_SCAN_ELEMENTS_PER_STEP, HOST_COPY_ELEMENTS_PER_STEP, EXPANDED_PARTS_PER_STEP, MAX_EXPANDED, MAX_EXPANDED_CHARS } from "./limits";
+import { NotInDialect, ResourceStop, Stopped, MAX_STRING, MAX_COLLECTION, Denied, riskyRegex, MAX_STORED_CELLS, STEP_BUDGET, NeedsPage, MAX_CALL_DEPTH, HOST_CHARS_PER_STEP, HOST_SCAN_CHARS_PER_STEP, FIXED_SLICE_FREE_CHARS, HOST_SCAN_ELEMENTS_PER_STEP, HOST_COPY_ELEMENTS_PER_STEP, EXPANDED_PARTS_PER_STEP, MAX_EXPANDED, MAX_EXPANDED_CHARS } from "./limits";
 import { Node } from "./parser";
 import { regexSteps } from "./regex-cost";
 import { replaceSize, replaceWorstCase } from "./replace-size";
@@ -25,6 +25,14 @@ const SHORT = Symbol("optional-short-circuit");
 // Truthy + typeof "function", but calling it throws → the real method never leaks.
 const METHOD_REF = function (): never { throw new NotInDialect("a method reference cannot be called indirectly"); };
 
+/** A guard signal: what a script's `try`/`catch`/`finally` can never swallow, because it ends the attempt rather than
+ *  being a fault of the script (a refusal, a denial, or running out of steps). */
+const isGuard = (e: unknown): e is NotInDialect | Denied | ResourceStop => e instanceof NotInDialect || e instanceof Denied || e instanceof ResourceStop;
+
+/** Did a statement END the construct around it? The ONE completion signal a loop and a block check; today only `return`
+ *  produces it, and a later `break` or `continue` would be recognised here, not in each loop. */
+const completed = (v: unknown): boolean => v !== null && typeof v === "object" && RETURN in (v as object);
+
 // An evaluation in progress: `yield` a value to have the driver await it.
 type Ev<T = unknown> = Generator<unknown, T, unknown>;
 
@@ -44,7 +52,7 @@ const COMPILES_PATTERN = new Set(["match", "matchAll", "search"]);
 /** Refuse a replace before it builds a result over {@link MAX_STRING}. The count stops once past it, so the message
  *  names the limit, not a size the replace would not have stopped at. */
 function tooMuchReplaced(): never {
-    throw new NotInDialect(`a replace that would build over ${MAX_STRING.toLocaleString("en-US")} characters, more than a value may hold without asking`);
+    throw new ResourceStop("string");
 }
 
 /** String methods that only scan, hash or compare (HOST_SCAN_CHARS_PER_STEP); every other one builds (HOST_CHARS_PER_STEP). */
@@ -129,6 +137,8 @@ export class Evaluator {
     /** The source offset of the expression a throw came out of (an identifier, a member read, a call), or -1. */
     failAt = -1;
     private fuel: number;
+    /** The run is offered `ml.sh` (set by the entry point), which the budget error names as the way to run a long computation. */
+    shell = false;
     /** Cells read out of STORED tables so far in this run. Each read is one host call doing work proportional to the
      *  table, which the step budget never sees, so the total has its own bound (MAX_STORED_CELLS). */
     private storedCells = 0;
@@ -139,14 +149,14 @@ export class Evaluator {
     /** Charge work a host call does that the evaluator cannot see (a pipe's stages), against the same budget. */
     spend(n: number): void { this.tick(n); }
     private tick(n = 1): void {
-        if ((this.fuel -= n) < 0) throw new NotInDialect(`too much work to run without asking: over ${this.budget} steps`);
+        if ((this.fuel -= n) < 0) throw new ResourceStop("steps", { budget: this.budget, shell: this.shell });
     }
     /** Refuse a value one step made too big to have been cheap (see MAX_COLLECTION / MAX_STRING). */
     private sized<T>(v: T): T {
         if (typeof v === "string" ? v.length > MAX_STRING
             : Array.isArray(v) ? v.length > MAX_COLLECTION
                 : (v instanceof Set || v instanceof Map) && v.size > MAX_COLLECTION)
-            throw new NotInDialect("a value too large to build without asking");
+            throw new ResourceStop(typeof v === "string" ? "string" : "collection");
         return v;
     }
     /** `Array.from` of an iterable a pattern destructures, charged its size first: a string's characters, a Set's or a
@@ -171,7 +181,7 @@ export class Evaluator {
     /** `Array(n)` / `new Array(n)` allocate n in one step, which the budget never sees. */
     private allocation(name: string, args: unknown[]): void {
         if (name === "Array" && args.length === 1 && typeof args[0] === "number" && args[0] > MAX_COLLECTION)
-            throw new NotInDialect("an array too large to build without asking");
+            throw new ResourceStop("collection");
     }
     /** A pattern given as a STRING becomes a regex inside the host call (`match`, `matchAll`, `search`, `new RegExp`),
      *  so it gets the same check a regex literal does. */
@@ -204,7 +214,7 @@ export class Evaluator {
     private regexCharge(search: [string, string, string]): void {
         const [source, flags, input] = search;
         const steps = regexSteps(source, flags, input, (n) => this.tick(n), HOST_SCAN_CHARS_PER_STEP);
-        if (steps > this.fuel) throw new NotInDialect(`a regex search that could backtrack for too long on this input (/${source.length > 40 ? source.slice(0, 40) + "…" : source}/ over ${input.length.toLocaleString("en-US")} characters)`);
+        if (steps > this.fuel) throw new ResourceStop("steps-left", { budget: this.budget, left: this.fuel, shell: this.shell });
         this.tick(steps);
     }
     /** Charge a `replace` or `replaceAll` for the text it BUILDS, before it builds it. The host sizes and allocates its
@@ -292,13 +302,16 @@ export class Evaluator {
                 : coll ? (isMap(x) ? [...(x as Map<unknown, unknown>)].flat() : [...(x as Set<unknown>)])
                     : Object.keys(x).map((k) => Object.getOwnPropertyDescriptor(x, k)?.value);
             parts += kids.length;
-            if (parts > cap) throw new NotInDialect(cap < MAX_EXPANDED
-                ? `too much work to run without asking: walking a value that expands to over ${cap.toLocaleString("en-US")} parts`
-                : `a value that expands to over ${MAX_EXPANDED.toLocaleString("en-US")} parts (an array holding the same array twice counts it twice), too much to walk without asking`);
+            // Over what is LEFT of the budget is a `steps-left` stop; over the size a value may have at all is an `expanded` stop.
+            // Both are a ResourceStop the model reads; neither asks the person.
+            if (parts > cap) {
+                if (cap < MAX_EXPANDED) throw new ResourceStop("steps-left", { budget: this.budget, left: this.fuel, shell: this.shell });
+                throw new ResourceStop("expanded");
+            }
             for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
-            if (chars > MAX_EXPANDED_CHARS) throw new NotInDialect(`a value whose strings expand to over ${MAX_EXPANDED_CHARS.toLocaleString("en-US")} characters, too much to walk without asking`);
+            if (chars > MAX_EXPANDED_CHARS) throw new ResourceStop("expanded-chars");
         }
-        if (chars > MAX_EXPANDED_CHARS) throw new NotInDialect(`a value whose strings expand to over ${MAX_EXPANDED_CHARS.toLocaleString("en-US")} characters, too much to walk without asking`);
+        if (chars > MAX_EXPANDED_CHARS) throw new ResourceStop("expanded-chars");
         return { parts, chars };
     }
     /** Charge the walk of `v` (see {@link expanded}) to the budget: what a host call or a coercion is about to do to it. */
@@ -421,7 +434,7 @@ export class Evaluator {
             seen.add(a);
             const n = Object.getOwnPropertyDescriptor(a, "length")?.value;
             if (typeof n !== "number") throw new NotInDialect(`an array whose length is not plain data, which ${via} would read by running page code`);
-            if ((visited += n) > MAX_EXPANDED) throw new NotInDialect(`a value too large for ${via} without asking`);
+            if ((visited += n) > MAX_EXPANDED) throw new ResourceStop("expanded");
             for (let i = 0; i < n; i++) {
                 const d = Object.getOwnPropertyDescriptor(a, i);
                 if (d === undefined) {
@@ -439,13 +452,13 @@ export class Evaluator {
 
     /** The host calls that do work proportional to an ARGUMENT, checked before they run: afterwards is too late. */
     private preflight(obj: unknown, key: string, args: unknown[], member: "ml" | "answer" | null = null): void {
-        const big = () => { throw new NotInDialect("a value too large to build without asking"); };
+        const big = (kind: "string" | "collection" = "collection"): never => { throw new ResourceStop(kind); };
         // A String OBJECT is a string here: `new String(…)` is a safe constructor and `ml.dereference` returns one
         // (DerefText), and while this read only `typeof obj === "string"` a pointer's text took a backtracking pattern.
         const str = typeof obj === "string" ? obj : kindOf(obj, this.isTokenList) === "string" ? String(obj) : null;
         if (str !== null) {
-            if (key === "repeat" && str.length * Math.max(0, Number(args[0]) || 0) > MAX_STRING) big();
-            if ((key === "padStart" || key === "padEnd") && Number(args[0]) > MAX_STRING) big();
+            if (key === "repeat" && str.length * Math.max(0, Number(args[0]) || 0) > MAX_STRING) big("string");
+            if ((key === "padStart" || key === "padEnd") && Number(args[0]) > MAX_STRING) big("string");
             if (COMPILES_PATTERN.has(key) && args[0] !== undefined && !isRegExp(args[0])) this.patternArg(this.regexText(args[0], "pattern"));
             if (FIXED_SLICE_STRING.has(key)) { if (str.length > FIXED_SLICE_FREE_CHARS) this.scans(str); }
             else if (SCANNING_STRING.has(key)) this.scans(str);
@@ -457,7 +470,7 @@ export class Evaluator {
         // join's SEPARATOR is coerced by the host like an element: an object (or function) would run its own toString.
         if (Array.isArray(obj) && key === "join" && args[0] !== null && (typeof args[0] === "object" || typeof args[0] === "function"))
             throw new NotInDialect("the separator is an object, which join would turn into text by running its own toString: use a string");
-        if (Array.isArray(obj) && key === "join" && obj.length * String(args[0] ?? ",").length > MAX_STRING) big();
+        if (Array.isArray(obj) && key === "join" && obj.length * String(args[0] ?? ",").length > MAX_STRING) big("string");
         if (Array.isArray(obj) && ARRAY_EXPANDS.has(key)) { if (key === "join" || key === "toString" || (key === "sort" && args[0] === undefined)) this.joinsData(obj, key === "toString" ? "toString" : key === "join" ? "join" : "a sort with no comparator"); this.expands(obj); }
         else if (Array.isArray(obj) && ARRAY_SCANS.has(key)) this.tick(Math.floor(obj.length / HOST_SCAN_ELEMENTS_PER_STEP));
         else if (Array.isArray(obj) && ARRAY_MOVES.has(key)) this.tick(Math.floor(obj.length / HOST_COPY_ELEMENTS_PER_STEP));
@@ -501,7 +514,7 @@ export class Evaluator {
             if (height * width > MAX_COLLECTION) big();
             if (stored && (key === "col" || key === "records")) {
                 this.storedCells += height * width;
-                if (this.storedCells > MAX_STORED_CELLS) throw new NotInDialect(`reading over ${MAX_STORED_CELLS.toLocaleString("en-US")} cells of stored tables in one script, which is too much work to run without asking`);
+                if (this.storedCells > MAX_STORED_CELLS) throw new ResourceStop("cells");
             }
         }
         // An EMBEDDING's comparisons are O(dimensions) a candidate inside one host call. Their arguments are read as
@@ -930,10 +943,29 @@ export class Evaluator {
                                 if (node.kind === "const") this.markConst(child, node.name);
                             }
                             const v = yield* this.eval(node.body, child);
-                            if (v && typeof v === "object" && RETURN in (v as object)) return v;   // a `return` breaks out + propagates
+                            if (completed(v)) return v;   // a `return` breaks out + propagates
                         }
                     } finally { this.release(iterable); }
                     return undefined;
+                }
+                // `while` and `do…while`: every turn spends a step like any node (the test and the body are nodes too),
+                // so STEP_BUDGET bounds the loop however the test is written. Nothing is held: the body may change what
+                // the test reads, and that is what a counter is.
+                case "While": {
+                    while (true) {
+                        this.tick();
+                        if (!(yield* this.eval(node.test, scope))) return undefined;
+                        const v = yield* this.eval(node.body, scope);
+                        if (completed(v)) return v;
+                    }
+                }
+                case "DoWhile": {
+                    while (true) {
+                        this.tick();
+                        const v = yield* this.eval(node.body, scope);
+                        if (completed(v)) return v;
+                        if (!(yield* this.eval(node.test, scope))) return undefined;
+                    }
                 }
                 case "Return": return { [RETURN]: yield* this.eval(node.arg, scope) };
                 // `await X` — hand X to the driver, which awaits it (identity on a non-promise). The sync
@@ -1103,20 +1135,22 @@ export class Evaluator {
                     // A NotInDialect/Denied is a GUARD signal, not a program error — it must ALWAYS reach the
                     // driver so the survey escalates to the human gate. A user catch/finally can never swallow
                     // it (that's the whole safety property); a normal throw (a DOM op, JSON.parse, …) IS caught.
-                    let result: unknown, guardErr: NotInDialect | Denied | null = null, otherErr: unknown, hasOther = false;
+                    let result: unknown, guardErr: NotInDialect | Denied | ResourceStop | null = null, otherErr: unknown, hasOther = false;
                     try {
                         result = yield* this.eval(node.block, scope);   // undefined or a RETURN wrapper
                     } catch (e) {
-                        if (e instanceof NotInDialect || e instanceof Denied) guardErr = e;
+                        if (isGuard(e)) guardErr = e;
                         else if (node.handler) {
                             const child = Object.create(scope);
                             if (node.param) child[node.param] = e;
                             this.failAt = -1;   // caught: where it threw is no longer the script's failure
                             try { result = yield* this.eval(node.handler, child); }
-                            catch (e2) { if (e2 instanceof NotInDialect || e2 instanceof Denied) guardErr = e2; else { otherErr = e2; hasOther = true; } }
+                            catch (e2) { if (isGuard(e2)) guardErr = e2; else { otherErr = e2; hasOther = true; } }
                         } else { otherErr = e; hasOther = true; }
                     }
-                    if (node.finalizer) {
+                    // A resource stop runs no `finally`, whatever its kind: a stop discards the cell, so nothing of the cell
+                    // runs after it (a finalizer after a size stop could otherwise loop on until the budget).
+                    if (node.finalizer && !(guardErr instanceof ResourceStop)) {
                         // A throw from the finalizer is stamped where IT threw, not where the held throw did; the held
                         // position comes back only when the finalizer finishes.
                         const held = this.failAt;
@@ -1125,8 +1159,9 @@ export class Evaluator {
                         try { f = yield* this.eval(node.finalizer, scope); }
                         catch (e3) {
                             // A finalizer's own throw replaces a held ERROR, as in JS, but never a held denial: that
-                            // would turn an escalation into a script error. Its own refusal stands either way.
-                            if (guardErr && !(e3 instanceof NotInDialect || e3 instanceof Denied)) { this.failAt = held; throw guardErr; }
+                            // would turn an escalation into a script error. Nor does a bound the finalizer trips: a held
+                            // refusal still goes to the gate. Its own refusal stands either way.
+                            if (guardErr && (!isGuard(e3) || e3 instanceof ResourceStop)) { this.failAt = held; throw guardErr; }
                             throw e3;
                         }
                         this.failAt = held;
@@ -1158,7 +1193,7 @@ export class Evaluator {
     // Invoke one of OUR arrows: bind the params in a child scope and evaluate its body. The depth
     // guard unwinds in `finally`, which runs even when the sync driver closes the generator early.
     private *callArrow(node: Node, scope: any, args: unknown[]): Ev {
-        if (++this.depth > MAX_CALL_DEPTH) { this.depth--; throw new NotInDialect(`calls nested more than ${MAX_CALL_DEPTH} deep`); }
+        if (++this.depth > MAX_CALL_DEPTH) { this.depth--; throw new ResourceStop("depth"); }
         try {
             const child = Object.create(scope);
             (node.params as (string | Node)[]).forEach((p, idx) => {
