@@ -15,7 +15,7 @@ const session = workerData?.session ?? "s1";
 const agent = new AgentFiles({ idb: new IDBFactory(), dbName: "real" });
 const lost = [];
 const reader = new RangedReader({
-    source: { attached: async () => [], blob: async () => { throw new Error("no attachments here"); }, secretForms: async () => [] },
+    source: { attached: async () => [], blob: async () => { throw new Error("no attachments here"); }, secretForms: async () => workerData?.forms ?? [] },
     agent,
     quotaBytes: async () => workerData?.quotaBytes ?? 1 << 30,
     onLost: (rec) => lost.push(rec),

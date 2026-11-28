@@ -45,3 +45,19 @@ test("writeBuildInfo stamps a BUILD_INFO module with the provenance fields", () 
     const diff = readFileSync(out.replace("build-info.gen.ts", "build-diff.gen.ts"), "utf8");
     assert.match(diff, /export const BUILD_DIFF = "/);
 });
+
+// --- what Chrome will load: no source carries a character that makes a bundle "not UTF-8" ---
+
+test("no file under src/ holds a literal U+FFFE or U+FFFF: Chrome refuses a content script that does, and any module can reach one", async () => {
+    // A literal U+FFFF in a regex range (py-format.ts) reached dist/injected.js once table-literals.ts imported it, and
+    // Chrome then refused injected.js as "not UTF-8 encoded": every e2e spec that approves an origin failed. Write `￿`.
+    const { readdirSync, statSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const root = new URL("../src", import.meta.url).pathname;
+    // build-diff.gen.ts is untracked and holds the working tree's own diff at build time (a removed line too), as
+    // check-dist-fresh.mjs's NOT_SOURCES says; a clean tree's build, which is what ships, writes it empty.
+    const bad = [];
+    const walk = (d) => { for (const f of readdirSync(d)) { const p = join(d, f); if (statSync(p).isDirectory()) walk(p); else if (f !== "build-diff.gen.ts" && /\.(m?[jt]sx?|css|html)$/.test(f) && /[￾￿]/.test(readFileSync(p, "utf8"))) bad.push(p.slice(root.length + 1)); } };
+    walk(root);
+    assert.deepEqual(bad, []);
+});

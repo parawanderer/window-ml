@@ -13,6 +13,15 @@ node scripts/check-file-size.mjs [base]          # the ratchet: did THIS change 
 
 Exit code is always 0. This is a reminder, never a gate.
 
+## When the ratchet speaks
+
+For a file over 800 lines that this change grew, the ratchet warns only when the file crossed 800 in this
+change (or is new), grew by 25 lines or more, or carries 5% or more of the repo's edit cost (its `--cost`
+share). Every other grown file is named on one plain log line with its growth, never as a `::warning`. On
+2026-11-25 two files were at 5% or more: `sw-run-host.ts` (13.0%) and `background.ts` (10.2%). With no git
+history every share is 0 and the growth rule decides alone. The decision is `decide()` in the script, tested
+in `tests/check-file-size.test.mjs`.
+
 ## Use `--cost`, not `--all`, to decide where to work
 
 `--all` sorts by length, which answers "what is big". That is the wrong question: a long file nobody opens

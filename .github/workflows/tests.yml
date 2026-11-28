@@ -486,9 +486,10 @@ jobs:
           if [ -z "$base" ]; then echo "no merge base — skipping the ratchet"; exit 0; fi
           node scripts/index.mjs --new "$base"
       # A REMINDER, never a gate — it exits 0 whatever it finds, and lands as ::warning annotations on the
-      # diff rather than as a line in a log. Ratcheted for the same reason as the CSS check above: fifteen
+      # diff rather than as a line in a log. Ratcheted for the same reason as the CSS check above: twenty-two
       # files are already over the limit, so listing them every run would train people to ignore it. It
-      # speaks only when a change makes an oversized file bigger.
+      # speaks only when a change makes an oversized file bigger AND that matters: it crossed the limit, grew by
+      # 25+ lines, or carries 5%+ of the repo's edit cost. Smaller growth is named on one plain log line.
       - name: Oversized source files (reminder only)
         run: |
           base=$(git merge-base HEAD "origin/${GITHUB_BASE_REF:-main}" 2>/dev/null || echo "")

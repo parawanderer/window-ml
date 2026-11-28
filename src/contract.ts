@@ -262,10 +262,11 @@ export interface MlApi {
      *  the agent can READ a file/API/other page without navigating (uncredentialed by default; opt into the
      *  user's session with `credentials`, or a JS render with `rendered`). requiresApproval. */
     fetchTool(): MlTool;
-    /** Run a sandboxed Python snippet (Pyodide/WASM, numpy + Pillow) with an optional
-     *  screenshot injected as `img`/`img_np`. No network/filesystem/DOM. `keep` holds a worker-hosted run's sandbox
+    /** Run a sandboxed Python snippet (Pyodide/WASM, numpy, pandas, Pillow) with an optional screenshot injected as
+     *  `img`/`img_np`. No network or DOM. A cell reads a table with `df = ml.table("<source>")`; from a page script only a
+     *  source written as a literal in the code is read, before the cell runs. `keep` holds a worker-hosted run's sandbox
      *  through idle gaps until its turn ends or its sandbox is killed (a timeout, a crash, a cancel), which the next cell is told as loss; a page's call has no run to keep, so it is ignored there. */
-    pythonExec(code: string, opts?: { image?: string | Element | null; margin?: number; tableRaw?: boolean; tables?: string | Element | TableValue | Record<string, string | Element | TableValue> | null; keep?: boolean; onStdout?: (chunk: string, ts?: number) => void }): Promise<{ ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; render?: "latex" | "img" | "figure"; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] }; bootMs?: number; runMs?: number }>;
+    pythonExec(code: string, opts?: { image?: string | Element | null; margin?: number; keep?: boolean; onStdout?: (chunk: string, ts?: number) => void }): Promise<{ ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; render?: "latex" | "img" | "figure"; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] }; bootMs?: number; runMs?: number }>;
     /** Read a whole table you own: a CSS selector or `"current"` (a page table, or the Google Sheet you are on), an
      *  http(s) URL this page already fetched (read from the fetch cache, never fetched), a fetch result (by its URL),
      *  a Google Sheets URL, `"@tool:<id>"`, or a table value. `raw` keeps every cell a string; `delimiter` and
@@ -441,7 +442,7 @@ export interface MlApi {
     _fetchImageBase64(url: string): Promise<string>;
     _stitchFullPage(capture: () => Promise<string>): Promise<string>;
     _resolveTable(target: string | Element, raw?: boolean): { kind: "rows"; columns: string[]; rows: (string | number | boolean | null)[][] } | { kind: "html"; html: string };
-    _loadTable(name: string, src: string | Element | TableValue, raw?: boolean): Promise<{ name: string; source: TableSource; preview?: (string | number | boolean | null)[][]; rowCount?: number; data: { kind: "rows"; columns: string[]; rows: (string | number | boolean | null)[][] } | { kind: "html"; html: string } | { kind: "value"; key: string; label: string; columns: string[]; delimiter?: string; headerless?: boolean } }>;
+    _hoistTable(src: string | Element | TableValue, opts?: { raw?: boolean; delimiter?: string; header?: boolean }): Promise<{ source: TableSource; preview?: (string | number | boolean | null)[][]; rowCount?: number; data: { kind: "rows"; columns: string[]; rows: (string | number | boolean | null)[][] } | { kind: "html"; html: string } | { kind: "value"; key: string; label: string; columns: string[]; delimiter?: string; headerless?: boolean } }>;
     _resolveVisionModel(agentModel: string | null, vision: boolean | string | null): Promise<string | null>;
     _modelSees(model: string | null): Promise<boolean>;
     _modelVision(model: string | null): Promise<import("./image-gate").VisionAnswer>;

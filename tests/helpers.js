@@ -161,7 +161,7 @@ function workerTimers() {
 // lets a test declare contextMenus, which GET_INVOCATION reads as "the right-click entry exists".
 // `holdPolicies` is a promise the policy store's first storage read waits on.
 // `holdRestore` is a promise the worker's read of ALL of local storage (its run restore) waits on.
-function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, onPdfRead, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, siteAgents = "always", userScripts, onTabsGet, holdRestore, onNative, dialectInside, pyInside, holdPolicies, onPyDelete, extensionTabs = [], onPyInstallTest, onFsCall }) {
+function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, onPdfRead, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, siteAgents = "always", userScripts, onTabsGet, holdRestore, onNative, dialectInside, pyInside, holdPolicies, onPyDelete, extensionTabs = [], onPyInstallTest, onFsCall, playTables = false, openCreated = false, deniedOrigins = [], alarms = false }) {
     const calls = [];
     // chrome.runtime.connectNative: each host name asked for, in order. With `onNative(name, end)`, the test plays the
     // native host: `end.send(msg)` delivers a message to the worker's port, `end.close(why)` disconnects it, and the
@@ -213,6 +213,10 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     const listeners = [];
     const connectListeners = [];
     const tabRemovedListeners = [];   // chrome.tabs.onRemoved listeners; fired by bg.closeTab(id)
+    // chrome.alarms, present only when a test passes `alarms: true` (the release deadline's alarm): what is set, by name, and the
+    // listeners `bg.alarms.fire(name)` calls. Absent otherwise, as in the tests that predate it.
+    const alarmsSet = new Map();
+    const alarmListeners = [];
     const tabActivatedListeners = new Set();   // chrome.tabs.onActivated listeners; fired by bg.activateTab(id)
     const tabReplacedListeners = new Set();   // chrome.tabs.onReplaced listeners; fired by bg.replaceTab(oldId, newId)
     const badges = new Map();   // tabId (or "default") → { text, title }: what chrome.action was told for each tab (the toolbar badge)
@@ -414,7 +418,12 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 sendMessage: async (msg) => {
                     runtimeSent.push(msg);
                     if (msg?.type === "PY_RUN" && msg.inside) { pyInsideRuns.push(msg); return pyInside ? pyInside(msg) : { ok: false, stdout: "", notInDialect: "this Pyodide build has no membership predicate (the stock core, not the restricted-mode fork)" }; }
-                    if (msg?.type === "PY_RUN") { pyRuns.push(msg); return onPyRun ? onPyRun(msg) : { ok: true, value: null, stdout: "" }; }
+                    if (msg?.type === "PY_RUN") {
+                        pyRuns.push(msg);
+                        // `playTables`: the cell makes its `ml.table("…")` reads first, as the real one does over the wire.
+                        if (playTables && msg.wire) msg.read = await playTableReads(msg);
+                        return onPyRun ? onPyRun(msg) : { ok: true, value: null, stdout: "" };
+                    }
                     if (msg?.type === "PY_DELETE_RUN") { pyDeletes.push(msg); return onPyDelete ? onPyDelete(msg) : { ok: true }; }
                     // python_install's candidate: `onPyInstallTest(msg)` answers for it; by default the import passes.
                     if (msg?.type === "PY_INSTALL_TEST") { pyInstallTests.push(msg); return onPyInstallTest ? onPyInstallTest(msg) : { ok: true }; }
@@ -445,7 +454,8 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 // Track named permissions (debugger); treat origin grants as present (FETCH_SHEET only
                 // contains()-checks Google origins, and the harness assumes those are granted).
                 // `allSites: false` withholds `<all_urls>`, as site access "On click" does.
-                contains: async ({ permissions = [], origins = [] }) => permissions.every(p => permsHeld.has(p)) && (allSites || !origins.includes("<all_urls>")),
+                // `deniedOrigins` withholds those origin patterns (`https://x.example/*`), as a site set to "never" does.
+                contains: async ({ permissions = [], origins = [] }) => permissions.every(p => permsHeld.has(p)) && (allSites || !origins.includes("<all_urls>")) && !origins.some((o) => deniedOrigins.includes(o)),
                 request: async ({ permissions = [] }) => { permissions.forEach(p => permsHeld.add(p)); for (const fn of permAddedListeners) fn({ permissions }); return true; },
                 onAdded: { addListener: (fn) => permAddedListeners.push(fn) },
                 onRemoved: { addListener: () => {} },
@@ -499,6 +509,12 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 getLastFocused: async () => (typeof focusedWindow === "function" ? focusedWindow() : focusedWindow) ?? { focused: false, tabs: [] },
                 update: async (...args) => { windowsUpdated.push(args); return {}; },
             },
+            ...(alarms ? { alarms: {
+                create: async (name, info) => { alarmsSet.set(name, { name, ...info }); },
+                get: async (name) => alarmsSet.get(name),
+                clear: async (name) => alarmsSet.delete(name),
+                onAlarm: { addListener: (fn) => alarmListeners.push(fn) },
+            } } : {}),
             tabs: {
                 // Records args so tests can assert the windowId; onCaptureTab (if
                 // given) provides the data URL or throws to simulate a failure.
@@ -518,10 +534,20 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                     tabMessages.push(args); return onTabMessage ? await onTabMessage(...args) : undefined;
                 },
                 // The PDF-print flow opens a print.html tab and later removes it by id.
-                create: async (props) => { tabsCreated.push(props); return { id: 4242 + tabsCreated.length }; },
+                // `openCreated`: the created tab is open from then on (`openTabs`), loaded, titled by its URL's host.
+                create: async (props) => {
+                    tabsCreated.push(props);
+                    const id = 4242 + tabsCreated.length;
+                    if (openCreated) openTabs.push({ id, windowId: 3, active: !!props.active, url: props.url, title: new URL(props.url).host, status: "complete" });
+                    return { id };
+                },
                 remove: async (id) => { tabsRemoved.push(id); },
                 update: async (...args) => { tabsUpdated.push(args); return { id: args[0] }; },
-                goBack: async (id) => { tabsBack.push(id); },
+                // A tab `create` opened has one entry and no page to go back to: Chrome rejects, in these words.
+                goBack: async (id) => {
+                    tabsBack.push(id);
+                    if (tabsCreated.some((_, i) => 4243 + i === id)) throw new Error("Cannot find a next page in history.");
+                },
                 onRemoved: { addListener: (fn) => tabRemovedListeners.push(fn) },
                 onActivated: { addListener: (fn) => tabActivatedListeners.add(fn), removeListener: (fn) => tabActivatedListeners.delete(fn) },
                 onReplaced: { addListener: (fn) => tabReplacedListeners.add(fn), removeListener: (fn) => tabReplacedListeners.delete(fn) },
@@ -542,6 +568,23 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         }
     };
     vm.createContext(context);
+    /**
+     * A cell's `ml.table` reads, played as the real cell makes them: each `ml.table("<literal>")` in its code, in order,
+     * one wire call from the offscreen document (sw-ml-table.ts), stopping at the first error as a raised MlError does.
+     * A test-only scan (no options, plain quotes and raw strings); the real one is src/python/table-literals.ts.
+     */
+    let readSeq = 0;
+    async function playTableReads(msg) {
+        const read = [];
+        const wire = JSON.parse(JSON.stringify(msg.wire));
+        for (const m of String(msg.code ?? "").matchAll(/ml\.table\(\s*[rR]?(["'])((?:(?!\1)[^\\\n])*)\1/g)) {
+            const req = { type: "ML_CALL", client: wire.client, run: wire.run ?? null, seq: ++readSeq, call: "table", args: [m[2]] };
+            const a = await new Promise((resolve) => listeners[0](req, { id: "test", url: "chrome-extension://test/offscreen.html", origin: "chrome-extension://test" }, resolve));
+            read.push({ src: m[2], ...JSON.parse(JSON.stringify(a ?? {})) });
+            if (a?.error) break;
+        }
+        return read;
+    }
     // `dialectInside`: a substring that marks a python_exec cell as INSIDE the read-only dialect. The built worker has no
     // real membership predicate yet (agent/python-dialect.ts), and a bundle in a vm cannot reach the source module's test
     // seam, so the default verdict is replaced in the bundle's text.
@@ -617,6 +660,8 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         },
         /** Grant a permission the way the browser's prompt does: held, then permissions.onAdded. */
         grantPermission: (name) => { permsHeld.add(name); for (const fn of permAddedListeners) fn({ permissions: [name] }); },
+        /** The alarms set (by name) and a way to fire one, when the test asked for `alarms: true`. */
+        alarms: { set: alarmsSet, fire: (name) => { for (const fn of [...alarmListeners]) fn({ name }); } },
         stored,
         localStore,   // chrome.storage.local contents — tests assert a snapshot was kept/removed
         sessionStore,   // chrome.storage.session contents — the housekeeping log lives here

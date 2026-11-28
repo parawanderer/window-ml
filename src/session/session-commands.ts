@@ -103,6 +103,8 @@ export interface CommandDeps {
     cancelRun(hash: string): boolean;
     /** resolve one open approval gate; false when it was already closed */
     resolveApproval(key: string, decision: { approved: true; persist?: boolean } | { approved: false; feedback?: string }): boolean;
+    /** release what the run holds in memory, keeping the session (reason `person`); false when a turn is live or it holds nothing */
+    releaseRun?(hash: string): Promise<boolean>;
     /** forget what the worker keeps for a finished session: its stored chat history, its resumable snapshot */
     forgetStored(hash: string): Promise<void>;
     /** start a chat this worker hosts (no tab), resolving with its hash once the first turn is under way */
@@ -721,6 +723,17 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             await deps.forgetStored(s.id.hash);
             deps.removeFromIndex(s.id);
             return ok({});
+        },
+
+        // This browser's own pages only: a hub device is not the person at the machine, and Stop frees this machine's memory.
+        "session.release": async (c, from) => {
+            if (from.via !== "this browser") return fail("forbidden", "only this browser's own pages may release a run");
+            const s = session(c);
+            if (s.error) return s.error;
+            if (!deps.releaseRun) return fail("unsupported", "this runtime holds no run to release");
+            const status = deps.index.get(s.id.hash)!.status;
+            if (status === "running" || status === "waiting") return fail("conflict", "a turn is running: stop it first");
+            return (await deps.releaseRun(s.id.hash)) ? ok({}) : fail("conflict", "a turn is running: stop it first");
         },
 
         "session.pin": async (c) => {

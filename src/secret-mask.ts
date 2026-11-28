@@ -1,9 +1,13 @@
 // secret-mask.ts — the scrub of a byte range that keeps its LENGTH: every byte of a secret's match becomes `*` (0x2A), so a reader that seeks by offset and reads `st_size` (Python's `/files` mount) sees the same sizes and offsets (FILE_ATTACHMENTS.md, "Python's view: two mounts").
 
-import { GITHUB_TOKEN } from "./secret-scrub";
+import { GITHUB_TOKEN, GITHUB_TOKEN_PUT } from "./secret-scrub";
 
-/** One secret in one of its written forms, matched as its UTF-8 bytes, ASCII letters in any case when `ci`. */
-export interface SecretForm { find: string; ci?: boolean }
+/** One secret in one of its written forms, matched as its UTF-8 bytes, ASCII letters in any case when `ci`. `put` is
+ *  what a NAME shows in its place ({@link maskName}): `[REDACTED:<NAME>]`, as the turn's scrub writes it. */
+export interface SecretForm { find: string; ci?: boolean; put?: string }
+
+/** What a name shows for a form that came with no `put`. */
+const NAME_PUT = "[REDACTED]";
 
 /** The byte a match's every byte is replaced by: `*`. */
 export const MASK_BYTE = 0x2a;
@@ -61,4 +65,24 @@ export function maskSecretBytes(bytes: Uint8Array, forms: readonly SecretForm[])
     }
     for (const m of s.matchAll(new RegExp(GITHUB_TOKEN))) mask(m.index, m[0].length);
     return count;
+}
+
+/**
+ * A file's name as `/files` shows it (FILE_ATTACHMENTS.md, "Names under `/files`"): every match of a form becomes that
+ * form's `put`, the longest form at each position first, and every GitHub token its marker, as the turn's scrub writes
+ * the framed task. Matched on the string, ASCII letters in any case when `ci`.
+ * @param name the stored name
+ * @param forms the secrets' forms
+ * @returns the shown name, `name` itself when nothing matched
+ */
+export function maskName(name: string, forms: readonly SecretForm[]): string {
+    const live = forms.filter((f) => f.find).sort((a, b) => b.find.length - a.find.length);
+    const folded = foldAscii(name);
+    let out = "";
+    let i = 0;
+    while (i < name.length) {
+        const hit = live.find((f) => (f.ci ? folded.startsWith(foldAscii(f.find), i) : name.startsWith(f.find, i)));
+        if (hit) { out += hit.put ?? NAME_PUT; i += hit.find.length; } else out += name[i++];
+    }
+    return out.replace(new RegExp(GITHUB_TOKEN), GITHUB_TOKEN_PUT);
 }

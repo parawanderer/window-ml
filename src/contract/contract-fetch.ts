@@ -85,8 +85,8 @@ export type TableDtype = "int64" | "float64" | "bool" | "str" | "object";
  *  which auto-approves. The table is READ-ONLY there: it belongs to the run's captured output, so mutating
  *  it is refused; copy it (`rows.slice()`) if you need to build on it.
  *
- *  For real analysis, hand the URL to `python_exec`'s `tables` (`tables: { df: "<the url>" }`): the parsed
- *  table loads from the fetch cache as an actual pandas DataFrame, with no second request and no `read_csv`. */
+ *  For real analysis, read it in `python_exec` with `df = ml.table("<the url>")`: the parsed table loads from the
+ *  fetch cache as an actual pandas DataFrame, with no second request and no `read_csv`. */
 export interface TableLike {
     /** Header labels, de-duplicated the way pandas does it (`a`, `a.1`) and with blanks named `Unnamed: N`,
      *  so every label is usable as a key. Empty (not absent) when the source had no header row. */
@@ -107,7 +107,7 @@ export interface TableLike {
     /** `rows` holds fewer rows than the table has: `shape[0]` is the whole count and `rows` a prefix of it, so a sum or
      *  count over `rows` covers only that prefix. A fetch keeps at most 200,000 rows (`MAX_TABLE_ROWS`); a stored
      *  table, and its `select` or long `head`, keeps its preview. For every row of a stored table, `await t.records()`
-     *  or `await t.col(name)`; for the whole file in pandas, hand its source to `python_exec`'s `tables`. */
+     *  or `await t.col(name)`; for the whole file in pandas, `ml.table(<its source>)` in `python_exec`. */
     truncated?: boolean;
     /** The source had NO header row, so `columns` are positional (`0`, `1`, `2`) — `read_csv(header=None)`.
      *  Recorded rather than left implicit: a reader who sees numeric column names should be able to tell that
@@ -124,8 +124,8 @@ export interface TableLike {
  *      t.head(10)                   // the first 10 rows as a new Table, like df.head(10)
  *
  *  It is NOT a DataFrame: `t.price`, `t[["a", "b"]]`, `t.groupby(…)` throw an error naming the nearest real
- *  spelling rather than returning `undefined`. For grouping, joins and the rest of pandas, hand the source URL to
- *  `python_exec`'s `tables`. Read-only: a fetched or a pointer's table is frozen at every level, so a write throws in
+ *  spelling rather than returning `undefined`. For grouping, joins and the rest of pandas, read the source URL with
+ *  `ml.table` in `python_exec`. Read-only: a fetched or a pointer's table is frozen at every level, so a write throws in
  *  strict code and does nothing in non-strict code; `t.copy()` gives one you can edit. Available in the
  *  read-only `exec` dialect, where a call that would build more than a million cells at once asks first.
  *

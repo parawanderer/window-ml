@@ -37,7 +37,7 @@ async function run(steps, { page, idb = new IDBFactory(), builtBy = "worker", on
     const subs = [];
     const toolResults = () => (bg.calls.filter((c) => c.url.includes("/chat/completions")).at(-1)?.body.messages ?? []).filter((m) => m.role === "tool").map((m) => String(m.content));
     bg = loadBackground({
-        siteGate: true, indexedDB: idb, onPyRun,
+        siteGate: true, indexedDB: idb, onPyRun, playTables: true,
         config: { chatUrl: "http://host/api/chat/completions", apiKey: "k", model: vision === "text" ? "text-driver" : vision ? "vlm-driver" : "m", apiFormat: "openai", ocrModel: vision ? "reader-vl" : "", debugMode: "off", ...config },
         onCaptureTab: async () => SHOT,
         // The site self-approves so a page-started PYTHON_EXEC is allowed to run at all (the tests below send one);
@@ -121,10 +121,15 @@ async function otherRunsValue(idb, session = "other-run") {
 }
 const holders = async (idb, key) => (await new ValueStore({ idb, budgetBytes: () => 1e9 }).rows()).find((r) => r.key === key)?.sessions ?? null;
 
-/** The PY_RUN payloads the offscreen document was sent. */
-const pyTables = (bg) => bg.pyRuns.filter((m) => m.type === "PY_RUN").map((m) => plain(m.tables ?? []));
+/** What each cell's `ml.table` calls were answered with (`playTables` plays them over the wire as the real cell makes them). */
+const pyTables = (bg) => bg.pyRuns.filter((m) => m.type === "PY_RUN").map((m) => plain(m.read ?? []));
+/** A page's hoisted read of a stored value, in the shape `hoistTables` (ml-python.ts) sends in PYTHON_EXEC's `hoisted`. */
+const hoistedValue = (key, columns) => ({ src: "@tool:abc1234", opts: {}, answer: { source: { kind: "pointer", label: "@tool:abc1234" }, data: { kind: "value", key, label: "@tool:abc1234", columns } } });
+/** A cell whose `ml.table` call was refused ends as the real cell does: the call raised, and its sentence is the error. */
+const cellRaised = (m) => ({ ok: false, stdout: "", error: `MlError: ${m.read.find((a) => a.error).error.message}` });
 /** An offscreen document that answers every run, returning a frame stored under `key` when one is given. */
 const pyAnswer = (key) => (m) => (m.type !== "PY_RUN" ? { ok: true, prewarm: "started" }
+    : m.read?.some((a) => a.error) ? cellRaised(m)
     : { ok: true, stdout: "", value: null, ...(key ? { table: { columns: ["a"], rows: [[1], [2]] }, valueKey: key } : {}) });
 /** The value table a page names in its answer: a preview of a stored value it says is the whole. */
 const plantedTable = (key) => ({ type: "table", columns: ["secret"], rows: [["x"]], rowCount: 2, value: key });
@@ -136,7 +141,7 @@ test("a worker-built run: a page's render naming ANOTHER run's stored value does
     const theirs = await otherRunsValue(idb);
     const r = await run([
         { name: "exec", args: { js: PAGE_JS, token: true } },
-        (res) => ({ name: "python_exec", args: { code: "df", tables: { df: `@tool:${tokenOf(res[0])}` } } }),
+        (res) => ({ name: "python_exec", args: { code: `df = ml.table("@tool:${tokenOf(res[0])}")\ndf` } }),
     ], { idb, onPyRun: pyAnswer(), page: () => ({ result: "ran", renderOut: plantedTable(theirs) }) });
     assert.ok(tokenOf(r.results[0]), "the page's step minted the pointer the model asked for");
     assert.deepEqual(await holders(idb, theirs), ["other-run"], "the run took no hold on another run's value");
@@ -220,7 +225,7 @@ test("a refused key never reaches the step's render, where the sidebar's table v
 test("a page cannot have a worker-built run's stored value read for it by naming the key in PYTHON_EXEC while the run is on its tab", async () => {
     const idb = new IDBFactory();
     const page7 = { tab: { id: 7, url: SITE_URL }, url: SITE_URL, origin: "https://site.example", frameId: 0, documentId: "doc-1" };
-    const asked = (key) => ({ type: "PYTHON_EXEC", requestId: `p-${key}`, payload: { code: "df", tables: [{ name: "df", data: { kind: "value", key, columns: ["secret"] } }] } });
+    const asked = (key) => ({ type: "PYTHON_EXEC", requestId: `p-${key}`, payload: { code: 'df = ml.table("@tool:abc1234")\ndf', hoisted: [hoistedValue(key, ["secret"])] } });
     let runs, pages, answers = {};
     await run([{ name: "click", args: { selector: "#a" } }], {
         idb, onPyRun: pyAnswer(),
@@ -241,15 +246,15 @@ test("control: a worker-built run's approved main-world exec that names its stor
     const idb = new IDBFactory();
     const mine = (await new ValueStore({ idb, budgetBytes: () => 1e9 }).put(new Blob(["a\n1\n2\n"]), { format: "csv" })).key;
     const page7 = { tab: { id: 7, url: SITE_URL }, url: SITE_URL, origin: "https://site.example", frameId: 0, documentId: "doc-1" };
-    const asked = { type: "PYTHON_EXEC", requestId: "p-own", payload: { code: "df", tables: [{ name: "df", data: { kind: "value", key: mine, columns: ["a"] } }] } };
+    const asked = { type: "PYTHON_EXEC", requestId: "p-own", payload: { code: 'df = ml.table("@tool:abc1234")\ndf', hoisted: [hoistedValue(mine, ["a"])] } };
     const during = [];
     let bgRef;
     const r = await run([
         { name: "python_exec", args: { code: "df", token: "orders" } },
         // No user-scripts world and no CDP: a pointer script on an approved page runs in the main world (exec-routing.ts).
         { name: "exec", args: { js: 'document.body.remove(); const v = await ml.dereference(\'@tool:"orders"\'); return v.text' } },
-        { name: "python_exec", args: { code: "df", tables: { df: '@tool:"orders"' } } },
-    ], { idb, config: { cdp: false }, onPyRun: (m) => (m.type === "PY_RUN" && !m.tables?.length ? pyAnswer(mine)(m) : pyAnswer()(m)),
+        { name: "python_exec", args: { code: `df = ml.table('@tool:"orders"')\ndf` } },
+    ], { idb, config: { cdp: false }, onPyRun: (m) => (m.type === "PY_RUN" && !m.read?.length ? pyAnswer(mine)(m) : pyAnswer()(m)),
         page: async (pl, bg) => { bgRef = bg; if (pl.name === "exec") during.push(plain(await bg.send(asked, page7))); return { result: "ran" }; } });
     assert.equal(r.results.length, 3, JSON.stringify(r.end));
     assert.equal(during.length, 1, `the exec reached the page main world: ${JSON.stringify(r.results)}`);
@@ -482,11 +487,11 @@ test("a worker-built run: python_exec over a pointer to a page's cut table is re
     const rows = Array.from({ length: PAGE_TABLE_CAPS.rows + 10 }, () => [1]);
     const r = await run([
         { name: "exec", args: { js: PAGE_JS, token: true } },
-        (res) => ({ name: "python_exec", args: { code: "len(df)", tables: { df: `@tool:${tokenOf(res[0])}` } } }),
-    ], { onPyRun: (m) => { if (m.type === "PY_RUN") ran++; return m.type === "PY_RUN" ? { ok: true, value: null, stdout: "" } : { ok: true, prewarm: "started" }; }, page: () => ({ result: "ran", renderOut: { type: "table", columns: ["a"], rows, rowCount: rows.length } }) });
+        (res) => ({ name: "python_exec", args: { code: `df = ml.table("@tool:${tokenOf(res[0])}")\nlen(df)` } }),
+    ], { onPyRun: (m) => { if (m.type === "PY_RUN") ran += m.read.filter((a) => a.value).length; return m.type !== "PY_RUN" ? { ok: true, prewarm: "started" } : m.read.some((a) => a.error) ? cellRaised(m) : { ok: true, value: null, stdout: "" }; }, page: () => ({ result: "ran", renderOut: { type: "table", columns: ["a"], rows, rowCount: rows.length } }) });
     assert.equal(r.results.length, 2, JSON.stringify(r.end));
     assert.match(r.results[1], new RegExp(`holds ${PAGE_TABLE_CAPS.rows.toLocaleString("en-US")} of ${(PAGE_TABLE_CAPS.rows + 10).toLocaleString("en-US")} rows, a preview`), r.results[1].slice(0, 300));
-    assert.equal(ran, 0, "the sandbox never ran over the prefix");
+    assert.equal(ran, 0, "no read handed the cell the rows held: the cell's call raised");
 });
 
 // --- the sidebar: a page's render drawn in an extension page ---

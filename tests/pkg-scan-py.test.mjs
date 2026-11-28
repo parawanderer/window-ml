@@ -55,7 +55,7 @@ before(async () => {
 
 /** The scan of `roots` within `scope` (default: the roots), run as the candidate runs it, read as the offscreen document reads it. */
 async function scan(roots, scope = roots) {
-    injectInputs(py.globals, null, null, harness);
+    injectInputs(py.globals, null, harness);
     await py.runPythonAsync(wrapUserCode(scanCode(roots, scope), true));
     const err = py.globals.get("_err");
     assert.equal(err ? String(err) : null, null, "the scan cell itself ran");
