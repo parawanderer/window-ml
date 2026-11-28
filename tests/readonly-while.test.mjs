@@ -367,6 +367,28 @@ test("a policy containing `while` or `do…while` is broken when parsed: the loo
     assert.equal(evalPolicy("(c) => { for (const x of [1]) { } return true }", {}, "allow").decision, "allow");
 });
 
+test("a bound tripped in a `finally` never replaces a held refusal; with nothing held, the trip is the answer", async () => {
+    // The held guard wins (janitor-2's finding on #2136, the coordinator's ruling): a finalizer's own trip downgraded a held
+    // Denied or NotInDialect to an answered "Stopped", so the refusal never reached the gate.
+    const loop = "let i = 0; while (i >= 0) i++";
+    const held = {
+        Denied: "try { return window } finally { " + loop + " }",
+        NotInDialect: "try { const k = 1; k = 2 } finally { " + loop + " }",
+    };
+    for (const [kind, js] of Object.entries(held)) {
+        const out = await evalReadonlyInWorker({ js }, {});
+        assert.equal(out.kind, "refused", `${kind} held, the finally's trip must not answer: ${JSON.stringify(out).slice(0, 200)}`);
+    }
+    // A held stop runs no finally at all, so the finalizer's loop never starts and the first stop is the answer.
+    const stopped = await evalReadonlyInWorker({ js: "try { " + loop + " } finally { " + loop + " }" }, {});
+    assert.notEqual(stopped.kind, "refused");
+    assert.match(stopped.result, /^Error: Stopped: /);
+    // Nothing held: the finalizer's trip is the cell's answer, an error the model reads.
+    const plain = await evalReadonlyInWorker({ js: "try { 1 } finally { " + loop + " }" }, {});
+    assert.notEqual(plain.kind, "refused");
+    assert.match(plain.result, /^Error: Stopped: /);
+});
+
 // --- a stop inside a policy is worded for a policy -----------------------------------------------------------------------
 
 test("a policy with a constant-true `while` is broken with the policy's own sentence, not the script's `Add a return`", () => {

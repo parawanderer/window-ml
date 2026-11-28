@@ -1159,8 +1159,9 @@ export class Evaluator {
                         try { f = yield* this.eval(node.finalizer, scope); }
                         catch (e3) {
                             // A finalizer's own throw replaces a held ERROR, as in JS, but never a held denial: that
-                            // would turn an escalation into a script error. Its own refusal stands either way.
-                            if (guardErr && !isGuard(e3)) { this.failAt = held; throw guardErr; }
+                            // would turn an escalation into a script error. Nor does a bound the finalizer trips: a held
+                            // refusal still goes to the gate. Its own refusal stands either way.
+                            if (guardErr && (!isGuard(e3) || e3 instanceof ResourceStop)) { this.failAt = held; throw guardErr; }
                             throw e3;
                         }
                         this.failAt = held;
