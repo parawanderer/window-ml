@@ -2145,10 +2145,9 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 .r-ts.hoverable { cursor: help; }
 .r-ts.hoverable:hover { opacity: 1; color: var(--fg-dim); }
 .r-ts-line { flex: 1 1 auto; white-space: pre-wrap; word-break: break-word; }
-/* An http(s) address in tool output (output-links.ts): the output's own colour with the underline that says it is a link,
-   so a log full of them does not turn into a wall of blue. */
-a.out-link { color: inherit; text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 2px; cursor: pointer; }
-a.out-link:hover { text-decoration-thickness: 2px; }
+/* An http(s) address in tool output (output-links.ts): the link treatment `.md a` gives prose (dotted underline, the
+   text's own colour), with `color: inherit` so it keeps the colour of whatever token it sits in, as a terminal does. */
+a.out-link { color: inherit; cursor: pointer; }
 /* A markdown link target in a raw view that holds no link we draw (a relative path, a data: URI, a refused address): the
    theme underlines `.hljs-link` as if it were clickable, so it loses that (code-links.ts). */
 .hljs-link.hljs-link-dead { text-decoration: none; }
@@ -2559,8 +2558,10 @@ a.out-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px
 .md hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
 .md blockquote { margin: 6px 0; padding: 2px 0 2px 12px; border-left: 3px solid var(--border); color: var(--fg-dim); }
 .md blockquote p { margin: 0 0 4px; } .md blockquote p:last-child { margin-bottom: 0; }
-.md a { color: var(--fg); text-decoration: underline dotted; text-underline-offset: 3px; }
-.md a:hover { text-decoration-style: solid; }
+.md a { color: var(--fg); }
+/* THE link underline, shared by prose and tool output (`a.out-link`): dotted, solid on hover. */
+.md a, a.out-link { text-decoration: underline dotted; text-underline-offset: 3px; }
+.md a:hover, a.out-link:hover { text-decoration-style: solid; }
 /* A markdown link is a `.tt` trigger for its `data-tip`, and must stay an inline run of text, not the tooltip
    primitive's inline-flex box — a link that wraps across two lines would otherwise become a block. */
 .md a.md-link.tt { display: inline; }
