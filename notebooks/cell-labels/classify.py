@@ -8,6 +8,8 @@ A Python cell is read with `ast`; a JS cell by classify-js.mjs (the dialect's pa
 labels.json, and every row names its `taxonomy`. Rows hold labels, flags and module names, never the cell's code.
 """
 
+from __future__ import annotations
+
 import ast
 import fnmatch
 import json
