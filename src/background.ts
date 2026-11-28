@@ -34,7 +34,7 @@ import { executeServerTool, serverToolResult } from "./sw/sw-tools";   // run ON
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, observeRequests, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw/sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw/sw-events";
 import { energyRequest, cutOpenStretches, watchPower } from "./sw/sw-energy";
-import { configureSessionCommands, handleSessionTitle, ingestSessionEvent, sessionPageMoved, sessionPageGone, keepSession, liveHeldSessions, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw/sw-sessions";   // the cross-tab session index the chat page reads
+import { configureSessionCommands, filesCommitted, handleSessionTitle, ingestSessionEvent, sessionPageMoved, sessionPageGone, keepSession, liveHeldSessions, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw/sw-sessions";   // the cross-tab session index the chat page reads
 import { backupAction, backupFailure } from "./sw/sw-backup";   // backup and restore, for Settings
 import { folderAction } from "./sw/sw-archive";   // the session archive's folder, for Settings
 import { ensureHubRuntime, hubDevices, hubLog, hubState, revokeHubDevice, stopHubRuntime } from "./sw/sw-hub";   // this browser as a runtime on a hub
@@ -1076,6 +1076,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     if (message.type === "FILES_SECRET_FORMS") { void filesSecretForms(sender).then(sendResponse); return true; }
     if (message.type === "FILES_QUOTA") { void filesQuota(sender).then(sendResponse); return true; }
     if (message.type === "FILES_LOST") { void filesLost(message, sender); return false; }
+    if (message.type === "FILES_COMMITTED") { filesCommitted(message, sender); return false; }
     if (message.type === "FILES_HIDE_LIST") { void filesHideList(message, sender).then(sendResponse); return true; }
     if (message.type === "SERVER_TOOL_EXEC") {
         // Run ONE OpenWebUI-configured tool. CHOKE POINT, and a real one: the fetch spends the user's API

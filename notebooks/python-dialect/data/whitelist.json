@@ -264,6 +264,7 @@
   ],
   "builtin_kinds": {
     "str": [
+      "endswith",
       "find",
       "index",
       "isdigit",
@@ -322,5 +323,5 @@
     }
   },
   "decided": "2026-10-15, repl-specs rulings 1-4 (session-mail 20261015-1201Z-repl-specs-to-repl-lane3-genexp-type-columns-rulings.md)",
-  "parsed_with": "CPython 3.13.15 ast (Pyodide carries 3.14.0; 3.14 adds only TemplateStr/Interpolation)"
+  "parsed_with": "CPython 3.13.17 ast (Pyodide carries 3.14.0; 3.14 adds only TemplateStr/Interpolation)"
 }
