@@ -52,7 +52,9 @@ const calmRow = (page) => page.getByRole("menuitemcheckbox", { name: /^Calm view
 // The row in the session's OWN runtime group. A session waiting on you is also listed in "Needs you" at the top, so
 // this matches twice; `.last()` is the one where it lives, which is the one every assertion here means.
 const row = (page, key) => page.locator(`.chat-row[data-session="${key}"]`).last();
-const commands = (page) => page.evaluate(() => globalThis.__chatFake.commands);
+// Without `files.list`: opening a session asks its runtime for the file count, and the assertions here are about what the
+// person did. The files panel's own tests read every command.
+const commands = (page) => page.evaluate(() => globalThis.__chatFake.commands.filter((c) => c.type !== "files.list"));
 /** Choose Agent or Chat on the start page. One pill at every width now — the segmented control is gone. */
 async function pickKind(page, name) {
     await page.getByRole("button", { name: /^Kind:/ }).click();
@@ -3920,6 +3922,47 @@ test("a run that still has its tab keeps the composer and shows no banner", asyn
     const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(CAPPED_HERE)}`);
     await expect(page.locator(".chat-notab")).toHaveCount(0);
     await expect(page.locator(".chat-resume")).toHaveCount(0);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+// --- the files panel: a plain file tree beside the chat, listed through the fake host with no chrome ---
+
+test("files panel, desktop: closed until opened, a folder lists on opening, and the open state survives a reload", async () => {
+    const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(CHAT)}`);
+    const button = page.locator(".chat-files-btn");
+    await expect(button).toBeVisible();
+    await expect(button).toHaveAttribute("aria-label", /^\d+ files$/);
+    await expect(page.locator(".fp")).toHaveCount(0);
+    await button.click();
+    await expect(page.locator(".fp")).toBeVisible();
+    await page.locator(".fp-row", { hasText: "attached" }).first().click();
+    await page.locator(".fp-row", { hasText: "3fa91c2" }).click();
+    await expect(page.locator(".fp-row", { hasText: "report.pdf" })).toBeVisible();
+    await page.locator(".fp-row", { hasText: "c41d7a0" }).click();
+    await expect(page.locator(".fp-row", { hasText: "keys.env" }).locator(".fp-hidden")).toBeVisible();
+    await page.locator(".fp-row", { hasText: "9b20e11" }).click();
+    await expect(page.locator(".fp-row", { hasText: "quarterly report.txt" }).locator(".fp-sees")).toBeVisible();
+    await expect(page.locator(".fp-ro"), "only attached/ itself differs from the writable root; nothing under it says so again").toHaveCount(1);
+    await expect(page.locator(".fp-row", { hasText: "attached" }).first().locator(".fp-ro")).toHaveCount(1);
+    const listed = (await page.evaluate(() => globalThis.__chatFake.commands)).filter((c) => c.type === "files.list" && c.limit !== 1).map((c) => c.path);
+    expect(listed).toEqual(["", "attached", "attached/3fa91c2", "attached/c41d7a0", "attached/9b20e11"]);
+    await page.reload();
+    await page.locator(".chat").waitFor();
+    await expect(page.locator(".fp")).toBeVisible();
+    await page.locator(".fp-close").click();
+    await expect(page.locator(".fp")).toHaveCount(0);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("files panel, phone width: the header holds the button and does not overflow, and the panel opens over the chat", async () => {
+    const { page, errors } = await open(PHONE, `#/s/${encodeURIComponent(CHAT)}`);
+    await expect(page.locator(".chat-files-btn")).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    await page.locator(".chat-files-btn").click();
+    await expect(page.locator(".fp.narrow")).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     expect(errors).toEqual([]);
     await page.close();
 });

@@ -167,6 +167,13 @@ export function decodeStreamFrame(batch: Bytes): SessionStreamMessage | null {
     if (m.type === "reset") return typeof m.epoch === "string" ? (v as SessionStreamMessage) : null;
     if (m.type === "backfilled") return typeof m.epoch === "string" && typeof m.cursor === "number" ? (v as SessionStreamMessage) : null;
     if (m.type === "gone") return v as SessionStreamMessage;
+    // A live hint: `dirs` at most 16 shown paths, or absent; anything else and it is not one.
+    if (m.type === "files-changed") {
+        const dirs = (v as { dirs?: unknown }).dirs;
+        if (dirs === undefined) return { type: "files-changed", session: m.session as SessionStreamMessage["session"] };
+        return Array.isArray(dirs) && dirs.length <= 16 && dirs.every((d) => typeof d === "string" && d.length <= 4096)
+            ? { type: "files-changed", session: m.session as SessionStreamMessage["session"], dirs: [...dirs] } : null;
+    }
     return null;
 }
 

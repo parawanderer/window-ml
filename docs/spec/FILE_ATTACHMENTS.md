@@ -505,7 +505,7 @@ whole or refused, so no page of it is held back.
 - The answer is a `<file name pages>` block of `<page n>` sections, text only, escaped as a message's are. A page
   with a figure says the figure is not returned; a scan with no text says it has none. Pages past one call's text
   (`pdfTextBudget`, as a message's) are named, to read in another call; a first page alone past it comes cut where the
-  budget ends and says so, since named it could never be read. Every refusal (no such file, no such page, a
+  budget ends and says so, since named it could never be read. Named cost: no call returns the rest of that page. Every refusal (no such file, no such page, a
   bad page list, no longer held) is a sentence the model reads, never an error that ends the turn.
 - At most 4 calls a turn. The 4th result says it was the last; a 5th call in the same reply is answered "Not read",
   and the next model call is made with no tools, so the turn ends in an answer. A cancel ends the loop.
@@ -1022,6 +1022,10 @@ RULED 2026-11-17 (Shane's idea, the details the coordinator's calls, in the coor
    a request names one directory and gets one page, and file bytes never ride a listing. A page is bounded so its
    sealed message fits the hub's `max_payload_bytes` (1 MiB less the envelope, `docs/dev/hub-client.md`): at most 500
    entries and 256 KiB of JSON, with a cursor for the next page.
+   AMENDED 2026-11-25 (accepted by the coordinator, 2026-11-25): the listing is the `files.list` COMMAND's answer, as
+   `session.backfill`'s pages are, not an event, since an event is kept in the session's history and replayed into
+   every backfill and export. The one live hint is `files-changed`, a stream message beside `gone` that names the
+   directories to list again and carries no entries (SESSION_CONTRACT.md, "Session events").
 6. **window-ml-hub needs no change.** The hub relays sealed payloads it cannot read (window-ml-hub's README and
    its `PROTOCOL.md`), so a new command and a new event kind pass through it as opaque bytes. The change is to the
    session contract only (SESSION_CONTRACT.md: the listing command, its event, and the hide-list command by reference),

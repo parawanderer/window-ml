@@ -22,6 +22,7 @@ export type FeedAction =
     | { type: "reset" }
     | { type: "backfilled"; truncated: boolean; from?: number }
     | { type: "gone" }
+    | { type: "files-changed"; dirs?: string[] }
     | { type: "drop"; reason: "other-session" | "version" | "mislabelled" | "stale-epoch" | "duplicate" };
 
 /** What a feed needs to resume in a LATER LAUNCH (event-cache.ts): its epoch and every cursor it applied. */
@@ -101,6 +102,9 @@ export class SessionFeed {
                 return { type: "backfilled", truncated: msg.truncated, ...(Number.isInteger(msg.from) && msg.from! >= 0 ? { from: msg.from } : {}) };
             case "gone":
                 return { type: "gone" };
+            case "files-changed":
+                // A live hint: no epoch, no cursor, nothing to remember. Only a well-formed list of paths is passed on.
+                return { type: "files-changed", ...(Array.isArray(msg.dirs) && msg.dirs.every((d) => typeof d === "string") ? { dirs: msg.dirs.slice(0, 16) } : {}) };
             default:
                 // A message type from a newer contract: ignored, like any unknown kind.
                 return { type: "drop", reason: "version" };
