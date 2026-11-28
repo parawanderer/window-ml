@@ -239,7 +239,8 @@ unknown vision used to get it, unread.
 person pasted count first, then the pages that need one, in page order. A page past the cap goes to the reader model
 when one is set, and otherwise is named in the block with what can get it: "pages 9-48 are scans not sent as images.
 This chat cannot show them." Once slice 3's `look` on a page exists, an agent run's note names it as the recovery;
-until then the note says there is none, since a recovery named must be callable now.
+until then the note says there is none, since a recovery named must be callable now. A worker chat's note says "Read
+them with read_pages." on a turn that offers the tool (below, "`read_pages`, as built").
 
 **Built for worker chats (2026-10-29).** A runtime listing `capabilities.attachPdf` takes `{ name, type, data }` in
 `files` on `chat.start` and on `session.send` to a chat, `data` the bytes as base64 (the extension's channel is JSON),
@@ -448,8 +449,9 @@ that rule for attachments and should reuse the `@tool:` value path, not a parall
   lets a model weigh an instruction found inside it.
 - **Lifetime.** A fetch can be repeated, so its value is evicted like any other; an attachment cannot, so it is held for
   the session ("Eviction differs by producer", slice 3).
-- **The recovery a held-back note names.** A worker chat has no tools ("This chat cannot show them."); an agent run
-  names the call that gets the page.
+- **The recovery a held-back note names.** A worker chat has one tool, `read_pages`, and names it on a turn that
+  offers it ("Read them with read_pages."), otherwise "This chat cannot show them."; an agent run names the call that
+  gets the page.
 
 Where there are no tools (a worker chat), "past the cap" cannot become a pointer. Decided (Shane, 2026-10-29): a PDF
 past the cap is no longer refused whole. Its pages go in order while they fit and the rest are named ("pages 12-30
@@ -464,7 +466,7 @@ Giving worker chats the read-only dialect instead would be a far larger surface 
 an agent run instead ("start a run to read them") leaves the model stuck, which is the thing the note is there to
 prevent. `read_pages` is a new agent-facing call, so it gets the red-team pass.
 
-**Where a worker chat keeps its PDFs (ruled 2026-11-17; built, the tool not yet).** In the value store, held for the
+**Where a worker chat keeps its PDFs (ruled 2026-11-17; built, the tool since 2026-11-24).** In the value store, held for the
 chat's session through `storeHeld`, as an agent run's attached files are: two rows per PDF, its bytes (`bytes`) and
 its read document (`paged`). One store, so the files panel lists from it. A PDF is held once its message is
 answered; a failed turn holds nothing, since its message is not kept either. A text file is not held: it is sent
@@ -490,6 +492,32 @@ whole or refused, so no page of it is held back.
 - The tool is offered only when the model's capabilities say it takes tools (`MODEL_CAPS` `tools: true`). Unknown and
   no keep "This chat cannot show them.", because a backend refuses a whole request that lists tools to a model without
   them. Named cost: a model that takes tools but does not say so never gets `read_pages`.
+
+**`read_pages`, as built (2026-11-24, `src/tools/read-pages-tool.ts`, `toolLoop` in sw-chat.ts).**
+
+- Offered on a turn only while the chat holds a PDF with a page no message sent (a PDF listed with no rows does not
+  count) and the model's capabilities say `tools`. The PDFs it reads are the chat's held ones, read back from their
+  `paged` row for the chat's own session (`readHeld`, the one function the session store's ranged reader replaces),
+  and this message's, from the document the message was framed from. Both are as the model read them, scrubbed.
+- Arguments `{ file, pages }`: `file` is the name the `<file>` block gives; two PDFs with one name are `name#1` and
+  `name#2`, in the order sent, and the bare name is refused listing both. `pages` is the `pages` verb's grammar, at
+  most 50 pages a call.
+- The answer is a `<file name pages>` block of `<page n>` sections, text only, escaped as a message's are. A page
+  with a figure says the figure is not returned; a scan with no text says it has none. Pages past one call's text
+  (`pdfTextBudget`, as a message's) are named, to read in another call; a first page alone past it comes cut where the
+  budget ends and says so, since named it could never be read. Every refusal (no such file, no such page, a
+  bad page list, no longer held) is a sentence the model reads, never an error that ends the turn.
+- At most 4 calls a turn. The 4th result says it was the last; a 5th call in the same reply is answered "Not read",
+  and the next model call is made with no tools, so the turn ends in an answer. A cancel ends the loop.
+- Each result goes through the scrub an agent run's tool results go through (`forModel` and the line naming what was
+  taken) before the model reads it, and the same text is the step's `result`, so the transcript and both exports show
+  what the model read.
+- Each call is an `agent-step` in the chat's session with `turn` (SESSION_CONTRACT.md, "Session events"), drawn
+  between the turn's message and its answer, and written raw under the turn in the Markdown export.
+- Only the question and the answer stay in the chat's history; a later turn that needs a page reads it again. Named
+  cost: a later turn does not see what an earlier one read.
+- Not built: a re-read of a scan or figure page as an image (the vision path for a re-read); the answer names it as
+  not returned.
 
 Built (2026-10-29, `pdfTextBudget` and `fitPages`):
 
@@ -1003,6 +1031,22 @@ RULED 2026-11-17 (Shane's idea, the details the coordinator's calls, in the coor
    listing and the commands are host-neutral and already reach the phone through the hub, so its view needs no
    contract change when it comes. Built first for the desktop renderer hosts: the extension, and a later VS Code
    extension.
+8. **A folder on the person's disk is listed and followed as the shelf is, in its own slice** (Shane, 2026-11-26, in
+   the coordinator's session; the details the coordinator's calls). NOT BUILT. Slices 1 and 1b list the `/files/` shelf
+   only: the listing command answers any other mount as `unsupported`, so no `ml.sh` root is in the tree, and a change
+   on disk reaches no tree. The slice after 1b adds both halves, and neither ships without the other:
+   - **The listing.** The same command with `mount` naming an `ml.sh` root, answered by the host through the
+     runtime, one directory a page under the same bounds, with each entry's hidden state from the hide list. A root
+     the session does not hold is refused as a path outside the mount is. With the host away the root answers
+     `unsupported`, and the tree says the folder is not connected; it never draws the last listing as current.
+   - **The change hint.** A change the host's watch sees under a listed root ("The sync", below: FSEvents on macOS,
+     inotify on Linux) sends the same `files-changed` hint a commit to the shelf sends, with the same rule: coalesced,
+     at most 16 directories or none, no names and no bytes. The end of an `ml.sh` call sends it once for what the call
+     changed. The watch is the host's one watch; the tree adds none.
+   - **Named cost.** The hint is a hint: a change made while no client is connected, or while the host is away, is
+     seen at the next listing, never replayed. A tree may be out of date between a change and its hint.
+   - **Open, for the slice's own spec:** the coalescing window, which roots are watched beyond the session's own
+     folder (the sync watches that folder only), and what a watch that overflows or dies reports.
 
 #### A `python_install` candidate worker
 
@@ -2235,6 +2279,51 @@ backup and any commit-on-cell-success live in one place.
   bytes itself is not (`ml.fs`, "The scrub"). Ruling 32's hash-only matcher is a stated gap: it is not built, the
   registry stores plaintext values, so the plaintext forms cover every registered value; when it lands, the forms'
   source changes and this read does not.
+
+#### Names under `/files` (the coordinator's rulings, 2026-11-24)
+
+BUILT (`src/session/ranged-reader.ts`, `maskName` in `src/secret-mask.ts`). The bytes are masked; the names are
+masked too, or a file named after a secret (an attachment's name, a file a cell wrote) would list it whole. The reader
+is the one place every front end lists and opens through, so the rule is there.
+
+1. Every name a listing returns is SHOWN: each match of a secret's form becomes its marker, `[REDACTED:<NAME>]` as the
+   person's turn writes it (the config's own markers, `[server]`, for a form the turn does not scrub), and a GitHub
+   token its marker. The forms come with their markers in `FILES_SECRET_FORMS`, asked at each call, as at each read.
+2. A folder sorts by its shown names. Entries sharing one are ordered by when they were made, then by a hash of the
+   stored name under a salt drawn once per reader, never by the stored name, so a cell cannot recover a secret from
+   where its own files sort beside it.
+3. A path resolves segment by segment: the child stored under exactly that name wins, even over a shown name it
+   shares; otherwise the one child whose shown name the segment is, as a whole value (no prefix, no part, no length).
+4. Two children sharing a shown name are both listed under it. A segment naming that shown name, with no exact match,
+   is `EACCES: '<path>' is ambiguous, <N> files`. The cost, accepted: neither opens by the shown name, a cell reaches
+   them only by their stored names, which it is never shown, and the person sees both in the panel, each under the
+   one shown name with its real name beside it on this device (rule 9).
+5. An error names the path as the caller wrote it, never a stored name: open, stat, the write side, a commit's
+   refusal and a discarded file's report alike.
+6. One lookup serves open, stat, opendir, unlink, rename (both ends), mkdir, rmdir and a create. A create on a shown
+   name addresses that file (an exclusive create is `EEXIST`), never a second one.
+7. The cursor is not a path: it is the last entry's ordinal among those sharing its shown name, then that shown name
+   (`c:<ordinal>:<shown>`), so a folder of colliding names pages to its end. A cursor of any other shape is `EINVAL`.
+8. Under `agent/`, a create or a rename whose last segment holds a marker a shown name can carry and names no file
+   there is `EACCES: '<path>' is reserved`: it would make a second file under a shown name. The markers are
+   `[REDACTED` (both `[REDACTED:<NAME>]` and the bare `[REDACTED]`), the GitHub token's `[a GitHub token]`, and every
+   `put` the forms carry at that call (`[server]`, `[price service]`, `[model filter]`).
+9. An entry's `name` is always the shown name, for every caller (the coordinator's ruling, amended by Shane,
+   2026-11-24). The person's panel shows the REAL name on this device, with a tip saying how the model sees it: the
+   reader has one extra output, `realName`, present only when the stored name differs from the shown one, and only for
+   a listing the extension's own pages ask for on this device (the offscreen caller the files panel adds). It never
+   rides the hub, an event (`files-changed`), an export, the run log, `ml.fs` or the Python mount; over the hub the
+   panel shows the shown name. The human-only state inspector (`session.files`) lists stored names, on the
+   extension's own pages only. NOT BUILT yet: the reader's `realName` option, off by default, lands in the PR after
+   this one; until then the panel has the shown name only.
+
+The exact match keeps two cases working: an attached name that holds the marker text itself, and a file written
+before the value in its name was registered, both open by the name the cell wrote. Python's mount lists both entries
+of a collision and caches neither, so its lookup asks the reader, which refuses it. A value registered mid-session is
+masked from the next listing on; a cell that read the name before holds it already, as with the bytes. A cursor read by a reader
+rebuilt since its page (the offscreen document restarted) may repeat or skip an entry, and only one tied on its birth
+time with another under one shown name: the tie's salt is drawn per reader. That cost is accepted; it needs equal
+birth times, a shared shown name and a restart between pages.
 
 **Asked by ruling 36 of the packages notebook, still not on main** (the design was fixed and built without them):
 whether worker memory stays flat reading ranges of a 1 GiB file; the cost of the scrub inside the read, both the

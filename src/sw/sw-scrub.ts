@@ -39,14 +39,18 @@ async function configSecrets(): Promise<SecretSub[]> {
 /**
  * Every secret's forms as the byte mask of Python's `/files` mount matches them (secret-mask.ts): the config's and
  * every registered value's, after the registry is read. Plaintext: for the offscreen document only (FILES_SECRET_FORMS).
+ * Each carries the `put` a file NAME shows for it: `[REDACTED:<NAME>]` for a registered value and the saved API key,
+ * as the person's turn writes them (`forTurn`), else the config scrub's marker (`[server]`).
  * @returns the forms, longest first
  * @throws when the config or the registry cannot be read
  */
 export async function secretFormsNow(): Promise<SecretForm[]> {
     const config = await configSecrets();
+    const cfg = await getConfig();
     await registryReady();
+    const named = new Map(turnSubs(cfg, (name) => `[REDACTED:${name}]`).map((s) => [s.find, s.put]));
     const seen = new Set<string>();
-    return [...config, ...registrySubsNow()].filter((s) => s.find && !seen.has(s.find) && !!seen.add(s.find)).sort((a, b) => b.find.length - a.find.length).map((s) => ({ find: s.find, ...(s.ci ? { ci: true } : {}) }));
+    return [...config, ...registrySubsNow()].filter((s) => s.find && !seen.has(s.find) && !!seen.add(s.find)).sort((a, b) => b.find.length - a.find.length).map((s) => ({ find: s.find, ...(s.ci ? { ci: true } : {}), put: named.get(s.find) ?? s.put }));
 }
 
 /**

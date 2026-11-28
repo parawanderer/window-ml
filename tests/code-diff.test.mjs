@@ -56,3 +56,15 @@ test("the gutter's rule runs the whole height of a wrapped row, in a diff and in
     assert.match(css, /\.cline \{ display: flex; align-items: stretch; \}/);
     assert.match(css, /\.dline \{ display: flex; align-items: stretch; \}/);
 });
+
+// --- the maximised view and the tip over any modal ---
+
+test("a cursor tip stacks above the shared modal's backdrop, and the popout's switch sits in its title row", () => {
+    const css = readFileSync(new URL("../src/sidebar/sidebar.css", import.meta.url), "utf8");
+    const z = (sel) => Number(new RegExp(`${sel.replace(/[.]/g, "\\.")} \\{[^}]*?z-index: (\\d+)`).exec(css)?.[1]);
+    assert.ok(z(".rc-tip") > z(".chat-dialog-back"), "a tip drawn behind the modal it was raised over is unreadable");
+    assert.ok(!/\.vram-rowtip \{[^}]*z-index/.test(css), "the row tip takes the shared tip's stacking");
+    const src = readFileSync(new URL("../src/sidebar/transcript/render-panel.tsx", import.meta.url), "utf8");
+    const head = /<div class="r-max-head">[\s\S]*?<\/div>/.exec(src)?.[0] ?? "";
+    assert.match(head, /<RevisionSwitch/, "the popout's title row carries the same code | diff | split switch");
+});

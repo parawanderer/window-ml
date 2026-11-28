@@ -1,8 +1,8 @@
 // ml-fetch-cache.ts — the page's ONE cache of successful `ml.fetch` results, and its memory budget.
 //
 // Its own module because two readers need it and they must not import each other: `ml.fetch`/`_fetchCached`
-// in injected.ts write and read it, and `_loadTable` in ml-python.ts reads it to answer a `tables:` source
-// that names a URL the run already fetched. Holding it in either of those files makes the other import that
+// in injected.ts write and read it, and `_hoistTable` in ml-python.ts reads it to answer an `ml.table` source
+// that names a URL the page already fetched. Holding it in either of those files makes the other import that
 // file, and the two import each other back.
 
 import { makeBackgroundTaskPromise } from "../bridge";

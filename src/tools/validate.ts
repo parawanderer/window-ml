@@ -37,7 +37,7 @@ export const validateArgs = (schema: JsonSchema | undefined, args: Record<string
             default: return true;
         }
     };
-    // A property may be a UNION (`oneOf`/`anyOf`) rather than one `type` — python_exec's `tables` is "a source
+    // A property may be a UNION (`oneOf`/`anyOf`) rather than one `type` — python_exec's old `tables` was "a source
     // string OR a { name: source } map". Reading only `spec.type` meant a union property was validated as
     // NOTHING AT ALL: an array, a number and null all passed silently, and `tables: ["current"]` then reached
     // the tool, where Object.keys(["current"]) is ["0"] and the model was told `"0" isn't a valid Python

@@ -298,8 +298,8 @@ export function tablePreview(t: TableLike, opts: { rows?: number; source?: strin
         // What python_exec gets from the cache is what was KEPT. Past the cap that is a prefix, and the hint must say
         // so rather than promise every row the shape counts.
         ...(opts.source ? [t.truncated
-            ? `Cached: pass ${opts.source} to python_exec's \`tables\` for the first ${t.rows.length.toLocaleString("en-US")} rows as a DataFrame (a prefix of the ${nrows.toLocaleString("en-US")}; no refetch, no read_csv).`
-            : `Whole table cached: pass ${opts.source} to python_exec's \`tables\` for all ${nrows.toLocaleString("en-US")} rows as a DataFrame (no refetch, no read_csv).`] : []),
+            ? `Cached: in python_exec, \`df = ml.table(${opts.source})\` reads the first ${t.rows.length.toLocaleString("en-US")} rows as a DataFrame (a prefix of the ${nrows.toLocaleString("en-US")}; no refetch, no read_csv).`
+            : `Whole table cached: in python_exec, \`df = ml.table(${opts.source})\` reads all ${nrows.toLocaleString("en-US")} rows as a DataFrame (no refetch, no read_csv).`] : []),
     ].join("\n");
 }
 
@@ -685,7 +685,7 @@ function pandasHint(key: string, t: TableLike, python: boolean): string {
     return [
         `This is a lightweight table facade, not a pandas DataFrame — \`${looksSelect ? `t[[${key.split(",").map(k => JSON.stringify(k.trim())).join(", ")}]]` : `t.${key}`}\` is not something it answers to.`,
         nearest ? `Use \`${nearest}\`.` : `It has: columns, rows, shape, dtypes, and col(name) / select(names) / records() / head(n).`,
-        python ? "For real pandas — grouping, joins, pivots, resampling — pass the table's source to python_exec's `tables` and work on the DataFrame there." : "",
+        python ? "For real pandas — grouping, joins, pivots, resampling — read the table's source in python_exec with `df = ml.table(src)` and work on the DataFrame there." : "",
     ].filter(Boolean).join(" ");
 }
 
@@ -724,7 +724,7 @@ export function columnIndexes(columns: string[], names: string[]): number[] {
 export function storedReadRows(rowCount: number, names: string[], plan: StoredReadPlan = {}): number {
     const n = Math.min(plan.limit ?? rowCount, rowCount);
     if (n * names.length > MAX_STORED_READ_CELLS)
-        throw new Error(`reading ${names.length === 1 ? `column "${names[0]}"` : `${names.length} columns`} of this stored table would return ${(n * names.length).toLocaleString("en-US")} cells, more than one read hands back (${MAX_STORED_READ_CELLS.toLocaleString("en-US")}). Compute over it in python_exec instead (tables: { df: "@tool:…" }).`);
+        throw new Error(`reading ${names.length === 1 ? `column "${names[0]}"` : `${names.length} columns`} of this stored table would return ${(n * names.length).toLocaleString("en-US")} cells, more than one read hands back (${MAX_STORED_READ_CELLS.toLocaleString("en-US")}). Compute over it in python_exec instead, with \`df = ml.table("@tool:…")\`.`);
     return n;
 }
 

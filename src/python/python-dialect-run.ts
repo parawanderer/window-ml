@@ -228,6 +228,17 @@ export const DIALECT_OUT_ARGS: [string, string, string][] = [
     ["numpy", "rint", "out"],
 ];
 
+/** The keywords an inside `pd.read_csv` may pass (ruling 71, docs/spec/ML_TABLE.md): any other asks. */
+export const DIALECT_READ_CSV_KEYWORDS = ["sep", "delimiter", "header", "names", "index_col", "usecols", "dtype", "parse_dates", "nrows",
+    "skiprows", "na_values", "keep_default_na", "thousands", "decimal"];
+/** The largest file an inside `pd.read_csv` reads: the table read cap (ML_TABLE.md, "Kept bytes"). A bigger one asks. */
+export const DIALECT_READ_CSV_MAX_BYTES = 64 << 20;
+/** Bytes of input one step of the budget pays for, so a parse costs at least what the same time of interpreter work
+ *  does. Measured on the fork core 35bd1d69 (Node): a step takes 20.2 ns, `read_csv` 6-10 ns a byte (string-heavy
+ *  files the slowest), so 2. Charged before the call: a parse that cannot fit asks, which with the 15,000,000-step
+ *  budget is any file past about 30 MB, below the read cap. */
+export const DIALECT_READ_CSV_BYTES_PER_STEP = 2;
+
 /** Standard-library manifest names that stay refused inside, with why: `_ml_stdlib` registers every other callable one
  *  (tests/python-dialect-vocab.test.mjs holds each name to a call that runs or a reason here). */
 export const DIALECT_STDLIB_REFUSED: Record<string, string> = {
@@ -299,6 +310,7 @@ def _ml_dialect_setup(_files):
             or _ml_lifted_reads(_restricted, restricted, _done["kinds"], json.loads(_files["manifest-pandas.json"]))
             or _ml_buffer_args(_restricted, restricted)
             or _ml_out_args(_restricted, restricted)
+            or _ml_read_csv_inside(_restricted, restricted, _done)
             or _ml_os_reads(_restricted, restricted, _done["modules"]))
 
 def _ml_stdlib(_restricted, restricted, _man):
@@ -425,6 +437,88 @@ def _ml_buffer_args(_restricted, restricted):
                     raise restricted.NotInDialect(f"not in dialect: {_name}({_p}=…) writes to the file or buffer it is given")
                 _own(func, self, args, kwargs)
             _restricted.allow_call(_f, True, _check)
+    return ""
+
+def _ml_read_csv_inside(_restricted, restricted, _done):
+    # pd.read_csv inside (ruling 71, served, not built until now): a file under /files/ or a buffer the cell made, parsed
+    # into a frame the cell owns. load_manifests leaves read_csv out (the fork's _EFFECTFUL), and allow_module REPLACES a
+    # module's names, so pandas is re-admitted with it. What is registered is the pd.read_csv a cell reaches: the
+    # worker installs the prelude's loader redirect before this setup, and that wrapper is the identity a cell calls.
+    # The check runs lifted, before the call. It charges the input's bytes to the cell's budget first, so a parse that
+    # cannot fit asks and none is half-done.
+    import io, math, os, stat, __main__ as _main
+    try:
+        import pandas as _pd
+        from pandas.io.common import is_url as _is_url, infer_compression as _compression
+    except ImportError:     # not loaded here, so load_manifests admitted nothing of it either
+        return ""
+    _f = _pd.read_csv
+    _restricted.allow_module("pandas", sorted(set(_done["modules"].get("pandas", [])) | {"read_csv"}))
+    _kw = frozenset(${JSON.stringify(DIALECT_READ_CSV_KEYWORDS)})
+    _cap, _per = ${DIALECT_READ_CSV_MAX_BYTES}, ${DIALECT_READ_CSV_BYTES_PER_STEP}
+    def _no(_why):
+        raise restricted.NotInDialect("not in dialect: pd.read_csv " + _why)
+    def _charge(_n):
+        _restricted.charge(max(1, math.ceil(_n / _per)))
+    def _check(func, self, args, kwargs):
+        _k = dict(kwargs or {})
+        if "filepath_or_buffer" in _k:
+            if args:
+                _no("with its source given twice")
+            _src = _k.pop("filepath_or_buffer")
+        elif len(args) == 1:
+            _src = args[0]
+        else:
+            _no("with no source" if not args else "with a positional argument after the source")
+        for _n, _v in _k.items():
+            if _n not in _kw:
+                _no("with " + str(_n) + "=")
+            if _n in ("usecols", "skiprows") and callable(_v):
+                _no("with a callable " + _n)
+            # A separator of more than one character is a regular expression, which the python engine runs with no step
+            # the budget sees.
+            if _n in ("sep", "delimiter") and _v is not None and not (type(_v) is str and len(_v) == 1):
+                _no("with a " + _n + " of more than one character")
+        # The prelude's redirect hands back an injected table for a name it does not know (one table loaded and any
+        # path): that frame is not the cell's, so with tables loaded the call asks.
+        if (getattr(_main, "_ml_load_ns", None) or {}).get("tables"):
+            _no("while this cell has tables loaded (the loader may answer with one of them)")
+        if type(_src) is str:
+            # pandas reads a str as a URL when it has a scheme (file:// included) and expands a leading ~: either would
+            # read somewhere the path rule below never looked, so each asks before the path is judged.
+            if "://" in _src or _is_url(_src) or _src.startswith("~"):
+                _no("of a URL or a ~ path: it reads files under /files/ only")
+            _p = os.path.normpath(os.path.join(os.getcwd(), _src))
+            if not _p.startswith("/files/"):
+                _no("of a path outside /files/")
+            # A compressed file is decompressed by pandas from its suffix, so its bytes would not bound the parse.
+            if _compression(_p, "infer") is not None:
+                _no("of a compressed file")
+            if os.path.realpath(_p) != _p:
+                _no("of a path that leads out through a link")
+            try:
+                _st = os.stat(_p)
+            except OSError:
+                return      # pandas raises the error a full run gives (FileNotFoundError), inside
+            if stat.S_ISREG(_st.st_mode):
+                if _st.st_size > _cap:
+                    _no("of a file over " + str(_cap >> 20) + " MB")
+                _charge(_st.st_size)
+        elif type(_src) is io.StringIO or type(_src) is io.BytesIO:
+            if not _restricted.owned(_src):
+                _no("of a buffer the cell did not make")
+            if type(_src) is io.BytesIO:
+                with _src.getbuffer() as _m:    # released at once: a live export would stop the buffer growing
+                    _n = _m.nbytes
+            else:
+                _n = len(_src.getvalue())
+            if _n > _cap:
+                _no("of a buffer over " + str(_cap >> 20) + " MB")
+            _charge(_n)
+        else:
+            _no("of a " + type(_src).__name__ + ": it takes a /files/ path or a StringIO/BytesIO the cell made")
+    _restricted.allow_call(_f, True, _check)
+    _restricted.allow_fresh(_f)
     return ""
 
 def _ml_out_args(_restricted, restricted):

@@ -6,6 +6,7 @@ import { ArrivingMsg, PROMPT_RAW_TIPS, RawToggle, SentAsIs, SentContext, SentIma
 import { cssDurationMs } from "../use-close";
 import { services, bareHash } from "../services";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import type { ComponentChildren } from "preact";
 import { useJustArrived } from "./history-paint";
 import { StreamingMd, continuesLiveAnswer } from "./streaming-md";
 import type { ExtendProfile } from "../../contract/contract-chat";
@@ -105,6 +106,10 @@ function useReplyArrival(msg: { current: HTMLDivElement | null }, body: { curren
     });
 }
 
+/** A MODEL'S REPLY: the answer as rendered Markdown, or as its raw source (`initialRaw`), highlighted, where an address or
+ *  `@tool:` pointer is clickable and a link target that is neither loses the underline the theme gives it.
+ *  @group transcript
+ */
 export function ReplyBubble({ content, status, model, profile, ts, reasoning = null, sources = null, error, label, capped, initialRaw, resumeCap, retry, streaming, tokenRun, tokenScope, anchorHash, latest }: {
     content: string; status: Status; model: string | null; profile: "utility" | "default" | null; ts: number;
     reasoning?: string | null; sources?: unknown[] | null; error?: string; label?: string; capped?: boolean; initialRaw?: boolean;
@@ -231,7 +236,7 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
                     : collapsed
                         ? <div class="asst-collapsed" onClick={toggleCollapsed}>{preview!.text}{preview!.more ? <span class="more"> …</span> : null}</div>
                         : showRaw
-                            ? <Code text={content} lang="markdown" />
+                            ? <Code text={content} lang="markdown" hash={tokenRun?.hash || anchorHash} />
                             : tokenRun && hasTokens(content, aliasOf(tokenRun))
                                 ? <AnswerBody text={content} run={tokenRun} cls="asst-answer" scope={tokenScope} />
                                 : streamed.current
@@ -291,7 +296,8 @@ export function EmbedRunView({ s }: { s: Session }) {
  *  @gallery {"t": {"id": "t1", "ts": 1760000000000, "user": "What does the stamp look like at rest?", "assistant": "The time shows; the buttons wait for the pointer.", "status": "ok"}}
  *  @gallery-flow user-stamp tests/gallery-flows/MessageTurn.mjs
  */
-export function MessageTurn({ t, hash }: { t: Turn; hash?: string }) {
+/** One chat turn: the person's message, what ran between it and the answer (`between`: its tool calls), the answer. */
+export function MessageTurn({ t, hash, between }: { t: Turn; hash?: string; between?: ComponentChildren }) {
     // With files attached, `t.user` is exactly what the model got (the `<file>` blocks included, the raw view) and
     // `t.display` the words and the files apart (the rendered view, files as chips under the message).
     const [raw, setRaw] = useRawView();
@@ -307,6 +313,7 @@ export function MessageTurn({ t, hash }: { t: Turn; hash?: string }) {
                 {t.display && !raw ? <SentContext context={t.display.context} /> : null}
                 <SentAsIs names={t.display?.asIs} />
             </ArrivingMsg>
+            {between}
             {/* `anchorHash` is what the event lane scrolls to. A chat session gets a container bar and
                 generation spans like any other, and clicking one used to navigate here and then find nothing
                 to reach — the anchor was only set for agent answers, which is where `tokenRun` comes from. */}

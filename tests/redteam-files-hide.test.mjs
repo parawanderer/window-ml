@@ -1,8 +1,10 @@
 // redteam-files-hide.test.mjs — the red-team pass on ruling 34's first build (#2088, feat/hide-show-files, POLICIES.md
 // "Hiding files"): the `files` consumer of `hide` and `show`, the offscreen `/files` reader bound by the worker's
 // resolved list, and the one `policy.files` command. Every row states what a hostile page, a model, or one careless
-// gesture must NOT get. Stated limitation, in force at this head and NOT rowed as an escape: a `hide` does not bind a
-// program the shell starts until PR B — this list binds the extension's own readers (`/files` in Python, ml.fs).
+// gesture must NOT get. This list binds the extension's own readers (`/files` in Python, ml.fs); since PR B (#2155)
+// every spawn the worker makes carries it too (tests/redteam-spawn-hide.test.mjs), and a host that does not declare it
+// is refused while a `hide` applies. Still a stated limit, in force at this head and NOT rowed as an escape: a file
+// made after the call starts, or renamed over the path, is not covered for that call (the hide list's stated limit).
 //
 // The builder's rows (tests/files-hide.test.mjs, tests/files-hide-policies.test.mjs) hold the rule's own tables, the
 // upgrade from an empty store, the add/remove path, two refusals, the reader's open/read under one spelling, and the
@@ -40,7 +42,7 @@ const { settingDecl } = await import("../src/setting-class.ts");
 const { DEFAULT_CONFIG } = await import("../src/contract/contract-config.ts");
 await P.policiesReady;
 
-const LIMIT = "(binds /files only: a spawned process is not bound until PR B)";
+const LIMIT = "(a file made or renamed after the call starts is not covered — the hide list's stated limit)";
 const EXT = { url: "chrome-extension://test/chat.html" };
 const OFFSCREEN = { url: "chrome-extension://test/offscreen.html" };
 const pageSender = (tabId) => ({ tab: { id: tabId, url: "https://site.example/page" }, url: "https://site.example/page", origin: "https://site.example", frameId: 0 });

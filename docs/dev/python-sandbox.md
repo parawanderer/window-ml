@@ -25,58 +25,35 @@ any other call (a page's `ml.pythonExec`, a page-hosted agent) is **stateless**:
 contract — `PYTHON_EXEC_REQUEST` (page) → `PYTHON_EXEC` (bg). `ml.pythonExec(code, { image })`
 screenshots `image` (a selector or `@pt`/`@box`) into the sandbox as `img` (PIL) + `img_np`
 (numpy). In a worker-built run the image is shot by the worker from its own capture, and a `cast` mints its token in
-the page's registry (`src/sw/worker-media.ts`, docs/dev/agent-tools.md). **Tabular data → DataFrame(s) via `{ tables }`** — ONE unified param that is either a
-single source (→ `df`) or a `{ varName: source }` map (→ each loaded under its name so the model
-can `pd.merge` them; keys validated as Python identifiers by `pyVarNameError`, single-sourced in
-`python-env.ts` beside the prelude's reserved names). Each df is bound BOTH under its name AND in a
-`tables` dict — a model that mirrors the arg name and reaches for `tables['name']` just works
-(the same accommodate-don't-fight tack as the read_csv redirect; `tables` is a reserved key). A map sent as a JSON
-STRING (`"{\"df\": \"https://…\"}"`, how glm-4.7-flash reads the schema's `oneOf`) is that map (`tablesMapFromJson`,
-dom.ts); the loader and the consent check both decode through it, or a sheet inside the string would skip its card. A
-path on the page's site (`/sales.csv`, `./x.csv`, `../x.csv`) is resolved against the page and read from the fetch cache
-like the absolute URL, by one rule on both hosts (`sitePathUrl`: the page's `_loadTable` and the worker's `workerTable`,
-which until 2026-11-19 sent a path to the DOM reader as a selector). No CSS selector starts with `/`, `./` or `../`;
-`x.csv` is a selector, and `//host/x` or a path the URL parser takes off the page's origin is not a path. A map key that is not a variable name (models key the map by the URL itself) loads under a name
-derived from it (`derivedTableName`: `…/sales.csv` → `sales`) with the key as its alias; a reserved name is still
-refused. Each source auto-dispatches by shape
-(`_loadTable`): **a `<table>`/ARIA-grid selector** is walked page-side (`extractTable`,
-case-preserving; col/rowspans or a non-table fall back to `pd.read_html(outerHTML)` with bs4).
-Before that fallback ships, `_resolveTable` **guards the cases read_html would choke on**: an
-**empty table** (0 rows — a collapsed/lazily-rendered table like the `#bigsales` demo: the node
-exists, its rows don't → pandas' `No tables found matching pattern '.+'`), a wrapper with **no
-`<table>` inside**, or an **unparseable ARIA grid** each throw an actionable page-side message
-("reveal/scroll it into view…") instead of the obscure downstream `ValueError`.
-**An `@tool:` pointer to a table** (`tables: { df: "@tool:\"the stock table\"" }`, or the single-source string) is
-resolved by the AGENT LOOP, which owns the pointer store (`resolveTablePointers`, beside `look`'s image pointer): the
-call's arguments are rewritten for execution only, so the step's raw view keeps what the model wrote, and the table
-travels down BY VALUE with its `shape` and the pointer's name. `ml.pythonExec` accepts such a `TableValue` from any
-caller (a page script's table, the `Table` facade from `ml.fetch`) and loads it only when it is WHOLE: a preview
-(`truncated`, or fewer rows than `shape` says) is refused with the URL form that loads the whole parsed table, because a
-DataFrame over a prefix answers confidently and wrongly.
+the page's registry (`src/sw/worker-media.ts`, docs/dev/agent-tools.md). **Tabular data: a cell reads each table itself with `df = ml.table(src)`** (rulings 77, 78), a synchronous facade
+member that returns a pandas DataFrame. `python_exec` has no `tables` or `tableRaw` argument any more; a call that
+still passes one gets `staleTableArgs`' sentence and nothing runs. The rules (which source asks, the hosts, the
+charge) are [`docs/spec/ML_TABLE.md`](../spec/ML_TABLE.md); this is where they live in the code:
 
-**A pointer to a STORED table** (a fetched table past the parse cap, whose body the value store holds; `docs/dev/pointers.md`)
-reads the whole table instead, POINTER_VALUES slice 5:
-
-- The loop adds the store key (`value`) and the preview's `delimiter`/`headerless` to the `TableValue`, on EITHER host:
-  what decides the read is the worker's own record of who it gave the key to, not anything the loop asserts.
-- `_loadTable` sends `{ kind: "value", key, label, columns, delimiter?, headerless? }` and none of the preview rows. The
-  log shows the preview with the whole table's `rowCount`, and the model's load note gives the whole size.
-- The background `PYTHON_EXEC` handler refuses a key unless the sender is entitled to it: a run active on the sender's
-  tab holds it, or the worker disclosed that key to that tab (`page:<tabId>`, how a page-hosted run qualifies). Our own
-  surfaces are trusted. A key that is no longer stored passes, so the read fails with the store's reason.
-- The offscreen document reads the Blob (`withStoredTables`) and TRANSFERS its ArrayBuffer to the worker. A missing value
-  fails the whole run with the store's message: `python_exec could not load \`df\` from @tool:… (…): the stored value …
-  was evicted …`.
-- The worker makes the ONE copy: `injectStoredTable` (python-runtime.ts, so the CPython tests use it) allocates a
-  `bytearray`, fills it through `getBuffer`, and binds it as `_ml_tbuf_<i>`. It is a buffer, never a JsProxy, so it
-  crosses the locked-down boundary without widening it.
-- The prelude decodes by stored format:
-  - `arrow-file` / `arrow-stream`: `pyarrow.ipc` → `to_pandas()`.
-  - `parquet`: `pyarrow.parquet.read_table` → `to_pandas()`.
-  - `csv` / `tsv`: `pd.read_csv` with the preview's `sep`, header decision and column `names`, so pandas cannot disagree
-    with what the model was shown.
-
-  The prelude pops the buffer, and the worker deletes the name in `finally`.
+- **A worker-run cell reads at the call.** `ml.table` is an `ML_CALL` over the cell's wire (`tableMemberFor`,
+  `sw-ml-table.ts`). `workerTableRead` (`worker-tools.ts`) judges the source by its shape, the same judgement the old
+  `tables` loader made. A table by value or an `@tool:` pointer is the run's own. A path on the page's site
+  (`/sales.csv`, `./x.csv`) or an http(s) URL is read only from the run's fetch cache (`sitePathUrl`, one rule on both
+  hosts; `//host/x` and an off-origin path are not paths). A Google Sheet asks unless it is approved. An `@file:`
+  pointer or a `/files/attached/` path goes through the file reader. Anything else is a page table, read by asking the
+  run's tab.
+- **A page-started cell reads before it runs.** The page scans the code for `ml.table("<literal>")` (`tableLiterals`,
+  `table-literals.ts`), reads each source with `_hoistTable` (`ml-python.ts`), and sends the answers as `hoisted`. A
+  computed source is `Absent` there, with a sentence telling the model to write it as a literal.
+- **A page table** is walked page-side (`extractTable`, case-preserving). Col/rowspans or a non-table fall back to
+  `pd.read_html(outerHTML)`. `_resolveTable` throws an actionable page-side message for the cases `read_html` would
+  choke on: an empty table (a lazily rendered one), a wrapper with no `<table>` inside, or an unparseable ARIA grid.
+- **An `@tool:` pointer** in a page-built run is resolved by the agent loop from the code's literals
+  (`resolveTablePointers`) into `args._tablePointers`, so the step's raw view keeps what the model wrote. The table
+  travels BY VALUE and loads only when WHOLE: a preview is refused with the URL form that loads the whole table, because
+  a DataFrame over a prefix answers confidently and wrongly.
+- **Bytes cross beside the answer.** A stored table (POINTER_VALUES slice 5) or a `/files/` file is read by the offscreen
+  document (`tableAnswerBytes`, `table-answer.ts`), whose format and delimiter decision is the JS reader's. It is
+  TRANSFERRED to the worker, which makes the ONE copy as a `bytearray` (`bindTableBytes`, `_ml_wbuf_<seq>`), never a
+  JsProxy. The frame builder (`_ml_table_frame`, python-runtime.ts) decodes it: Arrow and Parquet via pyarrow, CSV via
+  `pd.read_csv` with the decided `sep`, header and names. It then pops the buffer, and the worker deletes any name left
+  in `finally`. The background still refuses a stored key unless the sender is entitled to it: a run active on its tab
+  holds it, or the worker disclosed it to that tab (`page:<tabId>`).
 
 **A returned DataFrame larger than its 200-row preview becomes a stored table** (slice 6):
 
@@ -88,50 +65,27 @@ reads the whole table instead, POINTER_VALUES slice 5:
 - The offscreen document stores them as `arrow-file` (source `python_exec`) under the budget the service worker sent
   with the run (`valueBudget`, since that document cannot read settings), and returns `valueKey`.
 - `pythonExec` puts `value` and `rowCount` on `resultTable`, so the `python-out` render's `df` carries both. The loop's
-  pointer then has the whole `shape` and claims the value, and a later `python_exec` reads it through slice 5.
-**A Google Sheets URL** or **`'current'`** (the sheet you're on) is fetched as CSV. Numeric
-columns are **auto-cast page-side** (`dom.ts` `castTableColumns`, pure/tested: a column
-≥90%-numeric after stripping currency/commas/%/accounting-parens → `number|null`, else strings)
-so `df.sum()` adds instead of string-CONCATENATING — `{ tableRaw }` skips it for
-ZIP/SKU/leading-zero IDs. The **Google Sheet** path exists because the DOM is useless (Sheets
-renders to canvas): `googleSheetCsvUrl` (dom.ts, pure) derives the `/export?format=csv&gid=…`
-endpoint and a `FETCH_SHEET` background message fetches it **credentialed** (`credentials:"include"`
-→ the user's own Google login, so PRIVATE corporate sheets work), then `parseCsv` (dom.ts,
-RFC-4180) + the same `castTableColumns` pipeline. No access / not signed in → Google serves an
-HTML login page instead of CSV; `fetchSheetCsv` detects that and returns an actionable error
-telling the model to **have the USER authenticate in-browser and retry**. An **external** Sheets
-URL **always** requires approval (a privileged cross-origin fetch); a selector / `'current'` is
-auto-approvable like a readonly survey (the tool description gains a "YOU ARE CURRENTLY ON A
-GOOGLE SHEET" hint when `location` is one). An approved external sheet is **cached per page-session**
-(`approvedSheets`, keyed by `googleSheetId` — the spreadsheet, so its tabs share it): a repeat
-call skips the re-prompt (lifts only the external-sheet escalation, so a non-autoPy run is still
-gated on the code). Escalation scans **every** source (`externalSheetIds` — a bare string or every
-map value), so an external sheet inside a `tables` map still prompts. The debug render
-(`python-in.tables`) shows each df with its **variable name + a source label/tooltip** (`TableSource`:
-dom / sheet-current / sheet-external), mirrored in the export. The approval prompt **hoists the
-data source** (`renderArgs` ranks `tables`/`image` above the `code` blob) so the human sees
-*which* sheet before the script. **Host access:** the SW's
-credentialed fetch needs the `docs.google.com` host permission, which "On click" site-access
-withholds (activeTab covers content scripts, NOT the background fetch) — so a withheld fetch
-returns an actionable error (walks the user to the popup's **"Enable Google Sheets access"**
-button, or "On all sites"), best-effort `chrome.action.openPopup()`s to it, and the popup's
-collapsible **Permissions** block one-click `chrome.permissions.request`s the Google origins
-(docs/accounts/googleusercontent — the export can redirect across them). **Loader
-interception (PRELUDE, `python-runtime.ts`):** models reach for their pre-training loader idioms
-with the selector/name they passed — `Image.open('canvas#stage')`, `pd.read_csv('current')`,
-`pd.read_html('#sel')` — and the fs-less sandbox would just throw, burning a turn. The prelude
-patches `Image.open`/`pd.read_csv`/`pd.read_html` to return the pre-loaded `img`/`df` **when it's
-actually loaded** (never for a real file-like or a URL — except the exact URL a table was loaded FROM, which is that
-table: re-reading what `tables` already fetched is the commonest first try — a genuine http `read_csv` /
-`Image.open(BytesIO)` passes through). ONE patch per interpreter (the module attrs survive RESET;
-the originals live in the install function's closure, so no namespace holds an `_ml_orig_*` name and a later
-prelude run in any namespace installs nothing, never a chain). The wrappers resolve `img`/`tables` from the
-namespace the running cell's prelude named (`__main__._ml_load_ns`), never from the dict that defined them: a
-run with no image of its own is not handed another run's, and `from PIL import Image` in a cell neither loses
-the redirect nor leaks one. The bench names none (`None`), so for it the real loader runs. And when that CAN'T resolve it — data preloaded but the code still errors trying to
-(re)load it (`read_excel`/`read_json`/`open`/`requests`, an ambiguous name across many tables, a
-URL, which the locked-down worker has no way to load), the tool **appends a redirect hint** ("use `df`/`img` directly") as the
-fallback, catching any hallucinated load pattern on the failure. The tool
+  pointer then has the whole `shape` and claims the value, and a later cell's `ml.table("@tool:…")` reads it.
+
+**A Google Sheets URL** or **`'current'`** (the sheet you're on) is fetched as CSV. Numeric columns are **auto-cast**
+(`castTableColumns`: a column ≥90%-numeric after stripping currency/commas/%/accounting-parens → `number|null`, else
+strings) so `df.sum()` adds instead of string-concatenating; `ml.table(src, raw=True)` skips it for ZIP/SKU/leading-zero
+IDs. The Sheet path exists because the DOM is useless (Sheets renders to canvas): `googleSheetCsvUrl` derives the
+`/export?format=csv&gid=…` endpoint and `FETCH_SHEET` fetches it **credentialed** (the user's own Google login, so
+private sheets work). An HTML login page instead of CSV is detected (`fetchSheetCsv`) and answered with an error telling
+the model to have the user sign in and retry. An **external** Sheet always needs approval. A literal one is on the card
+(`externalSheetIds` scans the code's `ml.table` literals) and drives auto-approve. A computed one asks when the cell reads
+it: `Asks` inside the dialect, a nested ask on the step in an approved cell. An approved Sheet is **cached per
+page-session** (`approvedSheets`, keyed by `googleSheetId`, so a spreadsheet's tabs share it). **Host access:** the
+credentialed fetch needs the `docs.google.com` host permission, which "On click" site access withholds. A withheld fetch
+returns an actionable error pointing at the popup's **"Enable Google Sheets access"** button.
+
+**Loader interception (PRELUDE, `python-runtime.ts`):** only `Image.open` is redirected now. Models reach for
+`Image.open('canvas#stage')` with the selector they passed as `image`, so the prelude returns the pre-loaded `img` when
+one is loaded, never for a file-like. The `pd.read_csv`/`pd.read_html` redirects went with `tables`: those are pandas'
+own, and a cell reads a table with `ml.table`. ONE patch per interpreter: the original lives in the install function's
+closure, and the wrapper resolves `img` from the namespace the running cell's prelude named (`__main__._ml_load_ns`).
+When the code still fails reloading the screenshot, the tool appends a hint naming `img`/`img_np`. The tool
 description frames the sandbox as "appending a cell to a live Jupyter notebook" (img/img_np/df
 are pre-loaded) with a df/img snippet. Output (stdout/value/error) is capped by `clipOut`
 (dom.ts, shared with `exec`) with a `[first K of M chars]` note so a runaway result can't
@@ -193,7 +147,13 @@ the run's `ml.chat` with `images` is the vision chat `look` uses (`workerVisionC
 a worker-hosted run (`run:<id>`), a page (`page:<tabId>`), or one of our own surfaces (`own`). A cell inside the
 read-only dialect runs with no card; one outside it asks, and gets the full gated `ml`. A principal change spawns a new worker;
 the old one's kept bench namespace dies with it (the bench's "sandbox restarted" banner), and a
-respawn writes the `pyodide/respawn` housekeeping record (`docs/dev/housekeeping.md`). The
+respawn writes the `pyodide/respawn` housekeeping record (`docs/dev/housekeeping.md`). A worker's message acts only
+on its OWN principal's pending runs: the offscreen document keeps one `pending` map over every principal, keyed by a
+sequential id any worker can name, so each branch of a worker's `onmessage` (a reply, a `partial` chunk, `started`,
+`spending`, an `mlCall`) reads its entry through `own`, which refuses another principal's id and records
+`pyodide/foreign-id` (reason the branch, key the sender's principal, nothing of the message) once. Before it, a
+full-mode cell could answer another run's cell, write into its stream or call `ml` under its wire stamp
+(`tests/offscreen-worker-ids.test.mjs`, one row per branch; `tests/redteam-worker-ids.test.mjs`, the attacks). The
 lockdown is `lockdownReadonly` (`src/python/lockdown.ts`), one boot step that never undoes:
 (1) Agoric `ses` `lockdown()` with `overrideTaming: "severe"`, after one `runPythonAsync("1")` warmup. Pyodide's
 `getPyProxyClass` assigns `.constructor` on a plain object, which a frozen `Object.prototype` refuses for every PyProxy
@@ -351,6 +311,12 @@ worker drives with `autoApprovePython` on:
    listed). numpy's sized scalar types (`np.int64`, `np.float64` and the rest) are listed as values and constructors;
    their own attributes ask. `Decimal.quantize` and the `ROUND_*` modes are listed; `Decimal.as_tuple` is not, since C
    builds its `DecimalTuple` through `type.__new__`, which the gate refuses whatever is registered.
+   that runs inside or a reason. Both functions go when the fork does this itself. **`pd.read_csv` runs inside over a
+   `/files/` file or the cell's own buffer** (`_ml_read_csv_inside`; the rules are docs/spec/ML_TABLE.md's). The fork's
+   `load_manifests` leaves `read_csv` out, and `allow_module` replaces a module's names, so pandas is re-admitted with
+   it. The registered callable is the one a cell reaches: the prelude's loader redirect (`LOADERS_INSTALL`), which the
+   worker installs before `dialectSetup`, since a worker's first cell can be an inside one. The check runs lifted
+   before the call and charges the input's bytes to the budget with `_restricted.charge`.
    **The `os` subset (ruling 112)** is `_ml_os_reads`: the names `DIALECT_OS_READS` lists of `os`, `os.path`, `glob`
    and `pathlib` (reads and scans, `os.chdir`/`os.getcwd`, `os.environ` read and written through its methods), each
    registered lifted, and the kinds they return readable. Every other name of `os` asks, which
@@ -547,7 +513,7 @@ ROOT C ([`docs/spec/PYTHON_DIALECT.md`](../spec/PYTHON_DIALECT.md), "The namespa
   The worker keeps `runs: Map<runId, { ns, id }>` (`python-worker.ts`), so the key is the run and nothing else.
 - **Not** a page's `ml.pythonExec` or a page-hosted agent's `python_exec`: no run id, so the main namespace and the reset
   as before. **Not** the bench (`persist`): its own `benchNs`.
-- **Injected names** (`df`, `tables`, `img`) are assigned into the dict by each cell that passes them and are not
+- **Injected names** (`img`, `img_np`) are assigned into the dict by each cell that passes them and are not
   wiped when a later cell passes none. `RESET` never runs on a kept dict, so `_`-prefixed names persist too.
 - **Lives as long as the RUN, not the turn** (ruled 2026-11-13): a run id is stable across the turns of a session, and the
   run's own worker (`run:<id>`) keeps its dict between them. `settle()` (`sw-run-host.ts`, once per turn) calls
@@ -653,13 +619,12 @@ names persist).
 - **Top-level names are declared `global`** in the wrapper, chosen by Python's own `symtable` rather than a
   list of statement shapes. Without it `x = 1` is a local of `_user` and vanishes at the end of the run. A name
   a nested function declares `nonlocal` stays local, or the script would not compile.
-- **Only `PRELUDE_BASE`** (imports + helpers). The injected-data part resets `img`/`df`/`tables` every run — it
+- **Only `PRELUDE_BASE`** (imports + helpers). The injected-data part resets `img` every run — it
   would wipe a bench user's `df` — and it keeps no loader redirect: it names no
   namespace for the shared patch (`__main__._ml_load_ns = None`), so a patch a run cell installed falls
-  through to the real `Image.open`/`pd.read_*` for the bench rather than serving another namespace's names.
-- **After a `python_exec`, main is reset** (worker `finally`): its injected screenshot and tables otherwise
-  linger until the next run, where a bench script's `pd.read_csv("sales")` could reach them through the
-  redirect.
+  through to the real `Image.open` for the bench rather than serving another namespace's names.
+- **After a `python_exec`, main is reset** (worker `finally`): its injected screenshot otherwise
+  lingers until the next run, where a bench script's `Image.open(...)` could reach it through the redirect.
 - **A namespace has an `id`**, new whenever it is created afresh. When a run comes back in one the bench did
   not reset — the watchdog killed the worker, the extension reloaded — it says the variables are gone
   (`benchLost`) instead of leaving it to surface as a NameError. A reset arms no watchdog, for the same reason a
