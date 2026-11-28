@@ -362,6 +362,18 @@ def _ml_stdlib(_restricted, restricted, _man):
     for _n, _t in _types.items():
         if type(_t.__dict__.get("__init__")) is types.FunctionType:
             _kinds[_n] = list(_kinds.get(_n, [])) + ["__^"]
+    # A kind no listed module name reaches (the locals proxy bare dir() reads) is
+    # resolved from the manifest's kind_types here, in the harness, so its methods are readable while its module name
+    # stays unadmitted.
+    for _kind, _dotted in _man.get("kind_types", {}).items():
+        _mod, _, _attr = _dotted.rpartition(".")
+        _t = getattr(importlib.import_module(_mod), _attr, None)
+        if _t is None and _dotted == "builtins.FrameLocalsProxy":
+            # Not exported by types on 3.14: the type of an optimized frame's f_locals, checked by its qualified name.
+            _t = type((lambda: sys._getframe().f_locals)())
+        if not isinstance(_t, type) or (_t.__module__ + "." + _t.__qualname__) != _dotted:
+            return "the stdlib kind " + _kind + " names " + _dotted + ", which is not a type in this Python"
+        _types.setdefault(_kind, _t)
     for _kind, _names in _kinds.items():
         if _kind not in _types:
             return "the stdlib kind " + _kind + " is not a type the manifest lists"

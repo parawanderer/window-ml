@@ -58,6 +58,11 @@ LEAVES: dict[str, dict[str, Any]] = {
     "numpy.rint": {"effects": "pure; mutates(the out argument) when out= is given",
                     "returns": "fresh; alias(the out argument) when out= is given", "cost": "size",
                     "why": "a ufunc: a new array of rounded values, or the out array written in place (ruled in, V1 2026-11-19)"},
+    **{f"numpy.{t}": {"effects": "pure", "returns": "fresh", "cost": "O(1)",
+                      "why": "a sized scalar type: named as a value (astype(np.int64)), or called to build an immutable scalar "
+                             "(ruled in, coverage 2026-11-23)"}
+       for t in ("bool_", "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64", "float16", "float32",
+                 "float64", "complex64", "complex128")},
     "numpy.sum": {"effects": "pure; mutates(the out argument) when out= is given",
                     "returns": "fresh; alias(the out argument) when out= is given", "cost": "size",
                     "why": "a new scalar, from a pass over the input, or the out array written in place"},
@@ -278,6 +283,17 @@ LEAVES: dict[str, dict[str, Any]] = {
                            "why": "the live thread context: never owned"},
     "Decimal.max": {"effects": "pure", "returns": "fresh", "cost": "O(1)",
                     "why": "a new Decimal (measured: not either argument); Decimal is immutable either way"},
+    "Decimal.quantize": {"effects": "pure; sets the thread context's sticky flags (Inexact, Rounded), as Decimal arithmetic does, which the inside run puts back",
+                         "returns": "fresh", "cost": "digits",
+                         "why": "a new Decimal rounded to the exponent; its context= can only be the thread context, the one "
+                                "getcontext() returns, which the cell never owns (ruled in, coverage 2026-11-23)"},
+    **{f"decimal.{n}": {"effects": "pure", "returns": "internal", "cost": "O(1)",
+                        "why": "a rounding mode, a module-level str constant that quantize's rounding= takes (ruled in, coverage 2026-11-23)"}
+       for n in ("ROUND_CEILING", "ROUND_DOWN", "ROUND_FLOOR", "ROUND_HALF_DOWN", "ROUND_HALF_EVEN", "ROUND_HALF_UP", "ROUND_UP",
+                 "ROUND_05UP")},
+    "FrameLocalsProxy.keys": {"effects": "pure", "returns": "fresh", "cost": "names",
+                              "why": "a new list of the frame's local names, which bare dir() sorts; only names, never the values "
+                                     "(ruled in, coverage 2026-11-23)"},
     "io.BytesIO": {"effects": "pure", "returns": "fresh", "cost": "input length",
                    "why": "a fresh writable buffer; its contents are its own"},
     "io.StringIO": {"effects": "pure", "returns": "fresh", "cost": "input length",

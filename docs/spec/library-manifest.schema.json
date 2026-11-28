@@ -26,6 +26,11 @@
       "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_.]*$" },
       "additionalProperties": { "$ref": "#/$defs/Leaf" }
     },
+    "kind_types": {
+      "type": "object",
+      "description": "A kind no listed module name reaches, mapped to its type's dotted name (`FrameLocalsProxy: builtins.FrameLocalsProxy`), so window-ml's harness (`_ml_stdlib`) resolves it and admits its listed methods while its module stays unadmitted. Stdlib layout only.",
+      "additionalProperties": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$" }
+    },
     "dynamic": {
       "type": "object",
       "description": "Names a kind resolves at run time rather than listing (a DataFrame's column attributes), by kind.",
