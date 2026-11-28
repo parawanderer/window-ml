@@ -122,7 +122,7 @@ export interface AgentLoopDeps {
      *  the request goes out, so a surface can draw the call while it happens rather than back-dating a
      *  finished block over memory it already drew. Optional: a host that has no live surface omits it. */
     emitTurn?(ev: { step: number; phases?: import("../contract").GenPhase[] }): void;
-    emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; token?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[]; reused?: import("../contract").ReusedGrant[]; streamOutput?: string; streamMarks?: [number, number][]; remoteMs?: import("../contract").RemoteTiming; shCalls?: import("../contract").ShCallSpan[] }): void;
+    emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; token?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[]; reused?: import("../contract").ReusedGrant[]; streamOutput?: string; streamMarks?: [number, number][]; remoteMs?: import("../contract").RemoteTiming; shCalls?: import("../contract").ShCallSpan[]; cell?: import("./cell-facts").CellFacts }): void;
     // Mid-run STEERING (a.say()): drained at each step boundary (before the model call) — returns any user
     // messages queued since the last step, injected via pushUser so the model sees them on its next turn.
     // Omit → no steering. The queue lives in the caller's world (page handle / SW inbox).
@@ -151,6 +151,10 @@ export interface AgentLoopDeps {
      *  both exports draw it) and so a pointer's fuller capture, which a later `@tool:` read hands a script or the
      *  model. Omitted → unchanged. */
     scrubStored?<T>(value: T): Promise<T>;
+    /** What an `exec` or `python_exec` cell did (docs/spec/CELL_FACTS.md), asked once the step's approval and result are
+     *  final and carried on its DONE event. Recorded beside the step, never read by a decision and never shown to the
+     *  model. Omitted (a loop with no recorder outside the cell's realm, the page's) → the step has none: unknown. */
+    cellFacts?(name: string, seq: number, approval: Approval | undefined): Promise<import("./cell-facts").CellFacts | undefined>;
 }
 
 /** Where in a tool call's dispatch a throw happened: the read-only try, the auto-approve decision, the doomed-action
@@ -1313,7 +1317,12 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // beside it and not in a block of its own.
             const renderInWithDiff = revision && tr?.renderIn && (tr.renderIn.type === "code" || tr.renderIn.type === "python-in")
                 ? { ...tr.renderIn, revision } : tr?.renderIn;
-            deps.emit?.({ step, seq: s, tool: call.name, arguments: args, result, ...(tokenId ? { token: tokenId } : {}), ...(forModel !== result ? { modelResult: forModel } : {}), approval, renderIn: renderInWithDiff, renderOut: tr?.renderOut, feedback: tr?.feedback, elements: tr?.elements, reused: tr?.reused, ...(lastToolMs != null ? { toolMs: lastToolMs } : {}), ...(lastApproveMs != null ? { approveMs: lastApproveMs } : {}), ...(lastDispatchMs ? { dispatchMs: lastDispatchMs } : {}), ...(tr?.remoteMs ? { remoteMs: tr.remoteMs } : {}), ...(tr?.shCalls?.length ? { shCalls: tr.shCalls } : {}) });   // DONE (patches the START)
+            // The cell's recorded facts, after everything above has decided: a recorder that throws leaves the step without them.
+            let cell: import("./cell-facts").CellFacts | undefined;
+            if (deps.cellFacts && (call.name === "exec" || call.name === "python_exec")) {
+                try { cell = await deps.cellFacts(call.name, s, approval); } catch { cell = undefined; }
+            }
+            deps.emit?.({ step, seq: s, tool: call.name, arguments: args, result, ...(tokenId ? { token: tokenId } : {}), ...(forModel !== result ? { modelResult: forModel } : {}), approval, renderIn: renderInWithDiff, renderOut: tr?.renderOut, feedback: tr?.feedback, elements: tr?.elements, reused: tr?.reused, ...(lastToolMs != null ? { toolMs: lastToolMs } : {}), ...(lastApproveMs != null ? { approveMs: lastApproveMs } : {}), ...(lastDispatchMs ? { dispatchMs: lastDispatchMs } : {}), ...(tr?.remoteMs ? { remoteMs: tr.remoteMs } : {}), ...(tr?.shCalls?.length ? { shCalls: tr.shCalls } : {}), ...(cell ? { cell } : {}) });   // DONE (patches the START)
             pushed(() => deps.pushToolResult(messages, call, forModel), { seq: s, tool: call.name, truncated: cutBeforeModel(tr?.renderOut) });
             if (tr?.image) pendingImages.push({ image: tr.image, label: tr.imageLabel || "screenshot" });
             // Multiple images from one call (look's overlay + no-overlay) → each becomes its own inline image.

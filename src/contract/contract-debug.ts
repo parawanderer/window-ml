@@ -10,6 +10,7 @@ import type { JsonSchema } from "../contract";
 import type { ExtendProfile, NeutralMessage, TokenUsage, GenPhase } from "./contract-chat";
 import type { RemoteToolTarget, RemoteTiming, ShCallSpan, PersistGrant, ReusedGrant, StartAsk } from "./contract-agent";
 import type { RenderDescriptor, ToolFeedback, AnswerMedia } from "./contract-render";
+import type { CellFacts } from "../agent/cell-facts";
 
 /** Groups turns of one createChat conversation; `turn` is the 0-based index. */
 export interface SessionRef {
@@ -268,6 +269,8 @@ export interface DebugAgentStep extends DebugBase {
     remoteMs?: RemoteTiming;
     /** The `ml.sh` calls this step made, in the order they finished. Absent when it made none. */
     shCalls?: ShCallSpan[];
+    /** What the cell did (exec / python_exec), recorded by the worker; never model-facing (docs/spec/CELL_FACTS.md). */
+    cell?: CellFacts;
     /** A monotonic id per TOOL-call step in a run, so the sidebar can correlate the in-flight START
      *  (pending: true, no result yet) with the completed DONE and patch the row in place. Thoughts
      *  have no seq. `pending` marks the START (render "running…" until the DONE arrives). */

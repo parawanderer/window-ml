@@ -51,7 +51,7 @@ lifted calls are computed or thrown and then dropped; no wire-call count exists.
 | `budget` | the step budget or a size cap tripped; `name` is the cap's name |
 | `marked` | not tried inside, because the worker carries the outside mark |
 | `argument` | a tool argument was refused before the cell ran (`not-run`) |
-| `routing` | the cell had to run in another world or host than the dialect's (`ml.current`, a pointer, an unapproved page) |
+| `routing` | the cell had to run in another world or host than the dialect's (`ml.current`, a pointer, an unapproved page). Both languages; for Python only when the run executes its Python on the page |
 
 - **Names are identifiers, never values.** `why.name` and `lifted[].name` are dotted names from the source or the
   manifest, at most 120 characters. They cross the stored-text scrub like every exported string.
@@ -86,13 +86,18 @@ lifted calls are computed or thrown and then dropped; no wire-call count exists.
 - **The run-log record.** Subsystem `cell`, kind `facts`, one record per cell, written once the step's result is
   final. The log's flat-`detail` rule is lifted for this kind only: the sanitizer checks the nested shape by
   enumeration (known keys, their types, the row caps, the 4,096 characters) and drops a record with an unknown key.
-  `docs/spec/run-log.schema.json` changes with it.
+  `docs/spec/run-log.schema.json` changes with it. These records have their own caps, counted apart from the
+  mechanics records (page, CDP, tab): 200 per run (`PER_RUN_CELL_CAP`) and 1,000 across every run (`CELL_LOG_CAP`),
+  each dropping its oldest. One record per cell would otherwise push a long run's own mechanics out of the ring, and
+  through the shared total another run's: the mechanics are what says why a cell asked. The total is lower than the
+  mechanics' 2,000 because a record may be up to 4 KB, at most about 4 MB of `storage.session`'s 10 MB. The exports
+  read `cell` from the session's steps, never from the log, so a trimmed log truncates no export.
 
-- **Tests.** One row per `why.kind` for each language that can produce it (`denied` and `routing` are JS only,
-  `marked` is Python only); the upgrade row above; the row that the recorder changes no outcome; a row that the
-  `charged` figures and the cell's own steps sum to `steps.used`; two red-team rows: a worker-realm cell cannot write
-  or forge its own `cell` object (the recorder runs outside the cell's realm), and a page forging the page leg's
-  answer changes no recorded field.
+- **Tests.** One row per `why.kind` for each language that can produce it (`denied` is JS only, `marked` is Python
+  only, `routing` is both languages: for Python only when the run executes its Python on the page); the upgrade row
+  above; the row that the recorder changes no outcome; a row that the `charged` figures and the cell's own steps sum
+  to `steps.used`; two red-team rows: a worker-realm cell cannot write or forge its own `cell` object (the recorder
+  runs outside the cell's realm), and a page forging the page leg's answer changes no recorded field.
 
 ## Half 2: the offline classifier
 

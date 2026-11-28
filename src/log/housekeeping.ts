@@ -110,14 +110,15 @@ export function trimRing(events: HousekeepingEvent[]): HousekeepingEvent[] {
  * The events as a given reader may see them. An extension surface sees everything. A page sees every event,
  * but `key` and the STRING values of `detail` only on the ones its own tab reported: a key can be another tab's
  * fetched URL or a session hash (enough to resume that session), and a string detail can carry the same. Numbers
- * and booleans — a size, a flag — identify nothing and stay.
+ * and booleans — a size, a flag — identify nothing and stay. A nested object (the run log's `cell` facts) is withheld
+ * like a string: it is not a size or a flag.
  */
 export function eventsForReader(events: HousekeepingEvent[], readerTab: number | null): HousekeepingEvent[] {
     if (readerTab == null) return events;
     return events.map((e) => {
         if (e.origin === "page" && e.tab === readerTab) return e;
         const { key: _k, detail, ...rest } = e;
-        const kept = detail ? Object.fromEntries(Object.entries(detail).filter(([, v]) => typeof v !== "string")) : {};
+        const kept = detail ? Object.fromEntries(Object.entries(detail).filter(([, v]) => typeof v !== "string" && typeof v !== "object")) : {};
         return Object.keys(kept).length ? { ...rest, detail: kept } : rest;
     });
 }

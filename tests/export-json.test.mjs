@@ -431,6 +431,21 @@ test("a step's ml.sh calls export verbatim, a call no one was asked about with w
 });
 
 
+// --- a step's `cell` (docs/spec/CELL_FACTS.md) ---
+
+test("a step's `cell` reaches the JSON export unchanged", () => {
+    const cell = { lang: "python", ran: "outside", class: "B", why: { kind: "not-in-dialect", name: "os" }, wire: [{ member: "ml.fetch", calls: 2 }], marked: true };
+    const s = agentSession();
+    s.steps[1] = { ...s.steps[1], cell };
+    assert.deepEqual(sessionToJson(s).session.steps[1].cell, cell);
+});
+
+test("UPGRADE: a step stored before `cell` existed exports with no `cell` key (absent is unknown)", () => {
+    const doc = sessionToJson(agentSession());
+    for (const st of doc.session.steps) assert.equal("cell" in st && st.cell !== undefined, false);
+    assert.doesNotMatch(JSON.stringify(doc), /"cell"/);
+});
+
 // --- a chat turn's tool calls carry their turn ---
 
 const chatWithStep = () => ({

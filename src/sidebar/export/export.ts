@@ -36,6 +36,7 @@ const sizeTag = (s: string): string => `(${s.length.toLocaleString()} chars, ~${
 const buildLabel = (): string => `${BUILD_INFO.shortCommit}${(BUILD_INFO as { dirty?: boolean }).dirty ? "-dirty (uncommitted changes)" : ""} · built ${fullStamp(Date.parse(BUILD_INFO.buildTime))}`;
 import { annotatedConfig, resolveModel, shownModel } from "../model";
 import { askOutcomeLines, unaskedCalls, unaskedLines } from "../../shell/sh-call";
+import { cellFactsLine } from "../../agent/cell-facts";
 import { putSubject } from "../../shell/sh-put";
 import { shownText } from "../../python/pkg-card";
 import { settingValueLines } from "../../setting-text";
@@ -414,6 +415,8 @@ function writeAgent(s: Session, d: Sink): void {
             d.note(`ran without asking (sh): ${JSON.stringify(u.argv)}`);
             for (const l of unaskedLines(u)) d.note(`${l.label}: ${l.value}`);
         }
+        // What the cell did, as the worker recorded it; a step without the object prints nothing (absent is unknown).
+        if (st.cell) d.note(`cell: ${cellFactsLine(st.cell)}`);
         if (st.reasoning) d.details("Thinking", () => d.prose(st.reasoning!));
         if (st.thought) d.prose(st.thought);
         // In: a rendered view (when the tool supplies one) AND — always — the RAW args

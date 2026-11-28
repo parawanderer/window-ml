@@ -105,6 +105,19 @@ const SPECIAL_CURRENT_FIELDS = new Set(["run", "messages", "meta", "log", "debug
 /** How many objects one non-special `ml.current` field may copy into a survey before the rest is cut. */
 const OWNED_COPY_NODES = 10_000;
 
+/** One host function's row of a {@link CellMeter}: how often the script called it, and the steps charged to it. */
+export interface CellMeterRow { calls: number; charged: number }
+
+/** What a cell spent, for its recorded facts (docs/spec/CELL_FACTS.md): the steps of its own code, each host function's
+ *  row by name, and how often it called each `ml` member. `own` plus every row's `charged` is every step it spent. */
+export interface CellMeter { own: number; lifted: Map<string, CellMeterRow>; wire: Map<string, number>; steps?: { used: number; budget: number } }
+
+/** An empty {@link CellMeter}. */
+export const newCellMeter = (): CellMeter => ({ own: 0, lifted: new Map(), wire: new Map() });
+
+/** The name a host function's row is kept under: the receiver's kind (a namespace's own name for its statics) and the method. */
+const hostName = (obj: unknown, key: string, isTokenList: (o: unknown) => boolean): string => `${(kindOf(obj, isTokenList) ?? "value").replace(/Ctor$/, "")}.${key}`;
+
 export class Evaluator {
     /** The realm's own bound `getComputedStyle` (set by the entry point; absent in the worker), the one bare callback besides the intrinsics. */
     ownGetComputedStyle: Function | undefined;
@@ -136,17 +149,34 @@ export class Evaluator {
     // property write on one of these is refused: that is what keeps every loop's trip count fixed at its start.
     private iterating = new Map<object, number>();
 
+    /** What the cell spent, per host function, for its recorded facts (docs/spec/CELL_FACTS.md). Set by a caller that asks
+     *  for them, before the script runs; only written here, and no decision reads it. */
+    meter: CellMeter | null = null;
+    /** The host call whose row a step is charged to while the meter runs, or null while the script's own code runs (its
+     *  top level, and every callback a host call runs). */
+    private chargeTo: CellMeterRow | null = null;
     /** Charge work a host call does that the evaluator cannot see (a pipe's stages), against the same budget. */
     spend(n: number): void { this.tick(n); }
     private tick(n = 1): void {
-        if ((this.fuel -= n) < 0) throw new NotInDialect(`too much work to run without asking: over ${this.budget} steps`);
+        const m = this.meter;
+        if (m !== null) { if (this.chargeTo !== null) this.chargeTo.charged += n; else m.own += n; }
+        if ((this.fuel -= n) < 0) throw new NotInDialect(`too much work to run without asking: over ${this.budget} steps`, { name: "STEP_BUDGET", budget: true });
+    }
+    /** The meter's row for a host function, counted as called once more, or null while no meter runs. */
+    private meterRow(name: string): CellMeterRow | null {
+        const m = this.meter;
+        if (m === null) return null;
+        let row = m.lifted.get(name);
+        if (!row) m.lifted.set(name, row = { calls: 0, charged: 0 });
+        row.calls++;
+        return row;
     }
     /** Refuse a value one step made too big to have been cheap (see MAX_COLLECTION / MAX_STRING). */
     private sized<T>(v: T): T {
         if (typeof v === "string" ? v.length > MAX_STRING
             : Array.isArray(v) ? v.length > MAX_COLLECTION
                 : (v instanceof Set || v instanceof Map) && v.size > MAX_COLLECTION)
-            throw new NotInDialect("a value too large to build without asking");
+            throw new NotInDialect("a value too large to build without asking", { name: typeof v === "string" ? "MAX_STRING" : "MAX_COLLECTION", budget: true });
         return v;
     }
     /** `Array.from` of an iterable a pattern destructures, charged its size first: a string's characters, a Set's or a
@@ -171,7 +201,7 @@ export class Evaluator {
     /** `Array(n)` / `new Array(n)` allocate n in one step, which the budget never sees. */
     private allocation(name: string, args: unknown[]): void {
         if (name === "Array" && args.length === 1 && typeof args[0] === "number" && args[0] > MAX_COLLECTION)
-            throw new NotInDialect("an array too large to build without asking");
+            throw new NotInDialect("an array too large to build without asking", { name: "MAX_COLLECTION", budget: true });
     }
     /** A pattern given as a STRING becomes a regex inside the host call (`match`, `matchAll`, `search`, `new RegExp`),
      *  so it gets the same check a regex literal does. */
@@ -204,7 +234,7 @@ export class Evaluator {
     private regexCharge(search: [string, string, string]): void {
         const [source, flags, input] = search;
         const steps = regexSteps(source, flags, input, (n) => this.tick(n), HOST_SCAN_CHARS_PER_STEP);
-        if (steps > this.fuel) throw new NotInDialect(`a regex search that could backtrack for too long on this input (/${source.length > 40 ? source.slice(0, 40) + "…" : source}/ over ${input.length.toLocaleString("en-US")} characters)`);
+        if (steps > this.fuel) throw new NotInDialect(`a regex search that could backtrack for too long on this input (/${source.length > 40 ? source.slice(0, 40) + "…" : source}/ over ${input.length.toLocaleString("en-US")} characters)`, { name: "STEP_BUDGET", budget: true });
         this.tick(steps);
     }
     /** Charge a `replace` or `replaceAll` for the text it BUILDS, before it builds it. The host sizes and allocates its
@@ -294,11 +324,11 @@ export class Evaluator {
             parts += kids.length;
             if (parts > cap) throw new NotInDialect(cap < MAX_EXPANDED
                 ? `too much work to run without asking: walking a value that expands to over ${cap.toLocaleString("en-US")} parts`
-                : `a value that expands to over ${MAX_EXPANDED.toLocaleString("en-US")} parts (an array holding the same array twice counts it twice), too much to walk without asking`);
+                : `a value that expands to over ${MAX_EXPANDED.toLocaleString("en-US")} parts (an array holding the same array twice counts it twice), too much to walk without asking`, { name: cap < MAX_EXPANDED ? "STEP_BUDGET" : "MAX_EXPANDED", budget: true });
             for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
-            if (chars > MAX_EXPANDED_CHARS) throw new NotInDialect(`a value whose strings expand to over ${MAX_EXPANDED_CHARS.toLocaleString("en-US")} characters, too much to walk without asking`);
+            if (chars > MAX_EXPANDED_CHARS) throw new NotInDialect(`a value whose strings expand to over ${MAX_EXPANDED_CHARS.toLocaleString("en-US")} characters, too much to walk without asking`, { name: "MAX_EXPANDED_CHARS", budget: true });
         }
-        if (chars > MAX_EXPANDED_CHARS) throw new NotInDialect(`a value whose strings expand to over ${MAX_EXPANDED_CHARS.toLocaleString("en-US")} characters, too much to walk without asking`);
+        if (chars > MAX_EXPANDED_CHARS) throw new NotInDialect(`a value whose strings expand to over ${MAX_EXPANDED_CHARS.toLocaleString("en-US")} characters, too much to walk without asking`, { name: "MAX_EXPANDED_CHARS", budget: true });
         return { parts, chars };
     }
     /** Charge the walk of `v` (see {@link expanded}) to the budget: what a host call or a coercion is about to do to it. */
@@ -421,7 +451,7 @@ export class Evaluator {
             seen.add(a);
             const n = Object.getOwnPropertyDescriptor(a, "length")?.value;
             if (typeof n !== "number") throw new NotInDialect(`an array whose length is not plain data, which ${via} would read by running page code`);
-            if ((visited += n) > MAX_EXPANDED) throw new NotInDialect(`a value too large for ${via} without asking`);
+            if ((visited += n) > MAX_EXPANDED) throw new NotInDialect(`a value too large for ${via} without asking`, { name: "MAX_EXPANDED", budget: true });
             for (let i = 0; i < n; i++) {
                 const d = Object.getOwnPropertyDescriptor(a, i);
                 if (d === undefined) {
@@ -439,7 +469,7 @@ export class Evaluator {
 
     /** The host calls that do work proportional to an ARGUMENT, checked before they run: afterwards is too late. */
     private preflight(obj: unknown, key: string, args: unknown[], member: "ml" | "answer" | null = null): void {
-        const big = () => { throw new NotInDialect("a value too large to build without asking"); };
+        const big = () => { throw new NotInDialect("a value too large to build without asking", { name: "MAX_STRING", budget: true }); };
         // A String OBJECT is a string here: `new String(…)` is a safe constructor and `ml.dereference` returns one
         // (DerefText), and while this read only `typeof obj === "string"` a pointer's text took a backtracking pattern.
         const str = typeof obj === "string" ? obj : kindOf(obj, this.isTokenList) === "string" ? String(obj) : null;
@@ -501,7 +531,7 @@ export class Evaluator {
             if (height * width > MAX_COLLECTION) big();
             if (stored && (key === "col" || key === "records")) {
                 this.storedCells += height * width;
-                if (this.storedCells > MAX_STORED_CELLS) throw new NotInDialect(`reading over ${MAX_STORED_CELLS.toLocaleString("en-US")} cells of stored tables in one script, which is too much work to run without asking`);
+                if (this.storedCells > MAX_STORED_CELLS) throw new NotInDialect(`reading over ${MAX_STORED_CELLS.toLocaleString("en-US")} cells of stored tables in one script, which is too much work to run without asking`, { name: "MAX_STORED_CELLS", budget: true });
             }
         }
         // An EMBEDDING's comparisons are O(dimensions) a candidate inside one host call. Their arguments are read as
@@ -562,6 +592,8 @@ export class Evaluator {
     constructor(private ml: Record<string, unknown> | null, private budget: number = STEP_BUDGET, private realm: ReadonlyRealm = "page") { this.fuel = budget; }
     /** The steps spent so far, at most the budget: what a caller that shares one budget across evaluations charges. */
     stepsSpent(): number { return Math.min(this.budget, this.budget - this.fuel); }
+    /** The step budget this evaluation runs under. */
+    stepBudget(): number { return this.budget; }
 
     /** STRICT FACADES: the policy realm's `c` and every object and array inside it. Reading a field one does not have
      *  is a REFUSAL, never `undefined`, so a typo'd `deny` is a broken policy the person sees rather than a rule that
@@ -624,14 +656,14 @@ export class Evaluator {
     private absentRead(key: string): void {
         this.hiddenMember(key);
         if (this.realm === "worker") this.absentMl(key);
-        if (key === "current") throw new NotInDialect("ml.current is the run's context, which a survey on the page does not have");
+        if (key === "current") throw new NotInDialect("ml.current is the run's context, which a survey on the page does not have", { name: "ml.current" });
     }
     /** A member the facade does not carry. In the worker that defers the survey to the page; on the page it is a
      *  refusal, as it always was. */
     private absentMl(key: string): never {
         this.hiddenMember(key);
         if (this.realm === "worker") throw new NeedsPage(`ml.${key} is not available in the worker`);
-        throw new NotInDialect(`method '${key}' not allowed`);
+        throw new NotInDialect(`method '${key}' not allowed`, { name: `ml.${key}` });
     }
 
     /** Build what `ml.current` reads from a snapshot. `messages` is the snapshot's own copy, protected; `run`, `meta`
@@ -727,7 +759,7 @@ export class Evaluator {
         [key] = this.coerces("a computed key", key);   // a computed key is coerced with `String`, which walks an array whole
         this.scans(key);     // and a string key is hashed
         const k = String(key);
-        if (DENIED_PROPS.has(k)) throw new Denied(`access to '${k}' is not allowed`);
+        if (DENIED_PROPS.has(k)) throw new Denied(`access to '${k}' is not allowed`, { name: k });
         return k;
     }
 
@@ -862,8 +894,8 @@ export class Evaluator {
      *  `const`, where accepting it would make the dialect compute a value real JavaScript would not. */
     private writableFrame(scope: any, name: string): any {
         const frame = this.frameOf(scope, name);
-        if (!frame) throw new Denied(`'${name}' is not declared in this script — assignment never creates a binding here`);
-        if (Object.getPrototypeOf(frame) === null) throw new Denied(`'${name}' belongs to the page's environment and cannot be assigned to`);
+        if (!frame) throw new Denied(`'${name}' is not declared in this script — assignment never creates a binding here`, { name });
+        if (Object.getPrototypeOf(frame) === null) throw new Denied(`'${name}' belongs to the page's environment and cannot be assigned to`, { name });
         if (this.isConst(frame, name)) throw new NotInDialect(`'${name}' was declared const`);
         return frame;
     }
@@ -950,7 +982,7 @@ export class Evaluator {
                 }
                 case "Ident": {
                     if (node.name in scope) return scope[node.name];
-                    throw new Denied(`'${node.name}' is not available`);
+                    throw new Denied(`'${node.name}' is not available`, { name: node.name });
                 }
                 case "Array": {
                     const arr: unknown[] = [];
@@ -983,7 +1015,11 @@ export class Evaluator {
                     const fn = function (...args: unknown[]) {
                         // Called by a host method that COERCES what it returns (COERCES_CALLBACK): walked before the host gets it.
                         const coerced = self.coercingAt === self.depth;
-                        const ret = runSync(self.callArrow(node, scope, args));
+                        // A callback's steps are the cell's own, not the host call's that runs it (CELL_FACTS.md, `charged`).
+                        const host = self.chargeTo;
+                        self.chargeTo = null;
+                        let ret: unknown;
+                        try { ret = runSync(self.callArrow(node, scope, args)); } finally { self.chargeTo = host; }
                         if (coerced) self.expands(ret);
                         const rep = self.replacing;
                         if (rep !== null && rep.depth === self.depth) self.replaced(rep, ret, args[0]);
@@ -996,7 +1032,7 @@ export class Evaluator {
                     const ctor = SAFE_CONSTRUCTORS[node.ctor];
                     // A policy is a function of the call alone: the clock is not one of its facts.
                     if (node.ctor === "Date" && this.realm === "policy") throw new NotInDialect("new Date() reads the clock, which is not a fact of the call");
-                    if (!ctor) throw new Denied(`new ${node.ctor}() is not allowed — only pure builtins (Set, Map, Array, Date, RegExp, …)`);
+                    if (!ctor) throw new Denied(`new ${node.ctor}() is not allowed — only pure builtins (Set, Map, Array, Date, RegExp, …)`, { name: node.ctor });
                     // A script-CREATED instance is owned, so its own mutators (Set.add / Map.set/…) pass the
                     // MUTATING_METHODS gate. Mark it directly, not via own(): a Set/Map's prototype isn't
                     // Object.prototype, so own()'s isWritableTarget check would skip it. (Assignment `o[k]=v`
@@ -1158,7 +1194,7 @@ export class Evaluator {
     // Invoke one of OUR arrows: bind the params in a child scope and evaluate its body. The depth
     // guard unwinds in `finally`, which runs even when the sync driver closes the generator early.
     private *callArrow(node: Node, scope: any, args: unknown[]): Ev {
-        if (++this.depth > MAX_CALL_DEPTH) { this.depth--; throw new NotInDialect(`calls nested more than ${MAX_CALL_DEPTH} deep`); }
+        if (++this.depth > MAX_CALL_DEPTH) { this.depth--; throw new NotInDialect(`calls nested more than ${MAX_CALL_DEPTH} deep`, { name: "MAX_CALL_DEPTH", budget: true }); }
         try {
             const child = Object.create(scope);
             (node.params as (string | Node)[]).forEach((p, idx) => {
@@ -1210,9 +1246,9 @@ export class Evaluator {
             } else if (onStrict) {
                 if (typeof obj[key] !== "function") throw new TypeError(`${key} is not a function on the call`);
             } else if (onAnswer) {
-                if (!ANSWER_METHODS.has(key)) throw new NotInDialect(`method '${key}' not allowed`);
+                if (!ANSWER_METHODS.has(key)) throw new NotInDialect(`method '${key}' not allowed`, { name: `ml.answer.${key}` });
             } else if (onSh) {
-                if (!SH_READONLY_METHODS.has(key)) throw new NotInDialect(`ml.sh.${key} is not in the read-only dialect: it is put to the person`);
+                if (!SH_READONLY_METHODS.has(key)) throw new NotInDialect(`ml.sh.${key} is not in the read-only dialect: it is put to the person`, { name: `ml.sh.${key}` });
             } else if (!methodAllowed(obj, key, this.isTokenList)) {
                 // WHICH KIND OF "no" IS THIS? The distinction decides whether a human gets interrupted.
                 //
@@ -1230,7 +1266,7 @@ export class Evaluator {
                 // Say WHAT it was called on: with the gate scoped by receiver, "not allowed" without the kind
                 // sends the reader looking for a missing name when the real answer is that the name is fine
                 // and the receiver is wrong.
-                throw new NotInDialect(`method '${key}' not allowed on ${kindOf(obj, this.isTokenList) ?? "this value"}`);
+                throw new NotInDialect(`method '${key}' not allowed on ${kindOf(obj, this.isTokenList) ?? "this value"}`, { name: key });
             }
             // An in-place MUTATOR (push/sort/…) may run ONLY on a container the script itself created — never an
             // array reached off a page value. So `pageState.items.push(x)` / `.sort()` can't mutate page data.
@@ -1238,7 +1274,7 @@ export class Evaluator {
             // run's answer set (no nodes/media/realm reachable through them).
             if (MUTATING_METHODS.has(key)) this.refuseWrite(obj);
             if (MUTATING_METHODS.has(key) && !this.owned.has(obj) && !onAnswer)
-                throw new Denied(`'${key}' can only mutate an array you created, not one reached from the page`);
+                throw new Denied(`'${key}' can only mutate an array you created, not one reached from the page`, { name: key });
             if (MUTATING_METHODS.has(key) && !onAnswer) this.notIterating(obj, "change");
             // `x.then(cb)` where x is NOT a thenable — the shape models write over the ml reads
             // (`ml.getModel().then(m => …)`), which auto-await left a plain value. Apply the callback
@@ -1270,33 +1306,40 @@ export class Evaluator {
                 const target = args[i];
                 this.refuseWrite(target);
                 if (target === null || typeof target !== "object" || !this.owned.has(target) || !isWritableTarget(target))
-                    throw new Denied(`${key} can only write into an object or array you built — never a DOM node, a page object, or a builtin`);
+                    throw new Denied(`${key} can only write into an object or array you built — never a DOM node, a page object, or a builtin`, { name: key });
                 this.notIterating(target, "write into");
             }
             this.convertingArgsAreData(kindOf(obj, this.isTokenList), key, args);
-            this.preflight(obj, key, args, onMl ? "ml" : onAnswer ? "answer" : null);
-            // A builtin reads its arguments whole (`JSON.stringify(c)`, `Object.values(c.program)`): a `null` field it
-            // takes out of the call is a read of it. `Object.keys` reads names, never values.
-            if (!(obj === Object && (key === "keys" || key === "getOwnPropertyNames"))) for (const a of args) this.noteNulls(a);
-            // A callback handed to a host method may run WHILE that method walks its receiver (`set.forEach`,
-            // `arr.sort`) or its source (`Array.from(src, fn)`), so both are held for the call: the callback can read
-            // them and cannot grow them. (Array methods fix their length when they start and would halt anyway; the
-            // rule is simpler kept uniform than special-cased per method.)
-            const held = args.some((a) => typeof a === "function" && this.ourFns.has(a as Function))
-                ? [obj, key === "from" ? args[0] : undefined] : [];
-            for (const h of held) this.hold(h);
+            // The cell's meter (CELL_FACTS.md): from the preflight to the copy's charge every step is this call's, but a callback's.
+            const row = this.meter === null ? null : this.meterRow(onMl ? `ml.${key}` : onSh ? `ml.sh.${key}` : onAnswer ? `ml.answer.${key}` : hostName(obj, key, this.isTokenList));
+            if (row !== null && (onMl || onSh)) { const member = onSh ? `sh.${key}` : key; this.meter!.wire.set(member, (this.meter!.wire.get(member) ?? 0) + 1); }
+            const chargedBefore = this.chargeTo;
+            if (row !== null) this.chargeTo = row;
             let out: unknown;
-            const wasCoercing = this.coercingAt;
-            if (COERCES_CALLBACK.has(key)) this.coercingAt = this.depth;
-            const wasReplacing = this.replacing;
-            if ((key === "replace" || key === "replaceAll") && typeof args[1] === "function" && (typeof obj === "string" || kindOf(obj, this.isTokenList) === "string"))
-                this.replacing = { depth: this.depth, chars: String(obj).length };
-            try { out = fn.apply(obj, args); } finally { for (const h of held) this.release(h); this.coercingAt = wasCoercing; this.replacing = wasReplacing; }
-            // A Map, Set or Array ITERATOR is materialised into an array when a host call returns one: a walk cannot see
-            // through an iterator without consuming it, and a Map's could carry a shared-part key into `Object.fromEntries`.
-            if (out !== null && typeof out === "object") out = drainIterator(out) ?? out;
-            // A NEW array is charged its length: what `slice`, `map` or `split` built is a copy proportional to it.
-            if (Array.isArray(out) && out !== obj) this.tick(Math.floor(out.length / HOST_COPY_ELEMENTS_PER_STEP));
+            try {
+                this.preflight(obj, key, args, onMl ? "ml" : onAnswer ? "answer" : null);
+                // A builtin reads its arguments whole (`JSON.stringify(c)`, `Object.values(c.program)`): a `null` field it
+                // takes out of the call is a read of it. `Object.keys` reads names, never values.
+                if (!(obj === Object && (key === "keys" || key === "getOwnPropertyNames"))) for (const a of args) this.noteNulls(a);
+                // A callback handed to a host method may run WHILE that method walks its receiver (`set.forEach`,
+                // `arr.sort`) or its source (`Array.from(src, fn)`), so both are held for the call: the callback can read
+                // them and cannot grow them. (Array methods fix their length when they start and would halt anyway; the
+                // rule is simpler kept uniform than special-cased per method.)
+                const held = args.some((a) => typeof a === "function" && this.ourFns.has(a as Function))
+                    ? [obj, key === "from" ? args[0] : undefined] : [];
+                for (const h of held) this.hold(h);
+                const wasCoercing = this.coercingAt;
+                if (COERCES_CALLBACK.has(key)) this.coercingAt = this.depth;
+                const wasReplacing = this.replacing;
+                if ((key === "replace" || key === "replaceAll") && typeof args[1] === "function" && (typeof obj === "string" || kindOf(obj, this.isTokenList) === "string"))
+                    this.replacing = { depth: this.depth, chars: String(obj).length };
+                try { out = fn.apply(obj, args); } finally { for (const h of held) this.release(h); this.coercingAt = wasCoercing; this.replacing = wasReplacing; }
+                // A Map, Set or Array ITERATOR is materialised into an array when a host call returns one: a walk cannot see
+                // through an iterator without consuming it, and a Map's could carry a shared-part key into `Object.fromEntries`.
+                if (out !== null && typeof out === "object") out = drainIterator(out) ?? out;
+                // A NEW array is charged its length: what `slice`, `map` or `split` built is a copy proportional to it.
+                if (Array.isArray(out) && out !== obj) this.tick(Math.floor(out.length / HOST_COPY_ELEMENTS_PER_STEP));
+            } finally { if (row !== null) this.chargeTo = chargedBefore; }
             // Auto-await an ml call ONLY when it actually returns a promise (getModel/config/… round-trip),
             // so a forgotten `await` still reads the value. The SYNC ml reads (queryAll, range) return a plain
             // value — pass it straight through WITHOUT yielding, so they work inside a `.map`/`.filter` callback
@@ -1321,11 +1364,16 @@ export class Evaluator {
         if (callee.type === "Ident" && CALLABLE_ROOTS.has(callee.name) && callee.name in scope && this.isOwnRoot(callee.name, scope[callee.name])) {
             const fn = scope[callee.name] as Function;
             const args = yield* this.evalArgs(node.args, scope);
-            this.allocation(callee.name, args);
-            const at = ROOT_CONVERTS[callee.name];
-            if (at !== undefined) args.forEach((a, i) => { if (at === "all" || at.includes(i)) args[i] = this.converts(callee.name, a); });
-            for (const a of args) this.expands(a);   // each coerces its argument (`String(d)` is `join` for an array)
-            return this.sized(fn(...args));
+            const row = this.meterRow(callee.name);
+            const chargedBefore = this.chargeTo;
+            if (row !== null) this.chargeTo = row;
+            try {
+                this.allocation(callee.name, args);
+                const at = ROOT_CONVERTS[callee.name];
+                if (at !== undefined) args.forEach((a, i) => { if (at === "all" || at.includes(i)) args[i] = this.converts(callee.name, a); });
+                for (const a of args) this.expands(a);   // each coerces its argument (`String(d)` is `join` for an array)
+                return this.sized(fn(...args));
+            } finally { if (row !== null) this.chargeTo = chargedBefore; }
         }
         // (arrow)(args) / immediately-invoked arrow (or function expression). Driven by OUR driver
         // rather than through the sync wrapper, so an `await` inside an IIFE is honoured.
@@ -1368,6 +1416,6 @@ function untilStopped(v: unknown, stop: AbortSignal): Promise<unknown> {
  *  unwinds the depth guard) and fall out of dialect, so the survey drops to the approval path. */
 export function runSync(gen: Ev): unknown {
     const r = gen.next();
-    if (!r.done) { gen.return(undefined); throw new NotInDialect("await is not supported inside a callback"); }
+    if (!r.done) { gen.return(undefined); throw new NotInDialect("await is not supported inside a callback", { name: "await" }); }
     return r.value;
 }

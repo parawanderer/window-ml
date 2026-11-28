@@ -167,6 +167,10 @@ export interface PythonCaller {
      *  `mode`"): a run the worker drives trying it before its own gate. Honoured only with `runGated`. A cell outside
      *  comes back as `notInDialect` and nothing it did is kept. */
     inside?: boolean;
+    /** Told, once the cell has answered, what the worker saw of it: the `ml` members it called over the wire and whether
+     *  it set the outside mark. For the cell's recorded facts (docs/spec/CELL_FACTS.md); set only by worker code, and
+     *  never read by a decision. */
+    onCellFacts?: (facts: { wire: { member: string; calls: number }[]; markSet: boolean }) => void;
 }
 
 /** The most tables a page-started cell's page may read before it. */
@@ -357,6 +361,7 @@ export async function runPython(payload: any, requestId: string | undefined, cal
         // The offscreen document marked this cell's worker before posting it (py-mark.ts): no later cell there runs inside.
         if ((res as { markSet?: unknown } | undefined)?.markSet === true && caller.wireRun) recordRunLog(caller.wireRun, { subsystem: "python", kind: "outside-mark", reason: "outside-cell", detail: { principal } });
         if (key && caller.disclose && caller.tabId != null) claimValue(key, pageValueSession(caller.tabId));
+        caller.onCellFacts?.({ wire: wire?.calls() ?? [], markSet: (res as { markSet?: unknown } | undefined)?.markSet === true });
         return { data: res };
     } catch (err) {
         return { error: (err as Error)?.message || String(err) };

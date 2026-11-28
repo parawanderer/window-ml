@@ -234,6 +234,9 @@ export interface WireServeContext {
     argsMeter?: WireArgsMeter;
     /** Scrub an error's text before it crosses (sw-scrub.ts `forPage` in the worker). */
     scrub: (text: string) => Promise<string>;
+    /** Told the member of each call that names one the client has, for the cell's recorded facts (CELL_FACTS.md). It
+     *  only counts: nothing it does changes the answer. */
+    onCall?: (name: string) => void;
 }
 
 /**
@@ -274,6 +277,7 @@ export async function serveWireCall(req: Partial<MlWireRequest> | null | undefin
         const names = [...new Set(handles.map((h) => h.$secret).filter((n): n is string => typeof n === "string"))];
         return fail(seq, "SecretHandle", `ml.${name}: a secret handle is never read as a value; pass it to a call that uses it${names.length ? ` (${names.join(", ")})` : ""}`, ctx.scrub);
     }
+    ctx.onCall?.(name);
     const member = ctx.members[name];
     if (!member.gate) return answerOf(seq, name, member, args, ctx.scrub);
     let decision: WireGateDecision;
@@ -313,6 +317,8 @@ export interface WireClient {
     /** The evaluation steps its code's calls may still spend, all of them together (docs/spec/ML_WIRE.md, "One budget a
      *  cell"). Each call alone is already bounded; this is what bounds a loop of them. */
     budget: { left: number };
+    /** How many calls its code made of each member, for the cell's recorded facts (CELL_FACTS.md). Never read by a decision. */
+    calls: Map<string, number>;
     /** A page-started cell's tables, read by the page before it ran and checked by the worker (sw-ml-table.ts), by
      *  `hoistKey`. Absent for a run's cell, which reads at call time. */
     tables?: ReadonlyMap<string, import("../python/table-answer").HoistedAnswer>;
@@ -330,10 +336,11 @@ export const wireClient = (handle: string): WireClient | undefined => clients.ge
  *   starts with a whole {@link STEP_BUDGET}.
  * @returns the handle, and `close` to call when the code has finished: later calls on the handle are refused
  */
-export function openWireClient(c: { from: WireFrom; run: string | null; realm: WireRealm; tabUrl?: () => string; step?: WireClient["step"]; tables?: WireClient["tables"] }): { handle: string; close: () => void } {
+export function openWireClient(c: { from: WireFrom; run: string | null; realm: WireRealm; tabUrl?: () => string; step?: WireClient["step"]; tables?: WireClient["tables"] }): { handle: string; close: () => void; calls: () => { member: string; calls: number }[] } {
     const handle = `mlw-${crypto.randomUUID()}`;
-    clients.set(handle, { from: c.from, run: c.run, realm: c.realm, tabUrl: c.tabUrl ?? (() => ""), ...(c.run && c.step ? { step: { seq: c.step.seq, local: { ...c.step.local } } } : {}), budget: { left: STEP_BUDGET }, ...(!c.run && c.tables ? { tables: c.tables } : {}) });
-    return { handle, close: () => { clients.delete(handle); } };
+    const calls = new Map<string, number>();
+    clients.set(handle, { from: c.from, run: c.run, realm: c.realm, tabUrl: c.tabUrl ?? (() => ""), ...(c.run && c.step ? { step: { seq: c.step.seq, local: { ...c.step.local } } } : {}), budget: { left: STEP_BUDGET }, calls, ...(!c.run && c.tables ? { tables: c.tables } : {}) });
+    return { handle, close: () => { clients.delete(handle); }, calls: () => [...calls].map(([member, n]) => ({ member, calls: n })) };
 }
 
 /**

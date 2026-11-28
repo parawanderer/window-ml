@@ -33,10 +33,11 @@ import { tokenize } from "./readonly-exec/tokenizer";
 import { Parser } from "./readonly-exec/parser";
 import { DENIED_PROPS, ReadonlyRealm, mlFacade, tokenListBrand } from "./readonly-exec/policy";
 import { PrintSwap, safeStr } from "./readonly-exec/print";
-import { Evaluator, runAsync } from "./readonly-exec/evaluator";
+import { Evaluator, runAsync, type CellMeter } from "./readonly-exec/evaluator";
 
 export { NotInDialect, Denied, NeedsPage, Stopped, STEP_BUDGET, MAX_COLLECTION, MAX_STORED_CELLS, MAX_STRING, MAX_CALL_DEPTH, PIPE_CHARS_PER_STEP, riskyRegex } from "./readonly-exec/limits";
 export { ML_READONLY_METHODS } from "./readonly-exec/policy";
+export { newCellMeter, type CellMeter } from "./readonly-exec/evaluator";
 export type { ReadonlyRealm } from "./readonly-exec/policy";
 export { ABRIDGE_OVER, describeSwaps } from "./readonly-exec/print";
 export { evalPolicy, POLICY_STEPS } from "./readonly-exec/policy-realm";
@@ -68,7 +69,9 @@ export type { PrintSwap } from "./readonly-exec/print";
  */
 export async function evalReadonly(code: string, doc: Document | null, ml?: unknown, answerFacade?: unknown,
     opts: { checkpoint?: () => () => void; stepBudget?: number; realm?: ReadonlyRealm; current?: CurrentSnapshot; onLog?: (line: string) => void; signal?: AbortSignal;
-        globals?: Record<string, unknown>; hidden?: ReadonlyMap<string, string> } = {}): Promise<{ value: unknown; logs: string[]; dropped: number; reused: string[]; prints: { console: PrintSwap[]; value: PrintSwap[] } }> {
+        globals?: Record<string, unknown>; hidden?: ReadonlyMap<string, string>;
+        /** Filled with what the cell spent, for its recorded facts (docs/spec/CELL_FACTS.md), whether it answers or throws. */
+        meter?: CellMeter } = {}): Promise<{ value: unknown; logs: string[]; dropped: number; reused: string[]; prints: { console: PrintSwap[]; value: PrintSwap[] } }> {
     const realm: ReadonlyRealm = opts.realm ?? "page";
     // Bounded (output-clip.ts): past OUTPUT_CEILING a line is counted, not kept. The step budget bounds the WORK, and a
     // string may be 10 million characters, so without this 200 prints of one were 1.8 GB held and then an
@@ -139,6 +142,7 @@ export async function evalReadonly(code: string, doc: Document | null, ml?: unkn
     // The DOMTokenList brand: this realm's own, or (only where this realm has none) the document's, read before the script runs.
     if (realm !== "worker") ev.isTokenList = tokenListBrand(doc?.defaultView);
     if (opts.hidden) ev.hidden = opts.hidden;
+    if (opts.meter) ev.meter = opts.meter;
     charge = (n) => ev.spend(n);
     if (opts.current && facade) facade.current = ev.adoptCurrent(opts.current);
     printable = (v, swaps, where) => ev.printable(v, swaps, where);
@@ -165,5 +169,7 @@ export async function evalReadonly(code: string, doc: Document | null, ml?: unkn
             }
         }
         throw e;
+    } finally {
+        if (opts.meter) opts.meter.steps = { used: ev.stepsSpent(), budget: ev.stepBudget() };
     }
 }

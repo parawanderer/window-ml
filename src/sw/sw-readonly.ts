@@ -17,7 +17,8 @@
 // The call site is the host's `tryReadonly` (sw-run-host.ts), which hands it the run's `ml.current` and a read-only `ml`
 // with the run's pointers (worker-readonly-ml.ts), and records where each survey went in the execution log.
 
-import { evalReadonly, NeedsPage, NotInDialect, Denied } from "../readonly-exec";
+import { evalReadonly, NeedsPage, NotInDialect, Denied, newCellMeter, type CellMeter } from "../readonly-exec";
+import type { CellNote } from "../agent/cell-facts";
 import { expandPointers, execCodeIn } from "../pointers/pointer-macro";
 import { formatReadonlyExec } from "../agent/approval";
 import { descriptorFor } from "../tools/render-descriptor";
@@ -53,9 +54,28 @@ export interface WorkerReadonlyDeps {
 /** The outcome. `answered`: auto-approved, with the result the page path would have produced. `needs-page`: delegate
  *  it to the page as before. `refused`: out of dialect, so it goes to the human gate. */
 export type WorkerReadonlyOutcome =
-    | { kind: "answered"; result: string; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor }
+    | { kind: "answered"; result: string; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; cell?: CellNote }
     | { kind: "needs-page" }
-    | { kind: "refused" };
+    | { kind: "refused"; cell?: CellNote };
+
+/**
+ * What the worker's meter saw of a survey, as the cell's note (docs/spec/CELL_FACTS.md): the step meter, each host
+ * function's row and each `ml` member called, and for a refusal its kind and the name it gave.
+ * @param m the meter the evaluation filled
+ * @param e the refusal, when it was one
+ * @returns the note
+ */
+function noteOf(m: CellMeter, e?: NotInDialect | Denied): CellNote {
+    const note: CellNote = { realm: "worker" };
+    if (m.steps) note.steps = m.steps;
+    note.lifted = [...m.lifted].map(([name, r]) => ({ name, calls: r.calls, charged: r.charged }));
+    note.wire = [...m.wire].map(([member, calls]) => ({ member, calls }));
+    if (e) {
+        const kind = e instanceof Denied ? "denied" : e.budget ? "budget" : "not-in-dialect";
+        note.why = e.refusedName !== undefined ? { kind, name: e.refusedName } : { kind };
+    }
+    return note;
+}
 
 /** How long the worker holds a survey's first lines before streaming them. A survey that defers to the page does so at
  *  its first page reach, almost always within this, and the page then prints the same lines again: shown and taken
@@ -92,10 +112,10 @@ function heldLive(live: LiveOutput | undefined): { push: (line: string) => void;
 
 /** Evaluate one `exec` call's script in the worker. */
 export async function evalReadonlyInWorker(args: Record<string, unknown>, deps: WorkerReadonlyDeps): Promise<WorkerReadonlyOutcome> {
-    if (typeof args.js !== "string") return { kind: "refused" };
+    if (typeof args.js !== "string") return { kind: "refused", cell: { realm: "worker", why: { kind: "argument", name: "js" } } };
     const codeIn = execCodeIn(args.js);
     // A raised output cap is a request the human has to grant, wherever the script would run.
-    if (outputCapEscalated("exec", args)) return { kind: "refused" };
+    if (outputCapEscalated("exec", args)) return { kind: "refused", cell: { realm: "worker", why: { kind: "argument", name: "maxChars" } } };
     // `@tool:` is not JavaScript, so the macro expands it to `ml.dereference(…)` before the tokenizer sees it.
     const { code } = expandPointers(args.js);
     // The snapshot is a copy of the whole context, so it is made only for a script that says `current`. A cost
@@ -103,21 +123,22 @@ export async function evalReadonlyInWorker(args: Record<string, unknown>, deps: 
     // such member, which in the worker defers to the page, where there is none either, so it reaches the human.
     const current = deps.current && /\bcurrent\b/.test(code) ? deps.current() : undefined;
     const out = heldLive(deps.live);
+    const meter = newCellMeter();
     try {
         const ro = await evalReadonly(code, null, deps.ml ?? {}, undefined, { realm: "worker", current,
-            onLog: out ? out.push : undefined, signal: deps.signal });
+            onLog: out ? out.push : undefined, signal: deps.signal, meter });
         out?.settle();
         const { result, render } = formatReadonlyExec(ro.value, ro.logs, ro.prints, ro.dropped, args.maxChars);
         const { in: renderIn, out: renderOut } = descriptorFor(deps.tool, { result, render, ...(deps.tool ? {} : { renderIn: codeIn }) }, args);
-        return { kind: "answered", result, renderIn, renderOut };
+        return { kind: "answered", result, renderIn, renderOut, cell: noteOf(meter) };
     } catch (e) {
         if (e instanceof NeedsPage) { out?.drop(); return { kind: "needs-page" }; }
-        if (e instanceof NotInDialect || e instanceof Denied) { out?.drop(); return { kind: "refused" }; }
+        if (e instanceof NotInDialect || e instanceof Denied) { out?.drop(); return { kind: "refused", cell: noteOf(meter, e) }; }
         out?.settle();
         // A runtime error in the script is the model's to fix, reported with its line, exactly as the page path does.
         const { at, where } = surveyWhere(e);
         const error = `${errText(e)}${where}`;
         const { in: renderIn } = descriptorFor(deps.tool, { result: `Error: ${error}`, ...(deps.tool ? {} : { renderIn: codeIn }) }, args);
-        return { kind: "answered", result: `Error: ${error}`, renderIn, renderOut: { type: "exec-out", error, ...(at ? { errorLine: at } : {}) } };
+        return { kind: "answered", result: `Error: ${error}`, renderIn, renderOut: { type: "exec-out", error, ...(at ? { errorLine: at } : {}) }, cell: noteOf(meter) };
     }
 }

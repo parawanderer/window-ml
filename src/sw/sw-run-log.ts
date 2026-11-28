@@ -5,9 +5,8 @@
 // identifies anyone but the reporter; this ring holds every run's records, and a record's `key` can be another
 // tab's URL. The MODEL reads its own run's records through `ml.current.log` instead (docs/dev/run-log.md): filtered to
 // that run in the worker, and without `key`, `tab` or `origin`.
-import { RunLog, eventsForRun, runsInLog, type RunLogEvent } from "../log/run-log";
+import { RunLog, eventsForRun, runsInLog, type RunLogBody, type RunLogEvent } from "../log/run-log";
 import { sessionArea, senderOrigin } from "./sw-housekeeping";
-import type { HousekeepingReport } from "../log/housekeeping";
 import { defineState } from "../state-registry";
 import { currentLogRecords } from "../agent/current-context";
 
@@ -44,7 +43,7 @@ try {
 } catch { /* no globalThis to decorate (a bundled test): the echo simply stays off */ }
 
 /** Records something the machinery did on one run's behalf, where the caller knows whose run it is. */
-export const recordRunLog = (run: string, report: HousekeepingReport): void => {
+export const recordRunLog = (run: string, report: RunLogBody): void => {
     runLog.record(run, report);
     // The record as ONE line, in the order the panel prints it, so a run's console and its panel read alike.
     if (echo) (report.level === "error" ? console.warn : console.debug)(`[run-log] ${run}${report.level ? ` ${report.level.toUpperCase()}` : ""} ${report.subsystem} ${report.kind}${report.reason ? ` (${report.reason})` : ""}`,
