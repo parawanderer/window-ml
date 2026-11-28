@@ -3956,6 +3956,43 @@ test("files panel, desktop: closed until opened, a folder lists on opening, and 
     await page.close();
 });
 
+test("files panel menu: Hide marks the row at once, Show asks first and then clears it, and a default-hidden file is shown by a show rule", async () => {
+    const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(CHAT)}`);
+    await page.locator(".chat-files-btn").click();
+    await page.locator(".fp-row", { hasText: "agent" }).first().click();
+    const out = page.locator(".fp-row-wrap", { hasText: "out.json" });
+    await out.hover();
+    await out.locator(".fp-more-btn").click();
+    await page.locator(".fp-menu .chat-menu-item", { hasText: "Hide from the model" }).click();
+    await expect(out.locator(".fp-hidden")).toBeVisible();
+    await out.hover();
+    await out.locator(".fp-more-btn").click();
+    await page.locator(".fp-menu .chat-menu-item", { hasText: "Show to the model" }).click();
+    await expect(page.locator(".chat-dialog")).toContainText("The model can read out.json from its next cell.");
+    await page.locator(".chat-dialog .btn.primary").click();
+    await expect(page.locator(".chat-dialog")).toContainText("nothing else hides it");
+    await page.locator(".chat-dialog .btn.primary").click();
+    await expect(page.locator(".chat-dialog")).toHaveCount(0);
+    await expect(out.locator(".fp-hidden")).toHaveCount(0);
+    await page.locator(".fp-row", { hasText: "attached" }).first().click();
+    await page.locator(".fp-row", { hasText: "c41d7a0" }).click();
+    const keys = page.locator(".fp-row-wrap", { hasText: "keys.env" });
+    await keys.hover();
+    await keys.locator(".fp-more-btn").click();
+    await page.locator(".fp-menu .chat-menu-item", { hasText: "Show to the model" }).click();
+    await page.locator(".chat-dialog .btn.primary").click();
+    await expect(keys.locator(".fp-hidden")).toHaveCount(0);
+    const sent = (await page.evaluate(() => globalThis.__chatFake.commands)).filter((c) => c.type === "policy.files").map(({ op, effect, source, confirm }) => ({ op, effect, source, confirm }));
+    expect(sent).toEqual([
+        { op: "add", effect: "hide", source: "/files/agent/out.json", confirm: undefined },
+        { op: "remove", effect: undefined, source: undefined, confirm: undefined },
+        { op: "remove", effect: undefined, source: undefined, confirm: true },
+        { op: "add", effect: "show", source: "/files/attached/c41d7a0/keys.env", confirm: undefined },
+    ]);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 test("files panel, phone width: the header holds the button and does not overflow, and the panel opens over the chat", async () => {
     const { page, errors } = await open(PHONE, `#/s/${encodeURIComponent(CHAT)}`);
     await expect(page.locator(".chat-files-btn")).toBeVisible();

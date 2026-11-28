@@ -1011,6 +1011,19 @@ RULED 2026-11-17 (Shane's idea, the details the coordinator's calls, in the coor
    or host call from `src/chat/`. Any host of the renderer (the extension, a later VS Code extension) sends the
    identical command and gets the identical answer. The first item is hiding or unhiding a path as a secret; the
    command and its handler are files-host's hide-list spec's, and this spec only references them.
+   BUILT (slice 1b). On a shown row of the `/files/` shelf: Hide, which sends `policy.files` `add` `hide` with the row's
+   stored path as a literal `/files/…` source and scope `session`. On a hidden row: Show, which first asks the person
+   to confirm that the model can read the file from its next cell. Confirmed, it sends `remove` with `hiddenBy` when
+   `unhide` is `remove`, and a removal that answers `confirm` shows what else it exposes before it is sent again with
+   `confirm: true`. When `unhide` is `show`, it sends `add` `show` with the row's stored path and scope `session`. A
+   literal session `show` wins over a session `hide` on an ancestor or by a glob, and over every global rule and
+   default, so the directory's rule and the file's siblings stay hidden. A directory row whose `unhide` is `show` has
+   no Show, since a `show` releases what it matches and nothing under it; one whose `unhide` is `remove` has Show by
+   removal, whose confirmation says the model can read the folder and everything in it that no other rule hides. A
+   refusal is shown as its sentence. The menu is offered only on a page the runtime listed with `detail`, which is
+   this browser's, because a rule matches stored paths and a hub client holds only shown ones; with remote unhide
+   deferred (item 7), a hub client has no menu in 1b. No item is offered on a path whose stored segments hold `*`, `?`
+   or `[`, which a literal source would read as a glob. Global scope stays on the policy page in 1b.
 3. **A hidden file is listed by name, with its hidden state.** The browser never reads its bytes, to preview, size or
    anything else.
 4. **The menu is the person's gesture only.** No model tool, no `ml.fs` member and no page-started message reaches
@@ -2318,8 +2331,8 @@ is the one place every front end lists and opens through, so the rule is there.
    a listing the extension's own pages ask for on this device (the offscreen caller the files panel adds). It never
    rides the hub, an event (`files-changed`), an export, the run log, `ml.fs` or the Python mount; over the hub the
    panel shows the shown name. The human-only state inspector (`session.files`) lists stored names, on the
-   extension's own pages only. NOT BUILT yet: the reader's `realName` option, off by default, lands in the PR after
-   this one; until then the panel has the shown name only.
+   extension's own pages only. The reader's `detail` option, off by default, adds `realName` (and a hidden entry's
+   deciding rule); only `files.list` from this browser's own pages sets it, and `ml.fs` and Python's mount never do.
 
 The exact match keeps two cases working: an attached name that holds the marker text itself, and a file written
 before the value in its name was registered, both open by the name the cell wrote. Python's mount lists both entries

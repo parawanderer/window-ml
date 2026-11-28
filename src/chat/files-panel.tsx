@@ -10,6 +10,7 @@
 // per device and never moved by an attach: the header button's count moves instead.
 import { signal } from "@preact/signals";
 import { useEffect, useMemo } from "preact/hooks";
+import type { ComponentChildren } from "preact";
 import type { FileListEntry } from "../session/session-host";
 import type { SessionKey } from "../session/session-host";
 import { formatBytes } from "../resource/resource-model";
@@ -18,6 +19,7 @@ import { shortStamp, fullStamp } from "../sidebar/format";
 import { cursorTipOn } from "../sidebar/ui-kit";
 import type { ChatStore } from "./chat-store";
 import type { PlatformPrefs } from "./platform";
+import { FileRowMenu, FileShowConfirm, fileAction } from "./files-menu";
 
 /** The preference key the panel's open state is remembered under, on this device. */
 export const FILES_OPEN_KEY = "view.files";
@@ -47,6 +49,10 @@ export interface DirState {
     loading: boolean;
     /** why the last request failed, in the runtime's words */
     error?: string;
+    /** the directory's STORED path, session-relative, when every step to it was listed with `detail`; null when not */
+    stored?: string | null;
+    /** whether every page read was listed with `detail` (this browser's own pages): what the hide and show menu needs */
+    detail?: boolean;
 }
 
 const join = (dir: string, name: string): string => (dir ? `${dir}/${name}` : name);
@@ -65,10 +71,11 @@ export class FilesTree {
         this.dirs.value = next;
     }
 
-    /** Open a directory and ask for its first page. Already open: nothing. */
-    open(path: string): void {
+    /** Open a directory and ask for its first page. Already open: nothing.
+     *  @param stored its stored path when the parent's page said it ("" for the root), else null */
+    open(path: string, stored: string | null = path === "" ? "" : null): void {
         if (this.dirs.value.has(path)) return;
-        this.set(path, { entries: [], loading: true });
+        this.set(path, { entries: [], loading: true, stored });
         void this.read(path, 1);
     }
 
@@ -80,8 +87,8 @@ export class FilesTree {
         this.dirs.value = next;
     }
 
-    toggle(path: string): void {
-        if (this.dirs.value.has(path)) this.close(path); else this.open(path);
+    toggle(path: string, stored: string | null = null): void {
+        if (this.dirs.value.has(path)) this.close(path); else this.open(path, stored);
     }
 
     /** Ask for the page after the last one read. */
@@ -113,6 +120,7 @@ export class FilesTree {
         this.gens.set(path, gen);
         let entries: FileListEntry[] = from ? [...from.entries] : [];
         let cursor = from?.next;
+        let detail = from ? from.detail !== false : true;
         for (let i = 0; i < Math.max(1, pages); i++) {
             const r = await this.store.listFiles(this.key, path, cursor);
             if (this.gens.get(path) !== gen || !this.dirs.value.has(path)) return;
@@ -123,10 +131,12 @@ export class FilesTree {
             }
             if (!from && i === 0) this.pageSize.set(path, r.data.entries.length || this.pageSize.get(path) || 1);
             entries = entries.concat(r.data.entries);
+            detail &&= r.data.detail === true;
             cursor = r.data.next;
             if (!cursor) break;
         }
-        this.set(path, { entries, ...(cursor ? { next: cursor } : {}), loading: false });
+        const was = this.dirs.value.get(path);
+        this.set(path, { entries, ...(cursor ? { next: cursor } : {}), loading: false, stored: was?.stored ?? null, detail });
     }
 }
 
@@ -201,7 +211,7 @@ export const rowLabel = (e: FileListEntry): string => (e.realName != null && e.r
 const truncated = (el: Element) => el.scrollWidth > el.clientWidth;
 
 /** One row of any file browser: the kind's icon (and a chevron for a folder), the name, the size, the time. */
-function BaseRow({ entry, open, shared, onToggle, notes, parentReadonly }: { entry: FileListEntry; open: boolean; shared: boolean; onToggle: () => void; notes: boolean; parentReadonly: boolean }) {
+function BaseRow({ entry, open, shared, onToggle, notes, parentReadonly, menu }: { entry: FileListEntry; open: boolean; shared: boolean; onToggle: () => void; notes: boolean; parentReadonly: boolean; menu?: ComponentChildren }) {
     const dir = entry.kind === "dir";
     const label = rowLabel(entry);
     const body = <>
@@ -213,15 +223,19 @@ function BaseRow({ entry, open, shared, onToggle, notes, parentReadonly }: { ent
         <span class="fp-time" {...cursorTipOn(entry.mtimeMs ? fullStamp(entry.mtimeMs) : "No time")}>{entry.mtimeMs ? shortStamp(entry.mtimeMs) : "—"}</span>
     </>;
     // A folder whose shown name two entries share cannot be opened: the runtime refuses the path rather than guess.
-    if (dir && shared) return <div class="fp-row fp-dir fp-shared" aria-disabled="true" {...cursorTipOn("Two entries share this name")}>{body}</div>;
-    return dir
-        ? <button class="fp-row fp-dir" aria-expanded={open} onClick={onToggle}>{body}</button>
+    const row = dir && shared ? <div class="fp-row fp-dir fp-shared" aria-disabled="true" {...cursorTipOn("Two entries share this name")}>{body}</div>
+        : dir ? <button class="fp-row fp-dir" aria-expanded={open} onClick={onToggle}>{body}</button>
         : <div class="fp-row fp-file">{body}</div>;
+    // The menu sits beside the row, never inside it: a folder's row is a button, and a button holds no other.
+    return menu ? <div class="fp-row-wrap">{row}{menu}</div> : row;
 }
+
+/** What draws a row's menu, given the row, its stored path (null when not known) and whether its page carried `detail`. */
+export type RowMenuFor = (entry: FileListEntry, stored: string | null, detail: boolean) => ComponentChildren;
 
 /** One open directory's rows, then a "more" row, a loading row or what went wrong. Rows are keyed by position in the
  *  list: two entries may share a shown name. */
-function Level({ dirs, path, onToggle, onMore, notes, readonly = false }: { dirs: ReadonlyMap<string, DirState>; path: string; onToggle: (p: string) => void; onMore: (p: string) => void; notes: boolean; readonly?: boolean }) {
+function Level({ dirs, path, onToggle, onMore, notes, readonly = false, menuFor }: { dirs: ReadonlyMap<string, DirState>; path: string; onToggle: (p: string, stored: string | null) => void; onMore: (p: string) => void; notes: boolean; readonly?: boolean; menuFor?: RowMenuFor }) {
     const d = dirs.get(path);
     if (!d) return null;
     const names = new Map<string, number>();
@@ -231,10 +245,13 @@ function Level({ dirs, path, onToggle, onMore, notes, readonly = false }: { dirs
             {d.entries.map((e, i) => {
                 const p = join(path, e.name);
                 const open = e.kind === "dir" && dirs.has(p);
+                // The stored path only where the page carried the stored names: a shown name is not one.
+                const stored = d.detail && d.stored != null ? join(d.stored, rowLabel(e)) : null;
                 return (
                     <li key={i} role="treeitem" aria-expanded={e.kind === "dir" ? open : undefined}>
-                        <BaseRow entry={e} open={open} shared={(names.get(e.name) ?? 0) > 1} onToggle={() => onToggle(p)} notes={notes} parentReadonly={readonly} />
-                        {open ? <Level dirs={dirs} path={p} onToggle={onToggle} onMore={onMore} notes={notes} readonly={e.readonly} /> : null}
+                        <BaseRow entry={e} open={open} shared={(names.get(e.name) ?? 0) > 1} onToggle={() => onToggle(p, stored)} notes={notes} parentReadonly={readonly}
+                            menu={menuFor?.(e, stored, d.detail === true)} />
+                        {open ? <Level dirs={dirs} path={p} onToggle={onToggle} onMore={onMore} notes={notes} readonly={e.readonly} menuFor={menuFor} /> : null}
                     </li>
                 );
             })}
@@ -256,9 +273,11 @@ function Level({ dirs, path, onToggle, onMore, notes, readonly = false }: { dirs
  * @gallery loading {"dirs": {"": {"entries": [], "loading": true}}}
  * @gallery failed {"dirs": {"": {"entries": [], "error": "The runtime is unreachable"}}}
  */
-export function FilesPanelView({ dirs, onToggle, onMore, onClose, narrow }: {
+export function FilesPanelView({ dirs, onToggle, onMore, onClose, narrow, menuFor }: {
     dirs: Record<string, Partial<DirState> & { entries: readonly FileListEntry[] }>;
-    onToggle?: (path: string) => void; onMore?: (path: string) => void; onClose?: () => void; narrow?: boolean;
+    onToggle?: (path: string, stored: string | null) => void; onMore?: (path: string) => void; onClose?: () => void; narrow?: boolean;
+    /** each row's menu; absent, rows have none */
+    menuFor?: RowMenuFor;
 }) {
     const map: ReadonlyMap<string, DirState> = new Map(Object.entries(dirs).map(([k, v]) => [k, { loading: false, ...v } as DirState]));
     return (
@@ -271,7 +290,7 @@ export function FilesPanelView({ dirs, onToggle, onMore, onClose, narrow }: {
                 <button class="hbtn fp-close" aria-label="Close files" {...cursorTipOn("Close")} onClick={onClose}><IconClose /></button>
             </div>
             <div class="fp-body" role="tabpanel" id="fp-panel-files" aria-labelledby="fp-tab-files">
-                <Level dirs={map} path="" onToggle={onToggle ?? (() => undefined)} onMore={onMore ?? (() => undefined)} notes />
+                <Level dirs={map} path="" onToggle={onToggle ?? (() => undefined)} onMore={onMore ?? (() => undefined)} notes menuFor={menuFor} />
             </div>
         </aside>
     );
@@ -288,5 +307,12 @@ export function FilesPanel({ store, sessionKey, narrow }: { store: ChatStore; se
         const off = store.onFilesChanged((k, c) => { if (k === sessionKey) tree.relist(c.dirs); });
         return () => { off(); tree.close(""); tree.dirs.value = new Map(); };
     }, [tree]);
-    return <FilesPanelView dirs={Object.fromEntries(tree.dirs.value)} onToggle={(p) => tree.toggle(p)} onMore={(p) => tree.more(p)} onClose={() => setFilesOpen(false)} narrow={narrow} />;
+    const menuFor: RowMenuFor = (e, stored, detail) => {
+        const action = fileAction(e, stored, detail);
+        return action ? <FileRowMenu store={store} sessionKey={sessionKey} entry={e} label={rowLabel(e)} action={action} /> : null;
+    };
+    return <>
+        <FilesPanelView dirs={Object.fromEntries(tree.dirs.value)} onToggle={(p, stored) => tree.toggle(p, stored)} onMore={(p) => tree.more(p)} onClose={() => setFilesOpen(false)} narrow={narrow} menuFor={menuFor} />
+        <FileShowConfirm />
+    </>;
 }

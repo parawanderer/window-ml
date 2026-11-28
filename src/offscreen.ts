@@ -84,7 +84,7 @@ const filesHide = makeHideRule(async (session) => ((await chrome.runtime.sendMes
 chrome.runtime.onMessage.addListener((msg: { type?: unknown } | undefined) => { if (msg?.type === "FILES_HIDE_CHANGED") filesHide.forget(); return false; });
 const agentFiles = new AgentFiles();   // state: plumbing — a handle to the ml-agent-files database, declared as session.files
 const filesSource = createFilesSource({ store, send: (m) => chrome.runtime.sendMessage(m) });   // state: plumbing — the shelf the one reader reads
-const filesReader = new RangedReader({ hidden: filesHide.rule,   // state: plumbing — the one reader, a channel per worker
+const filesReader = new RangedReader({ hidden: filesHide.rule, hiddenWhy: filesHide.why,   // state: plumbing — the one reader, a channel per worker
     source: filesSource,
     agent: agentFiles,
     quotaBytes: async (session) => {
@@ -113,7 +113,7 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
     if (sender.id !== chrome.runtime.id || sender.tab) return undefined;   // the service worker's word only, like every message here
     if (msg?.type === "FS_CALL") { void fsChannels.call(msg.key, msg.session, msg.op, msg.args).then(sendResponse); return true; }
     if (msg?.type === "FS_END") fsChannels.end(msg.key);
-    if (msg?.type === "FILES_LIST") { void filesList.list(msg.session, msg.path, { cursor: msg.cursor, limit: msg.limit }).then(sendResponse); return true; }
+    if (msg?.type === "FILES_LIST") { void filesList.list(msg.session, msg.path, { cursor: msg.cursor, limit: msg.limit, detail: msg.detail === true }).then(sendResponse); return true; }
     return undefined;
 });
 

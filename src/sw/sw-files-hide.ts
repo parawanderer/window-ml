@@ -18,10 +18,46 @@ export async function filesHideList(message: unknown, sender: chrome.runtime.Mes
     return { entries: filesHideEntries(session) ?? null };
 }
 
-/** Tell the offscreen reader, whenever a policy changes, to drop the lists it holds, so a new `hide` binds the next read.
- *  No receiver (no offscreen document open) is not an error: the reader asks afresh when it starts. */
-export function signalFilesHideChanges(): void {
-    onPoliciesChanged(() => { chrome.runtime.sendMessage({ type: "FILES_HIDE_CHANGED" }).catch(() => { /* no reader open */ }); });
+/** How many listed sessions' rules are kept to compare against; past it the oldest listed is dropped, and a change to
+ *  its rules sends no hint until it is listed again. */
+export const LISTED_RULES_MAX = 256;
+
+/** Each listed session's resolved hiding rules when its files were last listed, as JSON: what a policy change is compared
+ *  against, so only a session whose `hidden` marks can have changed is told (`files-changed`). */
+const listedRules = new Map<string, string>();   // state: cache — re-read at every files.list; lost with the worker, as the page's subscription is
+
+const rulesOf = (hash: string): string => JSON.stringify(filesHideEntries(hash) ?? null);
+
+/**
+ * Note that a session's files were listed, so a later change to its hiding rules sends it a `files-changed` hint.
+ * @param hash the session
+ */
+export function noteFilesListed(hash: string): void {
+    listedRules.delete(hash);
+    listedRules.set(hash, rulesOf(hash));
+    if (listedRules.size > LISTED_RULES_MAX) listedRules.delete(listedRules.keys().next().value!);
+}
+
+/**
+ * Whenever a policy changes: tell the offscreen reader to drop the lists it holds, so a new `hide` binds the next read,
+ * then hint each listed session whose resolved rules changed (SESSION_CONTRACT.md, `files-changed`). A session rule
+ * changes one session's, a global rule every listed session's; a policy of another consumer changes none. No receiver
+ * (no offscreen document open) is not an error: the reader asks afresh when it starts.
+ * Called once, at the worker's load: the listed sessions' rules are one record, so a second listener would find each
+ * change already taken in by the first.
+ * @param hint sends one session a `files-changed` with no `dirs`
+ * @returns the unsubscribe
+ */
+export function signalFilesHideChanges(hint: (hash: string) => void = () => {}): () => void {
+    return onPoliciesChanged(() => {
+        chrome.runtime.sendMessage({ type: "FILES_HIDE_CHANGED" }).catch(() => { /* no reader open */ });
+        for (const [hash, was] of listedRules) {
+            const now = rulesOf(hash);
+            if (now === was) continue;
+            listedRules.set(hash, now);
+            hint(hash);
+        }
+    });
 }
 
 /**

@@ -1679,8 +1679,8 @@ function rightClickedContext(tabId: number): Promise<unknown> {
 // A redirect hop's target, read for the worker's judged fetches (sw-redirects.ts); registered at the top level, so a
 // fetch in a worker that just woke still sees its hop.
 watchRedirects();
-// The `/files` reader's hiding rules: a policy change makes the offscreen reader ask for its lists again (sw-files-hide.ts).
-signalFilesHideChanges();
+// The `/files` reader's hiding rules: a policy change makes the offscreen reader ask for its lists again, then hints each listed session whose rules changed (sw-files-hide.ts).
+signalFilesHideChanges((hash) => { sessionServer.filesChanged(hash); });
 
 chrome.runtime.onInstalled?.addListener((details) => {
     // A deliberate reload or an update (NOT an idle SW respawn — that never fires onInstalled): invalidate any

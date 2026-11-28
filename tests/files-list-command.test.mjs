@@ -33,7 +33,7 @@ test("files.list answers the page the reader gave, for the session the command n
     const { run, calls } = handler(async () => ({ ok: PAGE }));
     assert.deepEqual(await run({ type: "files.list", session: SESSION, path: "" }), { ok: true, data: PAGE });
     assert.deepEqual(await run({ type: "files.list", session: SESSION, path: "attached", cursor: "c:2:x", limit: 10 }, { via: "hub", scopes: ["view"] }), { ok: true, data: PAGE });
-    assert.deepEqual(calls, [[HASH, "", {}], [HASH, "attached", { cursor: "c:2:x", limit: 10 }]]);
+    assert.deepEqual(calls, [[HASH, "", { detail: true }], [HASH, "attached", { cursor: "c:2:x", limit: 10 }]], "detail is asked for this browser only; the hub device's call carries none");
 });
 
 test("files.list refuses before asking the reader: no session, another runtime's, unknown, a mount other than files, a bad path, cursor or limit", T, async () => {
@@ -78,6 +78,55 @@ test("listSessionFiles passes a refusal on and throws on any answer not of the s
         { ok: { entries: [], count: { attached: "2" } } }, { fail: "failed", message: "x" }, { fail: "invalid" }]) {
         await assert.rejects(via(bad), undefined, JSON.stringify(bad));
     }
+});
+
+// --- files.list: detail goes to this browser's own pages, decided by the sender ---
+
+test("files.list asks for detail only when the sender is this browser: the default sender and an explicit one yes, a hub device never, and a field of the command cannot change it", T, async () => {
+    const { run, calls } = handler(async () => ({ ok: PAGE }));
+    await run({ type: "files.list", session: SESSION, path: "a" });
+    await run({ type: "files.list", session: SESSION, path: "b" }, { via: "this browser" });
+    await run({ type: "files.list", session: SESSION, path: "c" }, { via: "hub", scopes: ["view"] });
+    await run({ type: "files.list", session: SESSION, path: "d", detail: true }, { via: "hub", scopes: ["approve"] });
+    await run({ type: "files.list", session: SESSION, path: "e", detail: false });
+    assert.deepEqual(calls.map(([, p, o]) => [p, o.detail]), [["a", true], ["b", true], ["c", undefined], ["d", undefined], ["e", true]]);
+    for (const [, , o] of calls.slice(2, 4)) assert.equal("detail" in o, false, "absent, not false");
+});
+
+test("files.list to a hub device: the handler passes on what the dep answered, so the worker's rebuild is what keeps detail off the wire", T, async () => {
+    // The dep here is the worker's listSessionFiles over an offscreen answer that carries detail anyway.
+    const offscreen = { ok: { entries: [{ name: ".env", kind: "file", size: 1, mtimeMs: 1, hidden: true, readonly: true, realName: "x", hiddenBy: "default:dotenv", unhide: "show" }], detail: true } };
+    const sent = [];
+    const { run } = handler(async (hash, path, opts) => listSessionFiles(hash, path, opts, { send: async (m) => { sent.push(m); return offscreen; } }));
+    const hub = await run({ type: "files.list", session: SESSION, path: "attached/h1" }, { via: "hub", scopes: ["view"] });
+    assert.deepEqual(hub.data.entries[0], { name: ".env", kind: "file", size: 1, mtimeMs: 1, hidden: true, readonly: true });
+    assert.equal("detail" in hub.data, false);
+    assert.equal("detail" in sent[0], false, "the offscreen document is not asked for it either");
+    const mine = await run({ type: "files.list", session: SESSION, path: "attached/h1" });
+    assert.deepEqual(mine.data.entries[0], { name: ".env", kind: "file", size: 1, mtimeMs: 1, hidden: true, readonly: true, realName: "x", hiddenBy: "default:dotenv", unhide: "show" });
+});
+
+test("listSessionFiles with detail forwards the flag and keeps the stored name and the rule, only each in its shape; without detail the page has none of them", T, async () => {
+    const entry = (over) => ({ name: "a***.txt", kind: "file", size: 3, mtimeMs: 9, hidden: true, readonly: true, ...over });
+    const answer = (entries) => ({ ok: { entries, detail: true } });
+    const run = async (opts, entries) => { const sent = []; const r = await listSessionFiles(HASH, "p", opts, { send: async (m) => { sent.push(m); return answer(entries); } }); return { r, sent }; };
+    const full = entry({ realName: "a-secret.txt", hiddenBy: "pol-1", unhide: "remove" });
+    const withD = await run({ detail: true, limit: 5 }, [full]);
+    assert.deepEqual(withD.sent, [{ type: "FILES_LIST", session: HASH, path: "p", limit: 5, detail: true }]);
+    assert.deepEqual(withD.r, { ok: { entries: [full], detail: true } });
+    const without = await run({ limit: 5 }, [full]);
+    assert.deepEqual(without.sent, [{ type: "FILES_LIST", session: HASH, path: "p", limit: 5 }]);
+    assert.deepEqual(without.r, { ok: { entries: [entry({})] } });
+    const falsy = await run({ detail: false }, [full]);
+    assert.equal("detail" in falsy.sent[0], false, "absent, not false");
+    assert.equal("detail" in falsy.r.ok, false);
+    // A malformed unhide drops the rule pair; a realName that is empty, equal to the name, or not a string is dropped; hiddenBy on a shown entry is dropped.
+    const bad = await run({ detail: true }, [
+        entry({ hiddenBy: "pol-1", unhide: "delete" }), entry({ hiddenBy: "pol-1" }), entry({ unhide: "remove" }), entry({ hiddenBy: 5, unhide: "show" }),
+        entry({ realName: "" }), entry({ realName: "a***.txt" }), entry({ realName: 7 }), entry({ hidden: false, hiddenBy: "pol-1", unhide: "remove" })]);
+    for (const e of bad.r.ok.entries) assert.deepEqual(Object.keys(e).sort(), ["hidden", "kind", "mtimeMs", "name", "readonly", "size"], JSON.stringify(e));
+    const shown = await run({ detail: true }, [entry({ hidden: false, hiddenBy: "pol-1", unhide: "remove" })]);
+    assert.equal(shown.r.ok.entries[0].hiddenBy, undefined);
 });
 
 // --- files-changed: a live hint from the session server, never an event ---

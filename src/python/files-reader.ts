@@ -25,8 +25,20 @@ export interface FileStat {
 
 /** One page of a directory's listing: each entry carries its stat; `next` is the cursor of the page after it. */
 export interface DirPage {
-    entries: Array<{ name: string } & FileStat>;
+    entries: Array<{ name: string } & FileStat & DirEntryDetail>;
     next?: string;
+}
+
+/** What a listing with `detail` adds to an entry, for the person's own file browser on this device only (SESSION_CONTRACT.md,
+ *  `files.list`): never asked by `ml.fs`, Python's mount or a hub client's listing. */
+export interface DirEntryDetail {
+    /** the stored name, only where it differs from the shown `name` */
+    realName?: string;
+    /** a hidden entry's deciding rule: a policy id, or a default's `default:<name>` */
+    hiddenBy?: string;
+    /** a hidden entry's way out: `remove` when the deciding rule is a session `hide` whose source is exactly this entry's
+     *  stored path, `show` otherwise (a session `show` on the path then wins) */
+    unhide?: "remove" | "show";
 }
 
 /** How `openWrite` starts the pending part: empty, seeded by reference with the version it replaces, or only if new. */
@@ -50,7 +62,8 @@ export interface FilesChannel {
     /** The session this channel serves (a Python run's worker: the run's, set once), or null for none; `attemptTxn` joins every `openWrite` to that txn. */
     setSession(hash: string | null, opts?: { attemptTxn?: Txn }): void;
     stat(path: string, opts?: { txn?: Txn }): Promise<FileStat>;
-    opendir(path: string, opts: { cursor?: string; limit: number; txn?: Txn }): Promise<DirPage>;
+    /** One page of a directory; `detail` adds {@link DirEntryDetail}, for the person's own file browser only. */
+    opendir(path: string, opts: { cursor?: string; limit: number; txn?: Txn; detail?: boolean }): Promise<DirPage>;
     /** Open for reading: the descriptor pins the version it opened. */
     open(path: string, opts?: { txn?: Txn }): Promise<{ fd: number; size: number; version: string }>;
     /** Copy at most `length` (≤ 512 KiB) bytes from `position` into `dest`; 0 at the end. Through a writer, its pending part. */

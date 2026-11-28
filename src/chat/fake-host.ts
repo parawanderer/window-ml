@@ -140,6 +140,46 @@ export class FakeHost implements SessionHost {
     filesCountsAgent = true;
     /** does it list files at all? Off, `files.list` is `unsupported` */
     filesListed = true;
+    /** does it list as for this browser's own pages (`detail`: stored names, deciding rules)? Off, as for a hub client */
+    filesDetail = true;
+    /** each session's hiding rules, as `policy.files` made them: literal paths only, the fake's whole rule language */
+    private filesRules = new Map<SessionKey, { id: string; effect: "hide" | "show"; source: string }[]>();
+    private filesRuleSeq = 0;
+
+    /** Which session rule decides a stored path, the fake's layer rule: a literal on the path itself, else a `hide` on an
+     *  ancestor; on the path itself a `hide` wins a tie. Undefined: the node's own `hidden` (a default) decides. */
+    private ruleFor(key: SessionKey | undefined, stored: string): { id: string; effect: "hide" | "show"; source: string } | undefined {
+        const rules = (key && this.filesRules.get(key)) || [];
+        const self = rules.filter((r) => r.source === `/files/${stored}`);
+        if (self.length) return self.find((r) => r.effect === "hide") ?? self[0];
+        const parts = stored.split("/");
+        for (let i = parts.length - 1; i > 0; i--) {
+            const hit = rules.find((r) => r.effect === "hide" && r.source === `/files/${parts.slice(0, i).join("/")}`);
+            if (hit) return hit;
+        }
+        return undefined;
+    }
+
+    private policyFiles(key: SessionKey | undefined, c: Extract<Command, { type: "policy.files" }>): CommandResult<"policy.files"> {
+        if (!key) return { ok: false, error: { code: "not-found", message: "no such session" } };
+        const rules = this.filesRules.get(key) ?? [];
+        this.filesRules.set(key, rules);
+        if (c.op === "add") {
+            if (!c.source.startsWith("/files/")) return { ok: false, error: { code: "invalid", message: "the pattern must be an absolute path starting with /" } };
+            if (c.effect === "show" && /\/\.config\/(gh|gcloud)(\/|$)/.test(c.source)) return { ok: false, error: { code: "invalid", message: "a show cannot release .config/gh (a credential directory)" } };
+            const same = rules.find((r) => r.effect === c.effect && r.source === c.source);
+            const id = same?.id ?? `fake-rule-${++this.filesRuleSeq}`;
+            if (!same) rules.push({ id, effect: c.effect, source: c.source });
+            this.filesChanged(key);
+            return { ok: true, data: { id } };
+        }
+        const at = rules.findIndex((r) => r.id === c.id);
+        if (at < 0) return { ok: false, error: { code: "not-found", message: "no such hiding rule in this session's view" } };
+        if (rules[at].effect === "hide" && c.confirm !== true) return { ok: true, data: { removed: false, confirm: { exposes: [] } } };
+        rules.splice(at, 1);
+        this.filesChanged(key);
+        return { ok: true, data: { removed: true } };
+    }
 
     constructor(opts: { self?: Principal; runtimes: RuntimeInfo[]; sessions?: { summary: SessionSummary; events?: MlDebugEvent[] }[]; archived?: { summary: SessionSummary; events?: MlDebugEvent[] }[]; latencyMs?: number; streamMs?: number;
         /** runtimes to report as this client's own (`isLocal`), as a page that hosts a runtime would */
@@ -276,24 +316,34 @@ export class FakeHost implements SessionHost {
         if (c.mount && c.mount !== "files") return bad("unsupported", `no mount ${c.mount}`);
         const tree = (key && this.filesOf.get(key)) || DEMO_FILES;
         let level: FakeFsNode[] | undefined = tree;
+        const storedDir: string[] = [];
         for (const part of c.path.split("/").filter(Boolean)) {
             if (level && level.filter((n) => n.name === part).length > 1) return bad("invalid", `the name ${part} is shared by two entries`);
             const hit: FakeFsNode | undefined = level?.find((n) => n.name === part);
             if (!hit) return bad("not-found", "no such directory");
             if (!hit.children) return bad("invalid", "not a directory");
+            storedDir.push(hit.realName ?? hit.name);
             level = hit.children;
         }
         let at = 0;
         if (c.cursor != null) { at = /^\d+$/.test(c.cursor) ? Number(c.cursor) : -1; if (at < 0 || at > level!.length) return bad("invalid", "not a cursor this runtime gave"); }
         const n = Math.min(Math.max(1, c.limit ?? this.filesPageSize), this.filesPageSize, 500);
-        const entries = level!.slice(at, at + n).map((f): FileListEntry => ({
-            name: f.name, kind: f.children ? "dir" : "file", size: f.size ?? 0, mtimeMs: f.mtimeMs ?? DEMO_MTIME, hidden: !!f.hidden, readonly: !!f.readonly,
-            ...(f.realName ? { realName: f.realName } : {}),
-        }));
+        const detail = this.filesDetail;
+        const entries = level!.slice(at, at + n).map((f): FileListEntry => {
+            const stored = [...storedDir, f.realName ?? f.name].join("/");
+            const rule = this.ruleFor(key, stored);
+            const hidden = rule ? rule.effect === "hide" : !!f.hidden;
+            // A node hidden with no session rule stands for a default (`.env`): only a `show` releases it.
+            const why = !hidden ? {} : rule ? { hiddenBy: rule.id, unhide: rule.source === `/files/${stored}` ? "remove" as const : "show" as const } : { hiddenBy: "default:dotenv", unhide: "show" as const };
+            return {
+                name: f.name, kind: f.children ? "dir" : "file", size: f.size ?? 0, mtimeMs: f.mtimeMs ?? DEMO_MTIME, hidden, readonly: !!f.readonly,
+                ...(detail && f.realName ? { realName: f.realName } : {}), ...(detail ? why : {}),
+            };
+        });
         const files = (ns: FakeFsNode[]): number => ns.reduce((t, f) => t + (f.children ? files(f.children) : 1), 0);
         const shelf = (name: string) => tree.find((t) => t.name === name)?.children ?? [];
         return { ok: true, data: {
-            entries, ...(at + n < level!.length ? { next: String(at + n) } : {}),
+            entries, ...(at + n < level!.length ? { next: String(at + n) } : {}), ...(detail ? { detail: true as const } : {}),
             ...(c.path === "" ? { count: { attached: files(shelf("attached")), ...(this.filesCountsAgent ? { agent: files(shelf("agent")) } : {}) } } : {}),
         } };
     }
@@ -441,6 +491,8 @@ export class FakeHost implements SessionHost {
         switch (c.type) {
             case "files.list":
                 return this.listFiles(key, c);
+            case "policy.files":
+                return this.policyFiles(key, c);
             case "side.call":
                 if (!caps.sideCalls) return fail("unsupported", "no side calls on this runtime");
                 return ok({ content: SIDE_REPLIES[c.purpose] });
