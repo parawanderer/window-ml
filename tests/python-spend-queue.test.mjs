@@ -49,7 +49,7 @@ after(async () => {
 /** Run a cell through the real boot harness; the spend is timed from its own mark to the cancel's return. */
 async function cell(code) {
     py.runPython("globals().pop('_queue_ms', None)");
-    injectInputs(py.globals, null, null, harness);
+    injectInputs(py.globals, null, harness);
     spendStarted = 0;
     const cancelled = await hostRunScript(harness, wrapUserCode(code, true, false, "host"), py.globals);
     const queueMs = py.globals.get("_queue_ms");

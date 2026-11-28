@@ -26,7 +26,7 @@ const { wrapUserCode, injectInputs } = await import(runtimeUrl);
 parentPort.on("message", async (msg) => {
     const { id, code, image, tablesJson } = msg;
     try {
-        injectInputs(py.globals, image ?? null, tablesJson ?? null, harness);
+        injectInputs(py.globals, image ?? null, harness);
         await py.runPythonAsync(wrapUserCode(code, true));
         const out = {
             stdout: String(py.globals.get("_stdout") ?? ""),
@@ -39,7 +39,7 @@ parentPort.on("message", async (msg) => {
     } catch (e) {
         parentPort.postMessage({ id, out: { stdout: "", error: String((e && e.message) || e), value: null } });
     } finally {
-        injectInputs(py.globals, null, null, harness);
+        injectInputs(py.globals, null, harness);
     }
 });
 parentPort.postMessage({ ready: true });

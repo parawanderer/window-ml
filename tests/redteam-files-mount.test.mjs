@@ -205,3 +205,52 @@ test("RED TEAM (files mount): each run's worker gets its own channel with its ow
         });
     } finally { setFilesReader(null); }
 });
+
+// --- two files under one shown name: both listed, and a lookup by it asks the reader ------------------------
+
+// FILE_ATTACHMENTS.md's name rule at the mount (#2166): two files whose stored names mask to ONE shown name are both
+// listed under it, and a lookup by it asks the reader, which refuses it as ambiguous. The cache is what is at stake,
+// and it fails in both directions: answer a stat from the mount's `kids` and it succeeds, saying one arbitrary file's
+// size; drop the name from `kids` altogether and the LISTING dies, because getdents looks up every name it returns
+// and the reader's EACCES fails the whole call. The control is a file whose shown name is unique, which stats fine.
+test("RED TEAM (files mount): two files under one shown name are both listed, and a stat or open by that name is refused, not answered from the cache", T, async (t) => {
+    if (skip) return t.skip(skip);
+    const SHOWN = "[REDACTED:RT]";
+    await ctl("seed", "rt-1", "agent/v1", "one");
+    await ctl("seed", "rt-1", "agent/v2", "two");
+    await ctl("seed", "rt-1", "agent/only-v1", "three");
+    await ctl("forms", [{ find: "v1", put: SHOWN }, { find: "v2", put: SHOWN }]);
+    const before = (await ctl("log")).length;
+    try {
+        const r = await cell([
+            "import os",
+            "out = []",
+            "try:",
+            "    out.append('ls=' + ','.join(sorted(os.listdir('/files/agent'))))",
+            "except OSError as e:",
+            "    out.append('lsERR ' + type(e).__name__)",
+            "try:",
+            "    os.stat('/files/agent/" + SHOWN + "'); out.append('stat ok')",
+            "except OSError as e:",
+            "    out.append('stat ' + type(e).__name__)",
+            "try:",
+            "    open('/files/agent/" + SHOWN + "'); out.append('open ok')",
+            "except OSError as e:",
+            "    out.append('open ' + type(e).__name__)",
+            "out.append('unique=' + str(os.stat('/files/agent/only-" + SHOWN + "').st_size))",
+            "print(';'.join(out))",
+        ].join("\n"));
+        assert.equal(r.ok, true, String(r.error ?? ""));
+        const out = String(r.stdout).trim();
+        // Positive control: the collision is two entries under the one shown name, and a unique shown name resolves.
+        assert.match(out, new RegExp(`ls=.*${SHOWN.replace(/[[\]]/g, "\\$&")},${SHOWN.replace(/[[\]]/g, "\\$&")}`), out);
+        assert.match(out, /unique=5/, out);
+        // Neither stored name reaches the cell: the listing carries what the reader shows, not what it stores.
+        assert.doesNotMatch(out, /v1|v2/, `a stored name reached the cell: ${out}`);
+        // The lookups: refused as ambiguous, which the mount can only learn by asking the reader.
+        assert.match(out, /stat PermissionError/, `the mount answered a stat for an ambiguous shown name from its cache: ${out}`);
+        assert.match(out, /open PermissionError/, `the mount answered an open for an ambiguous shown name from its cache: ${out}`);
+        const asked = (await ctl("log")).slice(before).filter((e) => typeof e[1] === "string").map((e) => e[1]);
+        assert.ok(asked.includes("agent/" + SHOWN), `the reader was never asked for the ambiguous shown name: ${asked.join(", ")}`);
+    } finally { await ctl("forms", []); }
+});

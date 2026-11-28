@@ -156,6 +156,12 @@ export async function holdStands(tabId: number, runId: string): Promise<boolean>
     return holds.has(runId);
 }
 
+/** Note that the run's judge has spoken on `url` without judging it: a page a gate already passed (a navigate's named page). */
+export function markSpoken(runId: string, url: string): void { spoke.set(runId, url); }
+
+/** A URL without its fragment, for telling a named page from another: a fragment is not another read. */
+export const unfragmented = (url: string): string | undefined => { try { const u = new URL(url); u.hash = ""; return u.href; } catch { return undefined; } };
+
 /** Forget a run whose session is released: its next life starts as a first turn. */
 export function forgetArrivalRun(runId: string): void { quiet.get(runId)?.(); quiet.delete(runId); holds.delete(runId); spoke.delete(runId); }
 
@@ -209,6 +215,13 @@ export function arrivalAnsweredText(h: Extract<ArrivalHold, { kind: "ask" }>, ap
     if (approved) return `The tab moved to ${h.origin}, a page the run did not open by name${why}. The person approved the run acting on it.`;
     return `The tab moved to ${h.origin}, a page the run did not open by name${why}. The person declined, and the tab went back to the page before.${note ? ` They said: ${note}` : ""}`;
 }
+
+/**
+ * What the model reads once the person declined an ask hold on a tab with no page to go back to: the run has no tab now
+ * (TABLESS_RUN.md, part 3).
+ * @param note what the person said with the denial
+ */
+export const arrivalNoBackText = (note?: string): string => `The person declined. The run has no page again.${note ? ` They said: ${note}` : ""}`;
 
 /** What the model reads of a call that met an ask hold before the person answered it. */
 export const arrivalWaitingText = (h: Extract<ArrivalHold, { kind: "ask" }>): string =>

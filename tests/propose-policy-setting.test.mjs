@@ -39,7 +39,10 @@ const TEST_STEPS = 300_000;
 function nFor(share) {
     const a = stepsOf(spender(0)), b = stepsOf(spender(20));
     const perIter = (b - a) / 20;   // total steps per extra iteration, over the whole measure
-    return Math.max(0, Math.round((share * TEST_STEPS - a) / perIter));
+    const n = Math.round((share * TEST_STEPS - a) / perIter);
+    // A baseline past the share leaves no loop to size: the row would measure the baseline, not the rule, so it fails.
+    assert.ok(n > 0, `the measure's baseline (${a} steps) is past ${share} of TEST_STEPS: the budget rows cannot be sized`);
+    return n;
 }
 
 // --- the measure: what a rule covers ---
@@ -103,21 +106,49 @@ test("every boolean and enum key is measured over all its (from, to) pairs and a
     assert.ok(seen >= 10, `only ${seen} boolean or enum keys were enumerated`);
 });
 
+/** The bounded integer keys the measure reaches, from the table: the rows below enumerate them, never name them. */
+const boundedInts = writable.filter((k) => { const d = SETTING_CLASSES[k]; return d.class === "ordinary" && d.domain.kind === "number" && d.domain.integer && d.domain.max !== undefined; });
+/** A rule matching `to === v` on key `k` that names no number, so the value must come from the measure's own `to` values. */
+const toIs = (k, v) => `(c) => c.key === ${JSON.stringify(k)} && String(c.to) === ${JSON.stringify(String(v))}`;
+
 test("every integer key with a max and a range within SETTING_ENUMERATE_MAX has every `to` tried", () => {
     let seen = 0;
-    for (const k of writable) {
-        const d = SETTING_CLASSES[k];
-        if (d.class !== "ordinary" || d.domain.kind !== "number" || !d.domain.integer || d.domain.max === undefined) continue;
-        const { min, max } = d.domain;
+    for (const k of boundedInts) {
+        const { min, max } = SETTING_CLASSES[k].domain;
         if (max - min + 1 > PP.SETTING_ENUMERATE_MAX) continue;
         for (let v = min; v <= max; v++) {
-            const b = measure(`(c) => c.key === ${JSON.stringify(k)} && c.to === ${v}`);
+            const b = measure(toIs(k, v));
             assert.ok(key(b, k).matched > 0, `${k}: to ${v} was never tried`);
             assert.equal(PP.settingCover(key(b, k)), "some", `${k} ${v}`);
         }
         seen++;
     }
     assert.ok(seen >= 1);
+});
+
+test("every integer key with a range wider than SETTING_ENUMERATE_MAX is sampled, not enumerated, and both its ends are tried", () => {
+    let seen = 0;
+    for (const k of boundedInts) {
+        const { min, max } = SETTING_CLASSES[k].domain;
+        if (max - min + 1 <= PP.SETTING_ENUMERATE_MAX) continue;
+        const all = key(measure(`(c) => c.key === ${JSON.stringify(k)}`), k);
+        assert.equal(all.sampled, true, k);
+        assert.ok(all.tried < max - min + 1, `${k}: ${all.tried} pairs tried, as many as its ${max - min + 1} values`);
+        for (const v of [min, max]) assert.ok(key(measure(toIs(k, v)), k).matched > 0, `${k}: the end ${v} was never tried`);
+        seen++;
+    }
+    assert.ok(seen >= 1, "no bounded integer key is wider than SETTING_ENUMERATE_MAX: the row tests nothing");
+});
+
+test("a rule naming 40 numbers on any bounded integer key is measured inside the product's budget", () => {
+    for (const k of boundedInts) {
+        const { min, max } = SETTING_CLASSES[k].domain;
+        const nums = Array.from({ length: 40 }, (_, i) => `c.to === ${min + Math.floor((i * (max - min)) / 39)}`).join(" || ");
+        const budget = { left: PP.SETTING_MEASURE_STEPS };
+        const b = PP.measureSettingBreadth(prop(`(c) => c.key === "theme" || (c.key === ${JSON.stringify(k)} && (${nums}))`), DEPS, [], budget);
+        assert.equal(b.exhausted, false, `${k}: ${PP.SETTING_MEASURE_STEPS - budget.left} steps`);
+        assert.ok(budget.left > 0, k);
+    }
 });
 
 test("a bounded number: c.to === one value reports \"some values\"", () => {

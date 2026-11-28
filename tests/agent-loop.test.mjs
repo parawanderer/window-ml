@@ -807,3 +807,35 @@ test("no reason, no note; a throwing askWhy asks without one; a cancelled gate a
     const r3 = await runAgentLoop("x", { tools: [danger] }, cancelled.deps);
     assert.doesNotMatch(r3.transcript[0].result, /removed by the person/);
 });
+
+// --- every approval path records the step's own tool time (`toolMs`) ---
+// The read-only try answers INSTEAD of runTool, so a step it handled once carried no `toolMs` and the sidebar's tooltip had a time but no runtime.
+test("toolMs: a step records its tool time under EVERY approval that runs it", async () => {
+    const wait = (ms) => new Promise(r => setTimeout(r, ms));
+    const cases = [
+        ["readonly (exec, tryReadonly)", "exec", { tryReadonly: async () => { await wait(20); return { result: "r" }; } }, "readonly"],
+        ["sandbox (python_exec, tryReadonly)", "python_exec", { tryReadonly: async () => { await wait(20); return { result: "r" }; } }, "sandbox"],
+        ...["readonly", "sandbox", "same-origin", "consented", "self-source"].map(a => [`${a} (autoApprove)`, "exec", { autoApprove: () => a }, a]),
+        ["user (the gate)", "exec", { approve: () => true }, "user"],
+    ];
+    for (const [label, tool, extra, approval] of cases) {
+        const { deps, calls } = makeDeps({ turns: [toolCall(tool, { js: "1" }), reply("done")], approve: extra.approve, autoApprove: extra.autoApprove });
+        const slow = deps.runTool;
+        deps.runTool = async (...a) => { await wait(20); return slow(...a); };
+        if (extra.tryReadonly) deps.tryReadonly = extra.tryReadonly;
+        await runAgentLoop("x", { tools: [{ name: tool, requiresApproval: true }] }, deps);
+        const done = calls.emits.find(e => e.tool === tool && !e.pending);
+        assert.equal(done.approval, approval, label);
+        assert.equal(typeof done.toolMs, "number", `${label}: toolMs recorded`);
+        assert.ok(done.toolMs >= 10, `${label}: toolMs measures the call (${done.toolMs})`);
+    }
+});
+
+test("toolMs: a refused read-only try leaves no time on a step that never ran (denied)", async () => {
+    const { deps, calls } = makeDeps({ turns: [toolCall("exec", { js: "x" }), reply("done")], approve: () => false });
+    deps.tryReadonly = async () => null;
+    await runAgentLoop("x", { tools: [{ name: "exec", requiresApproval: true }] }, deps);
+    const done = calls.emits.find(e => e.tool === "exec" && !e.pending);
+    assert.equal(done.approval, "denied");
+    assert.equal(done.toolMs, undefined);
+});

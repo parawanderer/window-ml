@@ -135,6 +135,10 @@ export interface MlConfig {
      *  ended, whichever executor runs it. 1..60; a value outside reads as 60, the ceiling (docs/spec/ASYNC_CALLS.md,
      *  rule 4b). A call's own `timeoutMs` is clamped to it. */
     detachedTaskMaxMin: number;
+    /** Minutes a run whose tab closed keeps its Python names, `@tool:` values and tasks before the worker releases them
+     *  (docs/spec/ASYNC_CALLS.md, "A run whose tab closed: the release"). A stored session and its transcript stay either
+     *  way. 0 releases at once. */
+    closedRunGraceMin: number;
     /** A finished detached task starts the run's next turn by default (docs/spec/ASYNC_CALLS.md, rule 4b). On, a finished
      *  task with no turn running only parks its result and says so in the transcript: it is read at the person's next
      *  message. DevTools Settings only. */
@@ -343,6 +347,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     sessionStoreBudgetMB: 256,
     pythonIdleMinutes: 10,
     detachedTaskMaxMin: 60,
+    closedRunGraceMin: 10,
     taskNotifyOnly: false,
     taskTurnChainMax: 5,
     filesQuotaMB: 1024,
@@ -442,6 +447,7 @@ export const SETTING_PLACES: Readonly<Partial<Record<keyof MlConfig, SettingPlac
     autoApprovePython: { tab: "advanced", section: "python" },
     pythonIdleMinutes: { tab: "advanced", section: "python" },
     detachedTaskMaxMin: { tab: "advanced", section: "python" },
+    closedRunGraceMin: { tab: "advanced", section: "python" },
     taskNotifyOnly: { tab: "advanced", section: "python" },
     taskTurnChainMax: { tab: "advanced", section: "python" },
     filesQuotaMB: { tab: "advanced", section: "python" },

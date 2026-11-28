@@ -1031,6 +1031,22 @@ RULED 2026-11-17 (Shane's idea, the details the coordinator's calls, in the coor
    listing and the commands are host-neutral and already reach the phone through the hub, so its view needs no
    contract change when it comes. Built first for the desktop renderer hosts: the extension, and a later VS Code
    extension.
+8. **A folder on the person's disk is listed and followed as the shelf is, in its own slice** (Shane, 2026-11-26, in
+   the coordinator's session; the details the coordinator's calls). NOT BUILT. Slices 1 and 1b list the `/files/` shelf
+   only: the listing command answers any other mount as `unsupported`, so no `ml.sh` root is in the tree, and a change
+   on disk reaches no tree. The slice after 1b adds both halves, and neither ships without the other:
+   - **The listing.** The same command with `mount` naming an `ml.sh` root, answered by the host through the
+     runtime, one directory a page under the same bounds, with each entry's hidden state from the hide list. A root
+     the session does not hold is refused as a path outside the mount is. With the host away the root answers
+     `unsupported`, and the tree says the folder is not connected; it never draws the last listing as current.
+   - **The change hint.** A change the host's watch sees under a listed root ("The sync", below: FSEvents on macOS,
+     inotify on Linux) sends the same `files-changed` hint a commit to the shelf sends, with the same rule: coalesced,
+     at most 16 directories or none, no names and no bytes. The end of an `ml.sh` call sends it once for what the call
+     changed. The watch is the host's one watch; the tree adds none.
+   - **Named cost.** The hint is a hint: a change made while no client is connected, or while the host is away, is
+     seen at the next listing, never replayed. A tree may be out of date between a change and its hint.
+   - **Open, for the slice's own spec:** the coalescing window, which roots are watched beyond the session's own
+     folder (the sync watches that folder only), and what a watch that overflows or dies reports.
 
 #### A `python_install` candidate worker
 
@@ -2263,6 +2279,51 @@ backup and any commit-on-cell-success live in one place.
   bytes itself is not (`ml.fs`, "The scrub"). Ruling 32's hash-only matcher is a stated gap: it is not built, the
   registry stores plaintext values, so the plaintext forms cover every registered value; when it lands, the forms'
   source changes and this read does not.
+
+#### Names under `/files` (the coordinator's rulings, 2026-11-24)
+
+BUILT (`src/session/ranged-reader.ts`, `maskName` in `src/secret-mask.ts`). The bytes are masked; the names are
+masked too, or a file named after a secret (an attachment's name, a file a cell wrote) would list it whole. The reader
+is the one place every front end lists and opens through, so the rule is there.
+
+1. Every name a listing returns is SHOWN: each match of a secret's form becomes its marker, `[REDACTED:<NAME>]` as the
+   person's turn writes it (the config's own markers, `[server]`, for a form the turn does not scrub), and a GitHub
+   token its marker. The forms come with their markers in `FILES_SECRET_FORMS`, asked at each call, as at each read.
+2. A folder sorts by its shown names. Entries sharing one are ordered by when they were made, then by a hash of the
+   stored name under a salt drawn once per reader, never by the stored name, so a cell cannot recover a secret from
+   where its own files sort beside it.
+3. A path resolves segment by segment: the child stored under exactly that name wins, even over a shown name it
+   shares; otherwise the one child whose shown name the segment is, as a whole value (no prefix, no part, no length).
+4. Two children sharing a shown name are both listed under it. A segment naming that shown name, with no exact match,
+   is `EACCES: '<path>' is ambiguous, <N> files`. The cost, accepted: neither opens by the shown name, a cell reaches
+   them only by their stored names, which it is never shown, and the person sees both in the panel, each under the
+   one shown name with its real name beside it on this device (rule 9).
+5. An error names the path as the caller wrote it, never a stored name: open, stat, the write side, a commit's
+   refusal and a discarded file's report alike.
+6. One lookup serves open, stat, opendir, unlink, rename (both ends), mkdir, rmdir and a create. A create on a shown
+   name addresses that file (an exclusive create is `EEXIST`), never a second one.
+7. The cursor is not a path: it is the last entry's ordinal among those sharing its shown name, then that shown name
+   (`c:<ordinal>:<shown>`), so a folder of colliding names pages to its end. A cursor of any other shape is `EINVAL`.
+8. Under `agent/`, a create or a rename whose last segment holds a marker a shown name can carry and names no file
+   there is `EACCES: '<path>' is reserved`: it would make a second file under a shown name. The markers are
+   `[REDACTED` (both `[REDACTED:<NAME>]` and the bare `[REDACTED]`), the GitHub token's `[a GitHub token]`, and every
+   `put` the forms carry at that call (`[server]`, `[price service]`, `[model filter]`).
+9. An entry's `name` is always the shown name, for every caller (the coordinator's ruling, amended by Shane,
+   2026-11-24). The person's panel shows the REAL name on this device, with a tip saying how the model sees it: the
+   reader has one extra output, `realName`, present only when the stored name differs from the shown one, and only for
+   a listing the extension's own pages ask for on this device (the offscreen caller the files panel adds). It never
+   rides the hub, an event (`files-changed`), an export, the run log, `ml.fs` or the Python mount; over the hub the
+   panel shows the shown name. The human-only state inspector (`session.files`) lists stored names, on the
+   extension's own pages only. NOT BUILT yet: the reader's `realName` option, off by default, lands in the PR after
+   this one; until then the panel has the shown name only.
+
+The exact match keeps two cases working: an attached name that holds the marker text itself, and a file written
+before the value in its name was registered, both open by the name the cell wrote. Python's mount lists both entries
+of a collision and caches neither, so its lookup asks the reader, which refuses it. A value registered mid-session is
+masked from the next listing on; a cell that read the name before holds it already, as with the bytes. A cursor read by a reader
+rebuilt since its page (the offscreen document restarted) may repeat or skip an entry, and only one tied on its birth
+time with another under one shown name: the tie's salt is drawn per reader. That cost is accepted; it needs equal
+birth times, a shared shown name and a restart between pages.
 
 **Asked by ruling 36 of the packages notebook, still not on main** (the design was fixed and built without them):
 whether worker memory stays flat reading ranges of a 1 GiB file; the cost of the scrub inside the read, both the
