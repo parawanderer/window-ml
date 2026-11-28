@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import { projectShotPoint, projectShotBox, browserInfo, incognitoEnableSteps, extensionDetailsUrl, mlRange, RANGE_MAX, pageContext } from "../src/util.ts";
+import { projectShotPoint, projectShotBox, browserInfo, incognitoEnableSteps, extensionDetailsUrl, mlRange, RANGE_MAX, pageContext, withinMs } from "../src/util.ts";
 
 // ---- mlRange: the bounded counter loop (ml.range) ----
 test("mlRange: the three forms (stop / start,stop / start,stop,step) incl. a descending range", () => {
@@ -259,4 +259,13 @@ test("pageContext: a document whose readyState is loading carries the Still load
             if (expected) assert.match(out, STILL, state); else assert.doesNotMatch(out, STILL, state);
         });
     }
+});
+
+// --- withinMs: a wait that may never be answered ---
+test("withinMs: a promise that never settles rejects after the bound, naming what it waited for", async () => {
+    await assert.rejects(withinMs(new Promise(() => {}), 20, "the archive"), /the archive did not answer in 1 s/);
+});
+test("withinMs: a value or a rejection inside the bound passes through unchanged", async () => {
+    assert.equal(await withinMs(Promise.resolve(7), 1000, "x"), 7);
+    await assert.rejects(withinMs(Promise.reject(new Error("boom")), 1000, "x"), /boom/);
 });

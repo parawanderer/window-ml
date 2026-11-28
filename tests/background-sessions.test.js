@@ -965,6 +965,28 @@ test("the storage history is recorded at startup, answered over the contract, an
     assert.match((await next.send({ type: "STORAGE_HISTORY" }, tab(7))).error, /Refused/);
 });
 
+// --- a storage report while the archive never answers ---
+
+test("the storage report resolves without its archive part when the archive never answers", T, async () => {
+    const { IDBFactory } = require("fake-indexeddb");
+    const idb = new IDBFactory();
+    // `stats` hangs forever (a SQLite worker that never replies); every other op answers.
+    const bg = loadBackground({
+        config: { ...config, sessionArchive: true }, indexedDB: idb,
+        onArchiveOp: (msg) => (msg.op === "stats" ? new Promise(() => {}) : { ok: true, result: msg.op === "list" ? [] : null }),
+    });
+    bg.context.__mlKeepSessionForTest("5709b001");
+    void bg.send({ type: "ML_DEBUG_EVENT", event: start("5709b001") }, tab(7));
+    for (let i = 0; i < 100 && !((await storedRow(idb, "5709b001", 1))?.count >= 1); i++) await new Promise((r) => setTimeout(r, 20));
+    const reply = await Promise.race([
+        bg.send({ type: "STORAGE_HISTORY" }, { url: "chrome-extension://test/settings.html" }),
+        new Promise((r) => setTimeout(() => r("HUNG"), 9000)),
+    ]);
+    assert.notEqual(reply, "HUNG", "the report must not wait forever on the archive");
+    assert.equal(reply.data.largest[0].hash, "5709b001");
+    assert.equal(reply.data.archive, undefined, "unknown, not zero");
+});
+
 test("the archive's folder state rides the runtime's description: read at startup, sent again when it changes, gone when the archive is switched off", T, async () => {
     const { IDBFactory } = require("fake-indexeddb");
     let folder = { state: "needs-grant", pending: 2, lastSync: null };

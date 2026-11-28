@@ -121,3 +121,19 @@ test("nearestPoint picks by time, so uneven samples are read where they are", as
     assert.equal(nearestPoint(pts, 50), 1, "halfway in TIME is nearer the second sample, though it is the middle index");
     assert.equal(nearestPoint(pts, 60), 2);
 });
+
+// --- a report that never arrives ---
+
+test("a report that never arrives stops saying Reading and says it could not be read", async () => {
+    const host = doc.getElementById("root");
+    render(null, host);
+    render(h(StorageBody, { load: () => new Promise(() => {}), readMs: 30 }), host);
+    await new Promise((r) => setTimeout(r, 200));
+    assert.doesNotMatch(host.textContent, /Reading/);
+    assert.match(host.textContent, /Could not read the storage report/);
+});
+
+test("a report that arrives inside the bound is drawn as before", async () => {
+    const host = await mount({ history: [snap(1)], now: snap(2), largest: [] }, { readMs: 5000 });
+    assert.match(host.textContent, /3 sessions/);
+});

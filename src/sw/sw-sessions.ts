@@ -16,7 +16,7 @@ import { type StoredSession } from "../contract/contract-messages";
 import { SESSION_CONTRACT_VERSION, type Command, type CommandFrom, type CommandResult, type CommandType, type ArchiveCapability, type BlankStartCapability, type RuntimeInfo, type SessionSummary, type TabGroupInfo, type TabInfo } from "../session/session-host";
 import { FaviconCache, stripOrder } from "./tab-favicons";
 import { tabReadyFailure } from "./tab-ready";
-import { browserInfo } from "../util";
+import { browserInfo, withinMs } from "../util";
 import { SessionIndex, type IngestSource } from "../session/session-index";
 import { SESSIONS_PORT, SessionServer } from "../session/session-server";
 import { STORE_MAX_SESSIONS, SessionStore, indexedDbBackend, type SessionHistory, type WriteFailure } from "../session/session-store";
@@ -35,7 +35,7 @@ import { forModel, forModelMessages, forTurn, redactedNote } from "./sw-scrub";
 import { workerMl } from "./worker-ml";
 import { ocrRequest } from "../ml/ml-vision";
 import { planImages } from "../image-gate";
-import { ensureOffscreen, isOffscreenSender } from "./sw-offscreen";
+import { ensureOffscreen, forgetOffscreen, isOffscreenSender } from "./sw-offscreen";
 import { forgetAgentFiles } from "./sw-agent-files";
 import { readPdfOffscreen } from "./sw-attach";
 import type { PdfMessage } from "../pdf/pdf-wire";
@@ -906,12 +906,27 @@ export async function recordStorageSnapshot(): Promise<void> {
     if (next) await chrome.storage.local.set({ [HISTORY_KEY]: next });
 }
 
-/** `storage.stats`, and the DevTools Storage section: the history, today's picture, and the largest sessions. */
+/** How long the report waits for the archive's `stats` before leaving that part out: the offscreen document or its SQLite worker may be down, and a message to either is never answered. */
+const ARCHIVE_STATS_MS = 5_000;
+/** How long the report waits for the store's rows (an IndexedDB that is blocked or very slow) before it fails with a reason. */
+const STORE_READ_MS = 20_000;
+
+/**
+ * `storage.stats`, and the DevTools Storage section: the history, today's picture, and the largest sessions. The
+ * archive's part is left out (unknown, never zero) when it does not answer in time; a store that does not answer fails
+ * the report with a message, so a page is never left waiting.
+ */
 export async function storageReport(): Promise<StorageReport> {
     const store = sessionStore!;
-    const [history, now, largest] = await Promise.all([storageHistory(), store.snapshot(), store.largest()]);
+    const [history, now, largest] = await withinMs(Promise.all([storageHistory(), store.snapshot(), store.largest()]), STORE_READ_MS, "the session store");
     // Only when it is on: asking would start SQLite for a page that has never used the archive.
-    const archive = archiveOn ? await archiveCall<NonNullable<StorageReport["archive"]>>("stats").catch(() => undefined) : undefined;
+    const archive = archiveOn
+        ? await withinMs(archiveCall<NonNullable<StorageReport["archive"]>>("stats"), ARCHIVE_STATS_MS, "the archive").catch((e) => {
+            // A call that never answered may have left the offscreen document's creation stuck: ask for a fresh one next time.
+            if (/did not answer/.test(String(e?.message))) forgetOffscreen();
+            return undefined;
+        })
+        : undefined;
     // A largest session's title leaves as a row's title does (a hub's `storage.stats` asks for this report too).
     const shown = largest.map(({ title, ...r }) => { const t = title ? forRowText(title) : undefined; return { ...r, ...(t ? { title: t } : {}) }; });
     return { history, now, largest: shown, ...(archive ? { archive } : {}) };
