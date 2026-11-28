@@ -5,7 +5,7 @@
 // between requests. Names are the reader's own, which are the SHOWN names; no bytes of any file are read.
 
 import { DIR_PAGE_MAX } from "./ranged-reader";
-import type { FilesChannel } from "../python/files-reader";
+import type { DirPage, FilesChannel } from "../python/files-reader";
 
 /** The most bytes of JSON one page's entries may take: what fits a sealed hub message with room for the envelope. */
 export const FILES_LIST_PAGE_BYTES = 256 * 1024;
@@ -19,12 +19,18 @@ export interface FilesListEntry {
     mtimeMs: number;
     hidden: boolean;
     readonly: boolean;
+    /** with `detail` only: the stored name where it differs, and a hidden entry's deciding rule and way out (DirEntryDetail) */
+    realName?: string;
+    hiddenBy?: string;
+    unhide?: "remove" | "show";
 }
 
 /** One page: its entries, the cursor of the next, and at the root how many files the session holds. */
 export interface FilesListPage {
     entries: FilesListEntry[];
     next?: string;
+    /** set when the page was listed with `detail`: its entries carry the stored names and the deciding rules */
+    detail?: true;
     count?: { attached: number; agent?: number };
 }
 
@@ -57,6 +63,14 @@ function refusal(code: unknown): FilesListAnswer {
     }
 }
 
+/** The detail fields the reader gave, each only where it is the reader's shape: nothing else of an entry passes. */
+function detailOf(e: DirPage["entries"][number]): Pick<FilesListEntry, "realName" | "hiddenBy" | "unhide"> {
+    return {
+        ...(typeof e.realName === "string" ? { realName: e.realName } : {}),
+        ...(e.hidden && typeof e.hiddenBy === "string" && (e.unhide === "remove" || e.unhide === "show") ? { hiddenBy: e.hiddenBy, unhide: e.unhide } : {}),
+    };
+}
+
 /**
  * The server for `files.list`.
  * @param deps the channel opener and the counts
@@ -68,9 +82,10 @@ export function filesListServer(deps: FilesListDeps) {
          * One page of one directory.
          * @param session the session's hash, as the worker resolved it
          * @param path the directory, session-relative ("" for the root, `attached/<handle>`, `agent/…`)
-         * @param opts `cursor` from a previous page, `limit` at most `DIR_PAGE_MAX`
+         * @param opts `cursor` from a previous page, `limit` at most `DIR_PAGE_MAX`; `detail` for the person's own browser on
+         *  this device, which the worker sets only for a command from this browser's pages
          */
-        async list(session: unknown, path: unknown, opts: { cursor?: unknown; limit?: unknown } = {}): Promise<FilesListAnswer> {
+        async list(session: unknown, path: unknown, opts: { cursor?: unknown; limit?: unknown; detail?: boolean } = {}): Promise<FilesListAnswer> {
             if (typeof session !== "string" || !session) return { fail: "invalid", message: "no session" };
             if (!inMount(path)) return { fail: "invalid", message: "path is a directory under /files/, written without a leading slash (\"\" for the root)" };
             if (opts.cursor !== undefined && typeof opts.cursor !== "string") return refusal("EINVAL");
@@ -81,15 +96,16 @@ export function filesListServer(deps: FilesListDeps) {
                 ch.setSession(session);
                 const cursor = opts.cursor as string | undefined;
                 let page;
-                try { page = await ch.opendir(path, { limit, ...(cursor !== undefined ? { cursor } : {}) }); }
+                const detail = opts.detail === true;
+                try { page = await ch.opendir(path, { limit, ...(cursor !== undefined ? { cursor } : {}), ...(detail ? { detail } : {}) }); }
                 catch (e) { return refusal((e as { code?: unknown })?.code); }
-                const entries: FilesListEntry[] = page.entries.map((e) => ({ name: e.name, kind: e.kind, size: e.size, mtimeMs: e.mtimeMs, hidden: e.hidden, readonly: e.readonly }));
+                const entries: FilesListEntry[] = page.entries.map((e) => ({ name: e.name, kind: e.kind, size: e.size, mtimeMs: e.mtimeMs, hidden: e.hidden, readonly: e.readonly, ...(detail ? detailOf(e) : {}) }));
                 // A page past the byte bound is listed again shorter: the reader's cursor is opaque, so the server
                 // never cuts a page itself. A name is at most 255 characters, so 500 rows fit and this is a guard.
                 if (JSON.stringify(entries).length > FILES_LIST_PAGE_BYTES && limit > 1) {
-                    return server.list(session, path, { cursor, limit: Math.max(1, Math.floor(limit / 2)) });
+                    return server.list(session, path, { cursor, limit: Math.max(1, Math.floor(limit / 2)), detail });
                 }
-                const out: FilesListPage = { entries, ...(page.next !== undefined ? { next: page.next } : {}) };
+                const out: FilesListPage = { entries, ...(page.next !== undefined ? { next: page.next } : {}), ...(detail ? { detail: true as const } : {}) };
                 if (path === "" && cursor === undefined) {
                     let attached: number;
                     try { attached = await deps.attachedCount(session); } catch { return refusal("EIO"); }

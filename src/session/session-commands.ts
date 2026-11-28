@@ -141,7 +141,7 @@ export interface CommandDeps {
     removeFilesRule?(hash: string, id: string, confirmed: boolean): { removed: true } | { removed: false; why: "unknown" | "confirm"; exposes?: string[] };
     /** one page of one directory of a session's `/files/`, under its shown names, read in the offscreen document
      *  (files-list-serve.ts); the command's own failure with its sentence, or the page */
-    listFiles?(hash: string, path: string, opts: { cursor?: string; limit?: number }): Promise<{ ok: FilesListing } | { fail: "invalid" | "not-found"; message: string }>;
+    listFiles?(hash: string, path: string, opts: { cursor?: string; limit?: number; detail?: boolean }): Promise<{ ok: FilesListing } | { fail: "invalid" | "not-found"; message: string }>;
     /** name a session (a capped, non-empty title), or with null return it to a generated title */
     renameSession(hash: string, title: string | null): void;
     /** every event this runtime still holds for a session, oldest first; empty when it holds none */
@@ -830,7 +830,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             return fail("invalid", "op is add or remove");
         },
 
-        "files.list": async (c) => {
+        "files.list": async (c, from) => {
             const s = session(c);
             if (s.error) return s.error;
             if (!deps.listFiles) return fail("unsupported", "this runtime lists no files");
@@ -839,7 +839,10 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             if (c.cursor !== undefined && typeof c.cursor !== "string") return fail("invalid", "the cursor is one this runtime gave");
             if (c.limit !== undefined && (typeof c.limit !== "number" || !Number.isInteger(c.limit) || c.limit < 1 || c.limit > 500)) return fail("invalid", "limit is a whole number from 1 to 500");
             let r;
-            try { r = await deps.listFiles(s.id.hash, c.path, { ...(c.cursor !== undefined ? { cursor: c.cursor } : {}), ...(c.limit !== undefined ? { limit: c.limit } : {}) }); }
+            // The stored names and the deciding rules go to this browser's own pages only, never to a hub device: the
+            // sender decides, never a field of the command (SESSION_CONTRACT.md, `files.list`).
+            const detail = from.via === "this browser";
+            try { r = await deps.listFiles(s.id.hash, c.path, { ...(c.cursor !== undefined ? { cursor: c.cursor } : {}), ...(c.limit !== undefined ? { limit: c.limit } : {}), ...(detail ? { detail } : {}) }); }
             catch { return fail("unavailable", "the session's files could not be read"); }
             if (!r || typeof r !== "object") return fail("unavailable", "the session's files could not be read");
             return "ok" in r ? ok(r.ok) : fail(r.fail, r.message);

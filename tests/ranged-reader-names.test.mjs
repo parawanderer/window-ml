@@ -302,6 +302,59 @@ test("a file that already exists under that literal name opens for write", T, as
     assert.equal(await slurp(ch, "agent/old[REDACTED:X]"), "second");
 });
 
+// --- detail: the stored name and the deciding rule (the person's own browser only) ---
+
+test("opendir with detail carries realName where the shown name is masked, and without detail no such key", T, async () => {
+    const bytes = enc("abc");
+    const { ch, forms } = setup({ attached: [row("h1", `${SECRET}.pdf`, "k1", bytes), row("h2", "plain.txt", "k2", bytes)], data: { k1: bytes, k2: bytes } });
+    forms.push(f(SECRET, "[REDACTED:DB_PASS]"));
+    const root = await ch.opendir("attached", { limit: 10 });
+    assert.ok(root.entries.every((e) => !("realName" in e)), "a directory under a plain name has none");
+    const page = await ch.opendir("attached/h1", { limit: 10, detail: true });
+    assert.deepEqual(page.entries.map((e) => [e.name, e.realName]), [["[REDACTED:DB_PASS].pdf", `${SECRET}.pdf`]]);
+    const plain = await ch.opendir("attached/h2", { limit: 10, detail: true });
+    assert.equal("realName" in plain.entries[0], false, "a name that is shown as stored carries no realName");
+    const bare = await ch.opendir("attached/h1", { limit: 10 });
+    assert.deepEqual(Object.keys(bare.entries[0]).sort(), ["birthtimeMs", "hidden", "kind", "mtimeMs", "name", "readonly", "size"], "ml.fs-style: no detail keys");
+});
+
+test("opendir with detail: a hidden entry carries hiddenBy and unhide from hiddenWhy, a shown one neither, and without detail nobody", T, async () => {
+    const bytes = enc("abc");
+    const { source, agent } = setup({ attached: [row("h1", ".env", "k1", bytes), row("h2", "ok.txt", "k2", bytes)], data: { k1: bytes, k2: bytes } });
+    const asked = [];
+    const reader = new RangedReader({ source, agent, now: () => 1,
+        hidden: (_s, p) => p.endsWith(".env"),
+        hiddenWhy: async (_s, p) => { asked.push(p); return { by: "default:dotenv", unhide: "show" }; } });
+    const ch = reader.openChannel("files");
+    ch.setSession("s1");
+    const list = async (opts) => {
+        const a = (await ch.opendir("attached/h1", { limit: 10, ...opts })).entries[0];
+        const b = (await ch.opendir("attached/h2", { limit: 10, ...opts })).entries[0];
+        return { env: a, ok: b };
+    };
+    const withDetail = await list({ detail: true });
+    assert.equal(withDetail.env.hidden, true);
+    assert.equal(withDetail.env.hiddenBy, "default:dotenv");
+    assert.equal(withDetail.env.unhide, "show");
+    assert.equal("hiddenBy" in withDetail.ok || "unhide" in withDetail.ok, false);
+    assert.deepEqual(asked, ["attached/h1/.env"], "asked only for the hidden entry");
+    const without = await list({});
+    for (const e of Object.values(without)) assert.equal("hiddenBy" in e || "unhide" in e || "realName" in e, false);
+    assert.equal(asked.length, 1, "a listing without detail never asks why");
+});
+
+test("opendir with detail: a hiddenWhy that rejects, or is absent, leaves both fields out and still lists", T, async () => {
+    const bytes = enc("abc");
+    const { source, agent } = setup({ attached: [row("h1", ".env", "k1", bytes)], data: { k1: bytes } });
+    for (const hiddenWhy of [async () => { throw new Error("worker gone"); }, undefined]) {
+        const ch = new RangedReader({ source, agent, now: () => 1, hidden: () => true, ...(hiddenWhy ? { hiddenWhy } : {}) }).openChannel("files");
+        ch.setSession("s1");
+        const [e] = (await ch.opendir("attached/h1", { limit: 10, detail: true })).entries;
+        assert.equal(e.hidden, true);
+        assert.equal("hiddenBy" in e || "unhide" in e, false);
+    }
+});
+
 // --- forms that fail ---
 
 test("secretForms rejecting makes opendir EIO, with nothing of the source's error", T, async () => {

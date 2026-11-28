@@ -699,13 +699,22 @@ export interface FileListEntry {
     hidden: boolean;
     readonly: boolean;
     /** The stored name where it differs from `name` (what the model sees it as), only to the extension's own pages on
-     *  this device, never to a hub client. Absent: `name` is the stored one. */
+     *  this device, never to a hub client. Absent: `name` is the stored one, or the listing is not this browser's. */
     realName?: string;
+    /** A hidden entry's deciding rule (a policy id, or a default's `default:<name>`; for an entry under a hidden directory,
+     *  that directory's rule), to this browser's own pages only, as `realName`. */
+    hiddenBy?: string;
+    /** A hidden entry's way out, beside `hiddenBy`: `remove` that rule when it is a session `hide` on exactly this path,
+     *  else `show` (a session `show` on this path wins over it). */
+    unhide?: "remove" | "show";
 }
 
 /** The answer to `files.list`: at most 500 entries and 256 KiB of JSON a page. */
 export interface FilesListing {
     entries: FileListEntry[];
+    /** Set only on a page listed for this browser's own pages, whose entries carry `realName`, `hiddenBy` and `unhide`:
+     *  the file browser offers its hide and show menu on such a page alone, since a rule matches stored paths. */
+    detail?: true;
     /** an opaque cursor for the next page; absent on the last */
     next?: string;
     /** the root (`path: ""`) only: how many files the session holds. A client never presents `attached` alone as the

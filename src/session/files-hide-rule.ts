@@ -1,7 +1,7 @@
 // files-hide-rule.ts — the `/files` reader's hide rule in the offscreen document: the worker's resolved list for a session, asked for and kept briefly.
 
 import { resolveHidden, type HideEntry } from "../files-hide";
-import type { HideRule } from "./ranged-reader";
+import type { HideRule, HideWhy } from "./ranged-reader";
 
 /** How long one session's list is reused before it is asked for again: the backstop when a change's signal is missed. */
 export const HIDE_LIST_TTL_MS = 1_000;
@@ -13,7 +13,7 @@ export const HIDE_LIST_TTL_MS = 1_000;
  * @param ask the session's entries, or null when the worker cannot read its policies
  * @param now the clock, for tests
  */
-export function makeHideRule(ask: (session: string) => Promise<HideEntry[] | null>, now: () => number = Date.now): { rule: HideRule; forget(): void } {
+export function makeHideRule(ask: (session: string) => Promise<HideEntry[] | null>, now: () => number = Date.now): { rule: HideRule; why: HideWhy; forget(): void } {
     const lists = new Map<string, { at: number; entries: Promise<HideEntry[]> }>();   // state: cache — the worker's list, refetched after the TTL or a change
     const listOf = (session: string): Promise<HideEntry[]> => {
         const had = lists.get(session);
@@ -23,9 +23,19 @@ export function makeHideRule(ask: (session: string) => Promise<HideEntry[] | nul
         lists.set(session, { at: now(), entries });
         return entries;
     };
+    // The reader's paths are relative to the volume (`attached/h1/.env`); the rules are written as `/files/...`.
+    const ruled = (path: string): string => (path === "" ? "/files" : `/files/${path}`);
     return {
-        // The reader's paths are relative to the volume (`attached/h1/.env`); the rules are written as `/files/...`.
-        rule: async (session, path) => resolveHidden(path === "" ? "/files" : `/files/${path}`, await listOf(session)).hidden,
+        rule: async (session, path) => resolveHidden(ruled(path), await listOf(session)).hidden,
+        // Removing the rule is the way out only when it is this session's `hide` on exactly this path: one on a directory
+        // above, or a glob, holds other paths too, and a session `show` on this path wins over it instead.
+        why: async (session, path) => {
+            const entries = await listOf(session);
+            const { by } = resolveHidden(ruled(path), entries);
+            const e = entries.find((x) => x.id === by);
+            const exact = !!e && e.layer === "session" && e.effect === "hide" && e.source === ruled(path);
+            return { ...(by !== undefined ? { by } : {}), unhide: exact ? "remove" : "show" };
+        },
         forget: () => lists.clear(),
     };
 }

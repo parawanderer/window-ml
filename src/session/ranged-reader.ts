@@ -38,6 +38,10 @@ export interface FilesSource {
  *  path: a list that cannot be read never lets a read past it. */
 export type HideRule = (session: string, path: string) => boolean | Promise<boolean>;
 
+/** Which rule hides a path, and whether removing it is the way out: asked only for a hidden entry of a listing with
+ *  `detail` (files-hide-rule.ts). */
+export type HideWhy = (session: string, path: string) => Promise<{ by?: string; unhide: "remove" | "show" }>;
+
 /** The volumes a channel may be opened on: `files` now; `history` (SESSION_HISTORY_STORE.md §6b) once it has one. */
 export type VolumeName = "files";
 
@@ -170,6 +174,8 @@ interface ReadFd {
 export interface RangedReaderDeps {
     source: FilesSource;
     hidden?: HideRule;
+    /** the deciding rule of a hidden entry, for a listing with `detail`; absent, such an entry carries neither field */
+    hiddenWhy?: HideWhy;
     now?: () => number;
     /** Where the files a session's runs make are kept (agent-files.ts). */
     agent?: AgentStore;
@@ -485,7 +491,13 @@ export class RangedReader {
                 for (const k of page) {
                     const q = dirPath === "" ? k.raw : `${dirPath}/${k.raw}`;
                     const c = k.node ?? await resolve(s, q, "opendir");
-                    if (c) entries.push({ name: k.shown, ...await statOf(s, q, c) });
+                    if (!c) continue;
+                    const st = await statOf(s, q, c);
+                    if (!opts.detail) { entries.push({ name: k.shown, ...st }); continue; }
+                    // The person's own browser: the stored name, and which rule hides it (a rule failing to say leaves both out).
+                    const why = st.hidden && reader.deps.hiddenWhy ? await reader.deps.hiddenWhy(s, q).catch(() => null) : null;
+                    entries.push({ name: k.shown, ...st, ...(k.raw !== k.shown ? { realName: k.raw } : {}),
+                        ...(why?.by !== undefined ? { hiddenBy: why.by, unhide: why.unhide } : {}) });
                 }
                 const last = page[page.length - 1];
                 return { entries, ...(order.length > page.length ? { next: `${CURSOR}${last.ord}:${last.shown}` } : {}) };

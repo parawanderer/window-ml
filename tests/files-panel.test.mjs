@@ -274,3 +274,68 @@ test("a folder row's size cell is empty", async () => {
     await mountPanel();
     assert.equal(rowOf("attached").querySelector(".fp-size").textContent, "");
 });
+
+// --- the row menu: what fileAction offers, and the stored path the panel builds for it ---
+
+const { fileAction, showWords } = await import("../src/chat/files-menu.tsx");
+const entry = (over = {}) => ({ name: "n", kind: "file", size: 1, mtimeMs: 1, hidden: false, readonly: false, ...over });
+
+test("fileAction: no detail, no stored path, or a glob character in any segment: none", () => {
+    assert.equal(fileAction(entry(), "agent/a.txt", false), null, "a hub listing");
+    assert.equal(fileAction(entry(), null, true), null, "a parent's stored path was not known");
+    assert.equal(fileAction(entry(), "", true), null, "the root itself");
+    for (const stored of ["agent/a*.txt", "agent/a?.txt", "agent/[x]/a.txt", "a*/b.txt", "agent/a[.txt"]) assert.equal(fileAction(entry(), stored, true), null, stored);
+    assert.deepEqual(fileAction(entry({ name: "ok" }), "agent/a.b-c d.txt", true), { kind: "hide", source: "/files/agent/a.b-c d.txt" }, "positive control: other characters are literal");
+});
+
+test("fileAction: a shown row hides its stored path; a hidden one removes its rule, shows a file, and offers a directory nothing", () => {
+    assert.deepEqual(fileAction(entry(), "agent/a.txt", true), { kind: "hide", source: "/files/agent/a.txt" });
+    assert.deepEqual(fileAction(entry({ kind: "dir" }), "agent/d", true), { kind: "hide", source: "/files/agent/d" });
+    const hidden = (over) => entry({ hidden: true, ...over });
+    assert.deepEqual(fileAction(hidden({ unhide: "remove", hiddenBy: "pol-9" }), "agent/a.txt", true), { kind: "remove", id: "pol-9" });
+    assert.deepEqual(fileAction(hidden({ unhide: "remove", hiddenBy: "pol-9", kind: "dir" }), "agent/d", true), { kind: "remove", id: "pol-9" }, "the rule on exactly the folder is removable");
+    assert.deepEqual(fileAction(hidden({ unhide: "show", hiddenBy: "default:dotenv" }), "agent/.env", true), { kind: "show", source: "/files/agent/.env" });
+    assert.equal(fileAction(hidden({ unhide: "show", hiddenBy: "pol-1", kind: "dir" }), "agent/d", true), null, "a show releases the row and nothing under it");
+    assert.equal(fileAction(hidden({}), "agent/a.txt", true), null, "the runtime did not say which rule");
+    assert.equal(fileAction(hidden({ unhide: "remove" }), "agent/a.txt", true), null, "a removal with no rule id");
+    assert.equal(fileAction(hidden({ unhide: "delete", hiddenBy: "x" }), "agent/a.txt", true), null);
+});
+
+test("showWords: a folder's wording does not claim only the folder", () => {
+    assert.equal(showWords(entry(), "a.txt"), "The model can read a.txt from its next cell.");
+    const d = showWords(entry({ kind: "dir" }), "docs");
+    assert.match(d, /everything in it that no other rule hides/);
+    assert.match(d, /^The model can read docs and everything in it/);
+});
+
+/** The `⋮` button of the row labelled `label`, among rows that have a menu. */
+const menuBtn = (label) => [...root.querySelectorAll(".fp-row-wrap")].find((w) => w.querySelector(".fp-name")?.textContent === label)?.querySelector(".fp-more-btn");
+
+test("the panel builds a subfolder's stored path from realName: the hide it sends names the stored folder and file", async () => {
+    await setup([dir("attached", [dir("up-1", [file("x.txt")], { realName: "real dir" })]), dir("agent", [])]);
+    await mountPanel();
+    await click(rowOf("attached"));
+    assert.ok(menuBtn("real dir"), "the folder row has a menu");
+    await click(rowOf("real dir"));
+    assert.deepEqual(listed(), ["", "attached", "attached/up-1"], "listed by the shown path");
+    await click(menuBtn("x.txt"));
+    await click(root.querySelector(".fp-menu [role=menuitem]") ?? [...root.querySelectorAll(".fp-menu *")].find((n) => /Hide from the model/.test(n.textContent)));
+    const sent = host.commands.filter((c) => c.type === "policy.files");
+    assert.deepEqual(sent.map((c) => [c.op, c.effect, c.source, c.scope]), [["add", "hide", "/files/attached/real dir/x.txt", "session"]]);
+});
+
+test("with the host listing as for a hub client (no detail), no row has a menu, and the page carries no detail", async () => {
+    await setup(TREE);
+    host.filesDetail = false;
+    await mountPanel();
+    await click(rowOf("attached"));
+    await click(rowOf("sub"));
+    const page = await host.send({ type: "files.list", session: { runtime: "r", hash: "aaaa0001" }, path: "attached" });
+    assert.equal("detail" in page.data, false);
+    assert.equal(root.querySelectorAll(".fp-more-btn").length, 0);
+    assert.ok(rowOf("deep.txt"), "positive control: the rows are there");
+    host.filesDetail = true;
+    host.filesChanged(KEY);
+    await flush();
+    assert.ok(root.querySelectorAll(".fp-more-btn").length > 0, "the same tree with detail offers menus");
+});

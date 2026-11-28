@@ -172,3 +172,33 @@ test("files.list: a root whose attached count cannot be read is refused rather t
     const server = filesListServer({ open: () => reader.openChannel("files"), attachedCount: async () => { throw new Error("worker gone"); } });
     assert.equal((await server.list("s1", "")).fail, "invalid");
 });
+
+// --- files.list: detail, for the person's own browser only ---
+
+/** A server over a reader that hides `.env` with a deciding rule, and holds a file whose name is masked. */
+function detailSetup() {
+    const SECRET = "hunter2-db";
+    const sessions = { s1: [row("h1", ".env"), row("h2", "ok.txt"), row("h3", `${SECRET}.pdf`)] };
+    const source = { ...fakeSource(sessions), secretForms: async () => [{ find: SECRET, put: "[REDACTED:K]" }] };
+    const reader = new RangedReader({ source, now: () => 123, hidden: (_s, p) => p.endsWith(".env"), hiddenWhy: async () => ({ by: "pol-1", unhide: "remove" }) });
+    return filesListServer({ open: () => reader.openChannel("files"), attachedCount: async () => 3 });
+}
+
+test("files.list with detail: the page says so, a masked name carries its stored name and a hidden entry its rule and way out", T, async () => {
+    const server = detailSetup();
+    const one = async (h) => { const r = await server.list("s1", `attached/${h}`, { detail: true }); assert.equal(r.ok.detail, true); return r.ok.entries[0]; };
+    const env = await one("h1"), ok = await one("h2"), masked = await one("h3");
+    assert.equal(env.hiddenBy, "pol-1");
+    assert.equal(env.unhide, "remove");
+    assert.equal(masked.name, "[REDACTED:K].pdf");
+    assert.equal(masked.realName, "hunter2-db.pdf");
+    assert.equal("realName" in ok || "hiddenBy" in ok || "unhide" in ok, false);
+});
+
+test("files.list without detail, or with anything but true: no detail key on the page or an entry", T, async () => {
+    for (const opts of [{}, { detail: false }, { detail: "true" }, { detail: 1 }]) {
+        const r = await detailSetup().list("s1", "attached/h1", opts);
+        assert.equal("detail" in r.ok, false, JSON.stringify(opts));
+        for (const e of r.ok.entries) assert.deepEqual(Object.keys(e).sort(), ["hidden", "kind", "mtimeMs", "name", "readonly", "size"], JSON.stringify(opts));
+    }
+});
