@@ -1651,39 +1651,29 @@ html[data-calm]:not([data-theme="light"]), html[data-calm]:not([data-theme="ligh
 .chat-settings-body .set-search-tab { margin: 18px 0 2px; padding-bottom: 6px; color: var(--fg-dim); font-size: .86em; }
 .chat-settings-body .set-field { gap: 7px; padding-top: 0; }
 .chat-settings-body .set-field > span { color: var(--fg-dim); font-size: .95em; }
-.chat-settings-body .set-field input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
-.chat-settings-body .set-field select, .chat-settings-body .perm-input, .chat-settings-body .perm-search {
+/* The text fields wear sidebar.css's one skin (`.set-field input`, `.perm-input`, `.pol-source-input`, textareas); this
+   page only makes them thumb-sized. A select keeps its own rule here. */
+.chat-settings-body { --field-min: 42px; --field-pad: 9px 14px; --field-pad-area: 10px 14px; }
+.chat-settings-body .set-field select {
     box-sizing: border-box; min-height: 42px; padding: 9px 14px; border: 1px solid transparent; border-radius: 12px;
     background-color: var(--panel); color: var(--fg); font: inherit;
 }
 .chat-settings-body .set-field select { padding-right: 40px; }
-.chat-settings-body .set-field input:focus, .chat-settings-body .set-field select:focus,
-.chat-settings-body .perm-input:focus, .chat-settings-body .perm-search:focus { outline: none; border-color: var(--panel-2-hover); }
-.chat-settings-body .set-field input.err { border-color: var(--err); }
+.chat-settings-body .set-field select:focus { outline: none; border-color: var(--panel-2-hover); }
 /* The compact selects that sit in a row (a policy's effect, a site's scope) and the policy source box: the same fill
    and radius, at the size of the row they are in. */
 .chat-settings-body select:not(.set-field select) {
     min-height: 34px; padding: 6px 34px 6px 12px; border: 1px solid transparent; border-radius: 10px;
     background-color: var(--panel); color: var(--fg); font: inherit; font-size: .92em;
 }
-/* The paths boxes (workspace folders, program search path): the same pill as every other field, which a <textarea> was
-   not given, so it drew the browser's grey box with a square corner. Several lines, one path each, so it grows
-   downward only. */
-.chat-settings-body .set-field textarea {
-    box-sizing: border-box; width: 100%; min-height: 42px; padding: 10px 14px; border: 1px solid transparent; border-radius: 12px;
-    background-color: var(--panel); color: var(--fg); font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--code-fs, .92em);
-    line-height: 1.5; resize: vertical;
-}
-.chat-settings-body .set-field textarea::placeholder { color: var(--fg-faint); }
-.chat-settings-body .set-field textarea:focus { outline: none; border-color: var(--panel-2-hover); }
 /* THE HOST INSTALLER: the note, the line to paste and the button are three things, spaced as three. The line is a
    rounded card like the note above it, its copy button always lit in the corner. */
 .chat-settings-body .shell-install { display: flex; flex-direction: column; gap: 12px; }
 .chat-settings-body .shell-install .code-block { border-radius: 12px; overflow: hidden; }
 .chat-settings-body .shell-install .set-hint { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: 0 2px; }
 @media (hover: none), (pointer: coarse) { .chat.calm .copyable-code.corner .code-tools { opacity: 1; } }
-.chat-settings-body .pol-source-input { padding: 10px 14px; border: 1px solid transparent; border-radius: 12px; background: var(--panel); }
-.chat-settings-body .pol-source-input:focus, .chat-settings-body select:focus { outline: none; border-color: var(--panel-2-hover); }
+.chat-settings-body .pol-source-input { padding: 10px 14px; }
+.chat-settings-body select:focus { outline: none; border-color: var(--panel-2-hover); }
 .chat-settings-body .set-test { padding: 14px 16px; border: none; border-radius: 14px; }
 /* One chevron for a native select and the model picker's caret alike, where the browser drew one and the picker a
    tiny ▾ of its own. */
