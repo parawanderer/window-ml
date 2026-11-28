@@ -2397,3 +2397,68 @@ html[data-calm] .tt-layer { --notice: var(--accent); --notice-fg: var(--accent-f
     .chat.calm .astep-approve.ask { animation: none; }
     .chat.calm .astep-approve.ask.leaving { animation: none; display: none; }
 }
+
+/* ===================== THE FILES PANEL =====================
+   The session's files as a plain file tree, beside the chat (files-panel.tsx). A row is what any file browser draws: a
+   kind icon, a name, a size, a time. `.fp-notes` is the ANNOTATION layer (hidden, read-only, "the model sees this as")
+   and is the only part that is ours; removing it leaves the base row unchanged. Colours are the page's own tokens, so
+   the calm view's light and dark both apply; `mobile/` reads the same tokens and needs nothing new. */
+.chat-more-corner { display: flex; align-items: center; gap: 4px; }
+/* The header button: the files icon and the session's count. Not an `.hbtn` (those are round, and a round button is as wide
+   as it is tall): a pill, since it carries a number, with the same quiet look. */
+.chat-files-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 5px; flex: 0 0 auto; padding: 0 10px; min-height: 30px;
+    border: none; border-radius: 15px; background: transparent; color: var(--fg-dim); cursor: pointer; font: inherit; font-size: .86em; line-height: 1;
+}
+.chat-files-btn:hover, .chat-files-btn.on { background: var(--panel-2); color: var(--fg); }
+.chat-more-corner .chat-files-btn, .chat.narrow .chat-head .chat-files-btn { min-height: 36px; border-radius: 18px; }
+@media (pointer: coarse) { .chat-files-btn, .chat-more-corner .chat-files-btn, .chat.narrow .chat-head .chat-files-btn { min-height: 40px; min-width: 40px; } }
+/* The approval bar clears the corner it shares with this button, as it clears the ⋮ alone. */
+.chat-main:has(> .chat-more-corner .chat-files-btn) > .chat-waiting { padding-right: 132px; }
+.chat-files-n { font-variant-numeric: tabular-nums; }
+
+.chat-main.files-open { position: relative; }
+.chat:not(.narrow) .chat-main.files-open { padding-right: var(--fp-w, 340px); }
+.chat:not(.narrow) .chat-main.files-open > .chat-more-corner { right: calc(var(--fp-w, 340px) + 10px); }
+/* The files panel (files-panel.tsx): a file browser over a session's /files/ docked at the chat's right edge, a tree of
+   rows (name, size, time) with window.ml's marks (hidden, read-only, the name the model sees) after the name. */
+.fp {
+    --fp-w: 340px;
+    width: var(--fp-w); max-width: 100%; box-sizing: border-box; min-height: 22em;
+    display: flex; flex-direction: column; background: var(--bg); border-left: 1px solid var(--border);
+}
+/* Placed over the session's right edge; drawn alone (the gallery) it is a plain block of its own height. */
+.chat-main > .fp { position: absolute; top: 0; right: 0; bottom: 0; z-index: 4; min-height: 0; }
+/* A narrow window has no room beside the chat: the panel slides over it instead of squeezing it. */
+.fp.narrow { box-shadow: -8px 0 24px color-mix(in srgb, var(--fg) 12%, transparent); animation: fp-in .2s cubic-bezier(.4, 0, .2, 1); }
+@keyframes fp-in { from { transform: translateX(100%); } to { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .fp.narrow { animation: none; } }
+.fp-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px 0 10px; border-bottom: 1px solid var(--border); flex: 0 0 auto; }
+.fp-tabs { display: flex; gap: 2px; }
+.fp-tab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--fg-dim); font: inherit; padding: 6px 8px; cursor: pointer; }
+.fp-tab[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); }
+.fp-close { min-width: 28px; min-height: 28px; margin-bottom: 4px; }
+.fp-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 6px 4px 12px; }
+.fp-level { list-style: none; margin: 0; padding: 0; }
+.fp-level .fp-level { padding-left: 14px; }
+.fp-row {
+    display: flex; align-items: center; gap: 6px; width: 100%; box-sizing: border-box; padding: 3px 6px; border: none; border-radius: 5px;
+    background: none; color: var(--fg); font: inherit; font-size: .92em; text-align: left; min-width: 0;
+}
+.fp-dir:not(.fp-shared) { cursor: pointer; }
+.fp-dir:not(.fp-shared):hover { background: var(--panel-2); }
+.fp-shared { color: var(--fg-dim); cursor: default; }
+.fp-row .tri { color: var(--fg-faint); flex: 0 0 auto; display: inline-flex; transition: transform .15s ease; }
+.fp-row .tri.open { transform: rotate(90deg); }
+.fp-row .tri-gap { flex: 0 0 11px; }
+@media (prefers-reduced-motion: reduce) { .fp-row .tri { transition: none; } }
+.fp-kind { color: var(--fg-faint); display: inline-flex; flex: 0 0 auto; }
+.fp-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fp-size, .fp-time { flex: 0 0 auto; color: var(--fg-faint); font-size: .86em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fp-size { min-width: 4.4em; text-align: right; }
+.fp-notes { display: inline-flex; gap: 4px; flex: 0 0 auto; color: var(--fg-dim); }
+.fp-note { display: inline-flex; }
+.fp-status { color: var(--fg-faint); font-size: .9em; padding: 3px 6px 3px 30px; }
+.fp-error { color: var(--fg-dim); }
+.fp-more { background: none; border: none; color: var(--fg-dim); font: inherit; font-size: .9em; padding: 3px 6px 3px 30px; cursor: pointer; }
+.fp-more:hover { color: var(--fg); }

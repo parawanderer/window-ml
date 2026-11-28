@@ -365,8 +365,11 @@ test("composite: runtimes merge, the first host wins a runtime both report, and 
     await flush(8);
     assert.equal(sessionMap.get("laptop:aaaa0001")?.task, "direct", "the direct path, not the hub's copy");
     await store.send({ type: "session.cancel", session: { runtime: "box", hash: "bbbb0002" } });
-    assert.equal(hub.commands.length, 1);
-    assert.equal(direct.commands.length, 0);
+    // Opening a session asks its runtime for the file count (`files.list`); the routing under test is the cancel's.
+    const sent = (h) => h.commands.filter((c) => c.type !== "files.list");
+    assert.equal(sent(hub).length, 1);
+    assert.equal(sent(direct).length, 0);
+    assert.equal(direct.commands.filter((c) => c.type === "files.list").length, 1, "the count was asked of the direct host, which owns the session");
     const r = await host.send({ type: "tabs.list", runtime: "nowhere" });
     assert.equal(r.error?.code, "not-found");
     store.dispose();
