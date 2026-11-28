@@ -289,7 +289,7 @@ function Stage({ s, item }: { s: GalleryState; item: GalleryItem }) {
                     const json = sel && s.props != null ? s.props : t.props;
                     const st = statuses.value[statusKey(item.id, t.name)];
                     return (
-                        <figure key={`${item.id}::${t.name}`} class={`gl-tile${sel ? " sel" : ""}`} data-variant={t.name} data-status={st?.state ?? "pending"}
+                        <figure key={`${item.id}::${t.name}`} class={`gl-tile${sel ? " sel" : ""}`} data-id={item.id} data-variant={t.name} data-status={st?.state ?? "pending"}
                             onClick={() => { if (!sel) setState({ variant: t.name, props: null }); }}>
                             <figcaption>{t.name} <span class="gl-dim">{t.source}</span>
                                 {t.flow ? <span class="gl-dim"> · flow <code>{t.flow}</code>: <code>node scripts/gallery.mjs shot {item.id} --variant '{t.name}'</code> runs it</span> : null}

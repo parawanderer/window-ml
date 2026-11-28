@@ -52,7 +52,7 @@ export function createFilesSource(deps: FilesSourceDeps): FilesSource {
             try { answer = await deps.send({ type: "FILES_SECRET_FORMS" }); } catch { throw new Error("the secrets could not be read"); }
             const forms = (answer as { forms?: unknown } | undefined)?.forms;
             if (!Array.isArray(forms) || forms.some((f) => !f || typeof f.find !== "string")) throw new Error("the secrets could not be read");
-            return forms.map((f) => ({ find: f.find, ...(f.ci === true ? { ci: true } : {}) }));
+            return forms.map((f) => ({ find: f.find, ...(f.ci === true ? { ci: true } : {}), ...(typeof f.put === "string" ? { put: f.put } : {}) }));
         },
     };
 }

@@ -283,29 +283,26 @@ test("markdownAffordance: a copy/view CONTROL counts, a page merely about Markdo
         { url: "https://docs.test/g.md", affordance: false });
 });
 
-// The external-Google-Sheet approval escalation scans python_exec's `tables` arg. python_exec accepts a
-// ONE-element array (models write `tables: ["current"]`), so this scan must see into an array too — it does,
-// because Object.values() on an array yields its elements. Pinned, since a hole here would let a privileged
-// credentialed sheet read skip its consent prompt by being wrapped in a list.
-test("externalSheetIds: finds sheets in a string, a map, AND an array", () => {
+// The external-Google-Sheet approval escalation scans the `ml.table("…")` literals in python_exec's code
+// (table-literals.ts). A sheet the page or the worker would read must be found in every shape the scan reads; one the
+// scan does not read (a comment, a string, a computed source) is not read before the cell either, and a worker-run cell
+// that computes one asks at the call (sw-ml-table.ts sheetAsk), so it never skips consent.
+test("externalSheetIds: finds every sheet the code names as an ml.table literal, and nothing else", () => {
     const A = "https://docs.google.com/spreadsheets/d/ABC123/edit#gid=0";
     const B = "https://docs.google.com/spreadsheets/d/XYZ789/edit";
-    assert.deepEqual(externalSheetIds({ tables: A }), ["ABC123"]);
-    assert.deepEqual(externalSheetIds({ tables: { a: A, b: B } }), ["ABC123", "XYZ789"]);
-    assert.deepEqual(externalSheetIds({ tables: [A] }), ["ABC123"], "a wrapped source must not escape the gate");
-    assert.deepEqual(externalSheetIds({ tables: [A, B] }), ["ABC123", "XYZ789"]);
-    assert.deepEqual(externalSheetIds({ tables: ["current"] }), [], "'current' is the page you are on, not external");
-    assert.deepEqual(externalSheetIds({ tables: "#sales" }), []);
+    const ids = (code) => externalSheetIds({ code });
+    assert.deepEqual(ids(`df = ml.table("${A}")`), ["ABC123"]);
+    assert.deepEqual(ids(`a = ml.table("${A}")\nb = ml.table('${B}', raw=True)`), ["ABC123", "XYZ789"]);
+    assert.deepEqual(ids(`a = ml.table(r"${A}")`), ["ABC123"], "a raw string");
+    assert.deepEqual(ids(`a = ml.table(\n    "${A}",\n    header=False,\n)`), ["ABC123"], "a call split over lines");
+    assert.deepEqual(ids(`x = 1 if True else ml.table("${A}")`), ["ABC123"], "a branch that never runs is still read");
+    assert.deepEqual(ids("ml.table('current')"), [], "'current' is the page you are on, not external");
+    assert.deepEqual(ids("ml.table('#sales')"), []);
+    assert.deepEqual(ids(`# ml.table("${A}")\ns = "ml.table('${A}')"`), [], "not read, so not fetched before the cell");
     assert.deepEqual(externalSheetIds({}), []);
-    // Any DEPTH, not just one level (red-team T2 on #442: an array-wrapped URL auto-approved as "sandbox").
-    assert.deepEqual(externalSheetIds({ tables: { a: [A] } }), ["ABC123"], "a map of arrays");
-    assert.deepEqual(externalSheetIds({ tables: [[A]] }), ["ABC123"], "a nested array");
-    assert.deepEqual(externalSheetIds({ tables: { a: [[A, B]] } }), ["ABC123", "XYZ789"], "two sheets, two deep");
-    // A table BY VALUE stops the walk: its cells are data, and a sheet URL a cell happens to mention is not a
-    // source this call reads. A table value still contributes nothing (it loads without consent of its own).
-    const byValue = { columns: ["link"], rows: [[A]] };
-    assert.deepEqual(externalSheetIds({ tables: { t: byValue } }), [], "a URL inside a by-value table's CELLS is not a sheet this call reads");
-    assert.deepEqual(externalSheetIds({ tables: { s: A, t: byValue } }), ["ABC123"], "a string source beside a by-value table");
+    assert.deepEqual(externalSheetIds({ code: 3 }), []);
+    // A URL that is a cell's DATA, not a source, is not a sheet this call reads.
+    assert.deepEqual(ids(`rows = [["${A}"]]\nreturn ml.table("#t")`), []);
 });
 
 // The third rung of the Markdown ladder: the DERIVED sibling, tried only when negotiation missed and the page
