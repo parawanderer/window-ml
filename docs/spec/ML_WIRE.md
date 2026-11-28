@@ -139,7 +139,7 @@ approved; the read-only realm's members have no Python caller yet.
 | `settings` | built | served to a client bound to a run the worker built; reachable as the row above | packages, step 1 |
 | `sh.run`, `sh.read`, `sh.put` | built | served to an approved client that a running step of its run opened; never inside the dialect | none |
 | `names` | no member (JS has `ml.state`) | NOT built; ruling 99 | packages, step 2 |
-| `table` | built (#2043) | NOT built; specified in [`ML_TABLE.md`](ML_TABLE.md), "The member" | packages, step 3 |
+| `table` | built (#2043) | built, synchronous (2026-11-24; [`ML_TABLE.md`](ML_TABLE.md), "Page callers"); red-team rows: `tests/redteam-python-table.test.mjs`, `tests/redteam-ml-table.test.mjs` | packages, step 3 |
 | `fetch` | built | NOT built; specified in [`ML_TABLE.md`](ML_TABLE.md), "The member" | packages, step 3 |
 | `current` | built | NOT built and not specified; [`ASYNC_CALLS.md`](ASYNC_CALLS.md) records it as open. Its `tasks` are reached today by the `Detached` error on `sh.run` and the `task` tool | no owner; a spec section first |
 | `state` | built (the page heap) | NOT built; [`PYTHON_DIALECT.md`](PYTHON_DIALECT.md) specifies the read, by copy or as a pointer | no owner; after `table` |

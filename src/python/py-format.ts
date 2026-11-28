@@ -72,8 +72,8 @@ export function tokenizePy(src: string): Tok[] | null {
             toks.push({ kind: "str", text, line: line - (text.match(/\n/g)?.length ?? 0) });
             i = j; continue;
         }
-        if (/[A-Za-z_À-￿0-9.]/.test(c)) {
-            let j = i; while (j < src.length && /[A-Za-z_À-￿0-9.]/.test(src[j])) j++;
+        if (/[A-Za-z_\u00C0-\uFFFF0-9.]/.test(c)) {
+            let j = i; while (j < src.length && /[A-Za-z_\u00C0-\uFFFF0-9.]/.test(src[j])) j++;
             push("word", src.slice(i, j)); i = j; continue;
         }
         push("op", c); i++; continue;

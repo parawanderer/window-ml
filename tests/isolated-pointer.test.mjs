@@ -149,7 +149,7 @@ test("UPGRADE: an isolated exec that read a pointer before part 4b reads it the 
     for (const path of ["userScripts", "cdp"]) {
         const r = await runOn(path, [old]);
         const got = report(r.results[0]);
-        assert.deepEqual(got, [413, "table", true, "fetch_url", "undefined", "{\n  \"columns\": [", true, true], `${path}: ${r.results[0].slice(0, 300)}`);
+        assert.deepEqual(got, [417, "table", true, "fetch_url", "undefined", "{\n  \"columns\": [", true, true], `${path}: ${r.results[0].slice(0, 300)}`);
         assert.deepEqual(r.log.map((x) => x.kind), ["exec-isolated"]);
     }
 });

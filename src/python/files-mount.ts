@@ -210,6 +210,11 @@ export function makeFilesMount(deps: FilesMountDeps) {
             },
             lookup(parent: any, name: string) {
                 const p = join(pathOf(parent), name);
+                // A shown name two entries share (rule 4) gets a node holding no stat: the listing's getdents looks up
+                // every name it returns and would fail on the reader's EACCES, while a stat or open of the node still
+                // asks the reader and is refused as ambiguous.
+                const shared = parent.kids ? parent.shared?.get(name) : undefined;
+                if (shared) { const node = makeNode(parent, name, shared); node.st = null; return node; }
                 const st = (parent.kids?.get(name) as Stat | undefined) ?? (req("stat", [p]) as Stat);
                 return makeNode(parent, name, st);
             },
@@ -246,6 +251,10 @@ export function makeFilesMount(deps: FilesMountDeps) {
             readdir(node: any) {
                 const p = pathOf(node);
                 const kids = new Map<string, Stat>();
+                // Every entry, a shown name twice when two files share it: both are listed, and `lookup` gives that
+                // name a node with no stat, so a stat or open asks the reader, which refuses it as ambiguous.
+                const names: string[] = [];
+                const shared = new Map<string, Stat>();
                 let cursor: string | undefined;
                 do {
                     // Charged for a full page before asking, since the count is not known first; nothing gives back
@@ -253,11 +262,12 @@ export function makeFilesMount(deps: FilesMountDeps) {
                     const limit = cursor ? DIR_PAGE : DIR_FIRST_PAGE;
                     if (deps.chargeListing && !deps.chargeListing(limit)) throw new FS.ErrnoError(ERRNO_CODES.EIO);
                     const page = req("opendir", [p, { limit, ...(cursor ? { cursor } : {}) }]) as { entries: Array<{ name: string } & Stat>; next?: string };
-                    for (const e of page.entries) kids.set(e.name, e);
+                    for (const e of page.entries) { if (kids.has(e.name)) shared.set(e.name, e); kids.set(e.name, e); names.push(e.name); }
                     cursor = page.next;
                 } while (cursor);
                 node.kids = kids;
-                return [".", "..", ...kids.keys()];
+                node.shared = shared;
+                return [".", "..", ...names];
             },
             symlink() { throw new FS.ErrnoError(ERRNO_CODES.EPERM); },
             // This core's `os` has no `link`; refused here too, for whatever reaches the node op.

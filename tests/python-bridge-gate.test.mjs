@@ -48,7 +48,7 @@ del _m`);
 
 /** Run one approved cell the way the readonly worker does; `lift` runs it with the refusal lifted. `{ error, value }`. */
 async function cell(code, { lift = false } = {}) {
-    injectInputs(py.globals, null, null, harness);
+    injectInputs(py.globals, null, harness);
     if (lift) bridges(true);
     try { await py.runPythonAsync(wrapUserCode(code, true)); } finally { if (lift) bridges(false); }
     const err = py.globals.get("_err");

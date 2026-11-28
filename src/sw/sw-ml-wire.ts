@@ -21,6 +21,7 @@ import { derefByRun, isWorkerRun, runControllers, sessionTokens, turnByRun } fro
 import { surveySettings } from "./sw-change-setting";
 import { shPut, shRead, shRun, type ShAnswer, type ShCallContext } from "./sw-shell-call";
 import { forPage } from "./sw-scrub";
+import { tableMemberFor } from "./sw-ml-table";
 import { isOffscreenSender } from "./sw-offscreen";
 import { serveWireCall, wirePointer, WireError, wireClient, deliverIfOpen, type WireMember, type WireClient, type WireFrom, type WireArgsMeter } from "./ml-wire-serve";
 
@@ -58,6 +59,9 @@ function membersFor(client: WireClient): Record<string, WireMember> {
     // ml.sh: an approved (full) client of a run, opened by one of its steps, and only while that run runs. Bound to the run
     // and step the HANDLE records, never to anything in the request; each call is judged or asked inside that step
     // (sw-shell-call.ts). A read-only client never has it.
+    // ml.table: a run the worker built reads at call time; a page's cell reads what its page hoisted (sw-ml-table.ts).
+    const table = tableMemberFor(client);
+    if (table) out.table = table;
     const sh = shContextFor(client);
     if (sh) {
         out["sh.run"] = { run: (...a: unknown[]) => shMember(shRun, sh, a) };

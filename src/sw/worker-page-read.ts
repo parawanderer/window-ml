@@ -34,7 +34,7 @@ export const PAGE_READ_ELSEWHERE = "the tab is not on that page any more, so it 
 /** The sentence for a tab whose document the browser does not name. */
 export const PAGE_READ_NO_DOCUMENT = "the browser does not say which page the tab holds now, so the page was not read. Run it again.";
 
-/** A page table's data, as `_loadTable` loads a page table (ml-python.ts). */
+/** A page table's data, as `_hoistTable` reads a page table (ml-python.ts). */
 export type PageTableData = { kind: "rows"; columns: string[]; rows: (string | number | boolean | null)[][] } | { kind: "html"; html: string };
 
 /**

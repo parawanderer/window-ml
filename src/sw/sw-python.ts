@@ -4,10 +4,10 @@
 
 import { senderTrust, tabGrants } from "./sw-consent";
 import { isExtensionSender } from "./sw-site-access";
-import { recordHousekeeping } from "./sw-housekeeping";
+import { recordHousekeeping, sessionArea } from "./sw-housekeeping";
 import { ensureOffscreen, forgetOffscreen, isOffscreenSender } from "./sw-offscreen";
 import { secretFormsNow } from "./sw-scrub";
-import type { SecretForm } from "../secret-mask";
+import { maskName, type SecretForm } from "../secret-mask";
 import { activeRuns, attachedFilesOf, execReads, isWorkerRun, onSessionRelease, pageValueSession, runControllers, type ReleaseReason } from "./sw-runs";
 import { valueHolders, budgetBytes as valueBudgetBytes, claimValue } from "./sw-values";
 import { PY_PACKAGE_LOADS } from "../python/python-env";
@@ -15,13 +15,14 @@ import { defineJob } from "../job-registry";
 import { pyCodeCovers } from "./grant-extract";
 import { pythonCellInDialect } from "../agent/python-dialect";
 import { openWireClient } from "./ml-wire-serve";
+import { hoistKey, tableOpts } from "../python/table-answer";
+import type { HoistedAnswer, TableAnswer, TableReadOpts } from "../python/table-answer";
 import { recordRunLog } from "./sw-run-log";
 import { hydrateTasks, rehydratedCellTask } from "./sw-tasks";
 import { plainPyOutcome } from "./sw-python-late";
 import { dialectLibraries } from "./sw-libraries";
 import type { DialectLibrary } from "../python/python-dialect-run";
 import type { CellCancel } from "../python/py-lease";
-import { sessionArea } from "./sw-housekeeping";
 import { defineState } from "../state-registry";
 import { DEFAULT_CONFIG, filesQuotaBytes } from "../contract/contract-config";
 import { idleMinutes } from "../python/py-reap";
@@ -172,6 +173,42 @@ export interface PythonCaller {
     onCellFacts?: (facts: { wire: { member: string; calls: number }[]; markSet: boolean }) => void;
 }
 
+/** The most tables a page-started cell's page may read before it. */
+export const HOISTED_TABLES_MAX = 32;
+
+/**
+ * A page-started cell's hoisted tables as the page sent them, checked for shape: each a source, its options, and an
+ * answer of rows, a page's HTML table, or a stored value's key. Never a `/files/` read, which only a run's own reader
+ * does. A page's rows are its own data, so they are not judged beyond their shape; a stored key is, by the caller.
+ * @param v `payload.hoisted`
+ * @returns the tables by `hoistKey`, undefined for none, or the refusal
+ */
+export function hoistedTables(v: unknown): Map<string, HoistedAnswer> | undefined | string {
+    if (v == null) return undefined;
+    if (!Array.isArray(v) || v.length > HOISTED_TABLES_MAX) return `Refused: hoisted tables are a list of at most ${HOISTED_TABLES_MAX}.`;
+    const out = new Map<string, HoistedAnswer>();
+    const cells = (rows: unknown) => Array.isArray(rows) && rows.every((r) => Array.isArray(r) && r.every((c) => c === null || ["string", "number", "boolean"].includes(typeof c)));
+    for (const h of v) {
+        let opts: TableReadOpts;
+        try { opts = tableOpts(h?.opts); } catch (e) { return `Refused: ${(e as Error).message}`; }
+        if (typeof h?.src !== "string") return "Refused: a hoisted table needs a source.";
+        // A literal the page could not read: the cell's call raises the page's reason.
+        if (typeof h.error === "string" && h.answer === undefined) { out.set(hoistKey(h.src, opts), { error: h.error.slice(0, 2000) }); continue; }
+        const a = h?.answer, d = a?.data;
+        const label = typeof a?.source?.label === "string" ? a.source.label : "";
+        const kind = ["dom", "sheet-current", "sheet-external", "fetch", "pointer"].includes(a?.source?.kind) ? a.source.kind : null;
+        if (!kind || !d) return "Refused: a hoisted table needs a source and its read.";
+        let data: TableAnswer["data"];
+        if (d.kind === "rows" && Array.isArray(d.columns) && d.columns.every((c: unknown) => typeof c === "string") && cells(d.rows)) data = { kind: "rows", columns: [...d.columns], rows: d.rows };
+        else if (d.kind === "html" && typeof d.html === "string") data = { kind: "html", html: d.html };
+        else if (d.kind === "value" && typeof d.key === "string" && Array.isArray(d.columns) && d.columns.every((c: unknown) => typeof c === "string"))
+            data = { kind: "value", key: d.key, label: String(d.label ?? label), columns: [...d.columns], ...(typeof d.delimiter === "string" ? { delimiter: d.delimiter } : {}), ...(d.headerless === true ? { headerless: true } : {}) };
+        else return "Refused: a hoisted table is rows, a page table's HTML or a stored table's key.";
+        out.set(hoistKey(h.src, opts), { source: { kind, label }, data });
+    }
+    return out.size ? out : undefined;
+}
+
 /** PYTHON_EXEC through the router: the caller is read off the sender, which the browser sets. */
 export function pythonExec(message: any, sender: chrome.runtime.MessageSender, sendResponse: (r: any) => void): void {
     const ownSurface = isExtensionSender(sender);
@@ -221,12 +258,15 @@ export async function runPython(payload: any, requestId: string | undefined, cal
     // The bench's KEPT STATE is ours alone: a page's run always executes in the namespace every run resets, and a page
     // cannot clear a person's variables.
     if (payload?.benchReset && !ownSurface) return { error: "Refused: the workbench's state is not a page's to reset." };
-    // A STORED table is read only for a caller entitled to it. The key reaches the page (the loop hands the table down
-    // through the delegated tool), so a page may pass one, but only while a run hosted on its own tab holds that value
-    // (or it was disclosed to this tab: a page-hosted run, whose loop we cannot vouch for). A key no longer stored is
+    // A PAGE-STARTED cell's tables: the sources its code names as literals, read by the page before the cell (ml-python.ts
+    // `hoistTables`), answered by the cell's `ml.table` (sw-ml-table.ts). A run the worker built reads at call time, so it
+    // carries none. A STORED table is read only for a caller entitled to it. The key reaches the page (the loop hands the
+    // table down through the delegated tool), so a page may pass one, but only while a run hosted on its own tab holds that
+    // value (or it was disclosed to this tab: a page-hosted run, whose loop we cannot vouch for). A key no longer stored is
     // let through, so the offscreen read fails with the store's own reason. Our own surfaces are trusted.
-    const stored = (Array.isArray(payload?.tables) ? payload.tables as { data?: { kind?: string; key?: unknown } }[] : [])
-        .filter((t) => t?.data?.kind === "value");
+    const hoisted = caller.wireRun ? undefined : hoistedTables(payload?.hoisted);
+    if (typeof hoisted === "string") return { error: hoisted };
+    const stored = hoisted ? [...hoisted.values()].flatMap((a) => "data" in a && a.data.kind === "value" ? [a.data.key] : []) : [];
     if (stored.length && !ownSurface) {
         const tid = caller.tabId;
         const running = tid != null ? activeRuns.get(tid) : undefined;
@@ -234,8 +274,7 @@ export async function runPython(payload: any, requestId: string | undefined, cal
         // exec named that key (the VALUE_COLUMNS rule), so a key the page learned, or guessed, is not enough.
         const named = (run: string, key: string) => (execReads.get(run) ?? []).some((r) => r.meta?.table && r.meta.value === key);
         const ok = caller.valueOk ?? ((holders: string[], key: string) => holders.some((h) => (running?.has(h) && (!isWorkerRun(h) || named(h, key))) || (tid != null && h === pageValueSession(tid))));
-        for (const t of stored) {
-            const key = String(t.data?.key);
+        for (const key of stored) {
             const holders = await valueHolders(key);
             if (holders && !ok(holders, key)) return { error: "Refused: that stored table belongs to a run that is not running on this page." };
         }
@@ -278,7 +317,7 @@ export async function runPython(payload: any, requestId: string | undefined, cal
         : caller.wireRun ? `run:${caller.wireRun}`
         : caller.tabId != null ? `page:${caller.tabId}`
         : "own";
-    const wire = complete ? null : openWireClient({ from: { kind: "offscreen" }, run: caller.wireRun ?? null, realm: outside ? "full" : "readonly", tabUrl: caller.tabUrl, ...(caller.wireStep ? { step: caller.wireStep } : {}) });
+    const wire = complete ? null : openWireClient({ from: { kind: "offscreen" }, run: caller.wireRun ?? null, realm: outside ? "full" : "readonly", tabUrl: caller.tabUrl, ...(caller.wireStep ? { step: caller.wireStep } : {}), ...(hoisted ? { tables: hoisted } : {}) });
     // A KEEP holds a worker-hosted run's sandbox through long idle gaps until the turn ends (py-reap.ts); it is told in
     // the run log once per turn, so the person sees the model asked for it.
     // A LEASED cell (py-lease.ts): only a worker-hosted run's.
@@ -287,7 +326,7 @@ export async function runPython(payload: any, requestId: string | undefined, cal
     // The lift, only for the exact code the person approved, and only outside the dialect (an inside cell needs none).
     const bridges = outside && caller.bridges === true && !!caller.pyCodeOk?.(String(payload?.code ?? ""));
     if (keep && !keptRuns.has(caller.wireRun!)) { keptRuns.add(caller.wireRun!); recordRunLog(caller.wireRun!, { subsystem: "python", kind: "keep" }); }
-    const run = { type: "PY_RUN", principal, ...(wire ? { wire: { client: wire.handle, run: caller.wireRun ?? null } } : {}), ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened: true, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}), ...(inside ? { inside: true } : {}), ...(keep ? { keep: true } : {}), ...(bridges ? { bridges: true } : {}), ...(cell ? { cell, ...(typeof caller.detachedMaxMs === "number" ? { detachedMaxMs: caller.detachedMaxMs } : {}) } : {}) };
+    const run = { type: "PY_RUN", principal, ...(wire ? { wire: { client: wire.handle, run: caller.wireRun ?? null } } : {}), ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened: true, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}), ...(inside ? { inside: true } : {}), ...(keep ? { keep: true } : {}), ...(bridges ? { bridges: true } : {}), ...(cell ? { cell, ...(typeof caller.detachedMaxMs === "number" ? { detachedMaxMs: caller.detachedMaxMs } : {}) } : {}) };
     // A cell inside the dialect may import the person's approved tier 3 libraries: they ride every inside run, and the
     // sandbox loads each pin once.
     if (inside) { const libraries = await dialectLibraries(); if (libraries.length) Object.assign(run, { libraries }); }
@@ -466,13 +505,18 @@ export async function filesQuota(sender: chrome.runtime.MessageSender): Promise<
 /**
  * FILES_LOST: the offscreen document discarded a file a run was writing, because the channel it came over ended with
  * the file still open (FILE_ATTACHMENTS.md, "A worker evicted mid-file"). Recorded in the session's run log; the
- * document keeps the readable note itself (agent-files.ts). Only from the offscreen document.
+ * document keeps the readable note itself (agent-files.ts). Only from the offscreen document. The path is recorded
+ * with its secrets masked, as `/files` lists it.
  * @param message `{ session, path, at, reason }`
  * @param sender who sent it
  */
-export function filesLost(message: any, sender: chrome.runtime.MessageSender): void {
+export async function filesLost(message: any, sender: chrome.runtime.MessageSender): Promise<void> {
     if (!isOffscreenSender(sender) || typeof message?.session !== "string" || !message.session || typeof message.path !== "string") return;
-    recordRunLog(message.session, { subsystem: "files", kind: "discarded", level: "error", reason: "channel-ended", detail: { path: message.path.slice(0, 512) } });
+    // The run log is the model's to read (`ml.current.log`), so the path is shown as a listing shows it
+    // (FILE_ATTACHMENTS.md, "Names under `/files`"); with no forms to show it by, only `agent/…` is recorded.
+    let path: string;
+    try { path = maskName(message.path, await secretFormsNow()); } catch { path = "agent/…"; }
+    recordRunLog(message.session, { subsystem: "files", kind: "discarded", level: "error", reason: "channel-ended", detail: { path: path.slice(0, 512) } });
 }
 
 /** The leased cells this worker sent and is still waiting on, and the last ones it settled: a `PY_DONE` naming neither
@@ -628,7 +672,7 @@ export function pythonBundlePresent(): Promise<boolean> {
  * @returns the verdict, `{ why }` with `why` "" when admitted (and, for `shape`, the defs and constants)
  */
 export async function pythonLibrary(op: "shape" | "load", lib: DialectLibrary): Promise<{ why: string; defs?: { name: string; signature: string }[]; constants?: string[] }> {
-    const msg = { type: "PY_RUN", principal: "library", hardened: true, code: "", image: null, tables: null, library: { op, lib } };
+    const msg = { type: "PY_RUN", principal: "library", hardened: true, code: "", image: null, library: { op, lib } };
     const attempt = () => ensureOffscreen().then(() => chrome.runtime.sendMessage(msg));
     const res = await attempt().catch((err) => {
         if (!/Receiving end does not exist|Could not establish connection/.test(String(err?.message || err))) throw err;

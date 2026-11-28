@@ -115,7 +115,7 @@ test("python_exec OUTSIDE the dialect always asks the gate, even with the flag o
 });
 
 test("an UN-approved external sheet asks; once isSheetApproved → auto (no gate)", async () => {
-    const args = { code: "return df", tables: "https://docs.google.com/spreadsheets/d/ABC/edit" };
+    const args = { code: 'return ml.table("https://docs.google.com/spreadsheets/d/ABC/edit")' };
     const asks = baseDeps({ callModel: scriptedModel([call("python_exec", args), answer("ok")]), isSheetApproved: () => false });
     await runBackgroundAgent({ task: "t", systemPrompt: "S", autoApprovePython: true, tools: [{ name: "python_exec", requiresApproval: true }] }, asks);
     assert.equal(asks.approvals.length, 1, "an external sheet not yet consented → ask");
@@ -126,7 +126,7 @@ test("an UN-approved external sheet asks; once isSheetApproved → auto (no gate
 });
 
 test("a REUSED external sheet surfaces a 'reused a grant' note on the step (background parity with the page loop)", async () => {
-    const args = { code: "return df", tables: "https://docs.google.com/spreadsheets/d/ABC/edit" };
+    const args = { code: 'return ml.table("https://docs.google.com/spreadsheets/d/ABC/edit")' };
     const events = [];
     const deps = baseDeps({
         callModel: scriptedModel([call("python_exec", args), answer("ok")]),
