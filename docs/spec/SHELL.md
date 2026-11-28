@@ -286,6 +286,10 @@ ml.pipe(r.stdout, "grep -c '^ '");         // stdout and stderr are pointers, he
 - **No shell is not no further process.** `npm test` runs its script through `sh -c`; `find -exec`, `xargs`, `env`,
   `timeout` and git aliases start other programs. The manifest marks such runners, the card says the call runs
   something else, and none of them is ever in the free tier on its own word.
+- **A measured case of the string shell this replaces:** one `pkill` whose option was read as a pattern ended every
+  agent session on the development machine (2026-11-28). What each property here would have done about it, and which
+  of them did not depend on a person reading a card:
+  [`CASE_2026-11-28_PKILL.md`](../plan/repl/CASE_2026-11-28_PKILL.md).
 - **No terminal, stdin closed:** a program that prompts fails at once instead of hanging; a time limit applies; a long
   one detaches with a cancel handle. That detach is mode 1 of [`ASYNC_CALLS.md`](ASYNC_CALLS.md), the one executor
   that has it today; the handle, the inbox return and the wake on a missed expectation are specified there.

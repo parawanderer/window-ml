@@ -653,3 +653,7 @@ The incidents behind the rules above, one line each; the full story is in the se
 - **A PR that conflicts with its base has NO checks at all.** (Branches, PRs and CI)
 - **A CANCELLED check prints as `fail`**; poll a run by ID. (Branches, PRs and CI)
 - **Backgrounding a command and then blocking on its output file** is a foreground wait. (Branches, PRs and CI)
+- **Never `pkill`, `killall` or `kill` by pattern, and never a test run outside the queue.** One `pkill -f "<pattern>"
+  -P 0` read `0` as a second pattern and ended every session on the machine (2026-11-28); stop your own run with
+  `node scripts/test-slot.mjs cancel <ticket>`. The full story:
+  [`CASE_2026-11-28_PKILL.md`](../plan/repl/CASE_2026-11-28_PKILL.md).
