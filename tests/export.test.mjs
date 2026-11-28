@@ -348,3 +348,45 @@ test("control: a whole table says nothing about a prefix", () => {
         steps: [{ step: 1, seq: 1, tool: "python_exec", arguments: { code: "df" }, result: "a frame", renderOut: { type: "python-out", df: { columns: ["a"], rows: [[1], [2]], rowCount: 2 } } }] };
     assert.doesNotMatch(serializeSession(s).md, /the first \d+ of/);
 });
+
+// --- a step stored before every approval recorded its tool time ---
+test("UPGRADE: a stored step with no toolMs exports without a durationMs, and one with it carries the number", async () => {
+    const { sessionToJson } = await import("../src/sidebar/export/export-json.ts");
+    const base = { step: 1, seq: 1, ts: 1000, tool: "exec", arguments: { js: "x" }, result: "0", approval: "readonly" };
+    const s = { hash: "abc", kind: "agent", model: "m", tag: "session", createdTs: 1, lastTs: 2, status: "ok", turns: [], task: "t",
+        steps: [base, { ...base, step: 2, seq: 2, toolMs: 7 }], answers: [] };
+    const steps = sessionToJson(s).session.steps;
+    assert.equal("durationMs" in steps[0], false, "an old step has no duration, and nothing throws");
+    assert.equal(steps[1].durationMs, 7);
+});
+
+// --- a chat turn's tool calls (read_pages): under their turn, in and out as the model had them ---
+
+test("a chat's Markdown export writes each step's in and out blocks under its own turn, between the question and the answer", () => {
+    const s = {
+        hash: "chat1", kind: undefined, model: "m", tag: "session", createdTs: 1, lastTs: 9, status: "ok", config: { save: true },
+        turns: [
+            { id: "chat1-1", ts: 2, user: "QUESTION-ONE", assistant: "ANSWER-ONE", status: "ok", model: "m" },
+            { id: "chat1-2", ts: 5, user: "QUESTION-TWO", assistant: "ANSWER-TWO", status: "ok", model: "m" },
+        ],
+        steps: [{ step: 1, seq: 1, turn: "chat1-2", tool: "read_pages", arguments: { file: "a.pdf", pages: "3" }, result: "PAGE-THREE-AS-READ" }],
+    };
+    const { md } = serializeSession(s);
+    assert.match(md, /read_pages · in/);
+    assert.match(md, /read_pages · out \(as the model read it\)/);
+    assert.equal(md.match(/read_pages · in/g).length, 1, "one step, one pair of blocks");
+    assert.ok(md.includes('"file": "a.pdf"') && md.includes("PAGE-THREE-AS-READ"));
+    const at = (t) => md.indexOf(t);
+    assert.ok(at("QUESTION-TWO") < at("read_pages · in") && at("read_pages · in") < at("read_pages · out") && at("read_pages · out") < at("ANSWER-TWO"), "inside turn 2");
+    assert.ok(at("ANSWER-ONE") < at("read_pages · in"), "nothing under turn 1");
+    assert.ok(at("QUESTION-ONE") < at("ANSWER-ONE") && at("ANSWER-ONE") < at("QUESTION-TWO"));
+});
+
+test("a chat step still running exports as such, and one with no `turn` is not written into any turn", () => {
+    const base = { hash: "chat2", model: "m", tag: "session", createdTs: 1, lastTs: 9, status: "ok", config: { save: true },
+        turns: [{ id: "chat2-1", ts: 2, user: "Q", assistant: "A", status: "ok", model: "m" }] };
+    const running = serializeSession({ ...base, steps: [{ step: 1, seq: 1, turn: "chat2-1", tool: "read_pages", arguments: {}, pending: true }] }).md;
+    assert.match(running, /read_pages · out \(as the model read it\)[\s\S]*\(still running\)/);
+    const old = serializeSession({ ...base, steps: [{ step: 1, seq: 1, tool: "read_pages", arguments: {}, result: "R" }] }).md;
+    assert.doesNotMatch(old, /read_pages · in/);
+});

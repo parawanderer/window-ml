@@ -151,7 +151,10 @@ card shows the call's resolved facts, not the script.
      that policy as the reason; a broken `allow` stays no opinion; a `deny` that evaluates cleanly still wins. The
      card says inline why the call escalated and what to do (Shane): it names the policy, gives the break in plain
      words, carries an action that opens the policy for editing, and offers no "remember". The cause slug is
-     `broken-policy`. Not built; small-fixes builds it. Two more findings of the same audit: the dialect's
+     `broken-policy`. Built. A policy is judged per call, so a broken `deny` or `ask` makes every call of its consumer
+     (among the run's and the global policies) that it breaks on ask until it is fixed or removed; one that does not
+     parse, or that the language refuses, breaks on every such call. When a clean `ask` also matches, the card names
+     the broken one, since it is the one the person can act on. Two more findings of the same audit: the dialect's
      `try`/`catch` catches the host's stack overflow, below `MAX_CALL_DEPTH`, so a policy can return the opposite
      answer with nothing recorded, and the outcome depends on the caller's stack depth (small-fixes repairs it for
      both realms: the overflow becomes a stop no script catches and the depth limit moves below the host's); and
@@ -561,6 +564,22 @@ the body). Aligned:
 - **One free tier.** The page the run is on is free in every mode, as `navigate` already was: a same-origin as-you fetch
   needs no card, and `autoApproveSameOriginAuth` is retired as a flag (the upgrade test reads a config that still
   carries it). What the page could make itself with `fetch()` stays unjudged, as in "What an ask cannot reach".
+- **The free tier is for an origin the person chose (ruling 130, Shane 2026-11-26). Not built.** "You approved to go
+  to the website, not the credential provider. The credential provider website would need a separate grant." The free
+  tier holds where the person put the run: the page the run started on, an origin a card of theirs approved (an
+  approved `navigate`, an approved arrival card, an approved as-you fetch's origin grant), and a tab they attached or
+  moved the run to. It does not hold on an origin the run is on only because a page sent the tab there: a redirect, an
+  arrival no policy covers (which passes, below), or an arrival an `allow` row let through (navigation only). There, a
+  fetch that sends a request to that origin is judged as a fetch of any other origin is: an as-you fetch asks, the
+  card names the origin, and approving it grants the origin for the rest of the run as usual. What does not change:
+  the run still acts on the page it landed on, a read of the live document that sends no request shows what a survey
+  shows and stays free, and `exec` asks as before. The measured case is a sign-in redirect to an identity provider
+  (docs/plan/repl/RED_TEAM_SIGNIN_CHAIN.md, the row where a credentialed read of the provider raises no card); that
+  row is restated to expect the card when this is built. It is the same rule for a tab run and a run that had no tab,
+  and it changes behaviour that shipped on 2026-10-24, so its build carries an UPGRADE row (a run restored mid-way on
+  a landed origin) and a red-team pass. Open, for the builder to bring before building: which fetch modes of the
+  exact current URL send a request, and how a navigation the PERSON made by hand in the run's tab is told from one
+  the page made (until it can be, it counts as the page's).
 - **What stays apart.** The run's `crossOrigin` option stays the run-level opt-in for leaving the origin at all, in
   either mode (so a run started without it fetches cross-origin only through a card, as today, and never navigates).
   The card for the interactive mode says that the run will act on the page it lands on; the fetch card says the body is

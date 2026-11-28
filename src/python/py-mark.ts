@@ -65,7 +65,7 @@ export type WorkerPostKind = keyof typeof WORKER_POSTS | "unknown";
 /** Every field a worker message may carry: one outside this set makes the message "unknown", which marks. */
 export const KNOWN_FIELDS: ReadonlySet<string> = new Set([
     "id", "mlAnswer", "interruptBuffer", "filesShared", "filesHome", "takeDropped", "deleteRun", "prewarm", "env", "complete", "library",
-    "libraries", "benchReset", "inside", "code", "image", "hardened", "tables", "stream", "wire", "run", "persist", "bridges", "wheels",
+    "libraries", "benchReset", "inside", "code", "image", "hardened", "stream", "wire", "run", "persist", "bridges", "wheels",
 ]);
 
 /**

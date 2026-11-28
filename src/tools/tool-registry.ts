@@ -104,6 +104,8 @@ defineBuiltinTool({ name: "change_setting", factories: ["src/tools/change-settin
 // task acts on the run's own detached calls (sw-tasks.ts): nothing outside the run, and the run is the worker's word.
 defineBuiltinTool({ name: "task", factories: ["src/tools/task-tool.ts"], gated: false, citable: false, realm: "worker", cardLine: null });
 defineBuiltinTool({ name: "agent_api_docs", factories: ["src/tools/api-docs-tool.ts"], gated: false, citable: true, realm: "worker", cardLine: null });
+// A worker chat's one tool: the text of its own attached PDFs' pages the message did not send (FILE_ATTACHMENTS.md).
+defineBuiltinTool({ name: "read_pages", factories: ["src/tools/read-pages-tool.ts"], gated: false, citable: false, realm: "worker", cardLine: null });
 
 // --- what the rest of the code reads ---
 

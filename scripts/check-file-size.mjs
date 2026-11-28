@@ -24,6 +24,15 @@
 // that arrives oversized), for the same reason the CSS-comment check reads the diff rather than the
 // stylesheet: the failure worth catching is "I am making this worse right now", not "this was already big".
 //
+// WHY THE RATCHET ALSO READS COST. Speaking for every grown file was still too often: twenty-two files are
+// over the line, and a 2,000-line settings panel gains five lines in half the PRs that touch it, so the same
+// warning landed about ten times for every once it was worth acting on. A grown file now SPEAKS only when it
+// crossed the line in this change (or is new), grew by GROWTH lines or more, or carries HOT_SHARE or more of
+// the repo's edit cost, the same lines x decayed commits figure `--cost` ranks by. Every other grown file is
+// named on one plain line, so the growth stays visible without an annotation on every PR. The cost needs a git
+// log, so it is computed only when something grew; with no history (a shallow clone) every share is 0 and the
+// growth rule decides alone.
+//
 // WHAT COST DOES NOT MEASURE, so it is not mistaken for a verdict:
 //   - Commits are WRITES. A file is also read to understand a call site or check a type, and a heavily imported
 //     type module can be read constantly and edited rarely. That is why fan-in is printed beside the score
@@ -46,6 +55,12 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 // Where one file stops plausibly being one idea. Deliberately generous: the point is to catch a file on its
 // way to three thousand lines, not to police a well-organised eight hundred.
 const LIMIT = 800;
+
+// When the ratchet speaks for a file that was already over LIMIT: it grew by GROWTH lines or more in this
+// change, or it carries HOT_SHARE or more of the repo's edit cost. Measured 2026-11-25: 2 of 22 oversized files
+// were at 5% or more (`sw-run-host.ts` 13.0%, `background.ts` 10.2%; third was `settings.tsx` at 4.2%).
+const GROWTH = 25;
+const HOT_SHARE = 0.05;
 
 // TESTS ARE EXEMPT, as asked. A test file is a LIST — of cases, of fixtures — and a long list is not the same
 // failure as a long module: nothing is tangled, and splitting it by size alone scatters related cases. The
@@ -88,16 +103,36 @@ function grownFiles(base, staged) {
 const ADVICE = "consider refactoring this into separate logical modules (`node scripts/move-symbols.mjs` does the move), "
     + "and moving the tests that cover them into per-module files where that follows";
 
-function report(items) {
+/** Which grown files SPEAK and which are only named, by the rule in the header. Pure, so a test can hold it to
+ *  the rule without a repo: `grown` is `{ path, before, now }[]`, `shares` maps a path to its share of the
+ *  repo's edit cost (absent = 0). Each item comes back carrying its `share`. */
+export function decide(grown, shares) {
+    const speak = [], quiet = [];
+    for (const f of grown) {
+        const share = shares.get(f.path) ?? 0;
+        const loud = f.before <= LIMIT || f.now - f.before >= GROWTH || share >= HOT_SHARE;
+        (loud ? speak : quiet).push({ ...f, share });
+    }
+    return { speak, quiet };
+}
+
+function report(items, quiet = []) {
     const ci = !!process.env.GITHUB_ACTIONS;
-    for (const { path, before, now } of items) {
-        const grew = before ? ` (+${now - before} in this change, was ${before})` : " (new file)";
-        const text = `${path} is ${now} lines${grew} — over ${LIMIT}. ${ADVICE}.`;
+    for (const { path, before, now, share = 0 } of items) {
+        const grew = before ? ` (+${now - before} in this change, was ${before}` : " (new file";
+        const hot = share >= HOT_SHARE ? `, and ${(100 * share).toFixed(1)}% of the repo's edit cost)` : ")";
+        const text = `${path} is ${now} lines${grew}${hot} — over ${LIMIT}. ${ADVICE}.`;
         // `::warning` puts it on the changed line in the PR's Files view; `file=` alone lands it on the file.
         console.log(ci ? `::warning file=${path},line=1::${text}` : `  ⚠ ${text}`);
     }
-    if (!items.length) console.log(`file sizes: nothing over ${LIMIT} lines grew in this change.`);
-    else if (!process.env.GITHUB_ACTIONS) console.log(`\n  (A reminder, not a gate — this never fails a build.)`);
+    // The quiet ones are NAMED, never annotated: visible to whoever reads the log, silent on the diff.
+    if (quiet.length) {
+        const names = quiet.map((f) => `${f.path} (+${f.now - f.before})`).join(", ");
+        console.log(`file sizes: ${quiet.length} oversized file(s) grew by under ${GROWTH} lines and carry under `
+            + `${Math.round(100 * HOT_SHARE)}% of the edit cost, so no reminder: ${names}.`);
+    }
+    if (!items.length && !quiet.length) console.log(`file sizes: nothing over ${LIMIT} lines grew in this change.`);
+    else if (items.length && !ci) console.log(`\n  (A reminder, not a gate — this never fails a build.)`);
 }
 
 /** How often anyone has to open each file, as a DECAYED commit count: a commit `halfLife` days old counts half
@@ -141,19 +176,9 @@ function fanIn(files) {
     return counts;
 }
 
-const args = process.argv.slice(2);
-const flagValue = (name, fallback) => {
-    const i = args.indexOf(name);
-    return i >= 0 && args[i + 1] && !args[i + 1].startsWith("--") ? args[i + 1] : fallback;
-};
-
-if (args.includes("--cost")) {
-    // Twelve months of history, halved every 30 days. The window is only a cutoff for how far back to read:
-    // with decay, anything older than a few half-lives contributes almost nothing anyway, so the HALF-LIFE is
-    // the knob that matters and the window is there to keep the git log cheap.
-    const since = flagValue("--since", "12 months ago");
-    const halfLife = Number(flagValue("--half-life", "30"));
-    const top = Number(flagValue("--top", "20"));
+/** Every in-scope file's cost (lines x decayed commits) and its `share` of the total, highest first. One
+ *  computation for `--cost` and the ratchet, so the share the ratchet acts on is the one `--cost` prints. */
+function costRows(since, halfLife) {
     const files = allFiles();
     const edits = churn(since, halfLife), fan = fanIn(files);
     const rows = files.map((p) => {
@@ -161,37 +186,66 @@ if (args.includes("--cost")) {
         return { path: p, now: n, weight: c.weight, raw: c.raw, fan: fan.get(p) ?? 0, cost: n * c.weight };
     }).sort((a, b) => b.cost - a.cost);
     const total = rows.reduce((t, r) => t + r.cost, 0) || 1;
-    console.log(`file cost: lines x commits since "${since}", each commit halved every ${halfLife} days.`);
-    console.log(`  ${"cost".padStart(8)} ${"lines".padStart(6)} ${"recent".padStart(6)} ${"all".padStart(4)} ${"in".padStart(4)}  share  file`);
-    const shown = rows.slice(0, top).filter((r) => r.cost > 0);
-    for (const r of shown) {
-        console.log(`  ${String(Math.round(r.cost)).padStart(8)} ${String(r.now).padStart(6)} ${r.weight.toFixed(1).padStart(6)}`
-            + ` ${String(r.raw).padStart(4)} ${String(r.fan).padStart(4)}  ${(100 * r.cost / total).toFixed(1).padStart(4)}%  ${r.path}`);
-    }
-    console.log(`\n  top ${shown.length} are ${(100 * shown.reduce((t, r) => t + r.cost, 0) / total).toFixed(0)}% of the total.`);
-    console.log(`  'recent' is the decayed commit weight, 'all' the raw count: a big gap means the work STOPPED.`);
-    console.log(`  'in' is how many files import this one — reads, which commits do not count. See the header.`);
+    for (const r of rows) r.share = r.cost / total;
+    return { rows, total };
+}
 
-    // DECAY MUST NOT HIDE BLOAT. A file can be enormous and quiet, and that is exactly the case a decayed
-    // ranking buries — so every oversized file that did not make the list above is named here regardless of
-    // its score. The ranking says where the work is; this says what is big anyway.
-    const listed = new Set(shown.map((r) => r.path));
-    const quiet = rows.filter((r) => r.now > LIMIT && !listed.has(r.path));
-    if (quiet.length) {
-        console.log(`\n  over ${LIMIT} lines but NOT ranked above — big and quiet, which decay hides by design:`);
-        for (const r of quiet.sort((a, b) => b.now - a.now)) {
-            console.log(`  ${String(r.now).padStart(8)} lines, ${r.raw} commit(s) in the window  ${r.path}`);
+const args = process.argv.slice(2);
+const flagValue = (name, fallback) => {
+    const i = args.indexOf(name);
+    return i >= 0 && args[i + 1] && !args[i + 1].startsWith("--") ? args[i + 1] : fallback;
+};
+
+function main() {
+    if (args.includes("--cost")) {
+        // Twelve months of history, halved every 30 days. The window is only a cutoff for how far back to read:
+        // with decay, anything older than a few half-lives contributes almost nothing anyway, so the HALF-LIFE is
+        // the knob that matters and the window is there to keep the git log cheap.
+        const since = flagValue("--since", "12 months ago");
+        const halfLife = Number(flagValue("--half-life", "30"));
+        const top = Number(flagValue("--top", "20"));
+        const { rows, total } = costRows(since, halfLife);
+        console.log(`file cost: lines x commits since "${since}", each commit halved every ${halfLife} days.`);
+        console.log(`  ${"cost".padStart(8)} ${"lines".padStart(6)} ${"recent".padStart(6)} ${"all".padStart(4)} ${"in".padStart(4)}  share  file`);
+        const shown = rows.slice(0, top).filter((r) => r.cost > 0);
+        for (const r of shown) {
+            console.log(`  ${String(Math.round(r.cost)).padStart(8)} ${String(r.now).padStart(6)} ${r.weight.toFixed(1).padStart(6)}`
+                + ` ${String(r.raw).padStart(4)} ${String(r.fan).padStart(4)}  ${(100 * r.cost / total).toFixed(1).padStart(4)}%  ${r.path}`);
+        }
+        console.log(`\n  top ${shown.length} are ${(100 * shown.reduce((t, r) => t + r.cost, 0) / total).toFixed(0)}% of the total.`);
+        console.log(`  'recent' is the decayed commit weight, 'all' the raw count: a big gap means the work STOPPED.`);
+        console.log(`  'in' is how many files import this one — reads, which commits do not count. See the header.`);
+
+        // DECAY MUST NOT HIDE BLOAT. A file can be enormous and quiet, and that is exactly the case a decayed
+        // ranking buries — so every oversized file that did not make the list above is named here regardless of
+        // its score. The ranking says where the work is; this says what is big anyway.
+        const listed = new Set(shown.map((r) => r.path));
+        const quiet = rows.filter((r) => r.now > LIMIT && !listed.has(r.path));
+        if (quiet.length) {
+            console.log(`\n  over ${LIMIT} lines but NOT ranked above — big and quiet, which decay hides by design:`);
+            for (const r of quiet.sort((a, b) => b.now - a.now)) {
+                console.log(`  ${String(r.now).padStart(8)} lines, ${r.raw} commit(s) in the window  ${r.path}`);
+            }
+        }
+    } else if (args.includes("--all")) {
+        const over = allFiles().map((p) => ({ path: p, before: 0, now: lines(p) })).filter((f) => f.now > LIMIT)
+            .sort((a, b) => b.now - a.now);
+        console.log(`file sizes: ${over.length} file(s) over ${LIMIT} lines.`);
+        for (const { path, now } of over) console.log(`  ${String(now).padStart(5)}  ${path}`);
+    } else {
+        const base = args.find((a) => !a.startsWith("--")) || "origin/main";
+        const grown = grownFiles(base, args.includes("--staged"));
+        if (grown === null) console.log(`file sizes: cannot diff against ${base} — skipping the ratchet.`);
+        else if (!grown.length) report([]);
+        else {
+            // Only now is the git log worth running: the common case, nothing oversized grew, stays cheap.
+            const shares = new Map(costRows("12 months ago", 30).rows.map((r) => [r.path, r.share]));
+            const { speak, quiet } = decide(grown, shares);
+            report(speak, quiet);
         }
     }
-} else if (args.includes("--all")) {
-    const over = allFiles().map((p) => ({ path: p, before: 0, now: lines(p) })).filter((f) => f.now > LIMIT)
-        .sort((a, b) => b.now - a.now);
-    console.log(`file sizes: ${over.length} file(s) over ${LIMIT} lines.`);
-    for (const { path, now } of over) console.log(`  ${String(now).padStart(5)}  ${path}`);
-} else {
-    const base = args.find((a) => !a.startsWith("--")) || "origin/main";
-    const grown = grownFiles(base, args.includes("--staged"));
-    if (grown === null) console.log(`file sizes: cannot diff against ${base} — skipping the ratchet.`);
-    else report(grown);
+    process.exit(0);   // ALWAYS. See the header: this is a reminder.
 }
-process.exit(0);   // ALWAYS. See the header: this is a reminder.
+
+// Run as a script only, so a test can import `decide` without the CLI running and exiting.
+if (process.argv[1] === fileURLToPath(import.meta.url)) main();

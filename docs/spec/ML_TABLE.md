@@ -1,7 +1,8 @@
 # Spec: `ml.table`, a cell reads its own tables
 
-**Status: specified (2026-11-19); the JS member is built (#2043, "Built as of 2026-11-20" below); the Python member,
-the `/files` writers and the lazy table are not.** The design note, with every measurement behind these rules, is
+**Status: specified (2026-11-19); the JS member is built (#2043, "Built as of 2026-11-20" below); the Python member is
+built and `tables` is removed (2026-11-24, "Page callers" and "What a Python cell gets" below); the `/files` writers and
+the lazy table are not.** The design note, with every measurement behind these rules, is
 [`docs/plan/repl/ML_TABLE.md`](../plan/repl/ML_TABLE.md). This file holds the rules; where another spec owns a line, it
 is pointed at, not restated. Shane's rulings: 55, 56, 57, 68 to 72, 75 to 87 (2026-11-19, in the coordinator's
 session, recorded in [`docs/plan/repl/README.md`](../plan/repl/README.md)).
@@ -13,8 +14,11 @@ owns (ruling 68).
 
 - **Python: `t = ml.table(src, raw=False, delimiter=None, header=None, decimal=None)`**, a synchronous call (ruling 77).
   - The facade blocks on the wire answer through JSPI (`pyodide.ffi.run_sync`), with no fork change and no `Await`
-    node. The spelling is the same inside and outside the dialect. Not built: the facade's members are `async` today,
-    and a call from inside needs the dialect's data to admit the facade ([`ML_WIRE.md`](ML_WIRE.md), "Step 1").
+    node. The spelling is the same inside and outside the dialect. Built (2026-11-24): `ml.table` is the facade's one
+    synchronous member (`_call_sync` in `ml-facade.ts`, over the lockdown harness's `run_sync`), and each cell admits
+    it inside the dialect as a lifted leaf (`_ml_table_inside`, "The charge"); the facade's other members stay `async`
+    ([`ML_WIRE.md`](ML_WIRE.md), "Step 1"). It is absent where nothing can wait in place: a real-CPython run, a
+    completion, and a cell whose worker installed no wire.
   - It returns a pandas DataFrame (ruling 78), built in the cell from the table's bytes. The source facts go on
     `t.attrs`: `source`, `delimiter`, `truncated` and `headerless`.
   - Past the materialise cap, it returns the lazy table instead ("Tables too large to load").
@@ -83,8 +87,20 @@ A source is judged exactly as a source in `python_exec`'s `tables` was:
   takes the path, as pandas does. A file that is not delimited text is refused with a sentence naming `dereference`.
 - **The rule runs at call time, on the resolved value,** whether the code named it as a literal or computed it.
 - **A literal scan only hoists.** It finds the `ml.table("…")` sources in the code, so the card can show them above
-  the code and an approval can grant them up front. In JS this is the `fetchUrlLiterals` pattern; in Python it is an
-  `ast` pass.
+  the code and an approval can grant them up front. In JS this is the `fetchUrlLiterals` pattern. For Python it is
+  built (2026-11-24) as a tokenizer in the extension, not an `ast` pass (`tableLiterals`, `src/python/table-literals.ts`),
+  because the page and the agent loop scan before any interpreter is up. It reads only a call spelled `ml.table` whose
+  first argument is one plain string literal: never a computed source, a concatenation, an f-string or bytes, never a
+  call inside a comment or a string, and at most `TABLE_LITERALS_MAX` (32) a cell. Literal `raw`, `delimiter` and
+  `header` keywords are kept, and any other keyword drops them all. A literal in a branch that never runs is still read.
+  Code the tokenizer cannot account for (an unterminated string) yields nothing. `tests/table-literals.test.mjs` holds
+  the adversarial rows.
+- **A computed Sheet in a worker-run cell asks (fixed 2026-11-24).** The worker's reader (`workerTableRead`) used to
+  read an unapproved Sheet unasked when the run's page was one whose site approves its own actions. Because the
+  source is now computed at call time, that let a cell build a Sheet URL the card never showed and read it with the
+  person's login. It now reads a Sheet only when the Sheet is in the call's approved set, or when the source is
+  `current` on that Sheet's own tab. Any other Sheet asks: `Asks` inside the dialect, and a nested ask on the step in
+  an approved cell (`sheetAsk`, `sw-ml-table.ts`). The RED TEAM row in `tests/run-start.test.mjs` pins it.
 - **Inside the dialect,** a source that needs the person raises `NotInDialect` at the bridge. The call goes to the
   person, and the approved rerun has the hoisted grants.
 - **In an approved cell,** a source the card did not hoist gets a nested ask on the running step ([`ML_WIRE.md`](ML_WIRE.md),
@@ -92,6 +108,31 @@ A source is judged exactly as a source in `python_exec`'s `tables` was:
   literals use, so a later read of that source is free.
 - **A cell's fetch** is judged as `fetch_url`'s is: `judgeCall(runId, "fetch", fetchFacts(url, mode))`, plus the run's
   origin grants and its consented set.
+
+### Page callers (built 2026-11-24)
+
+A cell has two hosts, and they read at different times.
+
+- **A worker-run cell** (an agent run the worker built) reads at the call. Each `ml.table(src)` is an `ML_CALL` for
+  member `table` (`tableMemberFor`, `src/sw/sw-ml-table.ts`). The worker judges the resolved source by the table above
+  (`workerTableRead`, `src/sw/worker-tools.ts`), asking the run's tab only for a page table, and records each read on
+  the call (`pyCall.read`). A computed source is read like a literal one.
+- **A page-started cell** (`ml.pythonExec`, or a page-built run's `python_exec`, which the page's own loop runs) has no
+  run the worker can read for at the call. So before the cell, the page reads each source its code writes as a literal
+  (`hoistTables`, `src/ml/ml-python.ts`). It judges each one with `_hoistTable`, the judgement a `tables` source had,
+  and sends the answers as `hoisted` in the `PYTHON_EXEC` payload. The cell's call is answered from them by source
+  and options (`hoistKey`). A source the page did not read, because it was computed or never written as a literal, is
+  `Absent` with the sentence `UNHOISTED_TABLE`, which tells the model to write the source as a literal or to read it
+  in an agent run.
+- **A read the page refused is the call's error, not the cell's.** The cell still runs, and the call that names that
+  source raises `MlError` with the page's reason, at that line. A read in a branch that never runs then costs nothing.
+  A page-started cell has no `/files/`, so an `@file:` or `/files/` literal is that error.
+- **An `@tool:` literal** in a page-built run is resolved by the agent loop before the call (`resolveTablePointers`,
+  `src/agent/agent-loop.ts`) into `args._tablePointers`. A pointer to something that is not a table, or one that does
+  not resolve, becomes that entry's error, in the same words a bad pointer gets elsewhere.
+- **A stale `tables` or `tableRaw` argument** (a model, or a saved script, that still passes one) gets one sentence and
+  nothing runs (`staleTableArgs`, `src/python/table-literals.ts`). The sentence names `ml.table("<source>")` and
+  `raw=True`. It is checked before the gate, so no card is shown for a call that cannot run.
 
 ## Ownership (ruling 57, amended by ruling 89)
 
@@ -130,6 +171,21 @@ never copied: `.copy()` always returns an editable table the caller owns.
 
 pandas parses the kept bytes, and the cell owns the frame. A URL the run did not fetch asks.
 
+**Built:** the `/files/` path and the owned buffer (`_ml_read_csv_inside`, `python-dialect-run.ts`). The two URL sources
+wait for the kept-bytes store (§10, step 3), and ask until then. As built:
+- a path is normalized against the working directory. It must stay under `/files/`, lead out through no link, and name
+  no compressed file (pandas decompresses by suffix). A URL of any scheme, `file://` included, and a `~` path ask.
+- A separator or delimiter longer than one character asks: pandas reads it as a regular expression with the python
+  engine. So do a callable `usecols` or `skiprows`.
+- The input's bytes are charged to the cell's step budget before the parse (`_restricted.charge`), at 2 bytes a step, so
+  a step of parse costs no less time than a step of interpreter work (on the fork core: 20.2 ns a step, 6-10 ns a byte
+  parsed). So the budget bounds a loop of calls too, and a parse that cannot fit asks with nothing read: with the
+  15,000,000-step budget, any input past about 30 MB. A file or buffer over the 64 MB table read cap asks.
+- With `tables` loaded, the call asks. The prelude's redirect returns an injected table for any name it does not know,
+  a `/files` path included, so the result might not be the file. That redirect is a defect on the full path today, and
+  goes with `tables` (step 3).
+- A hidden file is listed by the mount and refused at open, so an inside read raises the PermissionError a full run gets.
+
 - **Keywords allowed:** `sep`, `delimiter`, `header`, `names`, `index_col`, `usecols`, `dtype`, `parse_dates`,
   `nrows`, `skiprows`, `na_values`, `keep_default_na`, `thousands`, `decimal`.
 - **Refused:** `chunksize` and `iterator`; callable `converters` and `on_bad_lines`; `storage_options`, `memory_map`,
@@ -161,6 +217,58 @@ pandas parses the kept bytes, and the cell owns the frame. A URL the run did not
 | `tables: "current"` | `df = ml.table("current")` |
 | `tables: "@tool:<id>"` | `df = ml.table("@tool:<id>")` |
 | `tableRaw: true` | `ml.table(src, raw=True)` |
+
+- **Upgrade:** a saved script or a model that still passes `tables` gets the `staleTableArgs` sentence ("Page
+  callers"), never a silent run without its data. `injectInputs` takes `(ns, image, harness)` and throws on a fourth
+  argument, so an old caller that passes a tables map in the third place fails loudly rather than running ungated.
+
+## What a Python cell gets (built 2026-11-24)
+
+- **The answer** is `{ source, data }` (`TableAnswer`, `src/python/table-answer.ts`), where `data` is rows, a page's
+  HTML table, a stored value or a `/files/` file.
+- **Bytes cross beside the JSON.** The offscreen document reads a stored value's bytes, or a `/files/` file through the
+  run's reader (so the hide rule and the secret mask apply as they do to the mount), in `tableAnswerBytes`. It decides
+  a file's format by magic (Parquet, Arrow) and a delimited file's delimiter and header by the JS reader's own rules
+  (`sniffDelimiter`, `hasHeaderRow`). A binary file is never decoded as text: it is `NotATable`, and so is text with no
+  delimiter. A reader errno (`EACCES`, `EFBIG`, `ENOENT`) is the call's error code. The worker binds the bytes once as a
+  bytearray (`bindTableBytes`, under `_ml_wbuf_<seq>`), the frame builder takes them, and they are dropped after the
+  cell if it never did.
+- **The frame** is built in the cell by `_ml_table_frame` (`python-runtime.ts`): Arrow and Parquet through pyarrow, a
+  delimited body re-read by `pd.read_csv` with the delimiter and header already decided (so pandas cannot disagree with
+  the JS reader), rows and HTML as the old loader built them. The source facts go on `df.attrs`.
+- **An error answer** is an `MlError` raised at the line that called, and the cell can catch it. A source that is not
+  a string, or an option of the wrong type, is a `TypeError` before any call.
+
+### The charge
+
+Inside the dialect a table's decode is a lifted leaf, so the interpreter counts no steps for it. `ml.table` charges the
+budget itself, before the decode it pays for. The check registered with `allow_call` charges
+`ceil(len(src) / ML_TABLE_BYTES_PER_STEP)` steps for the source string. The facade's synchronous call charges the same
+rate on the answer's JSON (`_call_sync`, `ml-facade.ts`), which is where a rows or HTML answer's size is paid. It charges
+after `run_sync` returns and before the decode, on the cell's own stack: inside `run_sync` the awaited chain runs on the
+event loop, where the dialect counts nothing, so a charge made there was silently free (found 2026-11-24 by
+`tests/python-table-charge.test.mjs`; two answers at the cap cost about 4,400 steps). The decode itself then runs on the
+cell's stack and is counted too, a few steps a cell.
+`_ml_table_frame` charges it again on the bytes of a stored value or a `/files/` file, which cross beside the JSON. A
+page table's answer is bounded by `PAGE_TABLE_CAPS` (`worker-page-read.ts`: 2,000 columns, 1,000,000 rows, 4,000,000
+cells, 100,000 characters a cell, 16,000,000 characters of HTML), and the charge applies up to that cap. At the HTML
+cap one call costs about 8,000,000 steps, more than half the cell's 15,000,000, so two such calls exhaust the budget.
+Outside a run the charge is nothing.
+- **Known limit (2026-11-24): a Sheet's body is read whole.** `fetchSheetCsv` (`sw-fetch.ts`) reads the export with
+  `res.text()` and no size cap before it is parsed to at most `MAX_TABLE_ROWS` (200,000) rows, with no column or cell
+  cap. The charge bills what crosses to the cell, but the service worker holds the whole body first. A fetched table is
+  held to the fetch cap and parsed to the same 200,000 rows. Capping the Sheet's body at the fetch cap, refused past it
+  with a sentence naming the size, is its own change after this one.
+
+- **`ML_TABLE_BYTES_PER_STEP = 2`.** It was measured on the fork core (2026-11-24, Node, best of 3). One interpreter step
+  took 20.2 ns. `pd.read_csv` took 6.0 to 7.8 ns per byte for a numeric file and 8.9 to 9.7 ns per byte for a
+  string-heavy one, over 0.5 to 15 MB. So one step is worth 2 to 3 bytes of parsing. The constant takes the low end,
+  which charges more, not less. **Provisional:** it moves with the core, or when the decode is measured in Chrome.
+- **One class leaks per cell.** The facade is built anew each cell, so `_ml_table_inside` registers `allow_kind` on that
+  cell's facade class each time, and the fork's registry keeps an entry for each. Nothing bounds that within a
+  worker's life but the number of cells it runs. Building the facade class once per worker removes it; not done here.
+  A facade kept from an earlier cell is refused with nothing sent, and the next cell's own facade reads normally
+  (`tests/redteam-python-table.test.mjs`, "a facade kept from an earlier cell never reaches the wire in the next").
 
 ## What a table keeps of its source
 

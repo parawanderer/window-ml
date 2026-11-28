@@ -10,7 +10,7 @@ import { FilesRefused, isPdfFile, pdfToPageRun, textFiles } from "../attached-fi
 import { type MlDebugEvent } from "../contract/contract-debug";
 import { createCommandHandler, THIS_BROWSER, type CommandDeps, type PageOutcome } from "../session/session-commands";
 import { cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, isBackgroundChat, releaseEvictedChatFiles, sendBackgroundChat, setBackgroundChatModel, startBackgroundChat } from "./sw-chat";
-import { releaseSessionValues, storeHeld } from "./sw-values";
+import { readStoredText, releaseSessionValues, storeHeld } from "./sw-values";
 import { type StoredSession } from "../contract/contract-messages";
 import { SESSION_CONTRACT_VERSION, type Command, type CommandFrom, type CommandResult, type CommandType, type ArchiveCapability, type BlankStartCapability, type RuntimeInfo, type SessionSummary, type TabGroupInfo, type TabInfo } from "../session/session-host";
 import { FaviconCache, stripOrder } from "./tab-favicons";
@@ -29,8 +29,8 @@ import { moveRun } from "./move-run";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { isExtensionSender } from "./sw-site-access";
 import { fileChunks } from "./sw-file-chunks";
-import { fetchLLM, streamLLM, getConfig, listAvailableModels, modelCapabilitiesBatch, residentContextLength } from "./sw-llm";
-import { forModelMessages, forTurn } from "./sw-scrub";
+import { fetchLLM, streamLLM, streamAgentTurn, getConfig, listAvailableModels, modelCapabilities, modelCapabilitiesBatch, residentContextLength } from "./sw-llm";
+import { forModel, forModelMessages, forTurn, redactedNote } from "./sw-scrub";
 import { workerMl } from "./worker-ml";
 import { ocrRequest } from "../ml/ml-vision";
 import { planImages } from "../image-gate";
@@ -39,6 +39,7 @@ import { forgetAgentFiles } from "./sw-agent-files";
 import { readPdfOffscreen } from "./sw-attach";
 import type { PdfMessage } from "../pdf/pdf-wire";
 import { pythonBundlePresent, deletePythonRun } from "./sw-python";
+import { cancelRelease, releaseRun } from "./sw-release";
 import { endTasks } from "./sw-tasks";
 import { recordHousekeeping, senderOrigin } from "./sw-housekeeping";
 import { archiveCall, lastFolderReport, onFolderChange, scheduleFolderSync, syncFolder } from "./sw-archive";
@@ -346,6 +347,19 @@ export function configureSessionCommands(run: RunDeps): void {
             return String((r as { content?: string | null }).content || "").trim();
         },
         scrub: (asIs) => forTurn(asIs ? { asIs } : {}),
+        // `read_pages` (FILE_ATTACHMENTS.md, "Reading the pages held back"): offered only to a model whose capabilities
+        // say it takes tools, its held rows read for the chat's own session, its results scrubbed as an agent run's are.
+        takesTools: async (model) => {
+            const config = await getConfig();
+            const target = model || config.model;
+            const caps = target ? await modelCapabilities(config, target) : null;
+            return Array.isArray(caps) && caps.includes("tools");
+        },
+        callTools: async (req, onLive, signal) => await streamAgentTurn(
+            { messages: req.messages, ...(req.tools ? { tools: req.tools } : {}), model: req.model, think: req.think, hint: req.hint },
+            (acc) => onLive({ content: acc.content, reasoning: acc.reasoning }), signal),
+        readHeld: (key, session) => readStoredText(key, session),
+        scrubResult: async (text) => { const r = await forModel(text); return r.text + redactedNote(r.counts); },
     });
     handler = createCommandHandler({
         runtime: localRuntimeId(),
@@ -399,6 +413,7 @@ export function configureSessionCommands(run: RunDeps): void {
         setRunModel: run.setRunModel,
         cancelRun: run.cancelRun,
         resolveApproval: run.resolveApproval,
+        releaseRun: (hash) => releaseRun(hash, "person"),
         forgetStored: async (hash) => {
             run.forgetRun(hash);
             forgetBackgroundChat(hash);
@@ -482,6 +497,8 @@ export function configureSessionCommands(run: RunDeps): void {
             trackRun(tabId, hash, rebuild);
             const reply = rebuild ? await run.adoptOnTab(tabId, hash, rebuild) : { error: "no toolset to rebuild" };
             const outcome: PageOutcome | "adopted" = !reply.error ? "adopted" : "unanswered" in reply && reply.unanswered ? "no-answer" : "none";
+            // On a tab again: a release deadline set when its tab closed is void.
+            if (!reply.error) void cancelRelease(hash);
             // A page that did not take it must not leave a run hydrated against a tab that is not holding it: the
             // next thing to read `bgRuns` would believe that tab owns this session.
             if (outcome !== "adopted") { bgRuns.delete(hash); untrackRun(tabId, hash); }

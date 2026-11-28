@@ -44,7 +44,7 @@ function lifted(fn) {
 
 /** Run one cell the way a hardened `python_exec` does, with the bridge refusal lifted; `{ error, value }` as the wrapper reports them. */
 async function cell(code) {
-    injectInputs(py.globals, null, null, harness);
+    injectInputs(py.globals, null, harness);
     bridges(true);
     try { await py.runPythonAsync(wrapUserCode(code, true)); } finally { bridges(false); }
     const err = py.globals.get("_err");

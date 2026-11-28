@@ -849,3 +849,47 @@ test("session titles: skipped entirely when no utility model is configured (opt-
     assert.ok(!calls.some(c => c.extend === "utility"), "no title call without a utility model");
     assert.match(w.shadow.querySelector(".row-title").textContent, /some request text here/);
 });
+
+// --- a chat turn's tool calls (read_pages): drawn inside the turn that made them ---
+
+/** A `read_pages` step of chat turn `n` of session `hash`. */
+const chatToolStep = (hash, n, over = {}) => ({
+    kind: "agent-step", id: `${hash}-${n}`, ts: Date.now() + 50 + n, save: false, session: { hash, turn: n }, step: 1, seq: 1, turn: `${hash}-${n}`,
+    tool: "read_pages", arguments: { file: "a.pdf", pages: "3" }, result: "PAGE-THREE-TEXT", ...over,
+});
+const FOLLOWING = 4;   // Node.DOCUMENT_POSITION_FOLLOWING
+const before = (a, b) => !!(a.compareDocumentPosition(b) & FOLLOWING);
+
+test("a chat step of turn 2 draws .chat-tools inside turn 2 only, between its message and its reply; turn 1 draws none", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(chatStart("ctl", 1, "first question"));
+    await w.dispatch(chatResult("ctl", 1, "first answer"));
+    await w.dispatch(chatStart("ctl", 2, "second question"));
+    await w.dispatch(chatToolStep("ctl", 2));
+    await w.dispatch(chatResult("ctl", 2, "second answer"));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    const tools = w.shadow.querySelectorAll(".chat-tools");
+    assert.equal(tools.length, 1, "one group, for one turn");
+    assert.ok(tools[0].classList.contains("aturn"));
+    const users = w.shadow.querySelectorAll(".msg.user"), replies = w.shadow.querySelectorAll(".msg.asst");
+    assert.equal(users.length, 2);
+    assert.equal(replies.length, 2);
+    assert.ok(before(users[1], tools[0]), "after turn 2's message");
+    assert.ok(before(tools[0], replies[1]), "before turn 2's reply");
+    assert.ok(before(replies[0], tools[0]), "not inside turn 1 (after its reply)");
+    assert.match(tools[0].textContent, /read_pages/);
+});
+
+test("a chat step with no `turn` (an older client's) draws nothing, and the turns draw as before", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(chatStart("ctn", 1, "question"));
+    await w.dispatch(chatToolStep("ctn", 1, { turn: undefined }));
+    await w.dispatch(chatResult("ctn", 1, "answer"));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.equal(w.shadow.querySelectorAll(".chat-tools").length, 0);
+    assert.equal(w.shadow.querySelectorAll(".msg.user").length, 1);
+    assert.match(w.shadow.querySelector(".msg.asst").textContent, /answer/);
+});

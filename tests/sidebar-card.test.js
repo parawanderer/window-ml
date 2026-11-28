@@ -77,6 +77,25 @@ test("card surface: a pending approval shows the action directly + Approve posts
     assert.equal(decision.decision, true);
 });
 
+test("card surface: a broken-policy approval says which policy and why, has no remember, and Edit policy asks the worker to open the policies section", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    const sent = [];
+    const real = w.window.chrome.runtime.sendMessage;
+    w.window.chrome.runtime.sendMessage = (msg, cb) => { if (msg && msg.type === "OPEN_CHAT_PAGE") { sent.push(msg); return; } return real(msg, cb); };
+    await w.raw({ __mlSidebarSurface: "card" });
+    const why = { line: 'Asking because the policy "never cat" is broken: it ran out of steps. It may have been meant to refuse calls like this. Edit it to fix it.', detail: "d", cause: "broken-policy", policy: "never cat", policyId: "pid9" };
+    await w.dispatch(agentStart("brkcard", "read it", "m"));
+    await w.dispatch(agentStep("brkcard", 1, { ...APPROVAL_STEP, askWhy: why }));
+    await w.flush();
+    const doc = w.window.document;
+    const line = doc.querySelector(".appr-askwhy");
+    assert.ok(line, "the card says why");
+    assert.equal(line.querySelector("span").textContent, why.line);
+    assert.equal(doc.querySelector(".appr-btn.remember, .appr-grant"), null, "no remember");
+    [...line.querySelectorAll("button")].find((b) => b.textContent === "Edit policy").click();
+    assert.deepEqual(sent.map((m) => m.payload), [{ address: "settings/extension/permissions/policies" }], "the HUD cannot draw Settings: the section opens on the chat page");
+});
+
 test("card surface: the final answer shows; debug steps/thinking don't leak", async () => {
     const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
     const posted = [];

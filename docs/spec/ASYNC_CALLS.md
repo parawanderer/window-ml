@@ -484,9 +484,9 @@ would set it to a stand-in that prints the URL to stdout, where piece 1 picks it
 6. A page cannot cause a tail, read a snapshot, or make a call detach. None of `task`'s paths is in `HANDLE_MAP` or a
    page-started type.
 
-## A run whose tab closed: the release (ruled 2026-11-22; not built)
+## A run whose tab closed: the release (ruled 2026-11-22; points 1 to 5 and 7 built, point 6 not)
 
-**Status: ruled by the coordinator 2026-11-22 (#2085); not built.** The release itself is decided in
+**Status: ruled by the coordinator 2026-11-22 (#2085). Points 1 to 5 and 7 are built (`sw-release.ts`); point 6, the namespace-drop record, waits for the session store's `noteNsDropped`.** The release itself is decided in
 [`TABLESS_RUN.md`](TABLESS_RUN.md) ("It ships FIRST", Shane, 2026-11-14), and so is the boundary with the move-run lane
 ("The overlap with the async lane's closed-tab release", the coordinator, 2026-11-17). This section is how it is built,
 read against main 69a73569. The rest was the lane's proposal, now ruled.
@@ -510,8 +510,8 @@ read against main 69a73569. The rest was the lane's proposal, now ruled.
 ### The proposal
 
 1. **The trigger.** A tab closes. Each run the worker holds on it (`bgRuns` with that `tabId`) gets a release deadline
-   of now plus `closedRunGraceMin` (default 10, 0 releases at once). It is a DevTools setting, a guarded number, and
-   may be added to the popup but never only there. A run with a RUNNING task gets no deadline: `onTaskCounts` sets it
+   of now plus `closedRunGraceMin` (default 10, 0 releases at once). It is a DevTools setting, an ordinary number of
+   minutes (0 to 1440, a longer one read as 1440), and may be added to the popup but never only there. A run with a RUNNING task gets no deadline: `onTaskCounts` sets it
    when the run's last running task ends while the run still has no tab. A task's result that waits (`waiting`) does
    not hold the run (point 5).
 2. **A deadline that survives eviction.** The deadline is stored as `ml_release_due:<runId>` in
@@ -521,7 +521,8 @@ read against main 69a73569. The rest was the lane's proposal, now ruled.
 3. **Reopening cancels it.** An adopt, a move (`MOVE_RUN.md`) or a resume that puts the run on a tab removes its
    deadline. So does a person's message, which runs the turn on a tab or, after TABLESS_RUN, detached. The check is "the
    run has a tab now", made with `chrome.tabs.get` at release time, so a missed cancel releases nothing alive. A run
-   with a turn running is never released; its deadline moves to the turn's end.
+   with a turn running is never released; its deadline moves to the turn's end. A turn that ends with the run still on
+   no tab and no running task sets a fresh deadline of now plus `closedRunGraceMin`.
 4. **The release is `releaseSessionTokens(runId, reason)`**, the existing function with a reason added and passed to
    its hooks, so `PY_DELETE_RUN` carries it (`tab-closed`, or `person` for the Stop button in point 7). The stored run
    (`ml_bgrun`) and the transcript stay, so a later Continue rehydrates the run with a fresh namespace, as
