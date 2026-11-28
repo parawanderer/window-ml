@@ -728,7 +728,7 @@ function SheetsGrant() {
     return (
         <details class="set-section" open={!granted}>
             <summary class="set-group">Google Sheets access{granted ? <span class="perm-ok"> ✓</span> : null}</summary>
-            <div class="set-note">Lets <code>python_exec</code> load a Google Sheet (the <code>tables</code> arg / a Sheets URL) as a pandas DataFrame — the background CSV fetch needs host access to <code>docs.google.com</code>, which “On click” site access withholds. A narrower grant than “On all sites”.</div>
+            <div class="set-note">Lets <code>python_exec</code> load a Google Sheet (<code>ml.table</code> of a Sheets URL) as a pandas DataFrame — the background CSV fetch needs host access to <code>docs.google.com</code>, which “On click” site access withholds. A narrower grant than “On all sites”.</div>
             {granted
                 ? <div class="set-hint"><span class="perm-ok">Granted.</span> The extension can fetch Google Sheets you're signed into.</div>
                 : <div class="free-row"><button class="test-btn" onClick={enable}>Enable Google Sheets access</button></div>}

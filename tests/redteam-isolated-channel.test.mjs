@@ -208,7 +208,7 @@ test("HALTING: a fresh call's budget answers a burst up to ISO_ASK_MAX and refus
 test("the server passes the store's own errors through unchanged (an oversized read), refuses a table another run holds and a read that failed, and says when the run's pointers are gone", async () => {
     const table = { columns: ["n"], rows: [[1]], shape: [9, 1], dtypes: { n: "int64" }, truncated: true };
     const reads = [{ ref: "@tool:t", pipe: [], value: "x", meta: { id: "t", kind: "table", tool: "fetch_url", step: 1, table, value: "vkey" } }];
-    const capErr = "reading column \"n\" of this stored table would return 6,000,000 cells, more than one read hands back (5,000,000). Compute over it in python_exec instead (tables: { df: \"@tool:…\" }).";
+    const capErr = "reading column \"n\" of this stored table would return 6,000,000 cells, more than one read hands back (5,000,000). Compute over it in python_exec instead, with `df = ml.table(\"@tool:…\")`.";
     const s1 = isoServer("run-1", reads, { deref: () => undefined, holders: async () => ["run-1"], columns: async () => { throw new Error(capErr); } });
     assert.deepEqual(await s1({ op: "cols", key: "vkey", names: ["n"] }), { error: capErr }, "the cap's sentence, as every path gets it");
     assert.deepEqual(await s1({ op: "pipe", i: 0, stages: "head" }), { error: ISO_REFUSED.ended });

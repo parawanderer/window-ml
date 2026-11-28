@@ -100,7 +100,7 @@ after(async () => {
  * RESTORE what it removed.
  */
 async function cell(code, { hardened = true, lifted = false } = {}) {
-    injectInputs(py.globals, null, null, harness ?? undefined);
+    injectInputs(py.globals, null, harness ?? undefined);
     const saved = hardened && !lockedDown ? harden(py) : null;
     try {
         if (lifted) bridges?.(true);

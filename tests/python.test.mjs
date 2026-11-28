@@ -1,6 +1,6 @@
 // REAL-CPython tests for the python_exec sandbox runtime — Pyodide-in-Node exercising the exact
 // PRELUDE + wrapper the offscreen document runs (python-runtime.ts), so
-// the drift-prone Python (tables→DataFrame building, numeric auto-cast, the `tables` dict, read_html
+// the drift-prone Python (`ml.table`'s answer→DataFrame building, numeric auto-cast, read_html
 // fallback, return/stdout/traceback capture, per-run isolation) is verified against actual pandas —
 // not a re-implementation. Opt-in: needs the bundled wheels (dist/pyodide/, from `npm run
 // fetch-pyodide`); self-SKIPS when absent (so a bundle-less `npm test` stays green). CI fetches them.
@@ -11,7 +11,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 // Static (not conditional-require) — python-runtime.ts is chrome-free and side-effect-free,
 // so importing it costs nothing when the wheels are absent; `skip` still gates every test.
-import { wrapUserCode, harden, unharden, injectStoredTable, takeIpc, stdoutWriter } from "../src/python/python-runtime.ts";
+import { wrapUserCode, harden, unharden, takeIpc, stdoutWriter } from "../src/python/python-runtime.ts";
 // For the sympy→UI INTEGRATION test: the sidebar app (jsdom) to render the real WASM output. CommonJS helper.
 const { loadSidebarWorld, closeSidebarWorlds } = createRequire(import.meta.url)("./helpers");
 after(closeSidebarWorlds);   // close jsdom windows so their timers don't keep the runner alive (the leak gotcha)
@@ -33,24 +33,55 @@ before(async () => {
     if (withArrow) py.runPython((await import("../src/python/python-env.ts")).PY_STARTUP_PREPARE);
 }, { timeout: 180000 });
 
+// `ml.table` without the worker: a transport that answers each `table` call from `tables` (source → the answer's value,
+// or `{ error }`), as the worker's wire would. A value whose data is a stored table carries its bytes as `b64`, and they are
+// bound under the name the answer gives, which is what the worker does with an answer's transferred bytes (bindTableBytes).
+const FAKE_WIRE = `
+import json as _j, base64 as _b
+def _fake(answers_json, g, record):
+    answers = _j.loads(answers_json)
+    async def send(raw):
+        record(raw)
+        req = _j.loads(raw)
+        a = answers.get(req["args"][0]) if req.get("call") == "table" else None
+        if a is None:
+            return _j.dumps({"seq": req["seq"], "error": {"code": "Absent", "message": "the test gave no answer for this source"}})
+        if "error" in a:
+            return _j.dumps({"seq": req["seq"], "error": a["error"]})
+        v = _j.loads(_j.dumps(a))
+        b = v.pop("b64", None)
+        if b is not None:
+            name = "_ml_wbuf_%d" % req["seq"]
+            g[name] = bytearray(_b.b64decode(b))
+            v["data"]["buf"] = name
+        return _j.dumps({"seq": req["seq"], "value": v})
+    return send
+_fake
+`;
+let fakeWire = null;
+/** Install the fake transport in `ns` for one cell; returns the requests it receives, decoded. */
+function tableWire(ns, tables) {
+    const sent = [];
+    if (!tables) return sent;
+    fakeWire ??= py.runPython(FAKE_WIRE, { globals: py.toPy({}) });
+    const send = fakeWire(JSON.stringify(tables), ns, (raw) => sent.push(JSON.parse(raw)));
+    ns.set("_ml_send", send);
+    send.destroy();
+    return sent;
+}
+
 // Mirror offscreen.run(): set the injected globals, (optionally harden), run the wrapped script,
 // read back the result. `hardened` applies the REAL readonly-mode hardening (harden/unharden) so
 // the escape tests hit the shipped code — restored in `finally` so a null'd global can't leak to
-// the next test (which runs serially).
+// the next test (which runs serially). `tables` answers the cell's `ml.table` calls (tableWire).
 async function pyRun(code, { tables = null, image = null, hardened = false } = {}) {
     py.globals.set("INJECTED_IMAGE_B64", image);
-    // A stored table's bytes go in exactly as the worker puts them (injectStoredTable), and are cleared the same way.
-    const bufs = [];
-    const injected = Array.isArray(tables) ? tables.map((t, i) => injectStoredTable(py, py.globals, t, `_ml_tbuf_${i}`, bufs)) : tables;
-    py.globals.set("INJECTED_TABLES_JSON", Array.isArray(injected) && injected.length ? JSON.stringify(injected) : null);
+    const sent = tableWire(py.globals, tables);
     const saved = hardened ? harden(py) : null;
     try { await py.runPythonAsync(wrapUserCode(code, hardened)); }
-    finally {
-        if (saved) unharden(py, saved);
-        for (const name of bufs) { try { py.globals.delete(name); } catch { /* the prelude took it */ } }
-    }
+    finally { if (saved) unharden(py, saved); }
     const stdout = String(py.globals.get("_stdout") ?? "");
-    if (py.globals.get("_err")) return { ok: false, stdout, error: String(py.globals.get("_err")) };
+    if (py.globals.get("_err")) return { ok: false, stdout, error: String(py.globals.get("_err")), sent };
     const jr = py.globals.get("_json_result");
     let value; try { value = JSON.parse(jr); } catch { value = jr; }
     const tj = py.globals.get("_json_table");
@@ -59,9 +90,12 @@ async function pyRun(code, { tables = null, image = null, hardened = false } = {
     const render = rh === "latex" || rh === "img" ? rh : undefined;
     const ipc = takeIpc(py.globals);
     try { py.globals.delete("_ipc_result"); } catch { /* not set */ }
-    return { ok: true, value, stdout, table, render, ipc };
+    return { ok: true, value, stdout, table, render, ipc, sent };
 }
-const rows = (name, columns, r) => ({ name, data: { kind: "rows", columns, rows: r } });
+/** A `rows` answer, as the page's or the worker's read of a page table gives it. */
+const rows = (columns, r, label = "table#t") => ({ source: { kind: "dom", label }, data: { kind: "rows", columns, rows: r } });
+/** A stored table's answer, its bytes carried for tableWire to bind. */
+const storedAns = (bytes, data = {}) => ({ source: { kind: "fetch", label: "https://site.test/s.csv" }, data: { kind: "value", label: "s", columns: [], format: "csv", ...data }, b64: Buffer.from(bytes).toString("base64") });
 
 // ── Traceback line numbers ────────────────────────────────────────────────────────────────────────────
 //
@@ -122,42 +156,80 @@ test("traceback: a SYNTAX error also reports the user's line", { skip }, async (
     assert.equal(userLine(r.error), 2, "the bad def is the user's line 2");
 });
 
-test("tables map: each df binds under its name AND in tables[name]; numeric columns auto-typed", { skip }, async () => {
-    const r = await pyRun(
-        "return [int(sales['Q1'].sum()), int(tables['sales']['Q1'].sum()), str(sales['Q1'].dtype)]",
-        { tables: [rows("sales", ["Rep", "Q1"], [["Ada", 120], ["Ben", 90]])] });
-    // Both the bare var and the tables dict resolve; Q1 arrives as int64 so .sum() adds (not concat).
-    assert.deepEqual(r.value, [210, 210, "int64"]);
+// --- ml.table: the answer becomes the cell's DataFrame (ruling 78) ---
+
+test("ml.table: a rows answer is a DataFrame; numeric columns arrive typed", { skip }, async () => {
+    const r = await pyRun("sales = ml.table('#sales')\nreturn [int(sales['Q1'].sum()), str(sales['Q1'].dtype)]",
+        { tables: { "#sales": rows(["Rep", "Q1"], [["Ada", 120], ["Ben", 90]]) } });
+    // Q1 arrives as int64 so .sum() adds (not concat).
+    assert.deepEqual(r.value, [210, "int64"]);
+    assert.deepEqual(r.sent, [{ seq: 1, call: "table", args: ["#sales"] }], "one call, no options when none were given");
 });
 
-test("single source aliases into tables[<source>] too (a model that passed 'current' → tables['current'])", { skip }, async () => {
-    // A single source is loaded as `df`; the `alias` (the raw source string) also keys the tables dict,
-    // so tables['current'] resolves to the same df — accommodating the natural mirror of the passed arg.
-    const r = await pyRun(
-        "return [int(df['Q1'].sum()), int(tables['current']['Q1'].sum()), tables['current'] is df]",
-        { tables: [{ ...rows("df", ["Rep", "Q1"], [["Ada", 120], ["Ben", 90]]), alias: "current" }] });
-    assert.deepEqual(r.value, [210, 210, true]);
+test("ml.table: the source facts are on df.attrs", { skip }, async () => {
+    const r = await pyRun("df = ml.table('#sales')\nreturn dict(df.attrs)", { tables: { "#sales": rows(["A"], [[1]], "table#sales") } });
+    assert.deepEqual(r.value, { source: "table#sales", kind: "dom" });
 });
 
-test("tables map: two sources join with pd.merge under their own names", { skip }, async () => {
-    const r = await pyRun("return pd.merge(sales, targets, on='Rep')['Q1'].tolist()", {
-        tables: [rows("sales", ["Rep", "Q1"], [["Ada", 120], ["Ben", 90]]),
-                 rows("targets", ["Rep", "Goal"], [["Ada", 100], ["Ben", 200]])],
+test("ml.table: two sources join with pd.merge under the names the cell gave them", { skip }, async () => {
+    const r = await pyRun("sales = ml.table('#s')\ntargets = ml.table('#t')\nreturn pd.merge(sales, targets, on='Rep')['Q1'].tolist()", {
+        tables: { "#s": rows(["Rep", "Q1"], [["Ada", 120], ["Ben", 90]]), "#t": rows(["Rep", "Goal"], [["Ada", 100], ["Ben", 200]]) },
     });
     assert.deepEqual(r.value, [120, 90]);
 });
 
-test("html-kind source falls back to pd.read_html", { skip }, async () => {
+test("ml.table: an html answer is read with pd.read_html", { skip }, async () => {
     const html = "<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>";
-    const r = await pyRun("return int(df['A'].iloc[0]) + int(df['B'].iloc[0])",
-        { tables: [{ name: "df", data: { kind: "html", html } }] });
+    const r = await pyRun("df = ml.table('table')\nreturn int(df['A'].iloc[0]) + int(df['B'].iloc[0])",
+        { tables: { table: { source: { kind: "dom", label: "table" }, data: { kind: "html", html } } } });
     assert.equal(r.value, 3);
 });
 
-test("ragged rows pad to the header width (DataFrame can't choke)", { skip }, async () => {
-    const r = await pyRun("return bool(pd.isna(df.iloc[0, 2]))",
-        { tables: [rows("df", ["A", "B", "C"], [[1, 2]])] });   // only 2 cells for a 3-col header
+test("ml.table: ragged rows pad to the header width (DataFrame can't choke)", { skip }, async () => {
+    const r = await pyRun("df = ml.table('t')\nreturn bool(pd.isna(df.iloc[0, 2]))", { tables: { t: rows(["A", "B", "C"], [[1, 2]]) } });
     assert.equal(r.value, true);
+});
+
+test("ml.table: a stored CSV is read with the delimiter and header the JS reader decided, and its bytes are dropped", { skip }, async () => {
+    const r = await pyRun("df = ml.table('@tool:abc1234')\nreturn [df.shape[0], int(df['qty'].sum()), dict(df.attrs), [k for k in globals() if k.startswith('_ml_wbuf')]]",
+        { tables: { "@tool:abc1234": storedAns("name;qty\nx;1\ny;2\n", { delimiter: ";" }) } });
+    assert.deepEqual(r.value, [2, 3, { source: "https://site.test/s.csv", kind: "fetch", delimiter: ";" }, []]);
+});
+
+test("ml.table: a headerless stored CSV gets positional columns; raw keeps every cell a string", { skip }, async () => {
+    const h = await pyRun("df = ml.table('s')\nreturn [list(df.columns), df.attrs.get('headerless')]", { tables: { s: storedAns("1,2\n3,4\n", { headerless: true }) } });
+    assert.deepEqual(h.value, [[0, 1], true]);
+    const raw = await pyRun("df = ml.table('s', raw=True)\nreturn [str(df['a'].dtype), df['a'].tolist()]", { tables: { s: storedAns("a\n007\n", { raw: true }) } });
+    assert.ok(["object", "str"].includes(raw.value[0]), `a string column (pandas 3 says str): ${raw.value[0]}`);
+    assert.deepEqual(raw.value[1], ["007"], "a leading zero survives");
+    assert.deepEqual(raw.sent[0].args, ["s", { raw: true }], "the option travels as one trailing object");
+});
+
+test("ml.table: a stored value that is not a table, or whose bytes never arrived, raises at the call", { skip }, async () => {
+    const paged = await pyRun("ml.table('p')", { tables: { p: storedAns("x", { format: "paged" }) } });
+    assert.match(paged.error, /not a table\. Read it with ml\.dereference/);
+    const lost = await pyRun("ml.table('p')", { tables: { p: { source: { kind: "fetch", label: "u" }, data: { kind: "value", format: "csv", buf: "_ml_wbuf_9" } } } });
+    assert.match(lost.error, /was not handed to the sandbox/);
+});
+
+test("ml.table: an error answer is an MlError at the line that called, and the cell can catch it", { skip }, async () => {
+    const r = await pyRun("try:\n    ml.table('#gone')\nexcept MlError as e:\n    return [e.code, str(e)]",
+        { tables: { "#gone": { error: { code: "Failed", message: "no table matches #gone" } } } });
+    assert.equal(r.value[0], "Failed");
+    assert.match(r.value[1], /no table matches #gone/);
+});
+
+test("ml.table: a source that is not a string, or an option of the wrong type, is a TypeError before any call", { skip }, async () => {
+    for (const call of ["ml.table(1)", "ml.table(['#t'])", "ml.table('#t', raw='yes')", "ml.table('#t', delimiter=1)", "ml.table('#t', header=1)"]) {
+        const r = await pyRun(call, { tables: {} });
+        assert.match(r.error, /TypeError: ml\.table/, call);
+        assert.deepEqual(r.sent, [], `${call}: nothing crossed`);
+    }
+});
+
+test("ml.table is absent where the worker installed no wire (real CPython, a completion)", { skip }, async () => {
+    const r = await pyRun("ml.table('#t')");
+    assert.match(r.error, /NameError/);
 });
 
 test("captures a `return` value AND a bare top-level `result =`", { skip }, async () => {
@@ -212,7 +284,7 @@ test("a runtime error returns ok:false with the traceback (partial stdout preser
 });
 
 test("per-run RESET isolates the namespace — a prior run's table global doesn't leak", { skip }, async () => {
-    await pyRun("return 1", { tables: [rows("leaked", ["A"], [[1]])] });
+    await pyRun("leaked = ml.table('t')\nreturn 1", { tables: { t: rows(["A"], [[1]]) } });
     const r = await pyRun("return 'leaked' in globals()");   // next call, no tables
     assert.equal(r.value, false);
 });
@@ -353,40 +425,23 @@ test("loader: Image.open(BytesIO(...)) is NOT hijacked — a real file-like stil
     assert.equal(r.value, true);
 });
 
-test("loader: pd.read_csv('current') returns the one loaded df", { skip }, async () => {
-    const r = await pyRun("return int(pd.read_csv('current')['Q1'].sum())", { tables: [rows("df", ["Rep", "Q1"], [["Ada", 120], ["Ben", 90]])] });
-    assert.equal(r.value, 210);
+test("loader: pd.read_csv and pd.read_html are pandas' own: a selector or 'current' is never redirected to a table", { skip }, async () => {
+    const t = { t: rows(["Q1"], [[120]]) };
+    const csv = await pyRun("df = ml.table('t')\nreturn pd.read_csv('current')", { tables: t });
+    assert.match(csv.error, /FileNotFoundError|No such file/, "read_csv opens a file named 'current', which is not there");
+    const html = await pyRun("df = ml.table('t')\nreturn pd.read_html('#sales')", { tables: t });
+    assert.equal(html.ok, false, "read_html of a selector is pandas reading the string, not a loaded table");
 });
 
-test("loader: pd.read_html(selector) returns [df] so read_html(...)[0] works", { skip }, async () => {
-    const r = await pyRun("return int(pd.read_html('#sales')[0]['Q1'].sum())", { tables: [rows("df", ["Rep", "Q1"], [["Ada", 120], ["Ben", 90]])] });
-    assert.equal(r.value, 210);
-});
-
-test("loader: read_csv(name) picks the MATCHING table when several are loaded", { skip }, async () => {
-    const r = await pyRun("return int(pd.read_csv('targets')['Goal'].sum())", {
-        tables: [rows("sales", ["Rep", "Q1"], [["Ada", 120]]), rows("targets", ["Rep", "Goal"], [["Ada", 100], ["Ben", 200]])] });
-    assert.equal(r.value, 300);
-});
-
-test("loader: a real URL is NOT hijacked even with a table loaded (readonly → the clean net error)", { skip }, async () => {
-    const r = await pyRun("return pd.read_csv('https://example.com/x.csv')", { tables: [rows("df", ["A"], [[1]])], hardened: true });
-    assert.equal(r.ok, false, "'://' → not tableish → falls through to the real (blocked) loader");
-});
-
-test("loader: read_csv(<the URL a table was loaded FROM>) is that table, with no network (the commonest first try)", { skip }, async () => {
+test("loader: a URL read with ml.table does not make pd.read_csv of that URL a table (readonly → the clean net error)", { skip }, async () => {
     const url = "http://site.test/sales.csv";
-    const r = await pyRun(`return [int(pd.read_csv('${url}')['A'].sum()), int(pd.read_html('${url}')[0]['A'].sum())]`,
-        { tables: [{ ...rows("sales", ["A"], [[1], [2]]), alias: url }], hardened: true });
-    assert.deepEqual(r.value, [3, 3]);
-    const other = await pyRun("return pd.read_csv('http://site.test/other.csv')", { tables: [{ ...rows("sales", ["A"], [[1]]), alias: url }], hardened: true });
-    assert.equal(other.ok, false, "a URL that is not a loaded source still falls through to the blocked loader");
+    const r = await pyRun(`df = ml.table('${url}')\nreturn pd.read_csv('${url}')`, { tables: { [url]: rows(["A"], [[1]], url) }, hardened: true });
+    assert.equal(r.ok, false);
 });
 
-test("loader: patched loaders see the CURRENT run's data across runs (no stale closure)", { skip }, async () => {
-    // Patched ONCE, but resolve img/tables from globals() each call — so run 2's data wins.
-    const a = await pyRun("return int(pd.read_csv('current')['V'].sum())", { tables: [rows("df", ["V"], [[5]])] });
-    const b = await pyRun("return int(pd.read_csv('current')['V'].sum())", { tables: [rows("df", ["V"], [[9]])] });
+test("ml.table: each run reads its own answer (no stale closure across runs)", { skip }, async () => {
+    const a = await pyRun("return int(ml.table('t')['V'].sum())", { tables: { t: rows(["V"], [[5]]) } });
+    const b = await pyRun("return int(ml.table('t')['V'].sum())", { tables: { t: rows(["V"], [[9]]) } });
     assert.equal(a.value, 5);
     assert.equal(b.value, 9);
 });
@@ -416,7 +471,6 @@ test("INTEGRATION: sympy runs in WASM → its actual LaTeX renders via the UI `|
     // 1) REAL sympy in the sandbox → the actual LaTeX string (not a hand-written one).
     await py.loadPackage("sympy");
     py.globals.set("INJECTED_IMAGE_B64", null);
-    py.globals.set("INJECTED_TABLES_JSON", null);
     await py.runPythonAsync(wrapUserCode(`
 import sympy
 x = sympy.Symbol('x')
@@ -692,10 +746,11 @@ test("bench: one namespace cannot see another's, and the model's namespace sees 
 
 // ── A RUN'S KEPT DICT (`wrapUserCode(..., "run")`, ROOT C) ─────────────────────────────────────────────────
 // What the worker does for a cell of a worker-hosted run: its injected inputs set into the run's own dict, then the
-// wrapper in "run" mode. Unlike the bench, a cell that passes an image or tables gets them decoded.
+// wrapper in "run" mode. Unlike the bench, a cell that passes an image gets it decoded; `tables` answers its `ml.table`.
 async function runCell(code, ns, { image = null, tables = null } = {}) {
     const { wrapUserCode, injectInputs } = await import("../src/python/python-runtime.ts");
-    injectInputs(ns, image, Array.isArray(tables) && tables.length ? JSON.stringify(tables) : null);
+    injectInputs(ns, image);
+    tableWire(ns, tables);
     await py.runPythonAsync(wrapUserCode(code, false, "run"), { globals: ns });
     const err = ns.get("_err");
     if (err) return { error: String(err) };
@@ -709,21 +764,17 @@ test("run dict: a cell that passes an image gets img/img_np/H/W, and a later cel
     assert.deepEqual(await runCell("return [x, img.size[0], int(img_np.shape[0])]", ns), { value: [5, 1, 1] });
 });
 
-test("run dict: a cell's tables are bound by name and in `tables`, and stay for a cell that passes none", { skip }, async () => {
+test("run dict: a frame a cell read with ml.table stays for a later cell, which needs no wire", { skip }, async () => {
     const ns = freshNs();
-    assert.deepEqual(await runCell("return int(t['a'].sum())", ns, { tables: [rows("t", ["a"], [[1], [2]])] }), { value: 3 });
-    assert.deepEqual(await runCell("return [int(t['a'].sum()), list(tables)]", ns), { value: [3, ["t"]] });
-    // A later cell that passes tables replaces the `tables` dict with its own.
-    assert.deepEqual(await runCell("return sorted(tables)", ns, { tables: [rows("u", ["b"], [[4]])] }), { value: ["u"] });
+    assert.deepEqual(await runCell("t = ml.table('#t')\nreturn int(t['a'].sum())", ns, { tables: { "#t": rows(["a"], [[1], [2]]) } }), { value: 3 });
+    assert.deepEqual(await runCell("return int(t['a'].sum())", ns), { value: 3 });
 });
 
 test("run dict: the injected inputs are coerced to str/None, and the loaders' originals are not left in it", { skip }, async () => {
     const ns = freshNs();
-    assert.deepEqual(await runCell("return [INJECTED_IMAGE_B64, INJECTED_TABLES_JSON]", ns), { value: [null, null] });
+    assert.deepEqual(await runCell("return [INJECTED_IMAGE_B64, 'INJECTED_TABLES_JSON' in globals()]", ns), { value: [null, false] });
     // The shared patch keeps its originals in its own closure, so a run's dict holds none to chain onto.
     assert.equal(ns.has("_ml_orig_image_open"), false);
-    assert.equal(ns.has("_ml_orig_read_csv"), false);
-    assert.equal(ns.has("_ml_orig_read_html"), false);
 });
 
 // --- the loader redirect in a run's dict: ONE patch per interpreter, reading the namespace of the cell that runs ---
@@ -745,18 +796,17 @@ test("run dict loaders: a re-import of Image neither loses the redirect nor leak
     assert.match(String(bOpen.error), /FileNotFoundError|No such file/, "neither leak");
 });
 
-test("run dict loaders: tables are served per run, and a later run's prelude installs nothing over the first", { skip }, async () => {
+test("run dict loaders: a later run's prelude installs nothing over the first", { skip }, async () => {
     const a = freshNs();
     const b = freshNs();
-    assert.deepEqual(await runCell("return int(pd.read_csv('t')['a'].sum())", a, { tables: [rows("t", ["a"], [[1], [2]])] }), { value: 3 });
-    const bRead = await runCell("return int(pd.read_csv('t')['a'].sum())", b, { tables: [rows("u", ["a"], [[10]])] });
-    assert.deepEqual(bRead, { value: 10 }, "run B's only table is the one they meant, not run A's");
-    // No chain: a later prelude run installs nothing, so the patched slots are the very same objects afterwards.
-    const ids = "import PIL.Image as m\nreturn [id(m.open), id(pd.read_csv), id(pd.read_html)]";
+    // No chain: a later prelude run installs nothing, so the patched slot is the very same object afterwards, and
+    // pandas' readers are its own (nothing redirects them since `tables` went).
+    const ids = "import PIL.Image as m\nreturn [id(m.open), pd.read_csv.__module__, pd.read_html.__module__]";
     const before = await runCell(ids, a);
     await runCell("return 1", freshNs());
     await runCell("return 1", b);
-    assert.deepEqual(await runCell(ids, a), before, "the slots hold the same wrappers after other runs' preludes");
+    assert.deepEqual(await runCell(ids, a), before, "the slot holds the same wrapper after other runs' preludes");
+    assert.match(String(before.value[1]), /^pandas(\.|$)/);
 });
 
 // --- the _ml_in coercion runs on every run-dict cell, not only the first ---
@@ -764,32 +814,32 @@ test("run dict loaders: tables are served per run, and a later run's prelude ins
 test("run dict: a second cell with a null injection gets None, never a JsProxy", { skip }, async () => {
     const ns = freshNs();
     assert.equal((await runCell("return type(INJECTED_IMAGE_B64).__name__", ns, { image: TINY_PNG })).value, "str");
-    assert.deepEqual(await runCell("return [INJECTED_IMAGE_B64 is None, type(INJECTED_IMAGE_B64).__name__, INJECTED_TABLES_JSON is None, type(INJECTED_TABLES_JSON).__name__]", ns),
-        { value: [true, "NoneType", true, "NoneType"] }, "cell 2: both coerce to Python None");
-    assert.deepEqual(await runCell("return [type(INJECTED_IMAGE_B64).__name__ not in ('JsProxy','JsNull','JsUndefined'), type(INJECTED_TABLES_JSON).__name__ not in ('JsProxy','JsNull','JsUndefined')]", ns),
-        { value: [true, true] }, "never a JsProxy of the host's null/undefined");
+    assert.deepEqual(await runCell("return [INJECTED_IMAGE_B64 is None, type(INJECTED_IMAGE_B64).__name__]", ns),
+        { value: [true, "NoneType"] }, "cell 2: it coerces to Python None");
+    assert.deepEqual(await runCell("return type(INJECTED_IMAGE_B64).__name__ not in ('JsProxy','JsNull','JsUndefined')", ns),
+        { value: true }, "never a JsProxy of the host's null/undefined");
     assert.equal((await runCell("return type(INJECTED_IMAGE_B64).__name__", ns, { image: TINY_PNG })).value, "str", "cell 3: re-coerces when one is passed again");
 });
 
 test("run dict: no other host-injected name reaches the dict uncoerced", { skip }, async () => {
     const ns = freshNs();
-    await runCell("return 1", ns, { image: TINY_PNG, tables: [rows("t", ["a"], [[1]])] });
-    assert.deepEqual(await runCell("return ['_ml_harness' not in globals(), '_ml_send' not in globals(), '_ml_tbuf_0' not in globals()]", ns),
-        { value: [true, true, true] }, "the harness, the wire transport and the table buffers are all dropped");
-    assert.deepEqual(await runCell("return [type(INJECTED_IMAGE_B64).__name__, type(INJECTED_TABLES_JSON).__name__]", ns),
-        { value: ["NoneType", "NoneType"] }, "a cell that passes neither sees Python None, never a JsProxy");
-    assert.deepEqual(await runCell("return [type(INJECTED_IMAGE_B64).__name__, type(INJECTED_TABLES_JSON).__name__]", ns,
-        { image: TINY_PNG, tables: [rows("t", ["a"], [[1]])] }),
-        { value: ["str", "str"] }, "the only two injected names are the coerced ones, and a passing cell gets str");
+    await runCell("t = ml.table('s')\nreturn 1", ns, { image: TINY_PNG, tables: { s: storedAns("a\n1\n") } });
+    assert.deepEqual(await runCell("return ['_ml_harness' not in globals(), '_ml_send' not in globals(), [k for k in globals() if k.startswith('_ml_wbuf') or k.startswith('_ml_table') or k == '_ml_run_sync']]", ns),
+        { value: [true, true, []] }, "the harness, the wire transport, the table bytes and the table helpers are all dropped");
+    assert.deepEqual(await runCell("return type(INJECTED_IMAGE_B64).__name__", ns),
+        { value: "NoneType" }, "a cell that passes none sees Python None, never a JsProxy");
+    assert.deepEqual(await runCell("return type(INJECTED_IMAGE_B64).__name__", ns, { image: TINY_PNG }),
+        { value: "str" }, "the only injected name is the coerced one, and a passing cell gets str");
 });
 
 test("run dict loaders: the bench is never served a run's image or tables", { skip }, async () => {
     const run = freshNs();
-    await runCell("return 1", run, { image: TINY_PNG, tables: [rows("t", ["a"], [[1]])] });
+    await runCell("t = ml.table('s')\nreturn 1", run, { image: TINY_PNG, tables: { s: rows(["a"], [[1]]) } });
     const open = await benchRun("Image.open('x')", freshNs());
     assert.match(String(open.error), /FileNotFoundError|No such file/);
     const csv = await benchRun("pd.read_csv('t')", freshNs());
     assert.match(String(csv.error), /FileNotFoundError|No such file|Errno/);
+    assert.match(String((await benchRun("t", freshNs())).error), /NameError/, "nor a run's frame");
 });
 
 test("run dict: persist true (bench), \"run\" and false cannot be confused", { skip }, async () => {
@@ -885,18 +935,14 @@ test("ADVERSARIAL pyarrow: its preparation leaves no route to `js` for a hardene
 });
 
 // ── Stored tables (POINTER_VALUES slice 5) ────────────────────────────────────────────────────────────────────────────
-// A table the value store holds reaches Python as ONE copy of its bytes in a bytearray, decoded by the format it arrived
-// in, in the HARDENED sandbox (the buffer is not a JsProxy, so nothing the hardening removed comes back).
-const stored = (name, format, bytes, extra = {}) => {
-    const u8 = bytes instanceof Uint8Array ? bytes : new TextEncoder().encode(bytes);
-    return { name, data: { kind: "value", key: "v0000000000000001", label: "@tool:abc1234", format, buffer: u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength), columns: [], ...extra } };
-};
+// A table the value store holds reaches Python through `ml.table` as ONE copy of its bytes in a bytearray, decoded by
+// the format it arrived in, in the HARDENED sandbox (the buffer is not a JsProxy, so nothing the hardening removed comes back).
 
 test("stored table: Arrow IPC file and stream load as DataFrames with their own dtypes, in a hardened run", { skip: skipArrow, timeout: 120000 }, async () => {
     const { tableFromArrays, tableToIPC, vectorFromArray, Utf8, Int64 } = await import("apache-arrow");
     const t = tableFromArrays({ sku: vectorFromArray(["A", "B", "C"], new Utf8()), n: vectorFromArray([1n, 2n, 3n], new Int64()) });
-    const code = "return [list(df.shape), str(df.dtypes['n']), int(df['n'].sum()), list(tables['s'].columns)]";
-    const r = await pyRun(code, { hardened: true, tables: [stored("df", "arrow-file", tableToIPC(t, "file")), stored("s", "arrow-stream", tableToIPC(t, "stream"))] });
+    const code = "df = ml.table('f')\ns = ml.table('s')\nreturn [list(df.shape), str(df.dtypes['n']), int(df['n'].sum()), list(s.columns)]";
+    const r = await pyRun(code, { hardened: true, tables: { f: storedAns(tableToIPC(t, "file"), { format: "arrow-file" }), s: storedAns(tableToIPC(t, "stream"), { format: "arrow-stream" }) } });
     assert.equal(r.ok, true, r.error);
     assert.deepEqual(r.value, [[3, 2], "int64", 6, ["sku", "n"]]);
 });
@@ -905,20 +951,20 @@ test("stored table: Parquet loads through pyarrow", { skip: skipArrow, timeout: 
     const made = py.runPython("import io as _i, pandas as _p\n_b = _i.BytesIO()\n_p.DataFrame({'x': [1.5, 2.5], 'y': ['a', 'b']}).to_parquet(_b)\n_b.getvalue()");
     const bytes = made?.toJs ? made.toJs() : made;
     made?.destroy?.();
-    const r = await pyRun("return [list(df.shape), float(df['x'].sum()), str(df.dtypes['x'])]", { hardened: true, tables: [stored("df", "parquet", bytes)] });
+    const r = await pyRun("df = ml.table('p')\nreturn [list(df.shape), float(df['x'].sum()), str(df.dtypes['x'])]", { hardened: true, tables: { p: storedAns(bytes, { format: "parquet" }) } });
     assert.equal(r.ok, true, r.error);
     assert.deepEqual(r.value, [[2, 2], 4, "float64"]);
 });
 
 test("stored table: delimited text is re-read with the PREVIEW's delimiter, columns and header decision", { skip, timeout: 120000 }, async () => {
     // A header row whose names the preview had already decided on, split on ';'.
-    const withHeader = await pyRun("return [list(df.columns), list(df.shape), int(df['qty'].sum())]",
-        { tables: [stored("df", "csv", "region;qty\nnorth;3\nsouth;4\n", { delimiter: ";", columns: ["region", "qty"] })] });
+    const withHeader = await pyRun("df = ml.table('s')\nreturn [list(df.columns), list(df.shape), int(df['qty'].sum())]",
+        { tables: { s: storedAns("region;qty\nnorth;3\nsouth;4\n", { delimiter: ";", columns: ["region", "qty"] }) } });
     assert.equal(withHeader.ok, true, withHeader.error);
     assert.deepEqual(withHeader.value, [["region", "qty"], [2, 2], 7]);
     // No header row: the first line is data, and the columns are the preview's positional names.
-    const headerless = await pyRun("return [list(df.columns), list(df.shape)]",
-        { tables: [stored("df", "tsv", "1\t2\n3\t4\n", { headerless: true, columns: ["0", "1"] })] });
+    const headerless = await pyRun("df = ml.table('s')\nreturn [list(df.columns), list(df.shape)]",
+        { tables: { s: storedAns("1\t2\n3\t4\n", { format: "tsv", headerless: true, columns: ["0", "1"] }) } });
     assert.equal(headerless.ok, true, headerless.error);
     assert.deepEqual(headerless.value, [["0", "1"], [2, 2]], "no record was eaten as a header");
 });
@@ -926,18 +972,19 @@ test("stored table: delimited text is re-read with the PREVIEW's delimiter, colu
 test("ADVERSARIAL stored table: the buffer is gone after loading, and what Python holds is plain data with no route to `js`", { skip, timeout: 120000 }, async () => {
     const r = await pyRun([
         "import sys",
-        "left = [k for k in globals() if k.startswith('_ml_tbuf')]",
+        "df = ml.table('s')",
+        "left = [k for k in globals() if k.startswith('_ml_wbuf')]",
         "return {'left': left, 'js': 'js' in sys.modules, 'type': type(df).__name__}",
-    ].join("\n"), { hardened: true, tables: [stored("df", "csv", "a,b\n1,2\n", { columns: ["a", "b"] })] });
+    ].join("\n"), { hardened: true, tables: { s: storedAns("a,b\n1,2\n", { columns: ["a", "b"] }) } });
     assert.equal(r.ok, true, r.error);
     assert.deepEqual(r.value, { left: [], js: false, type: "DataFrame" });
-    const escape = await pyRun("import js\nreturn 'reached'", { hardened: true, tables: [stored("df", "csv", "a\n1\n", { columns: ["a"] })] });
-    assert.equal(escape.ok, false, "loading a stored table does not bring `js` back");
+    const escape = await pyRun("df = ml.table('s')\nimport js\nreturn 'reached'", { hardened: true, tables: { s: storedAns("a\n1\n", { columns: ["a"] }) } });
+    assert.equal(escape.ok, false, "reading a stored table does not bring `js` back");
 });
 
-test("stored table: an unknown format fails loudly rather than loading nothing", { skip, timeout: 120000 }, async () => {
-    // The prelude runs before the script's own wrapper, so this throws out of the run; the worker reports it as the error.
-    await assert.rejects(pyRun("return 1", { tables: [stored("df", "xlsx", "nope")] }), /a stored table in a format the sandbox does not read: xlsx/);
+test("stored table: an unknown format fails loudly at the call rather than loading nothing", { skip, timeout: 120000 }, async () => {
+    const r = await pyRun("ml.table('x')", { tables: { x: storedAns("nope", { format: "xlsx" }) } });
+    assert.match(r.error, /a stored table in a format the sandbox does not read: xlsx/);
 });
 
 // ── Returned frames become stored tables (POINTER_VALUES slice 6) ─────────────────────────────────────────────────────
@@ -967,46 +1014,33 @@ test("a frame inside its preview stores nothing, and one Arrow cannot hold still
 // --- second-adversary pass: the _ml_in coercion on the "run" path, every cell and every injected name ---
 
 test("run dict: a cell that poisons INJECTED_* to a JsProxy is re-coerced by the NEXT cell", { skip }, async () => {
-    // A hostile cell can set INJECTED_IMAGE_B64 / INJECTED_TABLES_JSON to anything, including a JsProxy.
+    // A hostile cell can set INJECTED_IMAGE_B64 to anything, including a JsProxy.
     // The coercion runs at the top of every wrapUserCode (persist "run" and false), so the next cell's
     // prelude reads str/None — never a JsProxy the cell left behind.
     const ns = freshNs();
     await runCell("return 1", ns);
-    await runCell("INJECTED_IMAGE_B64 = (lambda: None).__class__.__mro__\nINJECTED_TABLES_JSON = INJECTED_IMAGE_B64\nreturn 1", ns);
-    const r = await runCell("return [type(INJECTED_IMAGE_B64).__name__, type(INJECTED_TABLES_JSON).__name__]", ns);
-    assert.deepEqual(r.value, ["NoneType", "NoneType"], "the next cell's coercion drops whatever the previous cell left");
+    await runCell("INJECTED_IMAGE_B64 = (lambda: None).__class__.__mro__\nreturn 1", ns);
+    const r = await runCell("return [type(INJECTED_IMAGE_B64).__name__]", ns);
+    assert.deepEqual(r.value, ["NoneType"], "the next cell's coercion drops whatever the previous cell left");
     assert.ok(!r.value.some((t) => /JsProxy|JsNull|JsUndefined/.test(t)), "never a JsProxy");
 });
 
-test("run dict: PRELUDE_DATA_KEPT reads the COERCED INJECTED_TABLES_JSON, not a raw JsProxy", { skip }, async () => {
-    // The coercion block runs before the prelude. PRELUDE_DATA_KEPT (persist "run") reads
-    // globals().get("INJECTED_TABLES_JSON") — it must see the coerced str/None. A JsProxy there would
-    // reach _ml_loads and fail or worse. Pin: a null injection yields None and the prelude's _tsj path
-    // is skipped; a string injection loads tables.
-    const ns = freshNs();
-    await runCell("return 1", ns);
-    const none = await runCell("return [_tsj_loads_ran if '_tsj_loads_ran' in globals() else None, INJECTED_TABLES_JSON is None]", ns);
-    assert.equal(none.value[1], true, "a null injection is Python None after coercion");
-    const withTables = await runCell("return int(t['a'].sum())", ns, { tables: [rows("t", ["a"], [[1], [2]])] });
-    assert.equal(withTables.value, 3, "positive control: a string injection loads tables");
-});
-
 test("run dict: the coercion covers every injected name injectInputs sets, and nothing else leaks as a JsProxy", { skip }, async () => {
-    // injectInputs sets INJECTED_IMAGE_B64, INJECTED_TABLES_JSON (and _ml_harness, which the wrapper
-    // pops). The coercion block names exactly the two INJECTED_* names. After a cell that passes both,
-    // the namespace must hold no JsProxy of a host-injected name.
+    // injectInputs sets INJECTED_IMAGE_B64 (and _ml_harness, which the wrapper pops); the worker sets _ml_send, and binds
+    // a stored table's bytes as _ml_wbuf_<seq>. After a cell that passes an image and reads a stored table, the
+    // namespace must hold no JsProxy of a host-injected name and none of the wire's pieces.
     const ns = freshNs();
-    await runCell("return 1", ns, { image: TINY_PNG, tables: [rows("t", ["a"], [[1]])] });
+    await runCell("t = ml.table('s')\nreturn 1", ns, { image: TINY_PNG, tables: { s: storedAns("a\n1\n") } });
     const r = await runCell("return [n for n in globals() if n.startswith('INJECTED_') or n.startswith('_ml_')]", ns);
     const names = r.value;
-    assert.ok(names.includes("INJECTED_IMAGE_B64") && names.includes("INJECTED_TABLES_JSON"), "the two coerced names remain");
-    assert.ok(!names.includes("_ml_harness") && !names.includes("_ml_send") && !names.includes("_ml_tbuf_0"), "the harness, transport and buffers are dropped");
-    const types = await runCell(`return [type(globals()[n]).__name__ for n in ${JSON.stringify(["INJECTED_IMAGE_B64", "INJECTED_TABLES_JSON"])}]`, ns);
+    assert.ok(names.includes("INJECTED_IMAGE_B64") && !names.includes("INJECTED_TABLES_JSON"), "the one coerced name remains; the tables one is gone");
+    assert.ok(!names.includes("_ml_harness") && !names.includes("_ml_send") && !names.some((n) => n.startsWith("_ml_wbuf")), "the harness, transport and buffers are dropped");
+    const types = await runCell(`return [type(globals()[n]).__name__ for n in ${JSON.stringify(["INJECTED_IMAGE_B64"])}]`, ns);
     assert.ok(types.value.every((t) => !/JsProxy|JsNull|JsUndefined/.test(t)), `both are str/None, not JsProxy: ${types.value}`);
 });
 
 test("run dict: bench (persist true) injects no INJECTED_* names and compiles no coercion", { skip }, async () => {
-    // The bench's wipe keeps INJECTED_IMAGE_B64 / INJECTED_TABLES_JSON if present (PY_BENCH_BASE_NAMES),
+    // The bench's wipe keeps INJECTED_IMAGE_B64 if present (PY_BENCH_BASE_NAMES),
     // but injectInputs is never called for bench, so they are never set. Pin: a bench namespace has no
     // INJECTED_* names, and the bench wrapper has no _ml_in.
     const { wrapUserCode } = await import("../src/python/python-runtime.ts");

@@ -36,6 +36,7 @@ import { fileKindSaid, fileRef, fileSections, firstRead, isTextFile, LOOK_DOC_PA
 import { FILE_PREFIX } from "../pointers/token-prefixes";
 import type { PdfDoc } from "../pdf/pdf-read";
 import { CITABLE_TOOLS } from "../tools/tool-params";
+import { tableLiterals } from "../python/table-literals";
 
 export type Approval = "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled";
 /** What the loop knows about a tool besides running it: its name, whether it asks first, and where it runs. */
@@ -804,28 +805,25 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         };
         return { value: derefPipe(v, TokenStore.slotOf(ref), pipe, limits), ...(warning ? { warning } : {}), meta };
     });
-    /** `python_exec` with a TABLE POINTER as a `tables` source (`tables: { df: "@tool:…" }`, or the single-source form).
-     *  The store lives here, so the loop resolves the pointer and hands the TABLE down by value (with the pointer's
-     *  name for the log); `ml.pythonExec` loads it, and refuses it when it is only a preview. Other sources pass through
-     *  untouched. A bad pointer, or one that is not a table, is an ERROR RESULT for the model to correct. */
+    /** `python_exec` whose code names a TABLE POINTER as an `ml.table("@tool:…")` literal (table-literals.ts). The store
+     *  lives here, so the loop resolves each such pointer and hands the TABLE down by value (with the pointer's name for
+     *  the log) as `_tablePointers`; a page-hosted cell reads it before the cell runs (ml-python.ts `hoistTables`), and a
+     *  worker-hosted one reads the pointer itself when the cell calls it. A bad pointer, or one that is not a table, is
+     *  held as its fault, which the cell's call raises at the line that names it. Null when the code names none. */
     const resolveTablePointers = (args: Record<string, unknown>, step: number): { args?: Record<string, unknown>; error?: string } | null => {
-        const tables = args?.tables;
-        const isRef = (v: unknown): v is string => typeof v === "string" && /^\s*@tool:/.test(v);
-        const refs = typeof tables === "string" ? (isRef(tables) ? [tables] : [])
-            : tables && typeof tables === "object" && !Array.isArray(tables) ? Object.values(tables).filter(isRef) : [];
+        if (typeof args?.code !== "string") return null;
+        const refs = [...new Set(tableLiterals(args.code).map((l) => l.src.trim()).filter((s) => /^@tool:/.test(s)))];
         if (!refs.length) return null;
-        const resolved = new Map<string, unknown>();
+        const resolved: Record<string, unknown> = {};
         for (const ref of refs) {
-            const { value: v } = tokenStore.resolveRef(ref.trim(), opts.labelMatch);
-            if (!v) return { error: memoryFault(ref.trim(), tokenStore.nearest(ref.trim()), step) };
-            if (!v.table) return { error: `@tool:${v.id} is ${describeToken(v)}, not a table, so python_exec cannot load it as a DataFrame. Pass a pointer to a table (a fetch_url of a CSV/TSV/Parquet/Arrow file, a python_exec that returned a DataFrame), a URL fetch_url read, a CSS selector, or 'current'.` };
-            // `value` names the WHOLE table in the value store when `table` is its preview: the loader reads that instead.
-            // Both hosts qualify — the worker gates the read itself, on the run it hosts or on the tab it gave the key
-            // to — so a page-hosted run loads the whole table rather than hitting the preview refusal.
-            resolved.set(ref, { ...v.table, pointer: `@tool:${v.id}${v.label ? ` (${JSON.stringify(v.label)})` : ""}`, ...(v.value ? { value: v.value } : {}) });
+            const { value: v } = tokenStore.resolveRef(ref, opts.labelMatch);
+            if (!v) { resolved[ref] = { error: memoryFault(ref, tokenStore.nearest(ref), step) }; continue; }
+            if (!v.table) { resolved[ref] = { error: `@tool:${v.id} is ${describeToken(v)}, not a table, so ml.table cannot read it as a DataFrame. Pass a pointer to a table (a fetch_url of a CSV/TSV/Parquet/Arrow file, a python_exec that returned a DataFrame), a URL fetch_url read, or a CSS selector.` }; continue; }
+            // `value` names the WHOLE table in the value store when `table` is its preview: the read takes that instead.
+            // Both hosts qualify: the worker gates the read itself, on the run it hosts or on the tab it gave the key to.
+            resolved[ref] = { ...v.table, pointer: `@tool:${v.id}${v.label ? ` (${JSON.stringify(v.label)})` : ""}`, ...(v.value ? { value: v.value } : {}) };
         }
-        const swap = (x: unknown) => (isRef(x) ? resolved.get(x) : x);
-        return { args: { ...args, tables: typeof tables === "string" ? swap(tables) : Object.fromEntries(Object.entries(tables as Record<string, unknown>).map(([k, x]) => [k, swap(x)])) } };
+        return { args: { ...args, _tablePointers: resolved } };
     };
     /** `look` at an ATTACHED DOCUMENT (`look({ doc: "@file:…", pages: "4" })`): the loop holds the shelf, so it draws the
      *  pages from the file's stored bytes and hands the images down, as for an image pointer. Null when the call names no

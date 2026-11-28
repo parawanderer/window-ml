@@ -2776,74 +2776,53 @@ test("autoApprovePython OFF: a readonly python_exec still prompts (the flag gate
     assert.equal(pyPayload.mode, undefined, "no mode travels to the sandbox, whatever the approval");
 });
 
-test("autoApprovePython: an EXTERNAL `sheet` still prompts (a privileged cross-origin fetch)", async () => {
-    const { approvals, step } = await runPyAgent({ config: { autoApprovePython: true }, code: "return df.sum()", args: { tables: "https://docs.google.com/spreadsheets/d/ABC/edit" } });
+// A Sheet a cell reads is found in its code: an `ml.table("<sheet url>")` literal (table-literals.ts, dom.ts externalSheetIds).
+const SHEET = (id, tail = "/edit") => `https://docs.google.com/spreadsheets/d/${id}${tail}`;
+
+test("autoApprovePython: an EXTERNAL sheet the code reads still prompts (a privileged cross-origin fetch)", async () => {
+    const { approvals, step } = await runPyAgent({ config: { autoApprovePython: true }, code: `return ml.table("${SHEET("ABC")}").sum()` });
     assert.equal(approvals, 1, "pulling an arbitrary sheet from a URL always asks, even readonly");
     assert.equal(step.approval, "user");
 });
 
-test("autoApprovePython: tables:'current' is auto-approved (you're already on the page)", async () => {
-    const { approvals, step } = await runPyAgent({ config: { autoApprovePython: true }, code: "return df.sum()", args: { tables: "current" } });
+test("autoApprovePython: ml.table('current') is auto-approved (you're already on the page)", async () => {
+    const { approvals, step } = await runPyAgent({ config: { autoApprovePython: true }, code: "return ml.table('current').sum()" });
     assert.equal(approvals, 0, "the sheet you're looking at is as safe as a readonly DOM survey");
     assert.equal(step.approval, "sandbox");
 });
 
-test("an EXTERNAL sheet inside a `tables` MAP escalates to approval (not just a top-level source)", async () => {
-    // The escalation must scan every value in the map, not only a bare `tables` string.
-    const { approvals, step } = await runPyAgent({ config: { autoApprovePython: true }, code: "return df_t.sum()", args: { tables: { df_t: "https://docs.google.com/spreadsheets/d/MAP1/edit" } } });
-    assert.equal(approvals, 1, "an external sheet in the map still prompts");
+test("an EXTERNAL sheet beside page tables escalates to approval (every literal is scanned, not only the first)", async () => {
+    const { approvals, step } = await runPyAgent({ config: { autoApprovePython: true }, code: `return [ml.table("#t"), ml.table('${SHEET("MAP1")}')]` });
+    assert.equal(approvals, 1, "an external sheet among the literals still prompts");
     assert.equal(step.approval, "user");
 });
 
-// REGRESSION (observed in a real run). The model sent `tables: ["current"]` — an ARRAY, which is neither
-// documented form. `tables`'s schema is a `oneOf`, which validateArgs used to skip entirely, so nothing
-// flagged it; the tool then did Object.keys(["current"]) === ["0"] and reported `"0" isn't a valid Python
-// variable name`. The model had never written "0", so it could not act on that and retried the same call,
-// burning its step budget. A one-element array is unambiguous — take it.
-test("tables: a ONE-element array is the single source (models wrap a lone value in a list)", async () => {
-    const wrapped = await runPyAgent({ config: { autoApprovePython: true }, code: "return df.sum()", args: { tables: ["current"] } });
-    const bare = await runPyAgent({ config: { autoApprovePython: true }, code: "return df.sum()", args: { tables: "current" } });
-    // Equivalence is the claim, so compare against the documented form rather than pinning this page's outcome.
-    // The wrapped call additionally carries the schema warning — both halves of the fix in one result: the tool
-    // does the right thing, AND the model is told the shape it should have sent so it corrects next time.
-    assert.ok(String(wrapped.step.result).startsWith(String(bare.step.result)), "['current'] does what 'current' does");
-    assert.match(String(wrapped.step.result), /Argument schema issue.*"tables" should be string or object \(got array\)/, "and the union is now validated");
-    assert.equal(wrapped.approvals, bare.approvals, "same approval path");
-    assert.equal(wrapped.step.approval, bare.step.approval);
-    assert.doesNotMatch(String(wrapped.step.result), /valid Python variable name/, "never reports a name the model didn't write");
-});
-
-// The security invariant must survive that accommodation: wrapping a sheet URL in a list cannot skip consent.
-test("tables: an external sheet wrapped in an array still escalates to approval", async () => {
-    const { approvals, step } = await runPyAgent({ config: { autoApprovePython: true }, code: "return df.sum()", args: { tables: ["https://docs.google.com/spreadsheets/d/WRAP1/edit"] } });
-    assert.equal(approvals, 1, "a wrapped external sheet is still an external sheet");
+test("an external sheet in a branch that never runs still escalates: a literal is read whether or not it is reached", async () => {
+    const { approvals, step } = await runPyAgent({ config: { autoApprovePython: true }, code: `return 1 if True else ml.table("${SHEET("DEAD1")}")` });
+    assert.equal(approvals, 1);
     assert.equal(step.approval, "user");
 });
 
-test("tables: a map sent as a JSON STRING is the map (models serialise the oneOf's object form into its string form)", async () => {
-    const asString = await runPyAgent({ config: { autoApprovePython: true }, code: "return df.sum()", args: { tables: '{"df": "current"}' } });
-    const asObject = await runPyAgent({ config: { autoApprovePython: true }, code: "return df.sum()", args: { tables: { df: "current" } } });
-    assert.equal(String(asString.step.result), String(asObject.step.result), "the string does what the object does");
-    assert.doesNotMatch(String(asString.step.result), /not a valid CSS selector/, "never read as a selector");
-    assert.equal(asString.approvals, asObject.approvals, "same approval path");
+// The upgrade: a run resumed from before the removal, or a model that learned the old shape, still sends `tables`.
+test("a stale `tables` or `tableRaw` argument gets one sentence naming ml.table, and nothing runs", async () => {
+    for (const args of [{ tables: "current" }, { tables: { df: "#t" } }, { tableRaw: true }]) {
+        const { approvals, pyPayload, step } = await runPyAgent({ config: { autoApprovePython: true }, code: "return df.sum()", args });
+        assert.match(String(step.result), /python_exec has no `(tables|tableRaw)` argument\. Read each table in the code instead: `df = ml\.table\("<source>"\)`/, JSON.stringify(args));
+        assert.equal(pyPayload, null, "no cell reached the sandbox");
+        assert.equal(approvals, 0, "a doomed call is not put to the person");
+    }
 });
 
-// The same accommodation must not hide a sheet from the consent check: the loader decodes the string, so the check must.
-test("tables: an external sheet inside a JSON-STRING map still escalates to approval", async () => {
-    const { approvals, step } = await runPyAgent({ config: { autoApprovePython: true }, code: "return df.sum()", args: { tables: '{"s": "https://docs.google.com/spreadsheets/d/JSON1/edit"}' } });
-    assert.equal(approvals, 1, "a sheet inside the string is still an external sheet");
-    assert.equal(step.approval, "user");
+test("a stale `tables` naming an external sheet never fetches it", async () => {
+    let fetched = false;
+    const world = loadPageWorld({ dialectInside: "return ", config: { model: "", ocrModel: "", autoApprovePython: true },
+        onRuntimeMessage: (m) => { if (m.type === "FETCH_SHEET") fetched = true; return pyBackend([toolCall("python_exec", { code: "return 1", tables: SHEET("OLD1") }, "c1"), reply("done")])(m); } });
+    await world.ml.agent("x", { tools: [world.ml.pythonTool()], vision: false, approve: () => true });
+    assert.equal(fetched, false);
 });
 
-test("tables: a MULTI-element array names the real problem (no names) instead of failing on \"0\"", async () => {
-    const { step } = await runPyAgent({ config: { autoApprovePython: true }, code: "return 1", args: { tables: ["#a", "#b"] } });
-    assert.doesNotMatch(String(step.result), /"0" isn't a valid Python variable name/, "the old message pointed at an index");
-    assert.match(String(step.result), /carries no variable NAMES/, "says WHY a list can't work");
-    assert.match(String(step.result), /"sales": "#a"/, "and shows the map form built from what was actually passed");
-});
-
-test("a `tables` map of only DOM selectors / 'current' is auto-approved (no external escalation)", async () => {
-    const { approvals, step } = await runPyAgent({ config: { autoApprovePython: true }, code: "return 1", args: { tables: { a: "#t", b: "current" } } });
+test("code reading only DOM selectors / 'current' is auto-approved (no external escalation)", async () => {
+    const { approvals, step } = await runPyAgent({ config: { autoApprovePython: true }, code: "return [ml.table('#t'), ml.table('current')]" });
     assert.equal(approvals, 0, "no external sheet → the readonly sandbox path (no prompt)");
     assert.equal(step.approval, "sandbox");
 });
@@ -2867,8 +2846,8 @@ const runPySeq = async (calls) => {
 test("external-sheet approval is CACHED per page session — a repeat call to the same sheet doesn't re-prompt", async () => {
     // Two calls to the same spreadsheet (different gid on the 2nd → same id).
     const { approvals, steps } = await runPySeq([
-        { code: "return df.shape", tables: "https://docs.google.com/spreadsheets/d/ABC/edit#gid=0" },
-        { code: "return df.sum()", tables: "https://docs.google.com/spreadsheets/d/ABC/edit#gid=7" },
+        { code: `return ml.table("${SHEET("ABC", "/edit#gid=0")}").shape` },
+        { code: `return ml.table("${SHEET("ABC", "/edit#gid=7")}").sum()` },
     ]);
     assert.equal(approvals, 1, "only the FIRST call to the spreadsheet prompts");
     assert.equal(steps[0].approval, "user", "first call: user-approved");
@@ -2877,16 +2856,16 @@ test("external-sheet approval is CACHED per page session — a repeat call to th
 
 test("the sheet cache is per-spreadsheet — a DIFFERENT sheet still prompts", async () => {
     const { approvals } = await runPySeq([
-        { code: "return df.shape", tables: "https://docs.google.com/spreadsheets/d/AAA/edit" },
-        { code: "return df.shape", tables: "https://docs.google.com/spreadsheets/d/BBB/edit" },
+        { code: `return ml.table("${SHEET("AAA")}").shape` },
+        { code: `return ml.table("${SHEET("BBB")}").shape` },
     ]);
     assert.equal(approvals, 2, "each distinct spreadsheet is approved on its own");
 });
 
-test("_renderArgs hoists the data source (sheet/table) above the code blob for the approval prompt", () => {
+test("_renderArgs hoists the data source (url/image) above the code blob for the approval prompt", () => {
     const { ml } = loadDomWorld(`<div></div>`);
-    const out = ml._renderArgs({ code: "return df.sum()", tables: "https://docs.google.com/spreadsheets/d/X/edit" });
-    assert.ok(out.indexOf("tables:") < out.indexOf("code:"), "the data source is shown before the code");
+    const out = ml._renderArgs({ code: "return df.sum()", image: "#chart" });
+    assert.ok(out.indexOf("image:") < out.indexOf("code:"), "the data source is shown before the code");
 });
 
 test("agent routes a tool's DOM nodes to onStep/transcript but never to the model", async () => {
@@ -3424,15 +3403,15 @@ test("_resolveTable: an empty/malformed ARIA grid throws an ARIA-specific messag
     assert.throws(() => ml._resolveTable("#g"), /ARIA grid python_exec couldn't parse/);
 });
 
-test("python_exec tool: an ambiguous `table` selector warns it loaded the FIRST", async () => {
+test("python_exec tool: an ambiguous ml.table selector warns it read the FIRST", async () => {
     const { ml } = loadDomWorld(`<table class="t"><tr><td>1</td></tr></table><table class="t"><tr><td>2</td></tr></table>`);
-    ml.pythonExec = async () => ({ ok: true, value: "ok", stdout: "", inputTables: [{ name: "df", source: { kind: "dom", label: ".t" }, columns: [], rows: [[1]] }] });
-    const out = await ml.pythonTool().run({ code: "return 1", tables: ".t" });
-    assert.match(out.content, /matched 2 elements — loaded the FIRST/);
-    // A unique selector → no warning.
-    const { ml: ml2 } = loadDomWorld(`<table id="only"><tr><td>1</td></tr></table>`);
+    ml.pythonExec = async () => ({ ok: true, value: "ok", stdout: "", inputTables: [{ name: ".t", source: { kind: "dom", label: ".t" }, columns: [], rows: [[1]] }] });
+    const out = await ml.pythonTool().run({ code: "df = ml.table('.t')\nreturn 1" });
+    assert.match(out.content, /selector "\.t" matched 2 elements — ml\.table read the FIRST/);
+    // A unique selector → no warning; neither is a selector in a comment, which is not read.
+    const { ml: ml2 } = loadDomWorld(`<table id="only"><tr><td>1</td></tr></table><table class="t"></table><table class="t"></table>`);
     ml2.pythonExec = async () => ({ ok: true, value: "ok", stdout: "" });
-    assert.doesNotMatch((await ml2.pythonTool().run({ code: "return 1", tables: "#only" })).content, /matched/);
+    assert.doesNotMatch((await ml2.pythonTool().run({ code: "df = ml.table('#only')\n# ml.table('.t')\nreturn 1" })).content, /matched/);
 });
 
 test("python_exec tool: `maxChars` raises the stdout/value cap (post-approval), clamped to the ceiling", async () => {
@@ -3446,13 +3425,12 @@ test("python_exec tool: `maxChars` raises the stdout/value cap (post-approval), 
     assert.match(raised.content, /clamped to 20000 chars/i);
 });
 
-test("python_exec tool: prepends a synthetic 'loaded' log so models know what's pre-loaded", async () => {
+test("python_exec tool: prepends what the cell was handed and what it read, so models know what is loaded", async () => {
     const { ml } = loadDomWorld(`<table id="t"><tr><td>1</td></tr></table>`);
     ml.pythonExec = async () => ({ ok: true, value: "42", stdout: "", inputImage: "data:image/png;base64,X",
-        inputTables: [{ name: "sales", source: { kind: "dom", label: "#t" }, columns: ["A", "B"], rows: [[1, 2], [3, 4]] }] });
-    const out = await ml.pythonTool().run({ code: "return 1", tables: "#t", image: "#t" });
-    assert.match(out.content, /loaded, reference directly/);
-    assert.match(out.content, /2×2 DataFrame → `sales`/, "names the df + its shape");
+        inputTables: [{ name: "#t", source: { kind: "dom", label: "#t" }, columns: ["A", "B"], rows: [[1, 2], [3, 4]] }] });
+    const out = await ml.pythonTool().run({ code: "sales = ml.table('#t')\nreturn 1", image: "#t" });
+    assert.match(out.content, /\[ml\.table read\] "#t" \(2×2\)/, "names the source + its shape");
     assert.match(out.content, /screenshot → `img`/, "notes the pre-loaded image");
 });
 
@@ -3496,136 +3474,125 @@ test("_resolveTable: throws for a selector that matches nothing", () => {
     assert.throws(() => ml._resolveTable("#nope"), /no table element matches/);
 });
 
-// ---- python_exec `tables` → Google Sheets CSV (googleSheetCsvUrl + parseCsv + the FETCH_SHEET relay) ----
+// ---- a page-started cell's ml.table literals, read before it (ml-python.ts hoistTables): Google Sheets CSV, the fetch
+// cache, a pointer's table, and what the page cannot read, which becomes the call's error in the cell ----
 
-test("pythonExec tables: a Sheets URL derives the CSV export URL, fetches it, and parses + casts to a df", async () => {
-    let sheetUrl = null, pyTable = null;
+/** A page world whose background answers FETCH_SHEET with `csv` and records the PYTHON_EXEC payload. */
+const hoistWorld = (csv = "Rep,Q1\nAda,120\nBen,90\n") => {
+    const seen = { sheets: [], py: null };
     const world = loadPageWorld({
         onRuntimeMessage: (m) => {
-            if (m.type === "FETCH_SHEET") { sheetUrl = m.payload.url; return { data: { csv: "Rep,Q1\nAda,120\nBen,90\n", name: "FY Sales" } }; }
-            if (m.type === "PYTHON_EXEC") { pyTable = m.payload.tables; return { data: { ok: true, value: "210", stdout: "" } }; }
+            if (m.type === "FETCH_SHEET") { seen.sheets.push(m.payload.url); return { data: { csv, name: "FY Sales" } }; }
+            if (m.type === "PYTHON_EXEC") { seen.py = JSON.parse(JSON.stringify(m.payload)); return { data: { ok: true, value: "1", stdout: "" } }; }
             return undefined;
         },
     });
-    await world.ml.pythonExec("return df['Q1'].sum()", { tables: "https://docs.google.com/spreadsheets/d/ABC123/edit#gid=42" });
-    assert.equal(sheetUrl, "https://docs.google.com/spreadsheets/d/ABC123/export?format=csv&gid=42", "id + gid → the CSV export endpoint");
-    // A single-source `tables` string normalizes to a one-entry array named `df`.
-    assert.equal(pyTable.length, 1);
-    assert.equal(pyTable[0].name, "df");
-    assert.deepEqual(pyTable[0].data.columns, ["Rep", "Q1"]);
-    assert.deepStrictEqual(JSON.parse(JSON.stringify(pyTable[0].data.rows)), [["Ada", 120], ["Ben", 90]], "Q1 auto-cast to numbers, so pandas sums instead of concatenating");
+    return { world, seen };
+};
+
+test("hoist: a Sheets URL literal derives the CSV export URL, fetches it, and parses + casts it before the cell", async () => {
+    const { world, seen } = hoistWorld();
+    const url = "https://docs.google.com/spreadsheets/d/ABC123/edit#gid=42";
+    await world.ml.pythonExec(`df = ml.table("${url}")\nreturn df['Q1'].sum()`);
+    assert.deepEqual(seen.sheets, ["https://docs.google.com/spreadsheets/d/ABC123/export?format=csv&gid=42"], "id + gid → the CSV export endpoint");
+    assert.equal(seen.py.hoisted.length, 1);
+    const h = seen.py.hoisted[0];
+    assert.equal(h.src, url, "held under the source as the code wrote it");
+    assert.deepEqual(h.answer.data.columns, ["Rep", "Q1"]);
+    assert.deepEqual(h.answer.data.rows, [["Ada", 120], ["Ben", 90]], "Q1 auto-cast to numbers, so pandas sums instead of concatenating");
+    assert.equal(seen.py.tables, undefined, "no `tables` field crosses any more");
 });
 
-test("pythonExec tables map: two named sources → two ordered df entries carrying their names", async () => {
-    let sheetFetches = 0, pyTables = null;
-    const world = loadPageWorld({
-        onRuntimeMessage: (m) => {
-            if (m.type === "FETCH_SHEET") { sheetFetches++; return { data: { csv: "Rep,Q1\nAda,120\n", name: null } }; }
-            if (m.type === "PYTHON_EXEC") { pyTables = m.payload.tables; return { data: { ok: true, value: "ok", stdout: "" } }; }
-            return undefined;
-        },
-    });
-    await world.ml.pythonExec("return pd.merge(sales, targets, on='Rep')", { tables: { sales: "https://docs.google.com/spreadsheets/d/AA/edit", targets: "https://docs.google.com/spreadsheets/d/BB/edit" } });
-    assert.equal(sheetFetches, 2, "each sheet source fetches its own CSV");
-    assert.deepEqual(pyTables.map(t => t.name), ["sales", "targets"], "each source keeps its variable name, in order");
+test("hoist: two literals are two reads, in source order, each fetched once", async () => {
+    const { world, seen } = hoistWorld("Rep,Q1\nAda,120\n");
+    const a = "https://docs.google.com/spreadsheets/d/AA/edit", b = "https://docs.google.com/spreadsheets/d/BB/edit";
+    await world.ml.pythonExec(`sales = ml.table("${a}")\ntargets = ml.table("${b}")\nagain = ml.table("${a}")\nreturn 1`);
+    assert.equal(seen.sheets.length, 2, "each distinct sheet fetches its own CSV, once");
+    assert.deepEqual(seen.py.hoisted.map((h) => h.src), [a, b]);
 });
 
-test("pythonExec tables: a URL with no gid defaults to the first tab (gid=0)", async () => {
-    let sheetUrl = null;
-    const world = loadPageWorld({
-        onRuntimeMessage: (m) => {
-            if (m.type === "FETCH_SHEET") { sheetUrl = m.payload.url; return { data: { csv: "a\n1\n", name: null } }; }
-            return { data: { ok: true, value: "1", stdout: "" } };
-        },
-    });
-    await world.ml.pythonExec("return 1", { tables: "https://docs.google.com/spreadsheets/d/XYZ/edit" });
-    assert.match(sheetUrl, /export\?format=csv&gid=0$/);
+test("hoist: a Sheets URL with no gid defaults to the first tab (gid=0)", async () => {
+    const { world, seen } = hoistWorld("a\n1\n");
+    await world.ml.pythonExec(`return ml.table("https://docs.google.com/spreadsheets/d/XYZ/edit")`);
+    assert.match(seen.sheets[0], /export\?format=csv&gid=0$/);
 });
 
-test("pythonExec tables:'current' off a Google Sheet (with no table) errors before any fetch", async () => {
-    let fetched = false;
-    const world = loadPageWorld({
-        onRuntimeMessage: (m) => { if (m.type === "FETCH_SHEET") fetched = true; return { data: { ok: true, value: 1, stdout: "" } }; },
-    });
-    await assert.rejects(world.ml.pythonExec("return 1", { tables: "current" }), /neither a Google Sheet nor has a table with data/);
-    assert.equal(fetched, false, "no privileged fetch when the page isn't a sheet");
+test("hoist: a computed source is never read by the page, so a Sheet it names is never fetched", async () => {
+    const { world, seen } = hoistWorld();
+    await world.ml.pythonExec(`u = "https://docs.google.com/spreadsheets/d/" + "HID1/edit"\nreturn ml.table(u)`);
+    assert.deepEqual(seen.sheets, []);
+    assert.equal(seen.py.hoisted, undefined, "nothing hoisted: the cell's call raises the literal-only sentence");
 });
 
-test("pythonExec tables: a URL not in the page's fetch cache says the cache is the page's, never that the run never fetched it", async () => {
+test("hoist: 'current' off a Google Sheet (with no table) is the call's error, before any fetch", async () => {
+    const { world, seen } = hoistWorld();
+    await world.ml.pythonExec("return ml.table('current')");
+    assert.deepEqual(seen.sheets, [], "no privileged fetch when the page isn't a sheet");
+    assert.match(seen.py.hoisted[0].error, /neither a Google Sheet nor has a table with data/);
+});
+
+test("hoist: a URL not in the page's fetch cache says the cache is the page's, never that the run never fetched it", async () => {
     // The cache does not survive a navigation, so a run that fetched this URL on its previous page was told it never had.
-    const world = loadPageWorld({ onRuntimeMessage: () => ({ data: { ok: true, value: 1, stdout: "" } }) });
-    const err = await world.ml.pythonExec("return 1", { tables: "https://example.com/data.csv" }).catch((e) => e);
-    assert.match(err.message, /not in this page's fetch cache/);
-    assert.match(err.message, /does not survive a navigation/);
-    assert.match(err.message, /credentials:true or rendered:true \(those reads are never cached\)/, "names the cause a model that fetched as-you hits");
-    assert.doesNotMatch(err.message, /in this run/);
+    const { world, seen } = hoistWorld();
+    await world.ml.pythonExec("return ml.table('https://example.com/data.csv')");
+    const err = seen.py.hoisted[0].error;
+    assert.match(err, /not in this page's fetch cache/);
+    assert.match(err, /does not survive a navigation/);
+    assert.match(err, /credentials:true or rendered:true \(those reads are never cached\)/, "names the cause a model that fetched as-you hits");
+    assert.doesNotMatch(err, /in this run/);
 });
 
-// A TABLE BY VALUE (a pointer's table the loop resolved, or one a page script holds): loaded whole, labelled by its pointer,
-// and REFUSED when it is only a preview, because a sum over the first rows of a larger table is a confident wrong answer.
-test("pythonExec tables: a whole table by value loads its rows, labelled by the pointer it came from", async () => {
-    let pyTables = null;
-    const world = loadPageWorld({ onRuntimeMessage: (m) => {
-        if (m.type === "PYTHON_EXEC") { pyTables = m.payload.tables; return { data: { ok: true, value: "12", stdout: "" } }; }
-        return undefined;
-    } });
-    const r = await world.ml.pythonExec("return int(df['stock'].sum())", { tables: { df: { columns: ["sku", "stock"], rows: [["a", 5], ["b", 7]], shape: [2, 2], pointer: '@tool:abc1234 ("the stock table")' } } });
-    assert.equal(pyTables.length, 1);
-    assert.equal(pyTables[0].name, "df");
-    assert.deepEqual(JSON.parse(JSON.stringify(pyTables[0].data)), { kind: "rows", columns: ["sku", "stock"], rows: [["a", 5], ["b", 7]] });
+test("hoist: /files and @file: are the call's error from a page (a page-started cell has no /files)", async () => {
+    const { world, seen } = hoistWorld();
+    await world.ml.pythonExec("a = ml.table('/files/attached/f1/s.csv')\nb = ml.table('@file:f1')\nreturn 1");
+    assert.equal(seen.py.hoisted.length, 2);
+    for (const h of seen.py.hoisted) assert.match(h.error, /has no \/files\//);
+});
+
+// A TABLE BY VALUE (a pointer's table the loop resolved): read whole, labelled by its pointer, and REFUSED when it is
+// only a preview, because a sum over the first rows of a larger table is a confident wrong answer.
+const PTR = "@tool:abc1234";
+test("hoist: a whole table by value is read as rows, labelled by the pointer it came from", async () => {
+    const { world, seen } = hoistWorld();
+    const r = await world.ml.pythonExec(`df = ml.table("${PTR}")\nreturn int(df['stock'].sum())`,
+        { _pointers: { [PTR]: { columns: ["sku", "stock"], rows: [["a", 5], ["b", 7]], shape: [2, 2], pointer: '@tool:abc1234 ("the stock table")' } } });
+    assert.deepEqual(seen.py.hoisted[0].answer.data, { kind: "rows", columns: ["sku", "stock"], rows: [["a", 5], ["b", 7]] });
     assert.deepEqual(JSON.parse(JSON.stringify(r.inputTables[0].source)), { kind: "pointer", label: '@tool:abc1234 ("the stock table")' }, "the log names where the table came from");
 });
 
-test("pythonExec tables: a PREVIEW by value is refused, and nothing reaches the sandbox", async () => {
-    let ran = false;
-    const world = loadPageWorld({ onRuntimeMessage: (m) => { if (m.type === "PYTHON_EXEC") ran = true; return { data: { ok: true, value: 1, stdout: "" } }; } });
-    await assert.rejects(
-        world.ml.pythonExec("return len(df)", { tables: { df: { columns: ["a"], rows: [[1], [2]], shape: [48231, 1], pointer: "@tool:abc1234" } } }),
-        /@tool:abc1234 holds 2 of 48,231 rows, a preview rather than the whole table, so it is not loaded\. Pass the URL fetch_url read/);
-    await assert.rejects(
-        world.ml.pythonExec("return len(df)", { tables: { columns: ["a"], rows: [[1]], truncated: true } }),
-        /this table holds 1 of more rows/, "`truncated` alone is enough, even with no shape");
-    assert.equal(ran, false, "a refused table never runs any Python");
+test("hoist: a PREVIEW by value is refused as the call's error, with the forms that read the rest", async () => {
+    const { world, seen } = hoistWorld();
+    await world.ml.pythonExec(`return len(ml.table("${PTR}"))`, { _pointers: { [PTR]: { columns: ["a"], rows: [[1], [2]], shape: [48231, 1], pointer: PTR } } });
+    assert.match(seen.py.hoisted[0].error, /@tool:abc1234 holds 2 of 48,231 rows, a preview rather than the whole table, so it is not read\. Read the URL fetch_url read/);
+    const { world: w2, seen: s2 } = hoistWorld();
+    await w2.ml.pythonExec(`return len(ml.table("${PTR}"))`, { _pointers: { [PTR]: { columns: ["a"], rows: [[1]], truncated: true } } });
+    assert.match(s2.py.hoisted[0].error, /this table holds 1 of more rows/, "`truncated` alone is enough, even with no shape");
 });
 
-test("pythonExec tables: a preview whose WHOLE table is stored goes to the sandbox by key, with no rows, and the log shows the preview", async () => {
-    let pyTables = null;
-    const world = loadPageWorld({ onRuntimeMessage: (m) => {
-        if (m.type === "PYTHON_EXEC") { pyTables = m.payload.tables; return { data: { ok: true, value: "300000", stdout: "" } }; }
-        return undefined;
-    } });
-    const r = await world.ml.pythonExec("return len(df)", { tables: { df: { columns: ["a", "b"], rows: [[1, 2], [3, 4]], shape: [300000, 2], truncated: true, delimiter: ";", pointer: "@tool:abc1234", value: "v0123456789abcdef" } } });
-    assert.deepEqual(JSON.parse(JSON.stringify(pyTables[0].data)), { kind: "value", key: "v0123456789abcdef", label: "@tool:abc1234", columns: ["a", "b"], delimiter: ";" },
+test("hoist: a preview whose WHOLE table is stored crosses by key, with no rows, and the log shows the preview", async () => {
+    const { world, seen } = hoistWorld();
+    const r = await world.ml.pythonExec(`return len(ml.table("${PTR}"))`, { _pointers: { [PTR]: { columns: ["a", "b"], rows: [[1, 2], [3, 4]], shape: [300000, 2], truncated: true, delimiter: ";", pointer: PTR, value: "v0123456789abcdef" } } });
+    assert.deepEqual(seen.py.hoisted[0].answer.data, { kind: "value", key: "v0123456789abcdef", label: PTR, columns: ["a", "b"], delimiter: ";" },
         "the key and how to read it, never the preview rows");
-    assert.deepEqual(JSON.parse(JSON.stringify(r.inputTables[0])), { name: "df", source: { kind: "pointer", label: "@tool:abc1234" }, columns: ["a", "b"], rows: [[1, 2], [3, 4]], rowCount: 300000 });
+    assert.equal(seen.py.hoisted[0].answer.preview, undefined, "the preview stays on the page");
+    assert.deepEqual(JSON.parse(JSON.stringify(r.inputTables[0])), { name: PTR, source: { kind: "pointer", label: PTR }, columns: ["a", "b"], rows: [[1, 2], [3, 4]], rowCount: 300000 });
 });
 
-test("pythonExec tables: a key that is not a variable name is not refused for its name", async () => {
-    const world = loadPageWorld({ onRuntimeMessage: () => ({ data: { ok: true, value: 1, stdout: "" } }) });
-    const err = await world.ml.pythonExec("return 1", { tables: { "2bad": "#t" } }).catch((e) => e);
-    assert.doesNotMatch(String(err?.message ?? ""), /valid Python variable name/, "it loads as `_2bad` (here the selector matches nothing)");
-});
-
-test("pythonExec tables: a reserved name in the map is rejected (it would shadow a preloaded global)", async () => {
-    const world = loadPageWorld({ onRuntimeMessage: () => ({ data: { ok: true, value: 1, stdout: "" } }) });
-    await assert.rejects(world.ml.pythonExec("return 1", { tables: { pd: "#t" } }), /reserved/);
-    await assert.rejects(world.ml.pythonExec("return 1", { tables: { tables: "#t" } }), /reserved/, "the `tables` dict name itself is reserved");
+test("hoist: a pointer the loop did not resolve is left out (the call raises), and one it faulted carries the fault", async () => {
+    const { world, seen } = hoistWorld();
+    await world.ml.pythonExec(`a = ml.table("${PTR}")\nb = ml.table("@tool:def5678")\nreturn 1`, { _pointers: { "@tool:def5678": { error: "@tool:def5678 is an image, not a table" } } });
+    assert.deepEqual(seen.py.hoisted, [{ src: "@tool:def5678", opts: {}, error: "@tool:def5678 is an image, not a table" }]);
 });
 
 test("parseCsv (via sheet): quoted fields with embedded commas, newlines, and doubled quotes", async () => {
-    let cols = null, rows = null;
     const csv = 'Name,Note\n"Ada, L.","said ""hi""\nthere"\nBen,plain\n';
-    const world = loadPageWorld({
-        onRuntimeMessage: (m) => {
-            if (m.type === "FETCH_SHEET") return { data: { csv, name: null } };
-            if (m.type === "PYTHON_EXEC") { cols = m.payload.tables[0].data.columns; rows = m.payload.tables[0].data.rows; return { data: { ok: true, value: 1, stdout: "" } }; }
-            return undefined;
-        },
-    });
-    // tableRaw so the quoted text survives verbatim (no numeric cast).
-    await world.ml.pythonExec("return 1", { tables: "https://docs.google.com/spreadsheets/d/Q/edit", tableRaw: true });
-    assert.deepEqual(cols, ["Name", "Note"]);
-    assert.deepEqual(JSON.parse(JSON.stringify(rows)), [["Ada, L.", 'said "hi"\nthere'], ["Ben", "plain"]]);
+    const { world, seen } = hoistWorld(csv);
+    // raw so the quoted text survives verbatim (no numeric cast).
+    await world.ml.pythonExec(`return ml.table("https://docs.google.com/spreadsheets/d/Q/edit", raw=True)`);
+    const h = seen.py.hoisted[0];
+    assert.deepEqual(h.opts, { raw: true }, "the options are held with the read, so the call is answered only for them");
+    assert.deepEqual(h.answer.data.columns, ["Name", "Note"]);
+    assert.deepEqual(h.answer.data.rows, [["Ada, L.", 'said "hi"\nthere'], ["Ben", "plain"]]);
 });
 
 test("examples/spreadsheet.html ridiculous table: dirty cells coerce to null, the rest sum to 116153", () => {
@@ -3669,24 +3636,24 @@ test("examples/spreadsheet.html: the #sales table extracts to rows that sum to t
     assert.equal(total, 6260, "extraction matches the demo's expected answer");
 });
 
-// ---- python_exec tables:'current' shorthand (non-sheet page) ----
+// ---- ml.table('current') shorthand (non-sheet page) ----
 
-test("tables:'current' loads the page's SINGLE non-empty table (not just a Google Sheet)", async () => {
+test("ml.table('current') reads the page's SINGLE non-empty table (not just a Google Sheet)", async () => {
     const { ml } = loadDomWorld('<table id="sales"><tr><th>A</th></tr><tr><td>1</td></tr></table><table id="empty"></table>');
-    const loaded = await ml._loadTable("df", "current");
+    const loaded = await ml._hoistTable("current");
     assert.equal(loaded.source.kind, "dom");
     assert.deepEqual(loaded.data.columns, ["A"]);
     assert.deepEqual(loaded.data.rows, [[1]]);   // the empty table is ignored; numeric cast applied
 });
 
-test("tables:'current' is ambiguous with >1 non-empty table → an actionable error steers to a selector", async () => {
+test("ml.table('current') is ambiguous with >1 non-empty table → an actionable error steers to a selector", async () => {
     const { ml } = loadDomWorld('<table><tr><td>1</td></tr></table><table><tr><td>2</td></tr></table>');
-    await assert.rejects(ml._loadTable("df", "current"), /has 2 tables \(ambiguous\)\. Pass a CSS selector/);
+    await assert.rejects(ml._hoistTable("current"), /has 2 tables \(ambiguous\)\. Pass a CSS selector/);
 });
 
-test("tables:'current' with no data table (and not a Sheet) → a clear error", async () => {
+test("ml.table('current') with no data table (and not a Sheet) → a clear error", async () => {
     const { ml } = loadDomWorld('<table id="empty"></table><p>no data</p>');
-    await assert.rejects(ml._loadTable("df", "current"), /neither a Google Sheet nor has a table with data/);
+    await assert.rejects(ml._hoistTable("current"), /neither a Google Sheet nor has a table with data/);
 });
 
 test("click render() → an action intent; look render() → a hoverable element ref; no selector → null", () => {
@@ -3788,10 +3755,10 @@ test("no-cast return that is plain data (not a coordinate) gets NO cast hint", a
 test("the tool description only advertises 'current' when it resolves — one table → yes, none → no", () => {
     const one = loadDomWorld('<table><tr><td>1</td></tr></table>').ml.pythonTool();
     assert.match(one.description, /THIS PAGE HAS ONE TABLE/);
-    assert.match(one.parameters.properties.tables.description, /one table on this page/);
+    assert.match(one.description, /a CSS selector or 'current' \(a page table\)/);
     const none = loadDomWorld('<p>no tables</p>').ml.pythonTool();
-    assert.doesNotMatch(none.description, /current/);
-    assert.doesNotMatch(none.parameters.properties.tables.description, /'current'/);
+    assert.doesNotMatch(none.description, /'current'/);
+    assert.equal(none.parameters.properties.tables, undefined, "the argument is gone");
 });
 
 test("approveOnce dedups by (tool, args): identical repeats free, new scripts re-ask", () => {
