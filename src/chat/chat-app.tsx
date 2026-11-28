@@ -46,6 +46,7 @@ import { DockFrame, type DockPanel } from "./dock";
 import type { ChatExtras } from "./extras";
 import { clientUi, lightboxSrc, type ClientPlatform } from "./platform";
 import { PageChip } from "./page-chip";
+import { FilesButton, FilesPanel, filesOpen, loadFilesOpen } from "./files-panel";
 import { SessionList } from "./session-list";
 import { useNarrow } from "./narrow";
 import { keepsFollow, pinGlide } from "./pin-glide";
@@ -457,14 +458,17 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
     // ON A WIDE PAGE THE MODEL SITS IN THE COMPOSER, beside send: it is what the NEXT message goes to, so it belongs
     // where that message is written, and a pill in a header read as a stray control. A phone keeps it in its bar
     // (there is no room in a 390px box), and so does a session with no composer, where it is only information.
+    // The files panel: closed until opened, and only for a session whose runtime has said it lists files. The phone's own
+    // app draws none yet (`native`).
+    const filesShown = !native && filesOpen.value && store.filesCount.value.has(sessionKey);
     const modelBelow = !narrow && !native && !!summary?.model && !!rt && canDrive && !canResume;
     return (
-        <main class="chat-main" data-rev={r} data-session={sessionKey}>
+        <main class={`chat-main${filesShown ? " files-open" : ""}`} data-rev={r} data-session={sessionKey}>
             {/* WIDE CALM HAS NO HEADER BAND to hang this off, and that is deliberate — but the session's own options
                 still need a door, or the calm view (the default) is the one with no way to export what is in it. A
                 single ⋮ in the corner is the least the page can put back and still answer "and this session?". */}
             {bare && !native
-                ? <div class="chat-more-corner"><SessionMenu store={store} s={summary} rt={rt} title={title} sessionKey={sessionKey} partial={partial} floating /></div>
+                ? <div class="chat-more-corner"><FilesButton store={store} sessionKey={sessionKey} /><SessionMenu store={store} s={summary} rt={rt} title={title} sessionKey={sessionKey} partial={partial} floating /></div>
                 : null}
             {bare
                 ? null
@@ -482,9 +486,10 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
                     </span>
                     <span class="sp" />
                     {!narrow && !modelBelow && summary?.model && rt ? <ModelTop store={store} rt={rt} model={summary.model} sessionKey={sessionKey} summary={summary} /> : null}
-                    {narrow ? <SessionMenu store={store} s={summary} rt={rt} title={summary?.model ? title : undefined} sessionKey={sessionKey} partial={partial} />
+                    {narrow ? <><FilesButton store={store} sessionKey={sessionKey} /><SessionMenu store={store} s={summary} rt={rt} title={summary?.model ? title : undefined} sessionKey={sessionKey} partial={partial} /></>
                         : <>
                             <DeviceViews extras={extras} rt={rt} />
+                            <FilesButton store={store} sessionKey={sessionKey} />
                             <ViewToggle />
                             {id ? <Hash hash={id.hash} /> : null}
                             {/* IN-CHAT options, beside (not inside) the page-wide ones: looking at this session's
@@ -531,6 +536,7 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
                 tools={composerTools(store, rt, summary, sessionKey, modelBelow)} />
                 : s && rt && !(noTab && canDrive) ? <div class="chat-readonly">{!rt.online ? `${rt.name} is offline. You can read this session, and send to it once it is back.` : `This device may watch sessions on ${rt.name}, not drive them.`}</div>
                     : null}
+            {filesShown ? <FilesPanel store={store} sessionKey={sessionKey} narrow={narrow} /> : null}
         </main>
     );
 }
@@ -690,6 +696,7 @@ function Lightbox({ platform }: { platform: ClientPlatform }) {
 /** The chat page. */
 export function ChatApp({ store, platform, extras }: { store: ChatStore; platform: ClientPlatform; extras?: ChatExtras }) {
     store.ui = clientUi(platform);
+    loadFilesOpen(platform.prefs);
     const narrow = useNarrow();
     useHashRoute();
     const v = view.value;

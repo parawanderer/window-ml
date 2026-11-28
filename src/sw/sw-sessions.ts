@@ -3,6 +3,7 @@
 // places that feed the DevTools panel, so the index holds what a panel would show for every tab at once
 // (docs/dev/chat-page.md §The local index).
 import { addFilesRule, removeFilesRule } from "./sw-files-hide";
+import { listSessionFiles } from "./sw-files-list";
 import { restoreChatRecord } from "../session/chat-record";
 import { forgetRunPolicies, runPolicies, archivedPolicyLoss } from "./sw-policies";
 import { hintSession, type SentFile } from "../contract/contract-run";
@@ -34,7 +35,7 @@ import { forModel, forModelMessages, forTurn, redactedNote } from "./sw-scrub";
 import { workerMl } from "./worker-ml";
 import { ocrRequest } from "../ml/ml-vision";
 import { planImages } from "../image-gate";
-import { ensureOffscreen, forgetOffscreen } from "./sw-offscreen";
+import { ensureOffscreen, forgetOffscreen, isOffscreenSender } from "./sw-offscreen";
 import { forgetAgentFiles } from "./sw-agent-files";
 import { readPdfOffscreen } from "./sw-attach";
 import type { PdfMessage } from "../pdf/pdf-wire";
@@ -146,7 +147,7 @@ function localRuntime(): RuntimeInfo {
         // backend behind it); `pythonBench` is MEASURED, because a checkout without the wheels builds a bundle whose
         // bench would fail at run time. `localSettings`: this browser's pages may edit its settings, which only the
         // extension's own pages can (a phone over the hub reports the capability and holds nothing to edit with).
-        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: pythonBundled, localSettings: true, switchModel: true, detached: true, attachFiles: true, attachPdf: true, ...archiveCapability(), ...blankStartCapability(), ...shellCapabilities(), ...(attentionCodes().length ? { attention: attentionCodes() } : {}) },
+        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: pythonBundled, localSettings: true, switchModel: true, detached: true, attachFiles: true, attachPdf: true, listFiles: true, ...archiveCapability(), ...blankStartCapability(), ...shellCapabilities(), ...(attentionCodes().length ? { attention: attentionCodes() } : {}) },
         // This browser's own pages hold every scope.
         grants: [{ scope: "view" }, { scope: "drive" }, { scope: "approve" }, { scope: "screen" }],
     };
@@ -431,6 +432,7 @@ export function configureSessionCommands(run: RunDeps): void {
         pinSession,
         addFilesRule,
         removeFilesRule,
+        listFiles: listSessionFiles,
         renameSession,
         ...(sessionStore ? { storageReport } : {}),
         listModels: async () => {
@@ -839,6 +841,17 @@ try {
         sessionServer.runtimeChanged();
     });
 } catch { /* no storage (a test harness) */ }
+
+/**
+ * FILES_COMMITTED: a commit through Python's channel changed a session's `/files/`, so every page and hub watching it
+ * hears `files-changed`. Only the offscreen document's word, and only for a session the index holds.
+ * @param message `{ session }`, the channel's session hash
+ * @param sender the message's sender
+ */
+export function filesCommitted(message: { session?: unknown }, sender: chrome.runtime.MessageSender): void {
+    if (!isOffscreenSender(sender) || typeof message.session !== "string") return;
+    sessionServer.filesChanged(message.session);
+}
 
 /** Sessions asked for before the index had heard of them. A run mints its hash just BEFORE its first event, so a
  *  request to keep it can arrive first; a hash is held here until an event for it turns up. Bounded, because the
