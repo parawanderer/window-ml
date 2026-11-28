@@ -33,7 +33,7 @@ import { models, serverTools, execServerTool, info, capabilities, getModel, embe
 import { defineTool, lookTool, locateTool, clickTool, typeTool, navigateTool, fetchTool, pythonTool, chatMetaTool } from "./ml/ml-tool-factories";
 import { read, screenshot, _shotBox, _stitchFullPage, _resolveVisionModel, _modelSees, _modelVision, _nativeLookTool, _imageToDataUrl, _fetchImageBase64 } from "./ml/ml-vision";
 import { mlFetchCache } from "./ml/ml-fetch-cache";
-import { pythonExec, _loadTable, _resolveTable } from "./ml/ml-python";
+import { pythonExec, _hoistTable, _resolveTable } from "./ml/ml-python";
 import { table, tableSurvey } from "./ml/ml-table";
 import { createChat, resumeChat, chat, step } from "./ml/ml-chat";
 import { agent } from "./ml/ml-agent-run";
@@ -215,7 +215,7 @@ import { pageWorld } from "./page-world";
         _rebuildToolset: _rebuildToolset,
         _adoptRun: _adoptRun,
         pythonExec: pythonExec,
-        _loadTable: _loadTable,
+        _hoistTable: _hoistTable,
         _resolveTable: _resolveTable,
         table: table,
         _tableSurvey: tableSurvey,

@@ -2,9 +2,9 @@
 //
 // Models write `@tool:abc1234` inline as though it were JS, because that is how the reference is spelled
 // everywhere else they meet it — in a tool result's token line, in a citation, in their own prior turn. The
-// house response to that is not to correct them: `python_exec`'s prelude patches `pd.read_csv` to return
-// the preloaded frame, and `tables['name']` is aliased because a model reaches for the argument name it
-// passed. Accommodate what they write.
+// house response to that is not to correct them: `python_exec` reads a pointer written as a string,
+// `ml.table("@tool:abc1234")`, because that is where a model puts a reference it means as data.
+// Accommodate what they write.
 //
 // A LEXICAL pass, not an AST one, and that is forced rather than chosen: `@tool:abc` is not valid
 // JavaScript, so a parser cannot find it — a parser can only find syntax it accepts. This is the same

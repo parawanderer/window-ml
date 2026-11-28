@@ -473,7 +473,7 @@ _ml_spend_guarded = frozenset(id(f) for f in (_ml_s.settrace, _ml_s.setprofile, 
     *(getattr(_ml_mon, n) for n in dir(_ml_mon) if not n.startswith("_") and n not in ("get_tool", "get_events", "get_local_events")
       and callable(getattr(_ml_mon, n)))) if f is not None)
 _ml_spend_skip = (_ml_os.path.dirname(_ml_aio.__file__), _ml_os.path.dirname(_ml_pyo.__file__), _ml_c.__file__, _ml_s._getframe().f_code.co_filename)
-from pyodide.ffi import create_proxy as _ml_proxy, create_once_callable as _ml_once
+from pyodide.ffi import create_proxy as _ml_proxy, create_once_callable as _ml_once, run_sync as _ml_run_sync
 import pyodide.webloop as _ml_wl
 _ml_cancel = _ml_make_cancel(_ml_cell_revoke, _ml_cell_spending, _ml_spend_queue, _ml_proxy, _ml_wl.__dict__, _ml_wl.scheduleCallback,
     _ml_aio.get_event_loop(), _ml_aio._set_running_loop, _ml_aio.all_tasks, _ml_aio.current_task, _ml_aio.Future,
@@ -528,8 +528,11 @@ object.__setattr__(_h, "_MlHarnessMod__ml_refs", {
     "cell_revoke": _ml_cell_revoke,
     # The worker runs every cell's script through this (python-worker.ts \`hostRunScript\`): the script, then the cancel.
     "run_script": _ml_run,
+    # A synchronous \`ml\` member (\`ml.table\`) waits on its wire answer in place, over JSPI. \`pyodide.ffi\` is a
+    # refused bridge, so a cell cannot import it; the facade is handed this one (ML_TABLE.md, ruling 77).
+    "run_sync": _ml_run_sync,
 })
-del _ml_gate_calls, _ml_cell_begin, _ml_cell_revoke, _ml_cell_spending, _ml_spend_queue, _ml_proxy, _ml_once, _ml_wl, _MlSpendLate, _ml_spend_guarded, _ml_spend_skip, _ml_make_cancel, _ml_cancel, _ml_make_run, _ml_run, _ml_eval_async
+del _ml_run_sync, _ml_gate_calls, _ml_cell_begin, _ml_cell_revoke, _ml_cell_spending, _ml_spend_queue, _ml_proxy, _ml_once, _ml_wl, _MlSpendLate, _ml_spend_guarded, _ml_spend_skip, _ml_make_cancel, _ml_cancel, _ml_make_run, _ml_run, _ml_eval_async
 _h
 `;
 

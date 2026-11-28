@@ -138,7 +138,7 @@ async function startMinted(tabId: number, tab: chrome.tabs.Tab | undefined, url:
     let adopted: Awaited<ReturnType<typeof adoptOnTab>>;
     try {
         // No tab: no page to adopt, and the model is told it has none (`NO_TAB_CONTEXT`).
-        adopted = isNoTab(tabId) ? { pageInfo: NO_TAB_CONTEXT } : await adoptOnTab(tabId, runId, rebuild);
+        adopted = isNoTab(tabId) ? { pageInfo: NO_TAB_CONTEXT + (names.includes("navigate") ? NO_TAB_NAV_CLAUSE : "") } : await adoptOnTab(tabId, runId, rebuild);
         if (adopted.error) throw new Error(`The run could not start on this page: ${adopted.error}.`);
         cfg = await getConfig();
         if (starting.signal.aborted) throw new Error("Cancelled before the run started.");
@@ -180,6 +180,8 @@ async function startMinted(tabId: number, tab: chrome.tabs.Tab | undefined, url:
 
 /** What a run started with no tab reads where a page's context would be: that there is none, and what still works. */
 const NO_TAB_CONTEXT = "This run has no tab: it started with no page. The tools that need a page answer that they need one; the others work. The person can bring this session to a tab.";
+/** Appended to {@link NO_TAB_CONTEXT} for a run that has `navigate`, which from no tab opens a tab (no-tab-nav.ts). */
+const NO_TAB_NAV_CLAUSE = " `navigate` to an absolute http(s) URL opens a tab there once the person approves, and the run goes on there.";
 
 /** A page context through the turn's scrub, absent when there is none. */
 const scrubbedContext = (scrub: TurnScrub, ctx: string | undefined): string | undefined => (ctx ? scrub.text(ctx) : ctx);

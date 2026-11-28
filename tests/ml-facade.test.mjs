@@ -150,6 +150,25 @@ test("ml is read-only, and its private names are not members", { skip }, async (
     assert.equal(sent.length, 0);
 });
 
+// --- ml.table: the one synchronous member (docs/plan/repl/ML_TABLE.md) ---
+
+test("ml.table is a member of the facade class, taken without await, named `table`", { skip }, async () => {
+    // A class body that assigns `table = staticmethod(table)` is a NameError at the factory: this pins that every
+    // facade builds, with the member on the class (so the dialect can admit it by kind) and its own name.
+    const { out } = await facadeRun(`def answer(req): return {"value": 1}`,
+        `out["on_class"] = "table" in type(ml).__dict__\nout["name"] = ml.table.__name__\nout["dir"] = "table" in dir(ml)`);
+    assert.deepEqual(out, { on_class: true, name: "table", dir: true });
+});
+
+test("ml.table where the sandbox cannot wait in place is an Absent MlError, and nothing crosses", { skip }, async () => {
+    // The harness's codec here has no run_sync (and no frame): the call must say so rather than send.
+    const { out, sent } = await facadeRun(`def answer(req): return {"value": 1}`,
+        `try:\n    ml.table("#t")\nexcept MlError as e:\n    out["code"] = e.code\nexcept TypeError as e:\n    out["type"] = str(e)\ntry:\n    ml.table(3)\nexcept TypeError as e:\n    out["type"] = str(e)`);
+    assert.equal(out.code, "Absent");
+    assert.match(out.type, /ml\.table takes a source string/, "a non-string source is a TypeError before anything else");
+    assert.equal(sent.length, 0);
+});
+
 test("the names the facade defines are the ones it says it defines", () => {
     assert.deepEqual([...ML_FACADE_NAMES], ["ml", "MlError"]);
     assert.match(ML_FACADE, /return _Ml\(\), MlError\n/);

@@ -48,7 +48,9 @@ export function bringableSessions(tabId: number, tabUrl: string): BringableSessi
  * @returns moved, or why not
  */
 export async function bringHere(hash: string, tabId: number): Promise<MoveOutcome> {
-    if (bgRuns.has(hash)) return moveRun(hash, tabId);
+    // A run this worker holds is moved, its turn running included: a first turn has no `bgRuns` entry until it ends, and
+    // a resume refuses a session that is still going.
+    if (bgRuns.has(hash) || runControllers.has(hash) || runInboxes.has(hash) || startingControllers.has(hash)) return moveRun(hash, tabId);
     const r = await runSessionCommand({ type: "session.resume", session: { runtime: localRuntimeId(), hash }, target: { kind: "tab", tabId } }, THIS_BROWSER);
     return r.ok ? { moved: true } : { refused: r.error.message };
 }

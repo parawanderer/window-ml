@@ -104,7 +104,10 @@ export interface MlWireRequest {
  *  budget, shared by every call its code makes, or a pipe stage would build more than one call may. `BadRequest`: malformed. `Failed`: the member threw. */
 export type MlWireErrorCode = "Absent" | "Refused" | "SecretHandle" | "Denied" | "TooLarge" | "OverBudget" | "BadRequest" | "Failed"
     /** The call outran its lease and runs on as a task (`error.task`); its result arrives later (docs/spec/ASYNC_CALLS.md). */
-    | "Detached";
+    | "Detached"
+    /** Inside the read-only dialect, the call needs the person (`ml.table` of an unapproved Sheet): the cell raises
+     *  `NotInDialect` and goes to them whole (docs/spec/ML_TABLE.md). Never answered to an approved cell, which asks. */
+    | "Asks";
 
 /** A value too big to cross: it stays in the run's store under `token`, and a narrower read (a pipe) fetches part of it. */
 export interface MlWirePointer { token: string; label: string; size: number }

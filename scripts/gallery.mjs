@@ -174,7 +174,13 @@ async function openGallery(size = "1400x900") {
     return { server, context, page, errors, close: async () => { await browser.close(); server.close(); } };
 }
 
-/** Wait until the tile for (id, variant) has a settled status, and return it. */
+/**
+ * Wait until the tile for (id, variant) has a settled status AND that tile is the SELECTED one, and return the
+ * status. The status alone is not enough: a component's Stage mounts a tile per variant, so `maximised`'s status is
+ * recorded the moment its ITEM is shown, before the queued `hashchange` has applied the requested variant; a flow
+ * started then runs against the previous variant, and when the change lands mid-flow `useSurface`'s cleanup
+ * (`src/gallery/gallery.tsx`) takes down the page-level tip layer the flow had just mounted.
+ */
 async function settle(page, id, variant, timeout = 10_000) {
     return page.evaluate(async ({ id, variant, timeout }) => {
         const g = globalThis.__gallery;
@@ -185,7 +191,19 @@ async function settle(page, id, variant, timeout = 10_000) {
         const t0 = performance.now();
         for (;;) {
             const s = g.status(id, v);
-            if (s && s.state !== "pending") return { ...s, variant: v };
+            if (s && s.state !== "pending") {
+                // The page SHOWS the requested tile selected: the applied state, not a status kept from an earlier
+                // visit or from the sibling tile. Then one frame past it, so the render's effects (the cleanup
+                // that unmounts a page-level mount on a variant change) have run before a flow touches the page.
+                for (;;) {
+                    const sel = document.querySelector(".gl-tile.sel");
+                    if (sel?.dataset.id === id && sel.dataset.variant === v) break;
+                    if (performance.now() - t0 > timeout) return { state: "error", error: `timed out selecting ${id} [${v}]`, variant: v };
+                    await new Promise((r) => setTimeout(r, 30));
+                }
+                await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+                return { ...s, variant: v };
+            }
             if (performance.now() - t0 > timeout) return { state: "error", error: "timed out rendering", variant: v };
             await new Promise((r) => setTimeout(r, 30));
         }

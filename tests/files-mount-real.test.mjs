@@ -49,7 +49,7 @@ before(async () => {
     fs.writeFileSync(path.join(shim, "pyodide", "pyodide.mjs"),
         `import { loadPyodide as real } from ${JSON.stringify(pathToFileURL(path.join(DIST, "pyodide", "pyodide.mjs")).href)};\n` +
         `export const loadPyodide = (o) => real({ ...o, indexURL: ${JSON.stringify(path.join(DIST, "pyodide") + "/")}, packageBaseUrl: ${JSON.stringify(path.join(DIST, "pyodide") + "/")} });\n`);
-    server = new Worker(new URL("./fixtures/files-server-real.mjs", import.meta.url), { workerData: { quotaBytes: QUOTA, session: "s1" } });
+    server = new Worker(new URL("./fixtures/files-server-real.mjs", import.meta.url), { workerData: { quotaBytes: QUOTA, session: "s1", forms: [{ find: "tok3n-abc", ci: true, put: "[REDACTED:K]" }] } });
     server.unref();
     const ready = new Promise((r) => server.on("message", (m) => { if (m?.ready) r(); else if (m?.cid) { replies.get(m.cid)?.(m); replies.delete(m.cid); } }));
     const shared = allocFilesShared();
@@ -158,6 +158,22 @@ test("real reader: a write past the session's quota fails ENOSPC, lands nothing,
     assert.equal(out, "ENOSPC");
     assert.equal(await ctl("committed", "s1", "agent/huge.bin"), undefined);
     assert.equal(await ctl("usage", "s1"), before);
+});
+
+// --- names under /files: two files one shown name (FILE_ATTACHMENTS.md, "Names under `/files`", rule 4) ---
+
+test("real reader: two files whose names mask to one shown name are both listed, and a stat or open by that name is EACCES", T, async () => {
+    await ctl("seed", "s1", "agent/x-tok3n-abc.txt", "lower");
+    await ctl("seed", "s1", "agent/x-TOK3N-ABC.txt", "upper");
+    const out = await ok([
+        "import os, errno",
+        "names = os.listdir('/files/agent')",
+        "print(names.count('x-[REDACTED:K].txt'), any('tok3n' in n.lower() for n in names))",
+        "for f in (os.stat, open):",
+        "    try: f('/files/agent/x-[REDACTED:K].txt'); print('opened')",
+        "    except OSError as e: print(errno.errorcode.get(e.errno))",
+    ].join("\n"));
+    assert.deepEqual(out.split("\n"), ["2 False", "EACCES", "EACCES"]);
 });
 
 // --- a file open when the channel ends is discarded and noted (last: it ends the channel) ---

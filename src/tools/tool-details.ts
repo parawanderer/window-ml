@@ -8,26 +8,24 @@
 
 import type { MlTool } from "../contract/contract-agent";
 
-/** `python_exec`'s `tables` and `cast` texts in full: its MECHANICS, served by {@link TOOL_DETAILS}. The
+/** `python_exec`'s `ml.table` and `cast` texts in full: its MECHANICS, served by {@link TOOL_DETAILS}. The
  *  schema carries {@link PYTHON}, the triggers (docs/spec/PROMPT_BUDGET.md, round 3: measured on five models). */
 export const PYTHON_FULL = {
-    tables: "A SINGLE source string (a CSS selector for a page <table>/ARIA grid, a Google Sheets URL, a URL fetch_url " +
-        "already read, or an `@tool:` pointer to a table such as a fetch_url of a CSV/Parquet/Arrow file) → loaded as " +
-        "`df`. OR a map { variable_name: source } (keys = Python identifiers) → each loaded under its name so you can " +
-        "join them, e.g. {\"sales\":\"#report\",\"targets\":\"https://docs.google.com/spreadsheets/d/…\"} → use " +
-        "`sales`/`targets` directly (also in a `tables` dict, tables['sales']). A Google Sheet is fetched FOR you by " +
-        "the extension (credentialed) (an external Sheet " +
-        "just asks once to approve, then loads as a normal df). " +
-        "A selector loads the FIRST match. The data arrives ALREADY parsed — use the variable, don't re-load it.",
+    "ml.table": "`df = ml.table(src)` returns a pandas DataFrame you own (no await). src: a CSS selector for " +
+        "a page <table>/ARIA grid (the FIRST match) or 'current', a Google Sheets URL, a URL fetch_url already read, an " +
+        "`@tool:` pointer to a table (a fetch_url of a CSV/Parquet/Arrow file, a python_exec that returned a DataFrame), " +
+        "and in a run's own sandbox an `@file:` pointer or a /files/ path. Call it once per table and join them in " +
+        "pandas. A Google Sheet is read FOR you with the person's login (an external Sheet asks once to approve, then " +
+        "reads like any table). `raw=True` keeps every cell a string; `delimiter` and `header` override discovery for " +
+        "a CSV. Where it came from is in `df.attrs`.",
     cast: "Interpret the return as a clickable coordinate: 'pt' (needs [x,y]/{x,y}) or 'box' ([x1,y1,x2,y2]/{left,top,right,bottom}). Compute it in your INPUT IMAGE's pixel space — casting AUTO-projects it to on-screen VIEWPORT coordinates (dpr + crop offset), so the returned @pt/@box is the correct click point, NOT displaced. Omit for a raw text result.",
     verify: "Set it when the result is an IMAGE (a chart, a picture) you want to check before citing: the image is attached for you to see, or described if you cannot see images. Default false: it costs a picture or a model call.",
 };
 
 /** The same two as the schema carries them: the triggers. */
 export const PYTHON: typeof PYTHON_FULL = {
-    tables: "Table(s) to load, ALREADY parsed (never re-read them): one source → `df`, or { name: source } → each under " +
-        "its name, a Python variable name (e.g. { sales: … }). A source: a page <table> selector, a Google Sheets URL, " +
-        "a URL fetch_url read, or an `@tool:` pointer to a table.",
+    "ml.table": "`df = ml.table(src)`: a page <table> selector or 'current', a Google Sheets URL, a URL fetch_url read, " +
+        "or an `@tool:` pointer to a table.",
     cast: "'pt' or 'box': the return is a clickable point ([x,y]) or box ([x1,y1,x2,y2]) in the input image's pixels, " +
         "placed on the page for you.",
     verify: "Look at an image result (a chart) before citing it. Default false.",
@@ -81,7 +79,7 @@ export const FETCH_SHORT =
     "site without navigating there. Each new URL is approved once. The result names a best-effort type; JSON comes " +
     "parsed, and an HTML page comes back as Markdown (the site's own when it publishes one; `format: \"html\"` for " +
     "the markup). TABLES (csv/tsv/parquet/arrow) come back PARSED, as a `df.head()` with the FILE's real row count " +
-    "and dtypes: never split the text yourself; to use every row, pass the same URL to `python_exec`'s `tables`. " +
+    "and dtypes: never split the text yourself; to use every row, read the same URL in `python_exec` with `ml.table(url)`. " +
     "Options: `schema` (only a JSON's shape), `pipe` (scan the raw text), `ask` (a reader model answers a question " +
     "about the content, keeping a big body out of your context), `credentials` (as the user, with their cookies; " +
     "always asks), `rendered` (when a plain GET comes back empty because JavaScript draws the page). Prefer this " +
@@ -194,8 +192,8 @@ export const TOOL_DETAILS: Readonly<Record<string, string>> = {
         "columns]` and `dtypes: <col> <dtype>, …` in pandas' own names (`int64`, `float64`, `bool`, `str`, `object`) " +
         "under pandas 3's rules: text is `str`, a whole-number column holding one blank is `float64` (NaN forces the " +
         "float), and a Parquet file's dtypes are READ from its schema. 5 rows shown out of `[50,000 rows x 4 columns]` " +
-        "means 50,000. `python_exec`'s `tables: { df: \"<the url>\" }` loads the already-parsed table from the cache as " +
-        "a real DataFrame: no second request, and never `read_csv` (the sandbox has no network). `schema: true` on a " +
+        "means 50,000. In `python_exec`, `df = ml.table(\"<the url>\")` reads the already-parsed table from the cache as " +
+        "a real DataFrame: no second request; do not `read_csv` the URL (the sandbox has no network). `schema: true` on a " +
         "table returns its shape and dtypes. `pipe` skips the parsed preview and gives the raw lines your scan selected.",
         "`schema: true` on JSON returns a compact TS-like shape (`{ id: number, items: { name: string }[] }`) instead " +
         "of the payload, and a clear error saying what it was if it isn't JSON.",

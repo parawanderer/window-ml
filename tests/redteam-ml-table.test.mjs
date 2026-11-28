@@ -11,6 +11,8 @@ import { asTable } from "../src/table/table-data.ts";
 import { derivedFetchFields, cacheCopy } from "../src/ml/fetch-result.ts";
 import { READ_ONLY_TABLE } from "../src/table/table-brand.ts";
 import { mlFetchCache } from "../src/ml/ml-fetch-cache.ts";
+import { tableMemberFor } from "../src/sw/sw-ml-table.ts";
+import { hoistKey } from "../src/python/table-answer.ts";
 
 const SALES = { columns: ["region", "amount"], rows: [["north", 10], ["south", 20]] };
 const CSV_URL = "https://data.example/sales.csv";
@@ -200,4 +202,33 @@ test("RED TEAM (ml.table): a copy of a stored table is editable, drops its plan,
     assert.throws(() => c.col("n"), /copy never reads the rest/, "a copy read past its rows in hand");
     assert.throws(() => c.records(), /copy never reads the rest/, "a copy's records read past its rows in hand");
     assert.throws(() => c.readColumns, /not something it answers to/, "the reader is reachable off the copy");
+});
+
+// --- a page-started cell reads only its literals, with the options it wrote ---------------------------------------
+
+// A cell a page started has no run here to read for, so the member answers from the tables the page hoisted and the
+// worker checked, keyed by `hoistKey(src, opts)`. The cell's source is whatever its code computed, so the key is the
+// whole gate: an id assembled from an approved URL, or the same literal with another `raw`/`header`, is a different
+// key and must raise at the call. Control: the literal the page hoisted is served.
+test("RED TEAM (ml.table): a page-started cell is served only the literal it wrote, with the options it wrote", async () => {
+    const answer = { source: { kind: "fetch", label: CSV_URL }, data: { kind: "rows", columns: ["a"], rows: [[1]] } };
+    const tables = new Map([[hoistKey(CSV_URL, {}), answer]]);
+    const member = tableMemberFor({ run: null, realm: "readonly", from: "page", tabUrl: () => "", budget: { left: 1e6 }, tables });
+    assert.ok(member, "a page-started client with hoisted tables has no member");
+    assert.deepEqual(await member.run(CSV_URL, {}), answer, "the literal the page hoisted is not served");
+    // Id surgery on the approved URL. The key is the string's VALUE, so a different-looking source is a different key;
+    // a cell that reassembles the same characters gets the same source, which is no more than it wrote.
+    for (const src of [
+        CSV_URL.replace("sales", "costs"),
+        CSV_URL + "?export=1",
+        CSV_URL.replace("https://", "https://x."),
+    ]) {
+        await assert.rejects(member.run(src, {}), /only the sources written in its code/, `read a source it did not write: ${String(src)}`);
+    }
+    // A string object keying by value would be the same source under a shape the wire never sees; it is refused before
+    // the key is made.
+    await assert.rejects(member.run(new String(CSV_URL), {}), /takes a source string/, "a string object was keyed by its value");
+    // The options are part of the key: an unapproved `raw` read is not the approved one.
+    await assert.rejects(member.run(CSV_URL, { raw: true }), /only the sources written in its code/, "an option change was served the default answer");
+    await assert.rejects(member.run(CSV_URL, { header: false }), /only the sources written in its code/, "an option change was served the default answer");
 });

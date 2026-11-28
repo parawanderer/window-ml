@@ -9,6 +9,7 @@ const { ChannelKey } = await import("../src/hub/seal.ts");
 const { HubClient } = await import("../src/hub/client.ts");
 const { Kind, Role } = await import("../src/hub/wire.ts");
 const { SessionPublisher, hubPublish } = await import("../src/hub/runtime/session-publisher.ts");
+const { eventsChannel } = await import("../src/hub/runtime/session-relay.ts");
 const { IndexPublisher } = await import("../src/hub/runtime/session-relay.ts");
 const { HubConnection } = await import("../src/chat/hub-connection.ts");
 const { HubHost } = await import("../src/chat/hub-host.ts");
@@ -97,8 +98,18 @@ test("a session's events arrive in the contract's order, with its own cursor", L
     const w = await world();
     try {
         const ev = (cursor, text) => ({ type: "event", v: 1, session: { runtime: w.id, hash: "aaaa0001" }, epoch: "w1.0", cursor, event: { kind: "agent-say", id: "aaaa0001", text } });
-        await w.pub.publish("aaaa0001", ev(1, "first"));
-        await w.pub.publish("aaaa0001", ev(2, "second"));
+        // A publish resolves when the frame is handed to the runtime's socket, not when the hub has it, and the phone subscribes on
+        // another socket: a frame still in flight then reaches the phone AFTER the ring replay and lands after `backfilled`, which is
+        // the same order seen on #1238, #2061 and #2166. Watch the frames come back on this connection first — the hub relaying them
+        // is proof it retained them — and only then subscribe: the ring the phone replays is then complete by construction.
+        const channel = await eventsChannel(w.channels, "aaaa0001");
+        const retained = [];
+        const stopWatching = w.conn.subscribe(w.runtime.principal, channel, (e) => { if (e.kind === "published") retained.push(e); });
+        try {
+            await w.pub.publish("aaaa0001", ev(1, "first"));
+            await w.pub.publish("aaaa0001", ev(2, "second"));
+            await poll("the hub to retain both frames", () => retained.length >= 2);
+        } finally { stopWatching(); }
 
         const got = [];
         w.host.events({ runtime: w.id, hash: "aaaa0001" }, (m) => got.push(m));
