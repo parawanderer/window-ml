@@ -35,7 +35,9 @@ async function open(hash = "", prefs = null, { reducedMotion = "no-preference" }
     await page.locator(".chat").waitFor();
     return { page, errors };
 }
-const commands = (page) => page.evaluate(() => globalThis.__chatFake.commands);
+// Without `files.list`: opening a session asks its runtime for the file count, and the assertions here are about what the
+// person did.
+const commands = (page) => page.evaluate(() => globalThis.__chatFake.commands.filter((c) => c.type !== "files.list"));
 const width = (loc) => loc.evaluate((el) => el.getBoundingClientRect().width);
 
 // --- two measures: the conversation a little wider than the box you write in ---

@@ -7,9 +7,9 @@
 // Development only. It ships in the web build until `HubHost` exists (slice 6) and never in the extension.
 import type { MlDebugEvent } from "../contract/contract-debug";
 import {
-    COMMAND_SCOPE, SESSION_CONTRACT_VERSION, sessionKey,
+    COMMAND_SCOPE, SESSION_CONTRACT_VERSION, parseSessionKey, sessionKey,
     type Command, type CommandResult, type HostStatus, type ModelChoice, type Principal, type RuntimeId, type RuntimeInfo, type SessionHost,
-    type SessionId, type SessionIndexUpdate, type SessionKey, type SessionStreamMessage, type SessionSummary, type StreamPosition, type TabGroupInfo, type TabInfo, type Unsubscribe, type ListedSession,
+    type FileListEntry, type SessionId, type SessionIndexUpdate, type SessionKey, type SessionStreamMessage, type SessionSummary, type StreamPosition, type TabGroupInfo, type TabInfo, type Unsubscribe, type ListedSession,
 } from "../session/session-host";
 import { capTitle } from "../session/session-title";
 import { b64Bytes, checkFilesField, frameFiles, isPdfFile, type FramedFile } from "../attached-files";
@@ -75,6 +75,39 @@ const DEMO_SHOT = "data:image/svg+xml;utf8," + encodeURIComponent(
 /** A tab id for one the demo world just opened, past the ids `DEMO_TABS` already uses. */
 let nextFakeTabId = 90;
 
+/** One node of the scriptable `/files/` tree `files.list` answers from: a folder holds `children`, a file does not. */
+export interface FakeFsNode extends Omit<FileListEntry, "kind" | "size" | "mtimeMs" | "hidden" | "readonly"> {
+    children?: FakeFsNode[];
+    size?: number;
+    mtimeMs?: number;
+    hidden?: boolean;
+    readonly?: boolean;
+}
+
+const DEMO_MTIME = Date.UTC(2026, 10, 20, 9, 30);
+/** Everything under a node is read-only, as the reader lists `attached/`: the person's files, which a model may copy out. */
+const frozen = (n: FakeFsNode): FakeFsNode => ({ ...n, readonly: true, ...(n.children ? { children: n.children.map(frozen) } : {}) });
+
+/** What every session's `/files/` holds unless a test sets its own (`setFiles`), in the real reader's layout (FILE_ATTACHMENTS.md,
+ *  "The layout (ruling 36)"): `attached/<handle>/<name>`, one file to a handle folder, all read-only; and the writable
+ *  `agent/` with what runs made. A name two files share can only happen under `agent/`, so that is where it is. */
+export const DEMO_FILES: FakeFsNode[] = [
+    frozen({ name: "attached", children: [
+        { name: "3fa91c2", children: [{ name: "report.pdf", size: 482113, mtimeMs: DEMO_MTIME }] },
+        { name: "9b20e11", children: [{ name: "upload-1.txt", realName: "quarterly report.txt", size: 880, mtimeMs: DEMO_MTIME + 3_600_000 }] },
+        { name: "c41d7a0", children: [{ name: "keys.env", size: 96, mtimeMs: DEMO_MTIME, hidden: true }] },
+        { name: "e77b0d4", children: [{ name: "notes.txt", size: 1204, mtimeMs: DEMO_MTIME }] },
+    ] }),
+    { name: "agent", children: [
+        { name: "out.json", size: 700, mtimeMs: DEMO_MTIME + 7_200_000 },
+        { name: "data.csv", size: 2048, mtimeMs: DEMO_MTIME },
+        { name: "data.csv", size: 4096, mtimeMs: DEMO_MTIME + 60_000 },
+        { name: "plots", children: [{ name: "fig1.png", size: 20480, mtimeMs: DEMO_MTIME + 7_300_000 }] },
+        { name: "old", children: [] },
+        { name: "old", children: [] },
+    ] },
+];
+
 /** A session hash for something the demo world just started: the same 8 hex characters a runtime mints. */
 let hashSeq = 0;
 const newHash = () => (0xd0000000 + ++hashSeq).toString(16);
@@ -100,6 +133,13 @@ export class FakeHost implements SessionHost {
     private runtimeL = new Set<(r: RuntimeInfo[]) => void>();
     private indexL = new Set<{ fn: (u: SessionIndexUpdate) => void; runtime?: RuntimeId }>();
     private subs = new Set<Sub>();
+    private filesOf = new Map<SessionKey, FakeFsNode[]>();
+    /** how many entries one `files.list` page holds (the contract's cap is 500): small, to see the "more" row */
+    filesPageSize = 500;
+    /** does the runtime count the files a run made? Off, the root answers `count: { attached }` alone */
+    filesCountsAgent = true;
+    /** does it list files at all? Off, `files.list` is `unsupported` */
+    filesListed = true;
 
     constructor(opts: { self?: Principal; runtimes: RuntimeInfo[]; sessions?: { summary: SessionSummary; events?: MlDebugEvent[] }[]; archived?: { summary: SessionSummary; events?: MlDebugEvent[] }[]; latencyMs?: number; streamMs?: number;
         /** runtimes to report as this client's own (`isLocal`), as a page that hosts a runtime would */
@@ -218,6 +258,44 @@ export class FakeHost implements SessionHost {
             if (sessionKey(sub.session) !== key) continue;
             this.later(() => { if (sub.live) sub.listener(this.envelope(h, entry)); });
         }
+    }
+
+    /** Script one session's `/files/` (shelves `attached` and `agent` at the top), the way a test sets up a world. */
+    setFiles(key: SessionKey, tree: FakeFsNode[]): void { this.filesOf.set(key, tree); }
+
+    /** The session's files changed: delivers the stream's `files-changed` hint to its live subscribers (no cursor, never
+     *  kept in the log). `dirs` names the shown paths to list again; absent means every open directory. */
+    filesChanged(key: SessionKey, dirs?: string[]): void {
+        const m: SessionStreamMessage = { type: "files-changed", session: parseSessionKey(key)!, ...(dirs ? { dirs } : {}) };
+        this.inject(key, m);
+    }
+
+    private listFiles(key: SessionKey | undefined, c: Extract<Command, { type: "files.list" }>): CommandResult<"files.list"> {
+        const bad = (code: "invalid" | "not-found" | "unsupported", message: string) => ({ ok: false as const, error: { code, message } });
+        if (!this.filesListed) return bad("unsupported", "this runtime lists no files");
+        if (c.mount && c.mount !== "files") return bad("unsupported", `no mount ${c.mount}`);
+        const tree = (key && this.filesOf.get(key)) || DEMO_FILES;
+        let level: FakeFsNode[] | undefined = tree;
+        for (const part of c.path.split("/").filter(Boolean)) {
+            if (level && level.filter((n) => n.name === part).length > 1) return bad("invalid", `the name ${part} is shared by two entries`);
+            const hit: FakeFsNode | undefined = level?.find((n) => n.name === part);
+            if (!hit) return bad("not-found", "no such directory");
+            if (!hit.children) return bad("invalid", "not a directory");
+            level = hit.children;
+        }
+        let at = 0;
+        if (c.cursor != null) { at = /^\d+$/.test(c.cursor) ? Number(c.cursor) : -1; if (at < 0 || at > level!.length) return bad("invalid", "not a cursor this runtime gave"); }
+        const n = Math.min(Math.max(1, c.limit ?? this.filesPageSize), this.filesPageSize, 500);
+        const entries = level!.slice(at, at + n).map((f): FileListEntry => ({
+            name: f.name, kind: f.children ? "dir" : "file", size: f.size ?? 0, mtimeMs: f.mtimeMs ?? DEMO_MTIME, hidden: !!f.hidden, readonly: !!f.readonly,
+            ...(f.realName ? { realName: f.realName } : {}),
+        }));
+        const files = (ns: FakeFsNode[]): number => ns.reduce((t, f) => t + (f.children ? files(f.children) : 1), 0);
+        const shelf = (name: string) => tree.find((t) => t.name === name)?.children ?? [];
+        return { ok: true, data: {
+            entries, ...(at + n < level!.length ? { next: String(at + n) } : {}),
+            ...(c.path === "" ? { count: { attached: files(shelf("attached")), ...(this.filesCountsAgent ? { agent: files(shelf("agent")) } : {}) } } : {}),
+        } };
     }
 
     /** Deliver a raw stream message to a session's subscribers, for tests of what a misbehaving host could send. */
@@ -361,6 +439,8 @@ export class FakeHost implements SessionHost {
         const ok = <T>(data: T) => ({ ok: true as const, data }) as CommandResult<Command["type"]>;
         const caps = rt.capabilities;
         switch (c.type) {
+            case "files.list":
+                return this.listFiles(key, c);
             case "side.call":
                 if (!caps.sideCalls) return fail("unsupported", "no side calls on this runtime");
                 return ok({ content: SIDE_REPLIES[c.purpose] });
