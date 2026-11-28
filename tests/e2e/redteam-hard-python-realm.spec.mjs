@@ -334,7 +334,7 @@ fam = ${JSON.stringify(NET_IO)}
 
 test("a READONLY cell cannot recover the Emscripten module through Pyodide's own exports (route 2)", async () => {
     test.skip(!HAS_FORK, NEED_FORK);
-    // Route 1: the strip deletes names from the realm's global, so only a CAPTURED value survives it. Pyodide is the
+    // Route 2: the strip deletes names from the realm's global, so only a CAPTURED value survives it. Pyodide is the
     // thing that captured most of them (its module object holds `fetch`, `indexedDB`, the FS, the wasm exports), so
     // `pyodide_js` — a JS module a Python cell can import, which would carry the module object as `_module` — is the
     // first place a recovery would come from. The probe lists what it finds; the control is a name the same probe
@@ -356,7 +356,7 @@ names = ["_module", "FS", "API", "loadPackage", "version"]
 
 test("a READONLY cell can compile its OWN wasm, but no host module, memory or import table is reachable (route 4)", async () => {
     test.skip(!HAS_FORK, NEED_FORK);
-    // Route 3: Emscripten's module object is where the FS's IDBFS and the socket syscalls bind their imports to. A cell
+    // Route 4: Emscripten's module object is where the FS's IDBFS and the socket syscalls bind their imports to. A cell
     // that can compile wasm is not the problem — compiling its own module only gives it the imports it PASSES. The
     // problem would be reaching the host's Module, its memory or its exports table; the row compiles an empty module
     // (the 8-byte header is a valid module) as the control that WebAssembly works at all, then lists those objects.
@@ -380,7 +380,7 @@ out`, "route-back wasm probe");
 test("no Pyodide module holds a JS object a READONLY cell can call (route 2, swept)", async () => {
     test.skip(!HAS_FORK, NEED_FORK);
     // The seal pops `pyodide_js` from `sys.modules`, but Pyodide's own modules bound things from it at THEIR import
-    // time (`webloop`'s scheduleCallback, the package loader). Route 1 survives only if one of those bindings still
+    // time (`webloop`'s scheduleCallback, the package loader). Route 2 survives only if one of those bindings still
     // holds a JsProxy — a JS object the cell could call. So the row sweeps every attribute of every `pyodide*` module
     // and asserts none is one; the control is that the SAME test answers yes for the global object itself, so an empty
     // result is an empty realm, not an isinstance that never matches.
