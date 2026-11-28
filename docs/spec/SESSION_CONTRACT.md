@@ -173,7 +173,11 @@ wrapped in a `SessionEventEnvelope`: `v`, the global `session` id, an `epoch` an
   connected lists on open. Sent at most once per commit (a cell's or tool step's `commitTx`), attach, or hiding-rule
   change, coalesced, never once per file. A hiding-rule change sends it with no `dirs`, after the offscreen reader has
   dropped its lists (`FILES_HIDE_CHANGED`), to the watchers of each session whose resolved hiding rules changed: a
-  session rule reaches that session's, a global rule every listed session's. Over a hub it carries the session alone. `dirs` holds at most 16 shown paths; absent means every open directory. It carries no names below
+  session rule reaches that session's, a global rule that of every session listed since the browser started (the worker
+  keeps what it compares against across an eviction, for the 256 most recently listed), and a page that resumes a
+  subscription is sent the hint once. Over a hub it carries the session alone. Known limit: a browser restart clears
+  what the worker compares against, and a hub client, connected to the hub throughout, does not list again when the
+  runtime comes back, so its open tree may show a stale hidden mark until it next lists. `dirs` holds at most 16 shown paths; absent means every open directory. It carries no names below
   `dirs`, no counts and no bytes. Over a hub it rides the sealed body as `gone` and `reset` do (`encodeStreamFrame`),
   since `dirs` holds paths: the hub never reads it, and a hint its ring replays costs only a re-list. Additive: a client
   that does not know the type ignores it and loses nothing but freshness.

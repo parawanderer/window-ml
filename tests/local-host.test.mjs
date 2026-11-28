@@ -160,7 +160,7 @@ test("the port dropping with the worker still alive: reconnect and resume, sendi
     await flush();
     assert.equal(store.status.value.state, "online");
     const resent = world.streamed.slice(before);
-    assert.deepEqual(resent.map((m) => (m.type === "event" ? m.event.kind : m.type)), ["agent-step", "backfilled"], "only the step it missed, no reset");
+    assert.deepEqual(resent.map((m) => (m.type === "event" ? m.event.kind : m.type)), ["agent-step", "backfilled", "files-changed"], "only the step it missed, no reset; then the one files hint a resume is sent (SESSION_CONTRACT.md, `files-changed`)");
     assert.equal(sessionMap.get("local:aaaa0001")?.steps?.length, 2);
     // The grace was cancelled by the reconnect: nothing is left to say "offline" later.
     assert.equal(timers.pending(), 0);
@@ -402,6 +402,47 @@ test("a page that joins MID-STREAM is served the accumulated reply, not the delt
     store.open("local:aaaa0001");
     await flush();
     assert.equal(sessionMap.get("local:aaaa0001")?.liveStream?.content, "half the answer");
+    store.dispose();
+    host.dispose();
+});
+
+// --- the files tree across a worker restart: a page that resumes is told to list again ---
+
+test("a files tree open across a worker restart lists again when the page resumes, so a file hidden meanwhile is drawn hidden with no refresh", T, async () => {
+    const { FilesTree } = await import("../src/chat/files-panel.tsx");
+    const hidden = { now: false };
+    const lister = (spawn) => {
+        const w = worker(spawn);
+        w.server = new SessionServer(w.index, {
+            runtime: () => ({ ...RUNTIME, capabilities: { listFiles: true } }),
+            command: async (c) => c.type === "files.list"
+                ? { ok: true, data: { entries: [{ name: "keys.txt", kind: "file", size: 1, mtimeMs: 1, hidden: hidden.now, readonly: false }], ...(c.path === "" ? { count: { attached: 0, agent: 1 } } : {}) } }
+                : { ok: false, error: { code: "unsupported", message: "not here" } },
+        });
+        w.server.ingest(start("f11e0001"), { tabId: TAB, trusted: true });
+        return w;
+    };
+    const { world, timers, host } = setup(lister("w1"));
+    const store = new ChatStore(host);
+    store.start();
+    await flush();
+    store.open("local:f11e0001");
+    const tree = new FilesTree(store, "local:f11e0001");
+    const off = store.onFilesChanged((k, c) => { if (k === "local:f11e0001") tree.relist(c.dirs); });
+    tree.open("");
+    await flush();
+    assert.equal(tree.dirs.value.get("")?.entries[0]?.hidden, false);
+    // The worker is evicted; while no page is connected the file is hidden from elsewhere, which hints nobody.
+    world.ports.at(-1).kill();
+    world.current = lister("w2");
+    hidden.now = true;
+    await flush();
+    timers.fire();
+    await flush(12);
+    assert.equal(tree.dirs.value.get("")?.entries[0]?.hidden, true, "the resumed subscription's files-changed listed the tree again");
+    const hints = world.streamed.filter((m) => m.type === "files-changed");
+    assert.equal(hints.length, 1, "one hint for the resume, none for the first subscription");
+    off();
     store.dispose();
     host.dispose();
 });

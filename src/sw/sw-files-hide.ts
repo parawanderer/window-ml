@@ -2,6 +2,7 @@
 
 import { addGlobalPolicy, addRunPolicy, filesHideEntries, globalPolicies, onPoliciesChanged, policiesReady, removeFromSession, runPolicies, sessionPolicies } from "./sw-policies";
 import { isOffscreenSender } from "./sw-offscreen";
+import { sessionArea } from "./sw-housekeeping";
 import { HIDE_ENTRIES_MAX, patternRefusal, type HideEffect, type HideEntry } from "../files-hide";
 
 /**
@@ -22,20 +23,60 @@ export async function filesHideList(message: unknown, sender: chrome.runtime.Mes
  *  its rules sends no hint until it is listed again. */
 export const LISTED_RULES_MAX = 256;
 
-/** Each listed session's resolved hiding rules when its files were last listed, as JSON: what a policy change is compared
- *  against, so only a session whose `hidden` marks can have changed is told (`files-changed`). */
-const listedRules = new Map<string, string>();   // state: cache — re-read at every files.list; lost with the worker, as the page's subscription is
+/** The storage.session key holding, for each listed session, a hash of its resolved hiding rules when its files were last
+ *  listed, oldest listed first: what a policy change is compared against, so only a session whose `hidden` marks can
+ *  have changed is told (`files-changed`). In session storage, not worker memory, because a client's tree outlives an
+ *  evicted worker: a hub client never even sees the worker restart. Survives an eviction, not a browser restart. */
+export const FILES_LISTED_KEY = "ml_files_listed";
 
-const rulesOf = (hash: string): string => JSON.stringify(filesHideEntries(hash) ?? null);
+/** A 53-bit hash of a string (cyrb53): a fingerprint of a session's rules, so the stored map stays small. */
+function fingerprint(s: string): string {
+    let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+    for (let i = 0; i < s.length; i++) {
+        const c = s.charCodeAt(i);
+        h1 = Math.imul(h1 ^ c, 2654435761);
+        h2 = Math.imul(h2 ^ c, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
+const rulesOf = (hash: string): string => fingerprint(JSON.stringify(filesHideEntries(hash) ?? null));
+
+/** The one session area this module reads and writes (a harness without storage.session gets one stand-in, kept). */
+let listedArea: ReturnType<typeof sessionArea> | null = null;   // state: plumbing — the accessor, made once
+const area = (): ReturnType<typeof sessionArea> => (listedArea ??= sessionArea());
+
+// Every write is a read-modify-write of one key, so they go one after another or two at once lose one.
+let listedQueue: Promise<unknown> = Promise.resolve();   // state: plumbing — orders this worker's reads and writes of FILES_LISTED_KEY
+
+async function readListed(): Promise<[string, string][]> {
+    try {
+        const got = (await area().get([FILES_LISTED_KEY]))[FILES_LISTED_KEY];
+        return Array.isArray(got) ? got.filter((e): e is [string, string] => Array.isArray(e) && typeof e[0] === "string" && typeof e[1] === "string") : [];
+    } catch { return []; }
+}
+
+function editListed(change: (all: [string, string][]) => [string, string][] | null): Promise<void> {
+    const next = listedQueue.then(async () => {
+        const out = change(await readListed());
+        if (out) await area().set({ [FILES_LISTED_KEY]: out.slice(-LISTED_RULES_MAX) });
+    }).catch(() => { /* no session storage: nothing is compared, so a change sends no hint */ });
+    listedQueue = next;
+    return next;
+}
+
+/** Resolves once every recorded listing and every comparison so far has been written: for tests. */
+export const filesListedIdle = (): Promise<void> => listedQueue.then(() => undefined, () => undefined);
 
 /**
- * Note that a session's files were listed, so a later change to its hiding rules sends it a `files-changed` hint.
+ * Note that a session's files were listed, so a later change to its hiding rules sends it a `files-changed` hint. The
+ * rules are read once the policies are, so a worker that just woke records what binds the listing.
  * @param hash the session
  */
-export function noteFilesListed(hash: string): void {
-    listedRules.delete(hash);
-    listedRules.set(hash, rulesOf(hash));
-    if (listedRules.size > LISTED_RULES_MAX) listedRules.delete(listedRules.keys().next().value!);
+export function noteFilesListed(hash: string): Promise<void> {
+    return policiesReady.then(() => editListed((all) => [...all.filter(([h]) => h !== hash), [hash, rulesOf(hash)]]));
 }
 
 /**
@@ -51,12 +92,15 @@ export function noteFilesListed(hash: string): void {
 export function signalFilesHideChanges(hint: (hash: string) => void = () => {}): () => void {
     return onPoliciesChanged(() => {
         chrome.runtime.sendMessage({ type: "FILES_HIDE_CHANGED" }).catch(() => { /* no reader open */ });
-        for (const [hash, was] of listedRules) {
-            const now = rulesOf(hash);
-            if (now === was) continue;
-            listedRules.set(hash, now);
-            hint(hash);
-        }
+        const changed: string[] = [];
+        void editListed((all) => {
+            const out = all.map(([hash, was]): [string, string] => {
+                const now = rulesOf(hash);
+                if (now !== was) changed.push(hash);
+                return [hash, now];
+            });
+            return changed.length ? out : null;
+        }).then(() => { for (const hash of changed) hint(hash); });
     });
 }
 

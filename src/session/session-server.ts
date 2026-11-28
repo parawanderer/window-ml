@@ -152,11 +152,12 @@ export class SessionServer {
                 if (this.opts.stored && this.index.needsStored(msg.hash, since)) {
                     const sub: Sub = { hash: msg.hash, loading: [] };
                     client.subs.set(msg.sub, sub);
-                    void this.fromDisk(client, msg.sub, sub);
+                    void this.fromDisk(client, msg.sub, sub).then(() => { if (since) this.filesResumed(client, msg.sub, msg.hash); });
                     return;
                 }
                 client.subs.set(msg.sub, { hash: msg.hash, loading: null });
                 for (const message of this.index.backfill(msg.hash, since)) this.post(client, { type: "stream", sub: msg.sub, message });
+                if (since) this.filesResumed(client, msg.sub, msg.hash);
                 return;
             }
             case "unsub":
@@ -232,6 +233,16 @@ export class SessionServer {
         for (const client of this.clients) {
             for (const [sub, s] of client.subs) if (s.hash === hash) this.post(client, { type: "stream", sub, message });
         }
+    }
+
+    /**
+     * A subscription that resumes (`since`, a page back after its port dropped) is sent one `files-changed` with no
+     * `dirs`: a hint sent while the port was down reached nobody, so a tree the page held open lists again.
+     */
+    private filesResumed(client: Client, sub: number, hash: string): void {
+        const id = this.index.get(hash)?.id;
+        if (!id || !client.subs.has(sub) || !this.clients.has(client)) return;
+        this.post(client, { type: "stream", sub, message: { type: "files-changed", session: id } });
     }
 
     /** Fold an event into the index and send what changed to every connected page. */

@@ -19,15 +19,22 @@ const OLD_STORE = {
 
 let stored = structuredClone(OLD_STORE);
 const sent = [];
+const sessionStored = {};
+/** Holds every session-storage read until opened: a worker that woke and has not read its map yet. */
+let sessionGate = Promise.resolve();
 globalThis.chrome = {
     runtime: { getURL: (p) => `chrome-extension://test/${p}`, sendMessage: async (m) => { sent.push(m); } },
     storage: { local: {
         get: async () => structuredClone(stored),
         set: async (o) => { stored = { ...stored, ...structuredClone(o) }; },
+    }, session: {
+        // The worker's session storage: what survives an eviction, so a fresh module over it is a restarted worker.
+        get: async (keys) => { await sessionGate; return Object.fromEntries(keys.filter((k) => k in sessionStored).map((k) => [k, structuredClone(sessionStored[k])])); },
+        set: async (o) => { Object.assign(sessionStored, structuredClone(o)); },
     } },
 };
 const P = await import("../src/sw/sw-policies.ts");
-const { addFilesRule, removeFilesRule, filesHideList, signalFilesHideChanges, noteFilesListed, LISTED_RULES_MAX } = await import("../src/sw/sw-files-hide.ts");
+const { addFilesRule, removeFilesRule, filesHideList, signalFilesHideChanges, noteFilesListed, filesListedIdle, FILES_LISTED_KEY, LISTED_RULES_MAX } = await import("../src/sw/sw-files-hide.ts");
 const { HIDE_LIMIT_HARD_LINK, HIDE_LIMIT_LINUX_LATE } = await import("../src/sw/files-hide-view.ts");
 const { DEFAULT_HOLDS, HIDE_ENTRIES_MAX, resolveHidden } = await import("../src/files-hide.ts");
 const { makeHideRule, HIDE_LIST_TTL_MS } = await import("../src/session/files-hide-rule.ts");
@@ -195,53 +202,92 @@ test("FILES_HIDE_LIST answers the offscreen document only", async () => {
     assert.ok(r.entries.some((e) => e.source === "/files/agent/y.txt" && e.layer === "session"));
 });
 
-test("the files-changed hint: only a listed session whose resolved rules changed hears it, after the reader is told to drop its lists", () => {
-    // Registered before the next test's own listener, so this one sees each change first.
-    signalFilesHideChanges((hash) => sent.push({ type: "HINT", hash }));
-    noteFilesListed("hint-a");
-    noteFilesListed("hint-b");
-    const run = (change) => { sent.length = 0; const r = change(); return { r, log: sent.map((m) => (m.type === "HINT" ? `hint:${m.hash}` : m.type)) }; };
-    const mine = run(() => addFilesRule("hint-a", { effect: "hide", source: "/files/agent/x.txt", scope: "session" }));
+test("the files-changed hint: only a listed session whose resolved rules changed hears it, after the reader is told to drop its lists", async () => {
+    const off = signalFilesHideChanges((hash) => sent.push({ type: "HINT", hash }));
+    await noteFilesListed("hint-a");
+    await noteFilesListed("hint-b");
+    const run = async (change) => { sent.length = 0; const r = await change(); await filesListedIdle(); return { r, log: sent.map((m) => (m.type === "HINT" ? `hint:${m.hash}` : m.type)) }; };
+    const mine = await run(() => addFilesRule("hint-a", { effect: "hide", source: "/files/agent/x.txt", scope: "session" }));
     assert.deepEqual(mine.log, ["FILES_HIDE_CHANGED", "hint:hint-a"], "A only, and the reader's signal comes first");
-    const global = run(() => addFilesRule("hint-a", { effect: "hide", source: "/files/agent/g.txt", scope: "global" }));
+    const global = await run(() => addFilesRule("hint-a", { effect: "hide", source: "/files/agent/g.txt", scope: "global" }));
     assert.deepEqual(global.log, ["FILES_HIDE_CHANGED", "hint:hint-a", "hint:hint-b"], "a global rule changes every listed session's");
-    const other = run(() => P.addGlobalPolicy({ consumer: "fetch", effect: "deny", source: '(c) => c.host === "hint.example"', label: "never hint.example" }));
+    const other = await run(() => P.addGlobalPolicy({ consumer: "fetch", effect: "deny", source: '(c) => c.host === "hint.example"', label: "never hint.example" }));
     assert.deepEqual(other.log, ["FILES_HIDE_CHANGED"], "a policy of another consumer changes no session's rules");
-    const again = run(() => P.removePolicy(other.r.id));
+    const again = await run(() => P.removePolicy(other.r.id));
     assert.deepEqual(again.log, ["FILES_HIDE_CHANGED"]);
-    const unlisted = run(() => addFilesRule("hint-never-listed", { effect: "hide", source: "/files/agent/u.txt", scope: "session" }));
+    const unlisted = await run(() => addFilesRule("hint-never-listed", { effect: "hide", source: "/files/agent/u.txt", scope: "session" }));
     assert.deepEqual(unlisted.log, ["FILES_HIDE_CHANGED"], "a session never listed is not hinted");
-    const removed = run(() => removeFilesRule("hint-a", mine.r.id, true));
+    const removed = await run(() => removeFilesRule("hint-a", mine.r.id, true));
     assert.deepEqual(removed.log, ["FILES_HIDE_CHANGED", "hint:hint-a"], "removing a rule is a change too");
-    const same = run(() => addFilesRule("hint-b", { effect: "hide", source: "/files/agent/g.txt", scope: "session" }));
+    const same = await run(() => addFilesRule("hint-b", { effect: "hide", source: "/files/agent/g.txt", scope: "session" }));
     assert.ok(same.log.includes("hint:hint-b"), "a session rule over the global one changes the resolved list");
-    const twice = run(() => { P.removePolicy(global.r.id); });
+    const twice = await run(() => { P.removePolicy(global.r.id); });
     assert.deepEqual(twice.log, ["FILES_HIDE_CHANGED", "hint:hint-a", "hint:hint-b"], "each session whose resolved list changed is hinted once");
-    const none = run(() => P.removePolicy("not-a-policy"));
+    const none = await run(() => P.removePolicy("not-a-policy"));
     assert.deepEqual(none.log.filter((l) => l.startsWith("hint:")), [], "nothing changed, nothing hinted");
+    // What is stored is a fingerprint per session, never a rule's source.
+    const kept = JSON.stringify(sessionStored[FILES_LISTED_KEY]);
+    assert.ok(kept.includes("hint-a") && !kept.includes("/files/"), kept);
+    off();
 });
 
-test("the files-changed hint: past LISTED_RULES_MAX listed sessions the oldest is dropped, and listing again makes a session the newest", () => {
-    // The listener the test above registered is the one still hearing changes.
+test("the files-changed hint: past LISTED_RULES_MAX listed sessions the oldest is dropped, and listing again makes a session the newest", async () => {
+    const off = signalFilesHideChanges((hash) => sent.push({ type: "HINT", hash }));
     const first = "cap-first";
-    noteFilesListed(first);
-    for (let i = 0; i < LISTED_RULES_MAX - 1; i++) noteFilesListed(`cap-${i}`);
-    noteFilesListed(first);   // listed again: now the newest, so the next eviction takes another
-    noteFilesListed("cap-last");
+    await noteFilesListed(first);
+    for (let i = 0; i < LISTED_RULES_MAX - 1; i++) void noteFilesListed(`cap-${i}`);
+    void noteFilesListed(first);   // listed again: now the newest, so the next drop takes another
+    await noteFilesListed("cap-last");
     sent.length = 0;
     const g = addFilesRule("cap-x", { effect: "hide", source: "/files/agent/cap.txt", scope: "global" });
+    await filesListedIdle();
     const heard = sent.filter((m) => m.type === "HINT").map((m) => m.hash);
     assert.equal(heard.length, LISTED_RULES_MAX, "never more sessions than the bound");
     assert.ok(heard.includes(first) && heard.includes("cap-last"));
     assert.ok(!heard.includes("cap-0"), "the oldest listed was dropped, and hears nothing");
     P.removePolicy(g.id);
+    await filesListedIdle();
+    off();
+});
+
+test("the files-changed hint survives a worker restart: a fresh module over the same session storage hints a session listed before it", async () => {
+    await noteFilesListed("restart-a");
+    // The worker is evicted and wakes again: a new module instance, nothing in its memory, the same session storage.
+    const fresh = await import(`../src/sw/sw-files-hide.ts?restart=${Date.now()}`);
+    const heard = [];
+    const off = fresh.signalFilesHideChanges((hash) => heard.push(hash));
+    const r = fresh.addFilesRule("restart-a", { effect: "hide", source: "/files/agent/after-restart.txt", scope: "session" });
+    await fresh.filesListedIdle();
+    assert.deepEqual(heard, ["restart-a"], "the session listed before the restart is hinted after it");
+    fresh.removeFilesRule("restart-a", r.id, true);
+    await fresh.filesListedIdle();
+    off();
+});
+
+test("the files-changed hint: a rule change that arrives before the stored map has loaded is compared after the load, not dropped", async () => {
+    await noteFilesListed("late-a");
+    let open;
+    sessionGate = new Promise((res) => { open = res; });
+    const heard = [];
+    const off = signalFilesHideChanges((hash) => heard.push(hash));
+    const r = addFilesRule("late-a", { effect: "hide", source: "/files/agent/late.txt", scope: "session" });
+    await new Promise((res) => setTimeout(res, 10));
+    assert.deepEqual(heard, [], "nothing is said before the map is read");
+    open();
+    sessionGate = Promise.resolve();
+    await filesListedIdle();
+    assert.deepEqual(heard, ["late-a"], "the change waited for the map and was compared against it");
+    off();
+    removeFilesRule("late-a", r.id, true);
+    await filesListedIdle();
 });
 
 test("a policy change tells the offscreen reader to drop its lists", () => {
-    signalFilesHideChanges();
+    const off = signalFilesHideChanges();
     sent.length = 0;
     addFilesRule("h9", { effect: "hide", source: "/files/agent/z.txt", scope: "session" });
     assert.ok(sent.some((m) => m.type === "FILES_HIDE_CHANGED"));
+    off();
 });
 
 // --- the reader bound by the list ---

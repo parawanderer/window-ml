@@ -46,7 +46,7 @@ function detailOf(e: FileListEntry): Pick<FileListEntry, "realName" | "hiddenBy"
 export async function listSessionFiles(hash: string, path: string, opts: { cursor?: string; limit?: number; detail?: boolean }, deps: FilesListDeps = defaultDeps): Promise<FilesListAnswer> {
     const { detail, ...page } = opts;
     // Listed now, so a change to the session's hiding rules from here on sends its watchers a hint (sw-files-hide.ts).
-    noteFilesListed(hash);
+    void noteFilesListed(hash);
     const r = await deps.send({ type: "FILES_LIST", session: hash, path, ...page, ...(detail === true ? { detail: true } : {}) }) as { ok?: unknown; fail?: unknown; message?: unknown } | undefined;
     if (r && isPage(r.ok)) {
         // Only the listed fields go on: a page is rebuilt, never passed through.

@@ -152,6 +152,21 @@ test("filesChanged reaches the subscribed page and the hub sink once, with dirs,
     assert.ok(!server.index.backfill(HASH).some((m) => m.type === "files-changed" || m.event?.kind === "files-changed"));
 });
 
+test("a subscription that resumes (since) is sent one files-changed with no dirs, after its backfill; a fresh one is sent none", T, async () => {
+    const server = new SessionServer(new SessionIndex({ runtime: "local", spawn: "w1" }), { runtime: () => ({ id: "local" }), command: async () => ({ ok: true, data: {} }) });
+    server.ingest(startEvent(), { tabId: 1, trusted: true });
+    const posted = [];
+    let listen;
+    server.attach({ postMessage: (m) => posted.push(m), onMessage: { addListener: (fn) => { listen = fn; } }, onDisconnect: { addListener: () => {} }, disconnect: () => {} });
+    listen({ type: "events", sub: 1, hash: HASH });
+    const epoch = posted.find((m) => m.type === "stream" && m.message.type === "event").message.epoch;
+    listen({ type: "events", sub: 2, hash: HASH, since: { epoch, cursor: 1 } });
+    const of = (sub) => posted.filter((m) => m.type === "stream" && m.sub === sub).map((m) => m.message.type);
+    assert.deepEqual(of(1).filter((t) => t === "files-changed"), [], "a fresh subscription lists on open by itself");
+    assert.deepEqual(of(2).slice(-1), ["files-changed"], "the hint comes after what the resume replays");
+    assert.deepEqual(posted.filter((m) => m.sub === 2 && m.message.type === "files-changed").map((m) => m.message), [{ type: "files-changed", session: SESSION }]);
+});
+
 test("filesChanged with no dirs, or past 16, names none; a session the index does not hold hears nothing", T, async () => {
     const { server, hints } = served();
     server.filesChanged(HASH);
