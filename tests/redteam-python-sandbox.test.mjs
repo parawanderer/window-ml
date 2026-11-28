@@ -139,7 +139,7 @@ after(async () => {
  * has been returned (not the wrapper — it is not a cell). `lift` runs the cell with the bridge refusal lifted (see the header).
  */
 async function cellOn(interp, code, { hardened = true, stream = false, tables = null, image = null, later = 0, cancel = null, lift = true } = {}) {
-    injectInputs(interp.globals, image, tables == null ? null : JSON.stringify(tables), interp === py ? harness : undefined);
+    injectInputs(interp.globals, image, interp === py ? harness : undefined);
     if (stream) {
         try { interp.setStdout({ batched: (s) => { (cellOn.chunks ??= []).push(s); } }); } catch { /* no setStdout here */ }
     }
@@ -1015,7 +1015,7 @@ test("P2-bound inside the dialect: a cell's rebind of the wrapper's revoke hook 
     const seen = {};
     for (const code of ["global _ml_cell_revoke\n_ml_cell_revoke = None\n1", "_ml_cell_revoke = None\n1", "globals()['_ml_cell_revoke'] = None\n1"]) {
         const ns = py.globals.get("dict")();
-        injectInputs(ns, null, null, harness);
+        injectInputs(ns, null, harness);
         await py.runPythonAsync(wrapUserSetup(true, "run"), { globals: ns });
         const bound = String(ns.get("_ml_cell_revoke"));   // the function's repr carries its address: a proxy is new per get
         await hostRunScript(harness, wrapUserScript(code, "run", { nodes: NODES }, "host"), ns);
@@ -1035,7 +1035,7 @@ const rt = await import(${JSON.stringify(path.join(import.meta.dirname, "../src/
 const py = await loadPyodide({ indexURL: ${JSON.stringify(PYODIDE_DIR)} });
 await py.loadPackage(["numpy", "pillow", "pandas"]);
 const held = await lockdownReadonly(py, {});
-rt.injectInputs(py.globals, null, null, held.harness);
+rt.injectInputs(py.globals, null, held.harness);
 const script = rt.wrapUserCode(${JSON.stringify(code)}, true, false, ${JSON.stringify(cancel)});
 console.log("READY");
 const r = ${JSON.stringify(cancel)} === "host" ? await rt.hostRunScript(held.harness, script, py.globals) : await py.runPythonAsync(script);

@@ -2,6 +2,7 @@
 // jQuery-tolerant query engine, skeleton descriptions, text normalization. No
 // dependency on injected's closure state; only args + browser globals.
 import { roleOf, accessibleName } from "./a11y";   // for the `role=` / `label=` selector engines (a11y has no dom import → no cycle)
+import { tableLiterals } from "../python/table-literals";   // a python_exec cell's ml.table literals (py-format has no imports → no cycle)
 import { looksCsv } from "../table/table-data";           // the delimiter sniff behind the "csv" classification (table-data has no dom import → no cycle)
 import type { ElementContext } from "../contract/contract-run";
 import { CLOSED_ROOTS_EVENT } from "../ids";
@@ -1211,41 +1212,18 @@ export const googleSheetId = (url: string): string | null => {
     return m ? m[1] : null;
 };
 
-/** Every EXTERNAL Google Sheet (a Sheets URL that isn't 'current') a python_exec call touches, ANYWHERE
- *  in its `tables` arg — a source string, a map of them, or either nested in a list — as spreadsheet ids.
- *  Reading arbitrary Google data the user didn't navigate to is privileged, so these drive the approval
- *  escalation + the auto-approve decision, and a shape the loaders happen to accept must never hide a
- *  sheet from them (red-team T2: an array-wrapped URL auto-approved as "sandbox" and was read anyway).
- *  A table BY VALUE stops the walk: its cells may hold sheet URLs and are DATA the scan must not escalate.
- *  Pure; shared by the page loop and the (design-A) background auto-approve so both agree on "which
- *  sheets need consent". */
-/**
- * A `tables` argument a model sent as a JSON STRING of the map form (`"{\"df\": \"https://…\"}"`), decoded to that map;
- * null for anything else. The schema's `oneOf` string|object reads to some models as "a string", and they serialise the
- * map into it (glm-4.7-flash did so in most of its failed table runs, 2026-10-10). No source starts with `{` (a selector,
- * a URL, an `@tool:` pointer, 'current'), so the decoding is unambiguous. The loader (`tableSpecs`) and the consent
- * check (`externalSheetIds`) both decode through here, or a sheet hidden in the string would load without its card.
- */
-export const tablesMapFromJson = (v: unknown): Record<string, unknown> | null => {
-    if (typeof v !== "string" || !/^\s*\{/.test(v)) return null;
-    try {
-        const o: unknown = JSON.parse(v);
-        return o && typeof o === "object" && !Array.isArray(o) ? o as Record<string, unknown> : null;
-    } catch { return null; }
-};
-
+/** Every EXTERNAL Google Sheet (a Sheets URL that isn't 'current') a python_exec call names as an `ml.table("…")`
+ *  literal (table-literals.ts), as spreadsheet ids. Reading arbitrary Google data the user didn't navigate to is
+ *  privileged, so these go on the card and drive the auto-approve decision; a Sheet the code computes is not here and
+ *  asks when the cell reads it (sw-ml-table.ts). Pure; shared by the page loop and the background auto-approve so both
+ *  agree on "which sheets need consent". */
 export const externalSheetIds = (args: unknown): string[] => {
+    const code = (args as { code?: unknown } | null)?.code;
     const out: string[] = [];
-    const walk = (v: unknown, depth: number): void => {
-        const decoded = tablesMapFromJson(v);
-        if (decoded) { walk(decoded, depth + 1); return; }
-        if (typeof v === "string") { if (v !== "current") { const id = googleSheetId(v); if (id) out.push(id); } return; }
-        if (!v || typeof v !== "object" || depth > 8) return;   // depth: a model-written arg tree, not a data structure to explore
-        const o = v as { columns?: unknown; rows?: unknown };
-        if (Array.isArray(o.columns) && Array.isArray(o.rows)) return;
-        for (const x of Object.values(v as Record<string, unknown>)) walk(x, depth + 1);
-    };
-    walk((args as { tables?: unknown } | null)?.tables, 0);
+    for (const { src } of tableLiterals(typeof code === "string" ? code : "")) {
+        const id = src.trim() === "current" ? null : googleSheetId(src.trim());
+        if (id) out.push(id);
+    }
     return out;
 };
 

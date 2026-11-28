@@ -323,7 +323,7 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
         try { chrome.runtime.onMessage.addListener(onChunk); streaming = true; } catch { /* no live channel */ }
         const stop = () => { if (streaming) try { chrome.runtime.onMessage.removeListener(onChunk); } catch { /* torn down */ } };
                 try {
-            chrome.runtime.sendMessage({ type: "PYTHON_EXEC", requestId, payload: { code, hardened: true, image: null, tables: null, stream: streaming, persist: true, ...(benchTimeout.value ? {} : { noTimeout: true }) } },
+            chrome.runtime.sendMessage({ type: "PYTHON_EXEC", requestId, payload: { code, hardened: true, image: null, stream: streaming, persist: true, ...(benchTimeout.value ? {} : { noTimeout: true }) } },
                 (resp: any) => {
                     stop();
                     // The background wraps the offscreen result: { data: PyResult } | { error }.

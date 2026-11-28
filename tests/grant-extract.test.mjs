@@ -53,38 +53,44 @@ test("unknown tool → no extractor → []", () => {
 const SHEET = "https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789/edit#gid=0";
 const SHEET_ID = "1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789";
 
-/** Every shape a python_exec's `tables` can name an external sheet in, and the other sources a call can mix with it. */
+/** Every shape a python_exec's code can name an external sheet in, as an `ml.table` literal, and the other sources a call
+ *  can mix with it; `sheet` is whether the call reads the sheet before or at the cell (a comment or a computed source is not
+ *  read ahead, and a worker-run cell asks for it at the call). */
 const PY_ARGS = {
-    "a sheet": { tables: { s: SHEET } },
-    "a sheet in an array": { tables: { s: [SHEET] } },
-    "a sheet nested two deep": { tables: { s: [[SHEET]] } },
-    "a sheet with an image (page-only)": { tables: { s: SHEET }, image: "current" },
-    "a sheet with a selector (page-only)": { tables: { s: SHEET, t: "#table" } },
-    "a sheet with a @tool: pointer": { tables: { s: SHEET, t: "@tool:abc1234" } },
-    "python cell with a sheet": { code: "print(1)", tables: { s: SHEET } },
-    "no sheet": { tables: { t: "#table" } },
+    "a sheet": { args: { code: `df = ml.table("${SHEET}")` }, sheet: true },
+    "a sheet with options": { args: { code: `df = ml.table('${SHEET}', raw=True, header=False)` }, sheet: true },
+    "a sheet in a raw string": { args: { code: `df = ml.table(r"${SHEET}")` }, sheet: true },
+    "a sheet in a branch that never runs": { args: { code: `df = None if True else ml.table("${SHEET}")` }, sheet: true },
+    "a sheet with an image (page-only)": { args: { code: `df = ml.table("${SHEET}")`, image: "current" }, sheet: true },
+    "a sheet with a selector (page-only)": { args: { code: `s = ml.table("${SHEET}")\nt = ml.table("#table")` }, sheet: true },
+    "a sheet with a @tool: pointer": { args: { code: `s = ml.table("${SHEET}")\nt = ml.table("@tool:abc1234")` }, sheet: true },
+    "python cell with a sheet": { args: { code: `print(1)\nml.table("${SHEET}")` }, sheet: true },
+    "a sheet in a comment": { args: { code: `# ml.table("${SHEET}")\nprint(1)` }, sheet: false },
+    "a computed sheet": { args: { code: `u = "${SHEET}"\nml.table(u)` }, sheet: false },
+    "no sheet": { args: { code: 'ml.table("#table")' }, sheet: false },
 };
 
 test("CLAUSE B: a worker-built run's python_exec puts no sheet on the tab, whatever its args and wherever it runs", () => {
-    for (const [label, args] of Object.entries(PY_ARGS)) for (const pyInWorker of [true, false]) {
+    for (const [label, { args }] of Object.entries(PY_ARGS)) for (const pyInWorker of [true, false]) {
         const g = tabGrantsForCall({ name: "python_exec", args, builtByWorker: true, pyInWorker });
         assert.deepEqual(g.sheets, [], `${label}, ${pyInWorker ? "in the worker" : "on the page"}: a sheet id went on the tab`);
     }
 });
 
 test("a page-built run's python_exec, which the page's own loop runs, still gets its sheets on the tab", () => {
-    for (const [label, args] of Object.entries(PY_ARGS)) {
+    for (const [label, { args, sheet }] of Object.entries(PY_ARGS)) {
         const g = tabGrantsForCall({ name: "python_exec", args, builtByWorker: false, pyInWorker: false });
-        assert.deepEqual(g.sheets, label === "no sheet" ? [] : [SHEET_ID], label);
+        assert.deepEqual(g.sheets, sheet ? [SHEET_ID] : [], label);
     }
 });
 
 test("a python_exec the worker runs puts nothing at all on the tab; one on the page gets its code keyed by MODE", () => {
     for (const builtByWorker of [true, false]) {
-        const inWorker = tabGrantsForCall({ name: "python_exec", args: PY_ARGS["python cell with a sheet"], builtByWorker, pyInWorker: true });
+        const cell = PY_ARGS["python cell with a sheet"].args;
+        const inWorker = tabGrantsForCall({ name: "python_exec", args: cell, builtByWorker, pyInWorker: true });
         assert.deepEqual(inWorker, { serverTools: [], sheets: [], pyCode: [] });
-        const onPage = tabGrantsForCall({ name: "python_exec", args: PY_ARGS["python cell with a sheet"], builtByWorker, pyInWorker: false });
-        assert.deepEqual(onPage.pyCode, ["full:print(1)"], "every cell is outside the dialect until membership ships: the key is the outside (`full:`) one");
+        const onPage = tabGrantsForCall({ name: "python_exec", args: cell, builtByWorker, pyInWorker: false });
+        assert.deepEqual(onPage.pyCode, [`full:${cell.code}`], "every cell is outside the dialect until membership ships: the key is the outside (`full:`) one");
     }
 });
 
@@ -115,7 +121,7 @@ test("an exec gets the URLs its code spells out and no others; a server tool its
     const remote = tabGrantsForCall({ name: "search", args: { q: "x" }, builtByWorker: true, pyInWorker: false, remoteKey: "bundle\u0000search\u0000{}" });
     assert.deepEqual(remote, { serverTools: ["bundle\u0000search\u0000{}"], sheets: [], pyCode: [] });
     for (const name of ["click", "type", "look", "fetch_url", "answer"])
-        assert.deepEqual(tabGrantsForCall({ name, args: { tables: { s: SHEET }, js: 'ml.fetch("https://a.example/x")', code: "x" }, builtByWorker: false, pyInWorker: false }), { serverTools: [], sheets: [], pyCode: [] }, name);
+        assert.deepEqual(tabGrantsForCall({ name, args: { js: 'ml.fetch("https://a.example/x")', code: `ml.table("${SHEET}")` }, builtByWorker: false, pyInWorker: false }), { serverTools: [], sheets: [], pyCode: [] }, name);
 });
 
 // UPGRADE (lane 7, `mode` removed): what the old code wrote for each mode, read by the new code. Every cell is outside

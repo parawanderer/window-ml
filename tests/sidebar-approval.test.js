@@ -731,12 +731,12 @@ test("awaiting approval of a python_exec that loads an EXTERNAL sheet warns it's
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("shg", "sum the sheet"));
     // A pending, approval-gated python_exec loading an external Google Sheet. The In is the PRE-RUN
-    // preview (code-only, no tables loaded yet) — the note MUST come from the ARGS (`tables`), which is
-    // the real approval-time scenario (the earlier renderIn-based detection silently showed nothing).
+    // preview (code-only, no tables read yet) — the note MUST come from the ARGS (the code's `ml.table("…")`
+    // literals), which is the real approval-time scenario (the earlier renderIn-based detection silently showed nothing).
     await w.dispatch(agentStep("shg", 1, {
         seq: 1, pending: true, awaitingApproval: true, tool: "python_exec",
-        arguments: { code: "return df['A'].sum()", tables: "https://docs.google.com/spreadsheets/d/SHEETID/edit" },
-        renderIn: { type: "python-in", mode: "script", code: "return df['A'].sum()" },   // code-only, no tables
+        arguments: { code: "return ml.table('https://docs.google.com/spreadsheets/d/SHEETID/edit')['A'].sum()" },
+        renderIn: { type: "python-in", mode: "script", code: "return ml.table('https://docs.google.com/spreadsheets/d/SHEETID/edit')['A'].sum()" },   // code-only, no tables
     }));
     w.shadow.querySelector(".row").click();
     await w.tick();
@@ -752,8 +752,8 @@ test("awaiting approval of a python_exec that loads an EXTERNAL sheet warns it's
     // A page-table run (a selector, not a Sheets URL) must NOT show the grant note.
     await w.dispatch(agentStep("shg", 2, {
         seq: 2, pending: true, awaitingApproval: true, tool: "python_exec",
-        arguments: { code: "return df.sum()", tables: "#t" },
-        renderIn: { type: "python-in", mode: "script", code: "return df.sum()" },
+        arguments: { code: "return ml.table('#t').sum()" },
+        renderIn: { type: "python-in", mode: "script", code: "return ml.table('#t').sum()" },
     }));
     await w.tick();
     const notes = [...w.shadow.querySelectorAll(".astep-approve .appr-note")];

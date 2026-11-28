@@ -732,8 +732,13 @@ test("opendir with limit 0, negative, fractional or missing is EINVAL", T, async
 
 test("a cursor past the last name answers an empty page without next", T, async () => {
     const { ch } = setup();
-    const page = await ch.opendir("attached", { limit: 3, cursor: "c:zzzz" });
+    const page = await ch.opendir("attached", { limit: 3, cursor: "c:0:zzzz" });
     assert.deepEqual(page, { entries: [] });
+});
+
+test("UPGRADE: a cursor of the shape before names were shown (`c:<name>`) is EINVAL, never read as a name", T, async () => {
+    const { ch } = setup();
+    await refused(ch.opendir("attached", { limit: 3, cursor: "c:zzzz" }), "EINVAL", "opendir");
 });
 
 test("two attachments with the same handle list the handle once", T, async () => {
