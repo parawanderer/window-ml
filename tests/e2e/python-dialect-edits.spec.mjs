@@ -28,10 +28,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const CELLS = [
     { name: "inside makes", code: "kept = [1, 2]\nlen(kept)", asks: null },
     { name: "inside edits what inside made", code: "kept.append(3)\nkept[0] = 9\nkept", asks: null },
-    { name: "edits the injected table", code: "df['flag'] = 1\nlen(df)", tables: true, asks: "item assignment to a value the cell does not own: on DataFrame" },
-    { name: "asked cell makes", code: "import os\nmade = [1]\nlen(made)", asks: MARKED_CARD_LINE },
+    { name: "edits the injected table", code: "df['flag'] = 1\nlen(df)", table: true, asks: "item assignment to a value the cell does not own: on DataFrame" },
+    { name: "asked cell makes", code: "import subprocess\nmade = [1]\nlen(made)", asks: MARKED_CARD_LINE },
     { name: "edits what an asked cell made", code: "made.append(2)\nmade", asks: MARKED_CARD_LINE },
 ];
+
+/** A cell's code as the model sends it: a `table` cell reads the fetched CSV with `ml.table` first (the URL is a runtime value, so it is spliced in as a literal). */
+const cellCode = (c, csvUrl) => (c.table ? `df = ml.table(${JSON.stringify(csvUrl)})\n` : "") + c.code;
 
 /** Serve a blank page and /sales.csv on 127.0.0.1. */
 async function serveSite() {
@@ -66,7 +69,7 @@ test("an inside-made value is edited unasked; the injected table and an asked ce
         const csvUrl = site.url + "sales.csv";
         fake.setScript([
             { tool: "fetch_url", args: { url: csvUrl } },
-            ...CELLS.map((c) => ({ tool: "python_exec", args: { code: c.code, ...(c.tables ? { tables: { df: csvUrl } } : {}) } })),
+            ...CELLS.map((c) => ({ tool: "python_exec", args: { code: cellCode(c, csvUrl) } })),
             { content: "done" },
         ]);
         await ext.sw.evaluate((id) => globalThis.__mlStartUserRunForTest(id, { task: "edit some values", hud: "quiet", surface: "overlay" }, { approvalRouting: "both" }), tabId);
@@ -89,8 +92,8 @@ test("an inside-made value is edited unasked; the injected table and an asked ce
         // Per cell: the step that finished, and the gate's askWhy if one opened.
         const steps = (code) => events.filter((e) => e.kind === "agent-step" && e.tool === "python_exec" && e.arguments?.code === code);
         const outcome = CELLS.map((c) => {
-            const asked = steps(c.code).find((e) => e.askWhy);
-            return { name: c.name, approval: steps(c.code).find((e) => e.result != null)?.approval ?? null, why: asked?.askWhy?.line ?? null };
+            const asked = steps(cellCode(c, csvUrl)).find((e) => e.askWhy);
+            return { name: c.name, approval: steps(cellCode(c, csvUrl)).find((e) => e.result != null)?.approval ?? null, why: asked?.askWhy?.line ?? null };
         });
         for (const [i, c] of CELLS.entries()) {
             const o = outcome[i];

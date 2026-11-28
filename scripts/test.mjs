@@ -82,8 +82,8 @@ const GENRES = {
     // `/files` (FILE_ATTACHMENTS.md, "`/files/` read by range, and `ml.fs`"): the ranged reader over the shelf, the
     // offscreen document's source for it, the synchronous channel Python's mount is served over, and the mount itself.
     files: {
-        about: "/files: the ranged reader, its source over the shelf, the channel and the Python mount",
-        files: ["ranged-reader.test.mjs", "files-attached.test.mjs", "files-channel-fake.test.mjs", "files-host.test.mjs", "files-mount-py.test.mjs", "ml-fs.test.mjs", "ml-fs-parity.test.mjs"],
+        about: "/files: the ranged reader and its write side, the store of run-made files, its source over the shelf, the channel and the Python mount",
+        files: ["ranged-reader.test.mjs", "files-attached.test.mjs", "files-channel-fake.test.mjs", "files-host.test.mjs", "files-mount-py.test.mjs", "files-mount-real.test.mjs", "ranged-reader-write.test.mjs", "agent-files.test.mjs", "sw-agent-files.test.mjs", "ml-fs.test.mjs", "ml-fs-parity.test.mjs"],
     },
     // Backup and restore (docs/dev/backup.md): the file format and the keys, the storage-key inventory held to the sources,
     // the settings collect/preview/apply, the backup file over the archive's SQLite, and the sequence that drives them.
@@ -96,6 +96,12 @@ const GENRES = {
     task: {
         about: "detached tasks: the result the run reads, a finished task starting a turn, the counts on a session's row",
         files: ["task-say.test.mjs", "task-turn.test.mjs", "task-starts-turn.test.mjs", "task-row.test.mjs"],
+    },
+    // Tables (docs/dev/wire-and-fetch.md, docs/plan/repl/ML_TABLE.md): the one table type and its parsers, a table's
+    // summary, the `ml.table("…")` literals a cell names, and an `ml.table` answer made ready for the sandbox.
+    table: {
+        about: "tables: the parsers and the one table type, summaries, ml.table's literal scan and its answer's bytes",
+        files: ["table-data.test.mjs", "table-summary.test.mjs", "table-literals.test.mjs", "table-answer.test.mjs"],
     },
     // The read-only exec dialect: the parser and mediated evaluator, and each member a survey may call for free
     // (`ml.pipe`, `ml.jsonPath`, `ml.current`). Four files, so a change to the dialect has its own suite; its rule
@@ -204,7 +210,7 @@ const GENRES = {
     // The Python sandbox's host side with no Pyodide: the offscreen document's routing and the idle reap through fake
     // Workers, the prelude's environment and the table sources. Fast; `python` below is the real interpreter.
     "python-host": { about: "the Python sandbox's host side without Pyodide: offscreen routing, the idle reap, the env, table sources, the install verdict and its candidate, the platform scan's note, a cell's lease and detach, the outside mark", files: ["python-outside-mark.test.mjs", "redteam-python-outside-mark.test.mjs", "pkg-verdict.test.mjs", "pkg-card.test.mjs", "pkg-index.test.mjs", "pkg-mirror.test.mjs", "pkg-archive.test.mjs", "pkg-pep.test.mjs", "pkg-scan-note.test.mjs", "redteam-pkg-scan-note.test.mjs", "pkg-install-offscreen.test.mjs", "python-env.test.mjs", "python-reap.test.mjs", "python-run-namespace.test.mjs", "python-table-sources.test.mjs", "redteam-python-keep.test.mjs", "python-keep-fixes.test.mjs", "python-lease.test.mjs", "python-lease-offscreen.test.mjs", "redteam-python-lease.test.mjs"] },
-    python: { about: "real CPython in Pyodide (self-skips without dist/pyodide)", files: ["python.test.mjs", "python-outside-plant.test.mjs", "pkg-install-py.test.mjs", "pkg-scan-py.test.mjs", "pkg-install-fatal-worker.test.mjs", "pyodide-no-cdn.test.mjs", "redteam-python-sandbox.test.mjs", "redteam-python-regex-backtrack.test.mjs", "python-lockdown.test.mjs", "python-run-namespace-py.test.mjs", "python-dialect-vectors-wasm.test.mjs", "regex-corpus-core.test.mjs", "regex-cost-core.test.mjs", "python-matplotlib.test.mjs", "python-dialect-inside.test.mjs", "python-dialect-buffer-args.test.mjs", "python-dialect-out-args.test.mjs", "redteam-python-dialect-buffer-args.test.mjs", "python-dialect-vocab.test.mjs", "redteam-python-dialect-vocab.test.mjs", "redteam-python-inside.test.mjs", "python-dialect-library.test.mjs", "python-dialect-library-redteam.test.mjs", "redteam-python-lockdown.test.mjs", "redteam-hard-python-lockdown.test.mjs", "redteam-hard-python-realm.test.mjs", "redteam-hard-python-cancel.test.mjs", "python-spend-queue.test.mjs", "python-worker-bridges.test.mjs", "python-bench-stop.test.mjs", "python-kernel-death.test.mjs", "redteam-python-kernel-death.test.mjs"] },
+    python: { about: "real CPython in Pyodide (self-skips without dist/pyodide)", files: ["python.test.mjs", "python-outside-plant.test.mjs", "pkg-install-py.test.mjs", "pkg-scan-py.test.mjs", "pkg-install-fatal-worker.test.mjs", "pyodide-no-cdn.test.mjs", "redteam-python-sandbox.test.mjs", "redteam-python-regex-backtrack.test.mjs", "python-lockdown.test.mjs", "python-run-namespace-py.test.mjs", "python-dialect-vectors-wasm.test.mjs", "regex-corpus-core.test.mjs", "regex-cost-core.test.mjs", "python-matplotlib.test.mjs", "python-dialect-inside.test.mjs", "python-os-inside.test.mjs", "redteam-python-os-subset.test.mjs", "python-table-charge.test.mjs", "python-dialect-buffer-args.test.mjs", "python-dialect-out-args.test.mjs", "redteam-python-dialect-buffer-args.test.mjs", "python-dialect-vocab.test.mjs", "redteam-python-dialect-vocab.test.mjs", "redteam-python-inside.test.mjs", "python-dialect-library.test.mjs", "python-dialect-library-redteam.test.mjs", "redteam-python-lockdown.test.mjs", "redteam-hard-python-lockdown.test.mjs", "redteam-hard-python-realm.test.mjs", "redteam-hard-python-cancel.test.mjs", "python-spend-queue.test.mjs", "python-worker-bridges.test.mjs", "python-bench-stop.test.mjs", "python-kernel-death.test.mjs", "redteam-python-kernel-death.test.mjs", "redteam-python-table.test.mjs", "python-read-csv-inside.test.mjs", "python-read-csv-worker.test.mjs", "redteam-python-read-csv.test.mjs"] },
     // Everything named `fetch-*`, which is two subjects the filename prefix alone joins: the page's fetch
     // machinery (the cache's budget, the ladder's presentation both sinks share) and the release-download
     // scripts the CI gates fetch binaries with (fetch-hub's retry and fallback, fetch-host's pin).

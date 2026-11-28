@@ -151,7 +151,10 @@ card shows the call's resolved facts, not the script.
      that policy as the reason; a broken `allow` stays no opinion; a `deny` that evaluates cleanly still wins. The
      card says inline why the call escalated and what to do (Shane): it names the policy, gives the break in plain
      words, carries an action that opens the policy for editing, and offers no "remember". The cause slug is
-     `broken-policy`. Not built; small-fixes builds it. Two more findings of the same audit: the dialect's
+     `broken-policy`. Built. A policy is judged per call, so a broken `deny` or `ask` makes every call of its consumer
+     (among the run's and the global policies) that it breaks on ask until it is fixed or removed; one that does not
+     parse, or that the language refuses, breaks on every such call. When a clean `ask` also matches, the card names
+     the broken one, since it is the one the person can act on. Two more findings of the same audit: the dialect's
      `try`/`catch` catches the host's stack overflow, below `MAX_CALL_DEPTH`, so a policy can return the opposite
      answer with nothing recorded, and the outcome depends on the caller's stack depth (small-fixes repairs it for
      both realms: the overflow becomes a stop no script catches and the depth limit moves below the host's); and
@@ -561,6 +564,22 @@ the body). Aligned:
 - **One free tier.** The page the run is on is free in every mode, as `navigate` already was: a same-origin as-you fetch
   needs no card, and `autoApproveSameOriginAuth` is retired as a flag (the upgrade test reads a config that still
   carries it). What the page could make itself with `fetch()` stays unjudged, as in "What an ask cannot reach".
+- **The free tier is for an origin the person chose (ruling 130, Shane 2026-11-26). Not built.** "You approved to go
+  to the website, not the credential provider. The credential provider website would need a separate grant." The free
+  tier holds where the person put the run: the page the run started on, an origin a card of theirs approved (an
+  approved `navigate`, an approved arrival card, an approved as-you fetch's origin grant), and a tab they attached or
+  moved the run to. It does not hold on an origin the run is on only because a page sent the tab there: a redirect, an
+  arrival no policy covers (which passes, below), or an arrival an `allow` row let through (navigation only). There, a
+  fetch that sends a request to that origin is judged as a fetch of any other origin is: an as-you fetch asks, the
+  card names the origin, and approving it grants the origin for the rest of the run as usual. What does not change:
+  the run still acts on the page it landed on, a read of the live document that sends no request shows what a survey
+  shows and stays free, and `exec` asks as before. The measured case is a sign-in redirect to an identity provider
+  (docs/plan/repl/RED_TEAM_SIGNIN_CHAIN.md, the row where a credentialed read of the provider raises no card); that
+  row is restated to expect the card when this is built. It is the same rule for a tab run and a run that had no tab,
+  and it changes behaviour that shipped on 2026-10-24, so its build carries an UPGRADE row (a run restored mid-way on
+  a landed origin) and a red-team pass. Open, for the builder to bring before building: which fetch modes of the
+  exact current URL send a request, and how a navigation the PERSON made by hand in the run's tab is told from one
+  the page made (until it can be, it counts as the page's).
 - **What stays apart.** The run's `crossOrigin` option stays the run-level opt-in for leaving the origin at all, in
   either mode (so a run started without it fetches cross-origin only through a card, as today, and never navigates).
   The card for the interactive mode says that the run will act on the page it lands on; the fetch card says the body is
@@ -814,17 +833,17 @@ this section is the coordinator's calls under the ruling, each surfaced to Shane
 **Built so far (the extension's readers, the first of three PRs).** The `files` consumer with `hide` and `show` entries
 in the policy store, the four defaults as built-in rows, the layer rule and its refusals (`src/files-hide.ts`), the
 `policy.files` command, the view's rows (`src/sw/files-hide-view.ts`), and the `/files` reader in the offscreen document
-bound by the resolved list (`src/session/files-hide-rule.ts`), which Python's mount and `ml.fs` both read through. NOT
-built: what the host gets (a `spawn` applies no entry yet, so a `hide` does not bind a program the shell starts, and
-every `files` row in the view says so in its label), the model's proposal card, the offer when a root is added, and
-the four defaults in the view of a session with no `files` rule: as for every consumer, a default row appears once the
-consumer has a rule (a stated gap, closed before PR C merges, with the three tests that pin it). In the browser
-copy, which has no symlinks, `default:link-target` and `default:linked-template` hold nothing, and the linked-template
-refusal of a `show` is the host's to make. Three choices made in building it, on the red team's findings at #2088: the
-policy page's generic edit and remove refuse a `files` row (an `allow` saved over a `hide` held nothing, and one click
-removed a `hide` with no confirmation), so a hiding rule is removed only from a session's view, which confirms, and
-DevTools Settings' own form for these rows is PR C; a `hide` that matches a directory holds everything under it, as the
-offer's one row for a credential directory needs, while a `show` releases only what it matches; and
+bound by the resolved list (`src/session/files-hide-rule.ts`), which Python's mount and `ml.fs` both read through. The
+second PR (window-ml-host #58 and this repository's half) binds a program the shell starts: every `spawn` goes through
+`spawnBound` (`src/sw/sw-spawn.ts`) and carries the list, below. NOT built: the model's proposal card, the offer when a
+root is added, and the four defaults in the view of a session with no `files` rule: as for every consumer, a default row
+appears once the consumer has a rule (a stated gap, closed before PR C merges, with the three tests that pin it). In the
+browser copy, which has no symlinks, `default:link-target` and `default:linked-template` hold nothing, and the
+linked-template refusal of a `show` is the host's to make. Three choices made in building it, on the red team's findings
+at #2088: the policy page's generic edit and remove refuse a `files` row (an `allow` saved over a `hide` held nothing,
+and one click removed a `hide` with no confirmation), so a hiding rule is removed only from a session's view, which
+confirms, and DevTools Settings' own form for these rows is PR C; a `hide` that matches a directory holds everything
+under it, as the offer's one row for a credential directory needs, while a `show` releases only what it matches; and
 `ml.current.policies` carries no `files` row. The reason given at #2088, that a hidden file reads as absent, does not
 hold: its NAME is listed ("What a hidden file shows", below). Whether the model may read its own hiding rules is decided
 with the masked-file design; until then the row stays out.
@@ -888,18 +907,26 @@ renderer first shows the entry verbatim and the paths that would become readable
 the remove control until a person-signed command exists. The hub needs no change to carry the command, the read below
 or the second verb: the sealed body is opaque to it ([hub-client.md](../dev/hub-client.md)).
 
-**What the host gets.** On each `spawn`, the worker sends the call's resolved list: the session's layer over the global
-one, as ONE ordered array `hideList` of `{ id, effect, pattern }` in ascending precedence, so a later entry decides
-(the shape window-ml-host#58 builds; an earlier draft of this paragraph had two arrays). The host applies `show` before it builds
-the held set, so `hiddenSecrets` never lists a shown path, and adds each `hide`. On macOS a `hide` becomes read and
-write deny rules after the template allow, and a `show` an allow after the denies but never over a credential directory.
-On Linux a `hide` is resolved against the tree when the call is spawned and each match is masked; more than 256 matches
-fails the spawn with `SandboxFailed` naming the entry, rather than leaving the excess readable. Naming a hidden path in
-`pathArgs` asks, for a `hide` as for a dotenv file, and the card names the entry that hides it; approved, it re-allows
-that path's read for that call. No `allow` policy of any consumer frees that ask, and no "always" is offered on it: the
-durable way to read the file is to remove the `hide`. A change applies from the next call; a call already running keeps
-the sandbox it started with. The host's protocol (window-ml-host, PROTOCOL.md) gains the `spawn` field when this is
-built.
+**What the host gets.** On each `spawn`, the worker sends the call's resolved list, the session's layer over the global
+one, as `hideList`: ONE array of `{ id, effect, pattern }` in ascending precedence, where the last entry that matches a
+path decides (a `hide` by the path or a directory above it, a `show` by the path exactly). The worker sorts it by the
+rule above (global under session, then less specific under more, then `show` under `hide`, and of two entries equal on
+all three the one stored first last), so the host's last match is the entry that rule names; a refused entry is left out
+(`hostHideList`, `src/files-hide.ts`). This one array replaced the `{ "show": […], "hide": […] }` this section first
+said (the coordinator's call on window-ml-host #58), since two lists cannot say which entry decides. An entry the host
+cannot read refuses the spawn and is never skipped. A host whose `hello.hideList` is not `true` would ignore the field:
+the worker refuses a call there while any `hide` applies, and sends it unchanged when there are only `show` entries,
+which then hold more, not less. A store that could not be read refuses the call. The host applies `show` before it
+builds the held set, so `hiddenSecrets` never lists a shown path, and adds each `hide`. On macOS a `hide` becomes read
+and write deny rules after the template allow, and a `show` an allow after the denies but never over a credential
+directory. On Linux a `hide` is resolved against the tree when the call is spawned and each match is masked; more than
+256 matches fails the spawn with `SandboxFailed` naming the entry, rather than leaving the excess readable. Naming a
+hidden path in `pathArgs` asks, for a `hide` as for a dotenv file, and the card names the entry that hides it; approved,
+it re-allows that path's read for that call. No `allow` policy of any consumer frees that ask, and no "always" is
+offered on it: the durable way to read the file is to remove the `hide`. A change applies from the next call; a call
+already running keeps the sandbox it started with. The host's protocol is window-ml-host PROTOCOL.md, "The hide list".
+The host reports such a path as `paths[].hiddenBy`, and `judgeCall` asks on it before any `allow` or the free tier
+(`namesHidden`).
 
 **Every reader of a root is bound by it.** The list binds every way a file under a root is read, not only a `spawn`:
 `ml.fs` and its one ranged reader, an `@files` reference, the file browser's content view, and Python's `/files`
@@ -914,11 +941,15 @@ both platforms; its content is not, and a read fails with EPERM on macOS and EAC
 defaults do on each platform, and the file browser marks the name as hidden (the per-entry `hidden` flag the hide-list
 item asks for).
 
-**Known limits.** Until the host half is built a `hide` binds no program the shell starts, and on Linux a default
-holds a dotenv file only at a root's top (`root/app/.env` is readable). On Linux a `hide` is resolved when the call is
-spawned, so a file the call creates that matches it is not masked for that call; macOS's rules match by pattern and cover it. The next call's spawn holds it on both. A file
-inside a credential directory, or under a mask in `$HOME`, has no `show` that releases it (ruling 46): a layout that
-keeps a file a call needs in one has no override in this version, and moves that file out.
+**Known limits.** On Linux a default holds a dotenv file only at a root's top (`root/app/.env` is readable). On Linux a
+`hide` is resolved when the call is spawned and again when it starts, so a file that appears after it starts and matches
+it is readable to that call until it ends, whoever created it (the call, or any other process writing into the tree
+meanwhile); macOS's rules match by pattern and cover it. The next call holds it on both. A `hide` follows names: a hard
+link made earlier under a name it does not match still opens the file, on both platforms, as for the defaults. Each
+`hide` row of the view says both, in plain words, the Linux line only when the connected host reports Linux
+(`hideLimits`, `src/sw/files-hide-view.ts`). A file inside a credential directory, or under a mask in `$HOME`, has no
+`show` that releases it (ruling 46): a layout that keeps a file a call needs in one has no override in this version, and
+moves that file out.
 
 **The read, for the view.** The view of the effective list is the access tab of small-fixes' per-session Session
 summary page, a read-only layered list (default < global < session) with a scope chip, an "overrides <rule>" line and

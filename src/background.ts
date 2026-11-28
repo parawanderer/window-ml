@@ -56,6 +56,7 @@ import { bringableSessions, bringHere } from "./sw/bring-here";
 import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, contextByRun, turnByRun, workerRunsStarting, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, detachTabRuns, runHasNoTab, senderOwnsRun, reconcileTabPins, startingControllers, abortStart, startingOwnedBy } from "./sw/sw-runs";
 import { cancelPageTasks, detachTask, dropAllTaskMemory, resetTaskChain, taskAction, type TaskOutcome } from "./sw/sw-tasks";
 import { refreshTaskRow, setNoTabReader, setReleaseAtReader, syncTaskRows } from "./sw/sw-task-rows";
+import { onTabClosed, releaseAtOf, restoreReleases } from "./sw/sw-release";
 import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
 import { startBackgroundRun, delegateStreams, hostRun, WORKER_RUN_REFUSED } from "./sw/sw-run-host";
@@ -75,7 +76,7 @@ import { asIsTokens, forBackendFromPage, forPage, forTurn, scanTurn } from "./sw
 import { TurnUnreadable } from "./secret-registry";
 import { secretRegistryOp } from "./sw/sw-secret-registry";
 import { filesHideList, signalFilesHideChanges } from "./sw/sw-files-hide";
-import { pythonPrewarm, pythonExec, pythonInterrupt, relayPyStdout, deletePythonRun, dropPythonLibraries, pythonReaped, filesAttached, filesSecretForms, pythonStarted, pythonDone } from "./sw/sw-python";
+import { pythonPrewarm, pythonExec, pythonInterrupt, relayPyStdout, deletePythonRun, dropPythonLibraries, pythonReaped, filesAttached, filesSecretForms, filesQuota, filesLost, pythonStarted, pythonDone } from "./sw/sw-python";
 import { focusLineFor } from "./sw/sw-focus";
 import { chatHashFor, openChatPage } from "./sw/sw-open-chat";
 import { eventSession, pageMayWrite, withoutPageWhy, WORKER_ONLY_KINDS, type WorkerClaim } from "./event-admission";   // what a page may add to a session the worker speaks for
@@ -84,7 +85,7 @@ import { watchRedirects } from "./sw/sw-redirects";
 import { fetchImageDataUrl } from "./sw/sw-image-fetch";
 import { approvalKey } from "./approval-key";
 import { raiseAsk } from "./sw/sw-asks";
-import { probeShell, refreshShell, shellStatusRead } from "./sw/sw-shell";
+import { probeShell, refreshShell, shellStatus, shellStatusRead } from "./sw/sw-shell";
 import { toPageUi, notePage, forgetTab, syncAllPanels, servePanelPort, startGesture, tabHidden, cuePanel, panelOpen, HL_POSITIONS } from "./sw/sw-side-panel";
 import { checkReadPlan } from "./table/table-plan";
 
@@ -126,6 +127,9 @@ observeRequests(energyRequest);
 // A worker evicted mid-run leaves its tabs pinned against discard with nobody left who knows why. After the
 // rehydrate — so a run that came back keeps its own tab — release the ones that did not.
 void hydrationDone.then(() => reconcileTabPins());
+// A run whose tab closed while no worker ran (or whose deadline fell then) is released now; the session row shows a deadline that is set.
+setReleaseAtReader(releaseAtOf);
+void hydrationDone.then(() => restoreReleases());
 // The value store's idle sweep: now, and on an alarm, since a worker evicted mid-run never releases what its session held.
 startValueSweeps(liveHeldSessions);   // its first pass releases held rows no session can end any more
 
@@ -144,6 +148,7 @@ startValueSweeps(liveHeldSessions);   // its first pass releases held rows no se
     dropAllTaskMemory();
     await hydratePersistedRuns();
     await syncTaskRows();
+    await restoreReleases();
 };
 // TEST-ONLY: seed a minimal resumable bgRun for a tab, so a unit test can exercise the "don't wipe a tab that
 // still has a recoverable run" guard (resetDebug / tabHasBgRun) without driving a whole run to completion.
@@ -269,8 +274,9 @@ if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
 }
 if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
     chrome.tabs.onRemoved.addListener((tabId) => {
-        // The async lane's `onTabClosed(tabId)` (#2107, the closed-tab release) goes HERE, AHEAD of the detach: it finds the
-        // runs held on this tab by their tabId, which the detach sets to NO_TAB, so after it no held run gets a release deadline.
+        // The release's deadline FIRST (sw-release.ts): it finds the runs held on this tab by their tabId, which the detach
+        // sets to NO_TAB, so after it no held run gets a release deadline. It reads them before its first await.
+        void onTabClosed(tabId);
         // Then, while the runs still name the tab: a run the worker drives goes on with no tab (no-tab.ts), so its row is
         // not marked interrupted and the list says it is held with no tab.
         const noTab = detachTabRuns(tabId);
@@ -812,7 +818,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
                 // One session's effective view (docs/spec/POLICIES.md, "The effective view"): a read, so no change to answer with.
                 const hash = str(p.hash, 100);
                 if (!hash) { sendResponse({ error: "a session hash is needed" }); return; }
-                sendResponse({ data: sessionPolicies(hash) });
+                sendResponse({ data: sessionPolicies(hash, shellStatus().host?.platform) });
                 return;
             } else if (p.op === "removeChecked") {
                 // A removal from a session's view: a widening one needs `confirm: true`, and refuses with the entry and what it would expose.
@@ -820,7 +826,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
                 if (!hash || !id) { sendResponse({ error: "a session hash and a policy id are needed" }); return; }
                 const r = removeFromSession(hash, id, p.confirm === true);
                 if (!r.removed) { sendResponse(r.why === "confirm" ? { error: "confirm", data: { row: r.row } } : { error: "no such policy" }); return; }
-                sendResponse({ data: sessionPolicies(hash) });
+                sendResponse({ data: sessionPolicies(hash, shellStatus().host?.platform) });
                 return;
             } else if (p.op !== undefined && p.op !== "list") { sendResponse({ error: "unknown op" }); return; }
             sendResponse({ data: policyView() });
@@ -1068,6 +1074,8 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     if (message.type === "PY_REAPED") { pythonReaped(message, sender, noteRunLine); return false; }
     if (message.type === "FILES_ATTACHED") { sendResponse(filesAttached(message, sender)); return false; }
     if (message.type === "FILES_SECRET_FORMS") { void filesSecretForms(sender).then(sendResponse); return true; }
+    if (message.type === "FILES_QUOTA") { void filesQuota(sender).then(sendResponse); return true; }
+    if (message.type === "FILES_LOST") { void filesLost(message, sender); return false; }
     if (message.type === "FILES_HIDE_LIST") { void filesHideList(message, sender).then(sendResponse); return true; }
     if (message.type === "SERVER_TOOL_EXEC") {
         // Run ONE OpenWebUI-configured tool. CHOKE POINT, and a real one: the fetch spends the user's API

@@ -1,4 +1,4 @@
-// redteam-tabless-run.test.mjs — what a run with NO tab (docs/spec/TABLESS_RUN.md, the build at 18723108) must not give a page, and must not lose, once its tab closes: an answer to its gate, a page tool on any tab, a session row or a page send naming the sentinel, a sender with no tab treated as its owner, or another tab's runs dragged along with it. Every row is a worker-built run in the real bundle (`director/background.js` in node:vm, tests/helpers.js `loadBackground`), its page played by `onTabMessage`, its model by `script`, and the chat page by the `ml-sessions` port.
+// redteam-tabless-run.test.mjs — what a run with NO tab (docs/spec/TABLESS_RUN.md, the build at 18723108) must not give a page, and must not lose, once its tab closes: an answer to its gate, a page tool on any tab, a session row or a page send naming the sentinel, a sender with no tab treated as its owner, or another tab's runs dragged along with it. Every row is a worker-built run in the real bundle (`director/background.js` in node:vm, tests/helpers.js `loadBackground`), its page played by `onTabMessage`, its model by `script`, and the chat page by the `ml-sessions` port. The last section is the run that STARTS with no tab (#2125, `target: {kind: "detached"}`): the channel that starts it is the extension's alone, and once it exists the page's ways in are the same refusals as for a run whose tab closed.
 //
 // The hazard throughout is the sentinel: a tab that closed is filed under chrome.tabs.TAB_ID_NONE (-1) instead of ending the run, so every place that compares a message's sender tab, a run's owner, or a session row's page with the run's tab now compares with -1 as well. A page is never -1; a sender with NO tab is `undefined` where a default is easy to write, and `!sender.tab` is the shortcut several checks take.
 
@@ -166,7 +166,7 @@ test("RED TEAM: a page cannot write its events into a no-tab run's session, on a
 
 // --- a page tool of a run with no tab reaches no tab ---
 
-test("RED TEAM: every page-realm tool the run offers is answered with how the run gets a page, and not one message reaches any tab", T, async () => {
+test("RED TEAM: every page tool that needs a page is answered with how the run gets a page, and not one message reaches any tab; `navigate`, which opens one, is refused without an absolute URL", T, async () => {
     const r = await run();
     const { hash } = await r.bg.context.__mlStartUserRunForTest(7, { task: "probe", surface: "hud", maxSteps: 40 });
     await until(() => r.bodies().length >= 1);
@@ -174,12 +174,16 @@ test("RED TEAM: every page-realm tool the run offers is answered with how the ru
     const offered = (r.bodies()[0].tools ?? []).map((t) => t.function?.name ?? t.name);
     // Enumerate, never sample: every tool whose realm is the page. The loop's own tools (chat_metadata) are not a page
     // tool even though their realm says so, and are asserted on their own below.
-    const caps = (r.bodies()[0].tools ?? []).filter((t) => builtinTool(t.function?.name ?? t.name)?.realm === "page" && !t.function?.capabilities?.includes("meta")).map((t) => t.function?.name ?? t.name);
+    // The wire carries no `capabilities`, so the loop's own tool is named: chat_metadata (ml-tool-factories.ts, `meta`).
+    // `navigate` from no tab is the worker's (no-tab-nav.ts, TABLESS_RUN.md §As built, part 3): asserted on its own below.
+    const caps = (r.bodies()[0].tools ?? []).filter((t) => builtinTool(t.function?.name ?? t.name)?.realm === "page" && !["chat_metadata", "navigate"].includes(t.function?.name ?? t.name)).map((t) => t.function?.name ?? t.name);
     assert.ok(caps.length > 8, `only ${caps.length} page tools offered (${caps.join(", ")}), too few to be the run's page set`);
     r.bg.closeTab(7);
     assert.ok(await until(() => r.rows().get(hash)?.background?.noTab === true));
     const since = r.bg.tabMessages.length;
     for (const name of caps) r.script.push({ name, args: {} });
+    assert.ok(offered.includes("navigate"), "the run offers navigate");
+    r.script.push({ name: "navigate", args: {} });
     await send(r, hash, "try them all", 3);
     assert.deepEqual(r.bg.tabMessages.slice(since), [], "a page tool of a run with no tab reached a tab");
     const read = toolResults(r.bodies().at(-1));
@@ -187,6 +191,8 @@ test("RED TEAM: every page-realm tool the run offers is answered with how the ru
         assert.ok(read.some((t) => t.includes(`"${name}" needs a page`)), `"${name}" was not answered with how the run gets a page: ${read.find((t) => t.includes(name)) ?? "no result"}`);
     }
     assert.equal(read.filter((t) => /needs a page, and this run has no tab/.test(t)).length, caps.length, "a page tool ran instead of being answered");
+    // A navigate with no URL is refused before any card, and reaches no tab (the slice above is empty).
+    assert.ok(read.some((t) => t.startsWith("Error: this run has no tab, so navigate needs an absolute http(s) URL")), "navigate with no URL was not refused");
     assert.equal(r.state().activeRuns.length, 0, "the detached run registered on a tab");
 });
 
@@ -207,7 +213,7 @@ test("RED TEAM: no session row names the no-tab sentinel as the run's page, and 
     assert.ok(!JSON.stringify([...r.rows().values()]).includes('"tabId":-1'), "a session row carries the sentinel");
 });
 
-test("RED TEAM: the sentinel is never handed to a tab-keyed browser call: a no-tab session's highlight and screenshot address no tab", { todo: "open: `tabOf` (session-commands.ts:272) now resolves a no-tab run to the sentinel, and `page.highlight` (:748) passes it to `deps.highlight` → `chrome.tabs.sendMessage(-1, ML_HL_REMOTE)` — measured: one tab message to -1. Chrome refuses an unknown tab id, so no page receives it, but the worker addresses a tab it knows does not exist and answers ok. Guard with isNoTab in `tabOf`/`highlight` (fail `unavailable` as for a closed tab), and give `tab.screenshot`'s session branch the same refusal" }, T, async () => {
+test("RED TEAM: the sentinel is never handed to a tab-keyed browser call: a no-tab session's highlight and screenshot address no tab", T, async () => {
     const r = await run();
     const { hash } = await r.bg.context.__mlStartUserRunForTest(7, { task: "probe", surface: "hud", maxSteps: 4 });
     await until(() => !r.live(hash));
@@ -222,7 +228,7 @@ test("RED TEAM: the sentinel is never handed to a tab-keyed browser call: a no-t
 
 // --- a sender with no tab is not the owner of a run with no tab ---
 
-test("RED TEAM: a sender with NO tab owns a no-tab run only when it is this extension's own surface", { todo: "open: `senderOwnsRun` (sw-runs.ts:730) trusts `!sender.tab` as an extension page, so a no-tab sender with a WEB url resolves the gate — measured: the python_exec ask closed and the turn ended. No web page can send a runtime message, so the shape is unreachable in Chrome today, but the check rests on the browser rather than on the message: it should be `!sender.tab && isExtensionSender(sender)`, as MOVE_RUN already is" }, T, async () => {
+test("RED TEAM: a sender with NO tab owns a no-tab run only when it is this extension's own surface", T, async () => {
     const r = await run();
     const { hash } = await r.bg.context.__mlStartUserRunForTest(7, { task: "probe", surface: "hud", maxSteps: 6 });
     await until(() => !r.live(hash));
@@ -304,7 +310,7 @@ test("RED TEAM: a fresh document on the closed tab's id does not inherit the no-
 
 // --- a tool that needs no page still works ---
 
-test("RED TEAM: a run with no tab keeps the tools that need no page, its own self-introspection included", { todo: "open: `needsPage` (no-tab.ts:30) judges by the tool's realm, and chat_metadata's realm is \"page\" although the LOOP answers it without a page (agent-loop.ts, the `meta` capability). A no-tab run is answered `\"chat_metadata\" needs a page` — measured — which is false to the model and contradicts noPageText's own sentence. Exempt the `meta` capability from `needsPage` (the loop answers it above the dispatch, so no page is involved)" }, T, async () => {
+test("RED TEAM: a run with no tab keeps the tools that need no page, its own self-introspection included", T, async () => {
     const r = await run();
     const { hash } = await r.bg.context.__mlStartUserRunForTest(7, { task: "probe", surface: "hud", maxSteps: 6 });
     await until(() => !r.live(hash));
@@ -312,9 +318,82 @@ test("RED TEAM: a run with no tab keeps the tools that need no page, its own sel
     assert.ok(await until(() => r.rows().get(hash)?.background?.noTab === true));
     const offered = (r.bodies()[0].tools ?? []).map((t) => t.function?.name ?? t.name);
     assert.ok(offered.includes("chat_metadata"), "positive control: the run offers chat_metadata");
-    r.script.push({ name: "chat_metadata", args: {} }, { name: "fetch_url", args: { url: "http://host/x" } });
-    await send(r, hash, "count, then fetch", 4);
+    // agent_api_docs, not fetch_url: a worker tool that asks no approval, which nothing in this row would answer.
+    r.script.push({ name: "chat_metadata", args: {} }, { name: "agent_api_docs", args: {} });
+    await send(r, hash, "count, then read the docs", 4);
     const read = toolResults(r.bodies().at(-1));
     assert.ok(!read.some((t) => /"chat_metadata" needs a page/.test(t)), `the loop's own chat_metadata was answered as needing a page: ${read.find((t) => t.includes("chat_metadata"))}`);
-    assert.ok(!read.some((t) => /"fetch_url" needs a page/.test(t)), "a worker tool was answered as needing a page");
+    assert.ok(!read.some((t) => /"agent_api_docs" needs a page/.test(t)), "a worker tool was answered as needing a page");
+});
+
+// --- a run that STARTS with no tab (#2125) ---
+
+test("RED TEAM: a page cannot start a run with a detached target, and one started so is no easier for a page to steer, approve or move than a run whose tab closed", T, async () => {
+    const r = await run();
+    // The command exactly as the chat page sends it: a session command on the `ml-sessions` port, never a page type.
+    const startDetached = (id, text) => ({ type: "cmd", id, command: { type: "agent.start", runtime: "local", task: text, target: { kind: "detached" }, maxSteps: 3 } });
+    // A content script carries the page's url AND its tab, the closest a page can get to the extension's own port.
+    // `serveSessionsPort` refuses any sender that is not this extension's, so the one channel that starts a detached run
+    // is closed to a page before the command is read at all — the same gate MOVE_RUN uses, checked on the message.
+    const pagePort = r.bg.connect("ml-sessions", { ...pageSender(7, SITE_URL) });
+    assert.ok(pagePort.wasDisconnected(), "a content script's session port was served (it speaks for a page)");
+    pagePort.send(startDetached(91, "from the page"));
+    // A sender with NO tab and a web origin: the other half of the `!sender.tab` shortcut.
+    const webPort = r.bg.connect("ml-sessions", { url: "https://evil.example/x", frameId: 0, origin: "https://evil.example" });
+    assert.ok(webPort.wasDisconnected(), "a no-tab web sender's session port was served");
+    webPort.send(startDetached(92, "from a no-tab web sender"));
+    await until(() => false, 20);
+    assert.equal(r.bodies().length, 0, "a page's agent.start reached the model");
+    assert.equal(r.rows().size, 0, "a page's agent.start put a session in the index");
+    assert.equal(r.state().activeRuns.length + r.state().bgRuns.length, 0, "a page's agent.start started a run");
+    // Positive control: the person's chat page starts the same command, and nothing is opened, adopted or registered.
+    const created = r.bg.tabsCreated.length;
+    const updated = r.bg.tabsUpdated.length;
+    r.port.send(startDetached(90, "probe"));
+    assert.ok(await until(() => r.port.messages.some((m) => m.type === "result" && m.id === 90)), "the person's detached start is answered");
+    const answer = r.port.messages.find((m) => m.type === "result" && m.id === 90).result;
+    assert.ok(answer?.ok && answer.data?.session?.hash, `the person's detached start failed: ${JSON.stringify(answer)}`);
+    const hash = answer.data.session.hash;
+    r.port2(hash);
+    assert.ok(await until(() => !r.live(hash)), "the detached run's first turn ends");
+    assert.equal(r.bg.tabsCreated.length, created, "a detached start opened a tab");
+    assert.equal(r.bg.tabsUpdated.length, updated, "a detached start adopted a tab");
+    assert.equal(r.state().activeRuns.length, 0, "a detached run registered on a tab");
+    const row = r.rows().get(hash);
+    assert.equal(row?.background?.noTab, true, "a run started detached is not filed as having no tab");
+    assert.equal(row?.page?.tabId, undefined, "a detached run's row names a tab");
+    assert.ok(!JSON.stringify([...r.rows().values()]).includes('"tabId":-1'), "a detached run's row carries the sentinel");
+    // A page that comes up AFTER the detached start is handed nothing of it: no adopt list, no replay.
+    const since = r.bg.tabMessages.length;
+    const ready = await r.bg.send({ type: "CONTENT_READY" }, { tab: { id: 8, url: OTHER_URL }, url: OTHER_URL, frameId: 0 });
+    assert.deepEqual(ready?.adopt ?? [], [], "a page coming up was given the detached run to adopt");
+    await until(() => false, 20);
+    assert.deepEqual(r.bg.tabMessages.slice(since).filter(([t]) => t === 8), [], "a straight tab was sent the detached run's replay");
+    // A turn on it holds a gate that a page must not answer, and the run must not be steerable, movable, resumable or
+    // stoppable from one. `python_exec` is the worker tool that asks; a page tool would be answered before the gate.
+    r.script.push({ name: "python_exec", args: { code: "1+1" } });
+    r.port.send({ type: "cmd", id: 1, command: { type: "session.send", session: { runtime: "local", hash }, text: "compute" } });
+    assert.ok(await until(() => r.events().some((e) => e?.awaitingApproval)), "the detached run's turn holds a gate");
+    const gate = r.events().filter((e) => e?.awaitingApproval).at(-1);
+    const before = r.bodies().length;
+    const page = pageSender(8, OTHER_URL);
+    const refusals = await Promise.all([
+        r.bg.send({ type: "INJECT_MESSAGE", payload: { runId: hash, text: "steer" } }, page),
+        r.bg.send({ type: "MOVE_RUN", payload: { runId: hash, tabId: 8 } }, page),
+        r.bg.send({ type: "RESUME_RUN", payload: { runId: hash, task: "" } }, pageSender(7, SITE_URL)),
+        r.bg.send({ type: "START_RUN", payload: { runId: hash, task: "again", systemPrompt: "S", tools: [], model: "m", think: null, maxSteps: 3, autoApprovePython: false, autoApproveReadonly: false, surface: "off" } }, pageSender(7, SITE_URL)),
+    ]);
+    void r.bg.send({ type: "SET_APPROVAL", payload: { runId: hash, seq: gate.seq, decision: true } }, pageSender(7, SITE_URL));
+    void r.bg.send({ type: "PAGE_CANCEL_RUN", payload: { runId: hash } }, pageSender(7, SITE_URL));
+    await until(() => false, 20);
+    for (const [i, reply] of refusals.entries()) assert.ok(reply?.error || reply?.data === false, `a page's message ${i} was not refused: ${JSON.stringify(reply)}`);
+    assert.ok(r.live(hash), "a page stopped a run that started with no tab");
+    assert.equal(r.rows().get(hash)?.pendingApprovals, 1, "a page answered a detached run's gate");
+    assert.equal(r.bodies().length, before, "a page's move or steer caused a model call");
+    // The person can still answer it, so the refusals are the page's and not a run nobody can reach.
+    r.port.send({ type: "cmd", id: 2, command: { type: "approval.answer", session: { runtime: "local", hash }, seq: gate.seq, decision: "approve" } });
+    assert.ok(await until(() => r.port.messages.some((m) => m.type === "result" && m.id === 2)));
+    assert.deepEqual(r.port.messages.find((m) => m.type === "result" && m.id === 2).result, { ok: true, data: { resolved: true } }, "positive control: the person's answer resolves a detached run's gate");
+    assert.ok(await until(() => !r.live(hash), 8000), "the approved call ran and the turn ended");
+    assert.ok(!toolResults(r.bodies().at(-1)).some((t) => /^Error: the arguments|not approved|denied/.test(t)), "the approved call was answered as denied");
 });

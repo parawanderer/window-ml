@@ -9,6 +9,7 @@ import { highlight, beautifyJs, htmlLines, mdInline } from "./format";
 import { useCopy } from "./copy-hash";
 import { IconCopy, IconCheck } from "./icons";
 import { morphInto } from "./transcript/code-morph";
+import { linkifyHtml, codeLinkHandlers, type CodeLinks } from "./code-links";
 
 /** A span of `text` that was substituted for something the author did not write, with the original for a
  *  tooltip — `exec`'s expanded pointer macros. */
@@ -56,7 +57,8 @@ export const displaySource = (text: string, lang?: string, format?: boolean, mar
     format && !marks?.length && (lang === "javascript" || lang === "js") ? beautifyJs(text) : text;
 
 /** The props `Code` and `CodeBlock` share: the source and how to mark it. */
-export interface CodeProps { text: string; lang?: string; format?: boolean; marks?: CodeMark[]; lineIds?: string; markLine?: number | null; markTitle?: string; notes?: Map<number, string>; onMap?: (map: number[] | null) => void }
+export interface CodeProps { text: string; lang?: string; format?: boolean; marks?: CodeMark[]; lineIds?: string; markLine?: number | null; markTitle?: string; notes?: Map<number, string>; onMap?: (map: number[] | null) => void;
+    /** what makes an address or `@tool:` pointer in the code clickable; absent, none is (a page with no panel) */ links?: CodeLinks }
 
 /** A CODE BLOCK — syntax-highlighted, optionally line-numbered, and the one place a line can be MARKED
  *  (a failure), ANNOTATED (a margin note from `explain`), or pointed at from elsewhere (`lineIds` makes
@@ -65,7 +67,7 @@ export interface CodeProps { text: string; lang?: string; format?: boolean; mark
  *
  *  Everything the panel's setting and tooltip decide comes in as props (`lineNumbers`, `markTip`), so a page with no
  *  panel draws the same block; `Code` is the panel's, with both filled in. */
-export const CodeBlock = ({ text, lang, format, marks, lineIds, markLine, markTitle, notes, onMap, lineNumbers = false, markTip }: CodeProps & { lineNumbers?: boolean; markTip?: (text: string) => Record<string, unknown> }) => {
+export const CodeBlock = ({ text, lang, format, marks, lineIds, markLine, markTitle, notes, onMap, links, lineNumbers = false, markTip }: CodeProps & { lineNumbers?: boolean; markTip?: (text: string) => Record<string, unknown> }) => {
     const src = displaySource(text, lang, format, marks);
     // BEAUTIFYING MOVES LINE NUMBERS, and js-beautify hands back no map — so one is derived from the two
     // texts (see line-map.ts). Without it a JS stack trace read against this block names a line that has
@@ -77,6 +79,8 @@ export const CodeBlock = ({ text, lang, format, marks, lineIds, markLine, markTi
     useLayoutEffect(() => { if (format && preRef.current) morphInto(preRef.current); }, []);
     // An expansion is a single call and never contains a newline, so a marked span cannot straddle one —
     // which is what lets the line-number path below split this HTML as it always has.
+    const lk = (h: string) => links ? linkifyHtml(h, (id) => !!links.step(id)) : h;
+    const on = links ? codeLinkHandlers(links) : {};
     const html = marks?.length ? markedHtml(src, lang, marks) : highlight(src, lang);
     // The per-line form is also used when a line is being POINTED AT: you cannot mark a line in a block that
     // has no lines, and a traceback saying "line 3" with nothing numbered leaves the reader counting. So a
@@ -89,10 +93,10 @@ export const CodeBlock = ({ text, lang, format, marks, lineIds, markLine, markTi
     // noise. A mark or a note still numbers it, since those do name the line.
     const oneLine = !src.replace(/\n+$/, "").includes("\n");
     if ((!lineNumbers || oneLine) && markLine == null && !notes?.size)
-        return <pre class="code" ref={preRef}><code class="hljs" dangerouslySetInnerHTML={{ __html: html }} /></pre>;
+        return <pre class="code" ref={preRef}><code class="hljs" {...on} dangerouslySetInnerHTML={{ __html: lk(html) }} /></pre>;
     return (
-        <pre class="code numbered" ref={preRef}><code class="hljs">
-            {htmlLines(html).map((ln, i) => [
+        <pre class="code numbered" ref={preRef}><code class="hljs" {...on}>
+            {htmlLines(html).map(lk).map((ln, i) => [
                 // `lineIds` makes each row addressable, so a traceback elsewhere on the page can point AT a
                 // line rather than at the block containing it.
                 // The marked line carries the panel's own tooltip rather than a native `title`: the native

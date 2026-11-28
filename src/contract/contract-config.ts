@@ -135,6 +135,10 @@ export interface MlConfig {
      *  ended, whichever executor runs it. 1..60; a value outside reads as 60, the ceiling (docs/spec/ASYNC_CALLS.md,
      *  rule 4b). A call's own `timeoutMs` is clamped to it. */
     detachedTaskMaxMin: number;
+    /** Minutes a run whose tab closed keeps its Python names, `@tool:` values and tasks before the worker releases them
+     *  (docs/spec/ASYNC_CALLS.md, "A run whose tab closed: the release"). A stored session and its transcript stay either
+     *  way. 0 releases at once. */
+    closedRunGraceMin: number;
     /** A finished detached task starts the run's next turn by default (docs/spec/ASYNC_CALLS.md, rule 4b). On, a finished
      *  task with no turn running only parks its result and says so in the transcript: it is read at the person's next
      *  message. DevTools Settings only. */
@@ -142,6 +146,10 @@ export interface MlConfig {
     /** The most turns finished tasks start in a row, with no message from the person between them. 1..20; a value outside
      *  reads as the default, 5. At the cap a finished task parks and says so, as with `taskNotifyOnly`. */
     taskTurnChainMax: number;
+    /** How many MiB of files a session's runs may keep under `/files/agent/` (the person's attachments do not count;
+     *  run-made files count at their stored size). A value that is not a positive whole number reads as the default,
+     *  1024; there is no upper cap. DevTools Settings only. */
+    filesQuotaMB: number;
     /** Move a session the store evicts (by retention or by the budget) into the long-term SQLite archive instead of
      *  deleting it. Off by default: it changes what "delete after N days" means. */
     sessionArchive: boolean;
@@ -339,8 +347,10 @@ export const DEFAULT_CONFIG: MlConfig = {
     sessionStoreBudgetMB: 256,
     pythonIdleMinutes: 10,
     detachedTaskMaxMin: 60,
+    closedRunGraceMin: 10,
     taskNotifyOnly: false,
     taskTurnChainMax: 5,
+    filesQuotaMB: 1024,
     sessionArchive: false,
     agentStartPage: "",
     priceSnapshotUrl: "",
@@ -437,8 +447,10 @@ export const SETTING_PLACES: Readonly<Partial<Record<keyof MlConfig, SettingPlac
     autoApprovePython: { tab: "advanced", section: "python" },
     pythonIdleMinutes: { tab: "advanced", section: "python" },
     detachedTaskMaxMin: { tab: "advanced", section: "python" },
+    closedRunGraceMin: { tab: "advanced", section: "python" },
     taskNotifyOnly: { tab: "advanced", section: "python" },
     taskTurnChainMax: { tab: "advanced", section: "python" },
+    filesQuotaMB: { tab: "advanced", section: "python" },
     autoApproveSelfSource: { tab: "advanced", section: "fetch" },
     agentSeesFocus: { tab: "advanced", section: "focus" },
     shellEnabled: { tab: "advanced", section: "shell" },
@@ -454,6 +466,12 @@ export const SETTING_PLACES: Readonly<Partial<Record<keyof MlConfig, SettingPlac
     execDefaultWorld: { tab: "advanced", section: "cdp" },
     siteRequests: { tab: "permissions", section: "siteapprovals" },
 };
+
+/** The files quota in bytes: the `filesQuotaMB` setting when it is a positive safe integer, else the default, times 1 MiB. */
+export function filesQuotaBytes(raw: unknown): number {
+    const mb = typeof raw === "number" && Number.isSafeInteger(raw) && raw > 0 ? raw : DEFAULT_CONFIG.filesQuotaMB;
+    return mb * 1024 * 1024;
+}
 
 /** The world an exec asks for with its `world` argument, or the default one. */
 export type ExecWorld = "page" | "isolated";

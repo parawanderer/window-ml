@@ -171,10 +171,10 @@ test("a bare trailing expression is the cell's value inside, as on the full path
 
 test("a refusal AT RUN TIME names what and where: the module and the cell's line", async (t) => {
     if (skip) return t.skip(skip);
-    const out = await cell(world("none"), "x = 1\nimport os\nreturn os.listdir('/')");
-    assert.match(out.refused, /import 'os'/);
+    const out = await cell(world("none"), "x = 1\nimport subprocess\nreturn subprocess.run");
+    assert.match(out.refused, /import 'subprocess'/);
     assert.match(out.refused, /\(line 2\)/);
-    assert.match(pythonOutsideWhy(out.refused).line, /^Outside the read-only Python dialect: import 'os' \(line 2\)$/);
+    assert.match(pythonOutsideWhy(out.refused).line, /^Outside the read-only Python dialect: import 'subprocess' \(line 2\)$/);
 });
 
 test("a refusal AT CHECK time keeps the fork's own line", async (t) => {
@@ -187,7 +187,7 @@ test("a refused cell's bindings and output are discarded: the namespace holds wh
     if (skip) return t.skip(skip);
     const ns = world("none");
     await cell(ns, "a = 1");
-    const out = await cell(ns, "a = 2\nb = 3\nprint('partial')\nimport os");
+    const out = await cell(ns, "a = 2\nb = 3\nprint('partial')\nimport subprocess");
     assert.ok(out.refused);
     assert.strictEqual((await cell(ns, "a")).value, 1);
     assert.match((await cell(ns, "b")).refused ?? (await cell(ns, "b")).error ?? "", /b/, "b was never bound");
@@ -387,7 +387,7 @@ test("a try inside the dialect writes nothing to the real stdout; its print reac
     py.setStdout({ batched: (s) => seen.push(s) });
     try {
         const ns = world("none");
-        assert.ok((await cell(ns, "print('TRY')\nimport os")).refused);
+        assert.ok((await cell(ns, "print('TRY')\nimport subprocess")).refused);
         assert.strictEqual(String(ns.get("_stdout")), "", "a refused try's captured output is dropped");
         assert.strictEqual((await cell(world("none"), "print('DONE')\nreturn 1")).stdout, "DONE\n");
         assert.strictEqual((await cell(world("none"), "print('FULL')", false)).stdout, "FULL\n");

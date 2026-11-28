@@ -51,9 +51,11 @@ import { reapDelay, longTimeout, DEFAULT_REAP_BETWEEN_MS } from "./python/py-rea
 import { createPdfHost } from "./pdf/pdf-host";
 import { b64ToBytes, bytesToB64, type PdfMessage, type PdfReadReply, type PdfRenderReply } from "./pdf/pdf-wire";
 import { importTestCode } from "./python/pkg-install-test";
-import { attachFiles, detachFiles, filesMessage, setFilesReader } from "./python/files-host";
+import { attachFiles, detachFiles, filesMessage, readWholeFile, setFilesReader } from "./python/files-host";
+import { ML_TABLE_FILE_MAX, tableAnswerBytes } from "./python/table-answer";
 import { createFilesSource } from "./python/files-source";
 import { RangedReader } from "./session/ranged-reader";
+import { AgentFiles } from "./session/agent-files";
 import { fsServer } from "./session/fs-serve";
 import { scanCode } from "./python/pkg-scan";
 import { readScan, type ScanResult } from "./python/pkg-scan-note";
@@ -74,10 +76,25 @@ const store = (): ValueStore => values ??= new ValueStore({
 });
 
 // `/files` in Python (files-host.ts) and `ml.fs`: the reader over this document's value store and the shelf the worker holds,
-// bound by the session's hiding rules (POLICIES.md, "Hiding files", ruling 34), which the worker resolves.
+// bound by the session's hiding rules (POLICIES.md, "Hiding files", ruling 34), which the worker resolves; and the store of
+// what a session's runs write under `agent/` (agent-files.ts), its quota asked of the worker at each file opened for
+// writing. A file discarded unwritten is noted in the store and in the run log.
 const filesHide = makeHideRule(async (session) => ((await chrome.runtime.sendMessage({ type: "FILES_HIDE_LIST", session })) as { entries?: HideEntry[] | null } | undefined)?.entries ?? null);   // state: plumbing — one rule for the one reader
 chrome.runtime.onMessage.addListener((msg: { type?: unknown } | undefined) => { if (msg?.type === "FILES_HIDE_CHANGED") filesHide.forget(); return false; });
-const filesReader = new RangedReader({ source: createFilesSource({ store, send: (m) => chrome.runtime.sendMessage(m) }), hidden: filesHide.rule });   // state: plumbing — the one reader, a channel per worker
+const agentFiles = new AgentFiles();   // state: plumbing — a handle to the ml-agent-files database, declared as session.files
+const filesReader = new RangedReader({ hidden: filesHide.rule,   // state: plumbing — the one reader, a channel per worker
+    source: createFilesSource({ store, send: (m) => chrome.runtime.sendMessage(m) }),
+    agent: agentFiles,
+    quotaBytes: async (session) => {
+        const bytes = (await chrome.runtime.sendMessage({ type: "FILES_QUOTA", session }) as { bytes?: unknown } | undefined)?.bytes;
+        if (typeof bytes !== "number" || !Number.isSafeInteger(bytes) || bytes <= 0) throw new Error("the quota could not be read");
+        return bytes;
+    },
+    onLost: (rec) => {
+        void agentFiles.noteLost(rec).catch(() => { /* the run log still has it */ });
+        try { chrome.runtime.sendMessage({ type: "FILES_LOST", ...rec }).catch(() => { /* no worker listening */ }); } catch { /* context gone */ }
+    },
+});
 setFilesReader(() => filesReader.openChannel("files"));
 // ml.fs (fs-serve.ts): a channel per isolated exec on the same reader, read ops only, its session the worker's word.
 const fsChannels = fsServer(() => filesReader.openChannel("files"));   // state: plumbing — an exec's channel, closed with it
@@ -102,29 +119,6 @@ async function storeReturnedTable(r: PyResult & { ipc?: ArrayBuffer; valueKey?: 
         reportHousekeeping({ subsystem: "value-store", kind: "refuse", reason: (e as Error)?.name === "ValueTooLarge" ? "budget" : "error", bytes: ipc.byteLength, detail: { source: "python_exec" } });
         return rest;
     }
-}
-
-/**
- * Swap each `tables` entry that names a STORED value (`data.kind === "value"`) for one carrying its bytes and format, and
- * list the buffers to transfer. A value that is gone fails the whole run with the store's reason: a table that was
- * asked for and silently left out would run the script against nothing.
- */
-async function withStoredTables(tables: unknown): Promise<{ tables: unknown; transfer: ArrayBuffer[] } | { error: string }> {
-    if (!Array.isArray(tables) || !tables.some((t) => t?.data?.kind === "value")) return { tables, transfer: [] };
-    const transfer: ArrayBuffer[] = [];
-    const out: unknown[] = [];
-    for (const t of tables) {
-        if (t?.data?.kind !== "value") { out.push(t); continue; }
-        try {
-            const { row, blob } = await store().get(String(t.data.key));
-            const buffer = await blob.arrayBuffer();
-            transfer.push(buffer);
-            out.push({ ...t, data: { ...t.data, format: row.format, buffer } });
-        } catch (e) {
-            return { error: `python_exec could not load \`${t.name}\` from ${t.data.label ?? "its pointer"}: ${(e as Error)?.message ?? e}` };
-        }
-    }
-    return { tables: out, transfer };
 }
 
 // `bootMs`/`runMs` come from the WORKER, which is the executor — anything measured downstream of it is
@@ -201,11 +195,35 @@ type WireStamp = { client: string; run: string | null };
 // service worker, its cap is the detached ceiling, its output is kept in `ring` for `task tail`, and a cancel reaches it
 // by that id. `stopOnStart` is a cancel that came before the cell started, done when it does.
 const pending = new Map<number, { resolve: (r: PyResult) => void; timer: ReturnType<typeof setTimeout>; streamId?: string; armOnStart?: boolean; principal: string; wire?: WireStamp; spending?: boolean; bench?: boolean; started?: boolean; stopping?: boolean; cell?: string; detachedMaxMs?: number; ring?: string; stopOnStart?: () => void; markSet?: boolean }>();   // state: plumbing
+/** One pending run, as `pending` holds it. */
+type PendingEntry = typeof pending extends Map<number, infer E> ? E : never;
 // THE `ml` WIRE (ML_WIRE.md): which worker a client handle's answers go back to. The handle is this
 // document's to stamp — the worker never sees it (LANE_1_PR2_DESIGN.md "Who stamps the handle"). An
 // `ask` first answer is NOT relayed down: the cell's `send` stays pending until the later `ML_ANSWER`
 // push, matched by `client`, arrives here.
-const wireByClient = new Map<string, { post: (m: unknown) => void; runMsgId: number }>();   // state: plumbing — one in-flight cell each
+const wireByClient = new Map<string, { post: (m: unknown, transfer?: Transferable[]) => void; runMsgId: number; principal: string; calls: Map<number, string> }>();   // state: plumbing — one in-flight cell each
+
+/**
+ * Post a wire call's final answer to the cell that made it. An `ml.table` answer over a stored table or a `/files/` file
+ * gets its bytes first (table-answer.ts), read in this document and transferred beside the JSON, never inside it.
+ * @param client the client the call came on
+ * @param seq the call's seq
+ * @param answer the final answer
+ */
+async function postWireAnswer(client: string, seq: number, answer: unknown): Promise<void> {
+    const entry = wireByClient.get(client);
+    if (!entry) return;
+    const call = entry.calls.get(seq);
+    entry.calls.delete(seq);
+    const ready = call === "table"
+        ? await tableAnswerBytes(answer, {
+            stored: async (key) => { const { row, blob } = await store().get(key); return { format: row.format, buffer: await blob.arrayBuffer() }; },
+            file: (path) => readWholeFile(entry.principal, path, ML_TABLE_FILE_MAX),
+        })
+        : { answer };
+    const mlAnswer = { seq, answer: ready.answer, ...(ready.buffer ? { buffer: ready.buffer } : {}) };
+    entry.post({ id: entry.runMsgId, mlAnswer }, ready.buffer ? [ready.buffer] : []);
+}
 
 /** The kill's error when it lands during the cancel's spend (the worker's `spending` mark). */
 export const SPEND_KILLED = `A task this cell left kept running after it was cancelled and would not stop (most likely inside a C function), so the Python sandbox was terminated after ${PY_TIMEOUT_MS / 1000}s and the cell's result is refused.`;
@@ -386,6 +404,21 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
     if (respawned.delete(principal)) {
         reportHousekeeping({ subsystem: "pyodide", kind: "respawn", key: principal, detail: { mode: readonly ? "readonly" : "full" } });
     }
+    /**
+     * The pending run a message from THIS worker names, or undefined. `pending` is one map over every principal, keyed by
+     * a sequential id any worker can name, so a worker may act only on its own principal's runs: another's id is refused,
+     * recorded once with nothing of the message, and leaves that run as it was. Every branch below that reads an entry
+     * reads it through here (tests/offscreen-worker-ids.test.mjs enumerates them).
+     * @param id the id the message names
+     * @param branch which branch asked, for the record
+     * @returns the entry, when it is this worker's
+     */
+    const own = (id: unknown, branch: string): PendingEntry | undefined => {
+        const entry = typeof id === "number" ? pending.get(id) : undefined;
+        if (!entry || entry.principal === principal) return entry;
+        reportHousekeeping({ subsystem: "pyodide", kind: "foreign-id", reason: branch, key: principal });
+        return undefined;
+    };
     w.onmessage = (e: MessageEvent) => {
         // A `/files` request from the mount: served by the run's channel, never a reply to a run.
         if (filesMessage(principal, e.data)) return;
@@ -397,7 +430,7 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
         // A `partial` message is a LIVE stdout chunk (opt-in streaming) — forward it to the background keyed by
         // this run's streamId (the page requestId), which relays it to the page; DON'T resolve the run.
         if (e.data?.partial) {
-            const entry = pending.get(e.data.id);
+            const entry = own(e.data.id, "partial");
             // A leased cell's output is kept here, bounded, for `task tail`: the service worker keeps no copy.
             if (entry?.cell !== undefined) entry.ring = ringAppend(entry.ring ?? "", String(e.data.chunk ?? ""));
             if (entry?.streamId) chrome.runtime.sendMessage({ type: "PY_STDOUT", streamId: entry.streamId, chunk: String(e.data.chunk ?? ""), ts: e.data.ts }).catch(() => { /* no receiver → drop */ });
@@ -405,13 +438,13 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
         }
         // The cell's own code is done and its cancel is spending the tasks it left: a kill from here on is named for it.
         if (e.data?.spending) {
-            const entry = pending.get(e.data.id);
+            const entry = own(e.data.id, "spending");
             if (entry) entry.spending = true;
             return;
         }
         // The USER'S CELL is starting (runtime up, prelude done, this run's turn): its own 15s begins now.
         if (e.data?.started) {
-            const entry = pending.get(e.data.id);
+            const entry = own(e.data.id, "started");
             if (entry) entry.started = true;   // the one a bench Stop may interrupt (`PY_INTERRUPT`)
             // A LEASED cell: the service worker starts its lease now (it detaches the call past it), and the sandbox holds
             // it to the detached ceiling instead of the 15 s, which the lease replaces.
@@ -431,19 +464,21 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
         // THE `ml` WIRE CALL (ML_WIRE.md): the cell's request, stamped HERE with the client handle and the run
         // this document is executing for it. The worker never sees either — it posts `{ seq, call, args }` only.
         if (e.data?.mlCall && typeof e.data.id === "number") {
-            const entry = pending.get(e.data.id);
+            // Another principal's id has no wire here: the sender is answered as a cell with none, and the victim's stamp is never used.
+            const entry = own(e.data.id, "ml-call");
             const wire = entry?.wire;
             const { seq, call, args } = e.data.mlCall as { seq: number; call: string; args: unknown[] };
             if (!wire) {
                 w.postMessage({ id: e.data.id, mlAnswer: { seq, answer: { seq, error: { code: "Refused", message: "this cell has no ml wire" } } } });
                 return;
             }
+            wireByClient.get(wire.client)?.calls.set(seq, String(call));
             chrome.runtime.sendMessage({ type: "ML_CALL", client: wire.client, run: wire.run, seq, call, args: args ?? [] })
                 .then((answer: { seq?: number; ask?: unknown } | undefined) => {
                     // An `ask` first answer is NOT final: the cell suspends, and the later `ML_ANSWER` push
                     // (matched by client) is what resolves it. Hold here; do not post `mlAnswer` yet.
                     if (answer && typeof answer === "object" && "ask" in answer) return;
-                    w.postMessage({ id: e.data.id, mlAnswer: { seq, answer: answer ?? { seq, error: { code: "Failed", message: "the wire returned no answer" } } } });
+                    return postWireAnswer(wire.client, seq, answer ?? { seq, error: { code: "Failed", message: "the wire returned no answer" } });
                 })
                 .catch((err: unknown) => {
                     w.postMessage({ id: e.data.id, mlAnswer: { seq, answer: { seq, error: { code: "Failed", message: String((err as Error)?.message || err) } } } });
@@ -451,7 +486,7 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
             return;
         }
         const { id, ...result } = e.data as { id: number } & PyResult;
-        const entry = pending.get(id);
+        const entry = own(id, "result");
         // The mark's two fields are this document's alone: whatever the worker sent under those names is dropped.
         delete result.marked;
         delete result.markSet;
@@ -584,7 +619,7 @@ async function installTest(run: string, refs: WheelRef[], modules: string[], sco
     candidates.set(run, principal);
     const deadline = setTimeout(() => endCandidate(principal, "install-deadline"), PY_INSTALL_DEADLINE_MS);
     try {
-        const cell = (code: string, wheels: WheelBytes[]) => runInWorker(code, null, true, null, false, undefined, false, true, undefined, undefined, [], principal, undefined, false, undefined, false, undefined, undefined, wheels) as Promise<PyResult & { installFailed?: boolean }>;
+        const cell = (code: string, wheels: WheelBytes[]) => runInWorker(code, null, true, false, undefined, false, true, undefined, undefined, [], principal, undefined, false, undefined, false, undefined, undefined, wheels) as Promise<PyResult & { installFailed?: boolean }>;
         // The deadline and Stop end the whole candidate. Each lands between two awaits, and the next cell would spawn a fresh
         // worker and run there with no timer of its own (unbounded past the deadline), so every await before a cell is
         // followed by this check.
@@ -634,7 +669,7 @@ async function installTest(run: string, refs: WheelRef[], modules: string[], sco
  *   ends there wedges the single Pyodide instance for every later call with nobody watching. In the bench a
  *   person is sitting in front of it, chose this, and can close the panel.
  */
-function runInWorker(code: string, image: string | null, hardened: boolean, tables: unknown, stream?: boolean, streamId?: string, env?: boolean, noTimeout?: boolean, complete?: { line: number; column: number; bench?: string }, bench?: { persist?: boolean; reset?: boolean }, transfer: ArrayBuffer[] = [], principal = hardened ? "own" : "full", wire?: WireStamp, inside = false, libraries?: { libraries?: unknown; library?: unknown }, bridges = false, cell?: string, detachedMaxMs?: number, wheels: WheelBytes[] = []): Promise<PyResult> {
+function runInWorker(code: string, image: string | null, hardened: boolean, stream?: boolean, streamId?: string, env?: boolean, noTimeout?: boolean, complete?: { line: number; column: number; bench?: string }, bench?: { persist?: boolean; reset?: boolean }, transfer: ArrayBuffer[] = [], principal = hardened ? "own" : "full", wire?: WireStamp, inside = false, libraries?: { libraries?: unknown; library?: unknown }, bridges = false, cell?: string, detachedMaxMs?: number, wheels: WheelBytes[] = []): Promise<PyResult> {
     // `hardened` is the mode (true = readonly, the locked-down sandbox); `principal` is WHOSE sandbox.
     // A readonly run gets one worker per principal so a patch one principal left cannot reach the next;
     // `full` is its own worker and is never locked.
@@ -675,9 +710,9 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
         // THE `ml` WIRE: the handle stays HERE. The worker is told only that this run has a wire and which
         // run's namespace it is — never `client` (LANE_1_PR2_DESIGN.md, "Who stamps the handle").
         if ((inside && Array.isArray(libraries?.libraries) && libraries.libraries.length) || libraries?.library) libraryPrincipals.add(principal);
-        if (wire) wireByClient.set(wire.client, { post: (m) => { try { w.postMessage(m); } catch { /* worker gone */ } }, runMsgId: id });
+        if (wire) wireByClient.set(wire.client, { post: (m, transfer) => { try { w.postMessage(m, transfer ?? []); } catch { /* worker gone */ } }, runMsgId: id, principal, calls: new Map() });
         // A leased cell always streams to this document, which keeps its tail; the chunks go on only for a `streamId`.
-        w.postMessage({ id, code, image, hardened, tables, stream: stream || cell !== undefined, ...(wire ? { wire: true, run: wire.run } : {}), ...(env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(bench?.persist ? { persist: true } : {}), ...(bench?.reset ? { benchReset: true } : {}), ...(inside ? { inside: true } : {}),
+        w.postMessage({ id, code, image, hardened, stream: stream || cell !== undefined, ...(wire ? { wire: true, run: wire.run } : {}), ...(env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(bench?.persist ? { persist: true } : {}), ...(bench?.reset ? { benchReset: true } : {}), ...(inside ? { inside: true } : {}),
             // The person's approved tier 3 libraries ride an inside run; a library op (its card's shape, its load after
             // approval) is its own message. Only the service worker sends either (PY_RUN is not in HANDLE_MAP).
             ...(inside && Array.isArray(libraries?.libraries) ? { libraries: libraries.libraries } : {}),
@@ -813,7 +848,7 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
         const primaryPrincipal = String(msg.principal ?? (msg.hardened !== false ? "own" : "full"));
         for (const [p, entry] of workers) {
             if (p === primaryPrincipal) continue;
-            try { entry.w.postMessage({ id: nextId++, code: "", image: null, hardened: entry.readonly, tables: null, benchReset: true }); } catch { /* a dead worker is killed on its next use */ }
+            try { entry.w.postMessage({ id: nextId++, code: "", image: null, hardened: entry.readonly, benchReset: true }); } catch { /* a dead worker is killed on its next use */ }
         }
     }
     // The worker serializes runs internally (one Pyodide instance per worker = one per principal),
@@ -829,9 +864,8 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
     const ownLive = !sender.tab && !!wireStamp?.run && msg.principal === `run:${wireStamp.run}`;
     if (ownLive && msg.turnLive === true) endedRuns.delete(wireStamp!.run!);   // a cell of a live turn: the run is between turns no more
     if (msg.keep === true && ownLive && (msg.turnLive === true || !endedRuns.has(wireStamp!.run!))) keptPrincipals.add(msg.principal);
-    withStoredTables(msg.tables ?? null)
-        .then(async (t) => {
-            if ("error" in t) return { ok: false, stdout: "", error: t.error };
+    Promise.resolve()
+        .then(async () => {
             const principal = String(msg.principal ?? (msg.hardened !== false ? "own" : "full"));
             // The run's installs ride only its own readonly cell, which only the service worker sends: never a page's.
             const refs = ownLive && msg.hardened !== false ? wheelRefs(msg.installs) : [];
@@ -843,7 +877,7 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
                 wheels = got;
             }
             const sent: WheelRef[] = wheels.map(({ filename, sha256 }) => ({ filename, sha256 }));
-            const r = await runInWorker(msg.code, msg.image ?? null, msg.hardened !== false, t.tables, msg.stream, msg.streamId, msg.env, msg.noTimeout, msg.complete, { persist: msg.persist, reset: msg.benchReset }, t.transfer, principal, wireStamp, msg.inside === true, { libraries: msg.libraries, library: msg.library },
+            const r = await runInWorker(msg.code, msg.image ?? null, msg.hardened !== false, msg.stream, msg.streamId, msg.env, msg.noTimeout, msg.complete, { persist: msg.persist, reset: msg.benchReset }, [], principal, wireStamp, msg.inside === true, { libraries: msg.libraries, library: msg.library },
                 // Only the service worker may lift a cell's bridge refusal: a content script is an extension context too.
                 msg.bridges === true && !sender.tab,
                 // A LEASED cell (py-lease.ts): only the service worker leases, and only a worker-hosted run's own cell.
@@ -953,9 +987,8 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
 // the answer. Not in HANDLE_MAP — only the worker's `deliverLater` push reaches this listener.
 chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
     if (msg?.type !== "ML_ANSWER" || typeof msg.client !== "string") return undefined;
-    const entry = wireByClient.get(msg.client);
-    if (!entry) return undefined;
-    entry.post({ id: entry.runMsgId, mlAnswer: { seq: msg.answer?.seq, answer: msg.answer } });
+    if (!wireByClient.has(msg.client)) return undefined;
+    void postWireAnswer(msg.client, msg.answer?.seq, msg.answer);
     sendResponse({ ok: true });
     return undefined;
 });
@@ -968,6 +1001,7 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
     if (msg?.type !== "PY_DELETE_RUN" || typeof msg.run !== "string" || !msg.run) return undefined;
     if (sender.id !== chrome.runtime.id || sender.tab) return undefined;   // the service worker's word only, like every message here
     const run = String(msg.run);
+    // `msg.reason` (`tab-closed`, `person`, absent for a session's end) is accepted and not read yet: the namespace-drop record that uses it is a later change.
     endedRuns.delete(run); endedRuns.add(run);   // re-added last: the oldest is evicted first
     if (endedRuns.size > ENDED_RUNS_MAX) endedRuns.delete(endedRuns.values().next().value as string);
     const principals = new Set(runPrincipals.get(run) ?? []);

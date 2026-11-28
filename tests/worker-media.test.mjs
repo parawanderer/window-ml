@@ -361,13 +361,13 @@ test("an image together with a page table runs python in the worker: the image f
         const runs = [];
         let turns = 0, bg;
         bg = loadBackground({
-            config: { ...config, autoApprovePython: true, debugMode: "off" },
+            config: { ...config, autoApprovePython: true, debugMode: "off" }, playTables: true,
             openTabs: [{ id: 3, windowId: 1, active: true, url: "https://site.example/" }],
             onCaptureTab: async () => png(1024, 768),
             onFetch: (call) => {
                 if (!call.url.includes("/chat/completions")) return jsonResponse({});
                 return ++turns === 1
-                    ? jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "python_exec", arguments: JSON.stringify({ code: "return len(df) # CODE-9", image: "#save", tables: "table#t" }) } }] } }] })
+                    ? jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "python_exec", arguments: JSON.stringify({ code: "df = ml.table(\"table#t\")\nreturn len(df) # CODE-9", image: "#save" }) } }] } }] })
                     : jsonResponse({ choices: [{ message: { content: "done" } }] });
             },
             onPyRun: async (msg) => {
@@ -392,7 +392,7 @@ test("an image together with a page table runs python in the worker: the image f
         for (let i = 0; i < 2000 && turns < 2; i++) await new Promise((r) => setTimeout(r, 0));
         assert.equal(runs.length, 1, "positive control: the sandbox ran the call");
         assert.match(runs[0].image, /^data:image\/png;base64,RASTER\d+$/, "the worker's crop");
-        assert.deepEqual(runs[0].tables.map((t) => [t.name, t.data.rows]), [["df", [[1], [2]]]], "the page's table");
+        assert.deepEqual(runs[0].read.map((t) => [t.src, t.value.data.rows]), [["table#t", [[1], [2]]]], "the page's table, read by the cell's own ml.table call");
         const sends = bg.tabMessages.filter(([, m]) => m.type === "RUN_TOOL_IN_PAGE").map(([, m]) => m.payload);
         assert.deepEqual(sends.filter((p) => p.name === "python_exec" && !p.renderOnly && !p.precheck), [], "the call never went to the page");
         assert.ok(!JSON.stringify(sends).includes("CODE-9"), "nor its code");
@@ -491,23 +491,29 @@ test("python_exec tells a worker-hosted run its names persist, and a page-hosted
     assert.doesNotMatch(worker + page, / {2}/, "no padding in model-facing text");
 });
 
-test("python_exec tells a worker-hosted run its attached files are under /files/attached/ and read-only, and a page-hosted one it has no filesystem", T, async () => {
+test("python_exec tells a worker-hosted run its attached files are under /files/attached/, read-only, and that it writes in /files/agent/; a page-hosted one that it has no filesystem", T, async () => {
     const { buildPythonTool } = await import("../src/python/python-tool.ts");
     const { defineTool } = await import("../src/ml/ml-tool-factories.ts");
-    const failed = { ok: false, error: "FileNotFoundError: [Errno 44] No such file or directory: 'data.csv'", inputTables: [{ name: "df" }] };
-    const build = (ml) => buildPythonTool({ defineTool, _queryAll: () => [], pythonExec: async () => failed, ...ml });
+    const failed = { ok: false, error: "FileNotFoundError: [Errno 44] No such file or directory: 'data.csv'", inputImage: "data:image/png;base64,AA" };
+    let executed = 0;
+    const build = (ml) => buildPythonTool({ defineTool, _queryAll: () => [], pythonExec: async () => { executed++; return failed; }, ...ml });
     const worker = build({ _mintToken: async () => "@pt:abcdef12" });
     const page = build({});
-    assert.match(worker.description, /Files the person attached to this session are under \/files\/attached\/ \(list it with os\.listdir\); \/files is read-only\./);
+    assert.match(worker.description, /Files the person attached to this session are under \/files\/attached\/ \(read-only; list it with os\.listdir\); write yours in \/files\/agent\/, the working directory\./);
     assert.doesNotMatch(worker.description, /filesystem/, "the worker's sandbox has a filesystem");
-    assert.doesNotMatch(worker.description, /writ/i, "no write is promised: the reader answers EROFS to each");
+    assert.doesNotMatch(worker.description, /\/files is read-only/, "agent/ is written since the reader's write side (#2121)");
     assert.match(page.description, /No network or filesystem here/, "a page-hosted run's worker mounts no /files");
     assert.doesNotMatch(page.description, /\/files/);
-    const said = async (tool) => { const r = await tool.run({ code: "open('data.csv')", tables: "table" }); return typeof r === "string" ? r : JSON.stringify(r); };
+    const said = async (tool) => { const r = await tool.run({ code: "open('data.csv')" }); return typeof r === "string" ? r : JSON.stringify(r); };
     const wHint = await said(worker), pHint = await said(page);
-    assert.match(wHint, /your inputs are not files, and the sandbox has no network/);
-    assert.doesNotMatch(wHint, /no filesystem/);
-    assert.match(pHint, /the sandbox has no filesystem or network/);
+    for (const h of [wHint, pHint]) assert.match(h, /Hint: the tool ALREADY loaded the screenshot as `img`\/`img_np` \(the image parameter did it\) — reference it directly; do not open or fetch it\./);
+    const executedBefore = executed;
+    for (const tool of [worker, page]) {
+        const stale = await tool.run({ code: "open('data.csv')", tables: "table" });
+        assert.match(String(stale), /^Error: python_exec has no `tables` argument\. Read each table in the code instead: `df = ml\.table\("<source>"\)`.* Nothing ran\.$/, "a stale tables argument is refused with the one sentence");
+    }
+    assert.equal(executed, executedBefore, "nothing ran for a stale tables argument");
+    assert.doesNotMatch(wHint, /no filesystem|no network/, "a run's sandbox has /files/ and may write under /files/agent/: the hint claims neither away");
     assert.doesNotMatch(worker.description + page.description + wHint + pHint, / {2}/, "no padding in model-facing text");
 });
 

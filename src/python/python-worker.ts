@@ -14,12 +14,13 @@
 // the harness's captured refs) and stays that way. A FULL worker is a separate worker that is never
 // locked — that is why `self.name` is "readonly" or "full", set by the host when it spawns us.
 
-import { PY_PACKAGE_LOADS, PY_LAZY_LOADS, PY_BENCH_BASE_NAMES, PY_STARTUP_PREPARE, pyodideLoadOptions } from "./python-env";
+import { PY_PACKAGE_LOADS, PY_LAZY_LOADS, PY_BENCH_BASE_NAMES, PY_STARTUP_PREPARE, pyodideLoadOptions, pinEnvironment } from "./python-env";
 import { DIALECT_FILES, DIALECT_MODULES, DIALECT_NODES } from "./dialect-data";
-import { wrapUserSetup, wrapUserScript, COMPLETE_HELPER, completeIn, RESET, injectInputs, stdoutWriter, injectStoredTable, takeIpc, releaseNamespace, hostRunScript, cancelPath, type PyCompletion } from "./python-runtime";
-import { dialectSetup, libraryLoad, libraryShape, type DialectLibrary } from "./python-dialect-run";
+import { wrapUserSetup, wrapUserScript, LOADERS_INSTALL, COMPLETE_HELPER, completeIn, RESET, injectInputs, stdoutWriter, bindTableBytes, takeIpc, releaseNamespace, hostRunScript, cancelPath, type PyCompletion } from "./python-runtime";
+import { dialectSetup, libraryLoad, libraryShape, listingSteps, type DialectLibrary } from "./python-dialect-run";
 import { lockdownReadonly } from "./lockdown";
 import { makeFilesMount, FILES_OPEN_WORDS } from "./files-mount";
+import { restrictedCharge, chargeMemfsListings } from "./listing-charge";
 import { makeRequester, type FilesShared } from "./files-wire";
 import { cellBoundary, cellDropped, onSpending } from "./cell-gate";
 import { shownText } from "./pkg-card";
@@ -59,7 +60,7 @@ function clearInterrupt(): void {
     if (interruptFlag) Atomics.store(interruptFlag, 0, 0);
 }
 
-type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean; env?: boolean; complete?: { line: number; column: number; bench?: "readonly" | "full" }; persist?: boolean; benchReset?: boolean; wire?: boolean; inside?: boolean; bridges?: boolean; run?: string | null; deleteRun?: string; takeDropped?: boolean; libraries?: DialectLibrary[]; library?: { op: "shape" | "load"; lib: DialectLibrary }; wheels?: WheelBytes[] };
+type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; stream?: boolean; env?: boolean; complete?: { line: number; column: number; bench?: "readonly" | "full" }; persist?: boolean; benchReset?: boolean; wire?: boolean; inside?: boolean; bridges?: boolean; run?: string | null; deleteRun?: string; takeDropped?: boolean; libraries?: DialectLibrary[]; library?: { op: "shape" | "load"; lib: DialectLibrary }; wheels?: WheelBytes[] };
 /** A wheel the run installed (python_install, slice 4), as the offscreen document hands it over: already checked against its
  *  sha256 and its archive checked (`pkg-archive.ts`); unpacked into site-packages before the cell when this worker lacks it. */
 type WheelBytes = { filename: string; sha256: string; bytes: ArrayBuffer };
@@ -75,7 +76,7 @@ type BenchSession = { id: string; vars: { name: string; type: string }[] };
 // THE `ml` WIRE (ML_WIRE.md): one pending call per `seq`, matched to the answer the offscreen document
 // relays back. The worker never sees the client handle — the offscreen document stamps it — so this map
 // is only `seq → resolve`, and a call that answers `ask` stays pending until the final `ML_ANSWER`.
-const pendingWire = new Map<number, { resolve: (answerJson: string) => void }>();   // state: plumbing — one in-flight ml call each
+const pendingWire = new Map<number, { resolve: (answerJson: string) => void; bind: (buffer: ArrayBuffer, name: string) => void }>();   // state: plumbing — one in-flight ml call each
 
 /**
  * The transport `_ml_make` closes over: one wire request out, the FINAL answer back, as JSON text.
@@ -83,14 +84,15 @@ const pendingWire = new Map<number, { resolve: (answerJson: string) => void }>()
  * and relays `ML_CALL`. An `ask` answer does not resolve — the offscreen holds the promise until the
  * later `ML_ANSWER` push (LANE_1_PR2_DESIGN.md).
  * @param id the run message id this call rides (so a late answer can be dropped if the run is gone)
+ * @param bind binds a stored table's bytes, which an `ml.table` answer carries beside its JSON, into the cell's namespace
  * @returns `send(request_json) -> answer_json`, awaiting through a per-call ask
  */
-function makeWireSend(id: number): (requestJson: string) => Promise<string> {
+function makeWireSend(id: number, bind: (buffer: ArrayBuffer, name: string) => void): (requestJson: string) => Promise<string> {
     return (requestJson: string) => new Promise((resolve) => {
         let seq: number;
         try { seq = Number(JSON.parse(requestJson)?.seq); } catch { resolve(JSON.stringify({ seq: -1, error: { code: "Failed", message: "the request was not readable" } })); return; }
         if (!Number.isFinite(seq)) { resolve(JSON.stringify({ seq: -1, error: { code: "Failed", message: "the request carried no seq" } })); return; }
-        pendingWire.set(seq, { resolve });
+        pendingWire.set(seq, { resolve, bind });
         // The request is `{ seq, call, args }` only: which client and run it is for is stamped outside.
         try {
             const { call, args } = JSON.parse(requestJson) as { call: string; args: unknown[] };
@@ -130,15 +132,21 @@ function getPyodide(by: "prewarm" | "run" = "run"): Promise<any> {
         const t0 = Date.now();
         const { loadPyodide } = await import(new URL("pyodide/pyodide.mjs", base).href);
         const py = await loadPyodide(pyodideLoadOptions(new URL("pyodide/", base).href));
+        pinEnvironment(py);
         // The kernel's death's cause, from Pyodide's fatal-error handler (`API.on_fatal`, called with what it caught), not
         // a rejection's reason or a cell's answer, which a cell can choose; those stand in only for a Pyodide without the
         // hook. Set before the lockdown, like every hook here.
         if (py._api) py._api.on_fatal = (e: unknown) => { fatalCause ??= String((e as Error)?.message ?? e); };
         if (interruptFlag) py.setInterruptBuffer(interruptFlag);
+        // Every directory listing is charged to the cell running inside the dialect, before it lists (listing-charge.ts);
+        // outside a run the fork's charge is nothing. Null on a core without the fork, which never runs a cell inside.
+        const charge = restrictedCharge(py._module);
+        if (charge) chargeMemfsListings(py.FS, py.ERRNO_CODES, charge, listingSteps);
         // `/files` is built here, BEFORE the lockdown: the requester keeps `post` and the shared memory in its closure.
         if (filesShared) {
             const { call, data, Interrupted } = makeRequester(filesShared, post as never, interruptFlag);
-            const mount = makeFilesMount({ FS: py.FS, ERRNO_CODES: py.ERRNO_CODES, call, data, Interrupted, home: filesHome });
+            const chargeListing = charge ? (names: number) => charge(listingSteps(names)) : undefined;
+            const mount = makeFilesMount({ FS: py.FS, ERRNO_CODES: py.ERRNO_CODES, call, data, Interrupted, home: filesHome, chargeListing });
             filesMount = mount;
             mount.remount();
             // A hidden file's refusal in the reader's words, not "Permission denied": the model acts on the text.
@@ -208,12 +216,12 @@ function benchVars(py: any, ns: any): BenchSession["vars"] {
     try {
         return JSON.parse(py.runPython(`import json as _jv
 _jv.dumps([{"name": _k, "type": type(_v).__name__} for _k, _v in sorted(_ml_v_ns.items())
-           if not _k.startswith("_") and _k not in ${JSON.stringify([...PY_BENCH_BASE_NAMES, "INJECTED_IMAGE_B64", "INJECTED_TABLES_JSON"])}])`) as string);
+           if not _k.startswith("_") and _k not in ${JSON.stringify([...PY_BENCH_BASE_NAMES, "INJECTED_IMAGE_B64"])}])`) as string);
     } finally { try { py.globals.delete("_ml_v_ns"); } catch { /* */ } }
 }
 
 // ROOT C: ONE NAMESPACE PER RUN (docs/spec/PYTHON_DIALECT.md "The namespace"). A run's cells share a
-// dict; injected names (`df`/`tables`/`img`) are assigned into it without wiping the run's other
+// dict; injected names (`img`) are assigned into it without wiping the run's other
 // bindings; RESET never wipes it. Deleted when the run closes (`deleteRun`), and a worker restart under
 // a live run is told as a loss (the housekeeping record the offscreen document writes on respawn).
 const runs = new Map<string, { ns: any; id: string }>();   // state: python.run-namespace — per-run Python namespace, lost on worker kill
@@ -249,7 +257,10 @@ let dialectReady: Promise<string> | null = null;
  * @returns "" when it can, else the reason (a stock or old core, or a load that failed), so the cell asks
  */
 function dialectReason(py: any): Promise<string> {
-    return dialectReady ??= Promise.resolve().then(() => py.runPythonAsync(dialectSetup(DIALECT_FILES)))
+    // The loader redirects first, in a dict of their own: the setup registers the `pd.read_csv` a cell will reach, and
+    // a worker's first inside cell can come before any prelude has installed them.
+    const loaders = () => py.runPythonAsync("import pandas as pd\nfrom PIL import Image\n" + LOADERS_INSTALL, { globals: py.globals.get("dict")() });
+    return dialectReady ??= Promise.resolve().then(loaders).then(() => py.runPythonAsync(dialectSetup(DIALECT_FILES)))
         .then((r: unknown) => String(r ?? ""), (e: any) => `the dialect's manifests could not be loaded (${String((e && e.message) || e).split("\n").filter(Boolean).pop()})`);
 }
 
@@ -280,7 +291,7 @@ async function library(op: "shape" | "load", lib: DialectLibrary): Promise<{ why
     return op === "shape" ? out : out[0];
 }
 
-async function run(code: string, image: string | null, hardened: boolean, tables: unknown, onStdout?: (chunk: string) => void, persist = false, onStarted?: () => void, wire = false, runId: string | null = null, msgId = 0, inside = false, libraries: DialectLibrary[] = [], bridges = false): Promise<RunResult> {
+async function run(code: string, image: string | null, hardened: boolean, onStdout?: (chunk: string) => void, persist = false, onStarted?: () => void, wire = false, runId: string | null = null, msgId = 0, inside = false, libraries: DialectLibrary[] = [], bridges = false): Promise<RunResult> {
     const wasLive = pyodideLive;
     const w0 = Date.now();
     const py = await getPyodide();
@@ -321,27 +332,24 @@ async function run(code: string, image: string | null, hardened: boolean, tables
     const ns = kept ? kept.ns : py.globals;
     // Read only by PRELUDE_DATA, which a kept-state run does not execute — so never put into a bench namespace,
     // where they were listed as two variables no script had defined (and offered by completion).
+    // The names a table answer's bytes were bound under (`bindTableBytes`), dropped after the cell if the frame builder
+    // did not take them (a cell that ended between the answer and the build).
     const tableBufs: string[] = [];
-    if (!kept) {
-        // Python None/str, never a JS null: `set` of a null lands as `JsNull`, a JsProxy in the namespace.
-        const injected = Array.isArray(tables) ? tables.map((t, i) => injectStoredTable(py, ns, t, `_ml_tbuf_${i}`, tableBufs)) : tables;
-        injectInputs(ns, image, Array.isArray(injected) && injected.length ? JSON.stringify(injected) : null, harness);
-    } else if (keptRun) {
-        // ROOT C: a run's kept dict still gets the injected names and the harness, assigned WITHOUT
-        // wiping the run's other bindings. `injectInputs` sets the injected inputs; the wrapper's
-        // wrapper's `"run"` prelude decodes `img`/`tables` only when they are present.
-        const injected = Array.isArray(tables) ? tables.map((t, i) => injectStoredTable(py, ns, t, `_ml_tbuf_${i}`, tableBufs)) : tables;
-        injectInputs(ns, image, Array.isArray(injected) && injected.length ? JSON.stringify(injected) : null, harness);
+    if (!kept || keptRun) {
+        // Python None/str, never a JS null: `set` of a null lands as `JsNull`, a JsProxy in the namespace. ROOT C: a run's
+        // kept dict gets the injected image and the harness assigned WITHOUT wiping the run's other bindings; the
+        // wrapper's `"run"` prelude decodes `img` only when one is present.
+        injectInputs(ns, image, harness);
     } else {
         // A kept-state bench run still needs the harness module in its namespace — the wrapper looks it up there.
-        // Only the harness: `injectInputs` would also set INJECTED_IMAGE_B64 / INJECTED_TABLES_JSON as
+        // Only the harness: `injectInputs` would also set INJECTED_IMAGE_B64 as
         // undefined (→ Python None) in the bench namespace, and `benchVars()` would list them as kept.
         if (harness !== undefined) ns.set("_ml_harness", harness);
     }
     // THE `ml` WIRE TRANSPORT: a leading-underscore global the wrapper folds into `_ml_make` and drops.
     // The worker never sees the client handle (the offscreen document stamps it); this only posts
     // `{ seq, call, args }` and resolves when the answer comes back (LANE_1_PR2_DESIGN.md).
-    if (wire) ns.set("_ml_send", makeWireSend(msgId));
+    if (wire) ns.set("_ml_send", makeWireSend(msgId, (buffer, name) => { bindTableBytes(py, ns, buffer, name); tableBufs.push(name); }));
     // LIVE stdout tee (opt-in streaming): Pyodide's JS-side setStdout wraps the interpreter's real stdout,
     // which the prelude's _MlTee writes through to. No callback object lands in the namespace — a JsProxy
     // of one is a JS `Function` constructor to a hostile cell. Cleared in finally.
@@ -419,17 +427,17 @@ async function run(code: string, image: string | null, hardened: boolean, tables
         return timed({ ok: false, stdout: cancelled?.out ?? "", error: String((e && e.message) || e) + (cancelled?.refusal ? `\n${cancelled.refusal}` : ""), ...keptCatch });
     } finally {
         clearInterrupt();
-        if (!kept) injectInputs(ns, null, null, harness);
+        if (!kept) injectInputs(ns, null, harness);
         if (wire) { try { ns.delete("_ml_send"); } catch { /* the wrapper dropped it */ } }
         if (onStdout) { try { py.setStdout({}); } catch { /* ignore */ } }
-        for (const name of tableBufs) { try { ns.delete(name); } catch { /* the prelude already took it */ } }
+        for (const name of tableBufs) { try { ns.delete(name); } catch { /* the frame builder already took it */ } }
         try { ns.delete("_ipc_result"); } catch { /* not set */ }
         // The loaders' namespace pointer is per cell: a stale one must not keep a released run's dict reachable.
         try { py.globals.set("_ml_load_ns", undefined); } catch { /* the interpreter is gone */ }
         if (inside) for (const name of ["_ml_not_in_dialect", "_ml_inside_run", "_ml_trailing_return"]) { try { ns.delete(name); } catch { /* not set */ } }
-        // A `python_exec` leaves its injected screenshot and tables in main until the NEXT run's reset — and
-        // main is where the loader redirects live, reading `img`/`tables` at call time. So a bench script's
-        // `pd.read_csv("sales")` could have been handed the model's last table. Clear them now instead.
+        // A `python_exec` leaves its injected screenshot in main until the NEXT run's reset — and main is where the
+        // loader redirect lives, reading `img` at call time. So a bench script's `Image.open("x")` could have been
+        // handed the model's last image. Clear it now instead.
         if (!bench) { try { py.runPython(RESET); } catch { /* the next run resets anyway */ } }
     }
 }
@@ -525,7 +533,7 @@ self.addEventListener("error", ((e: ErrorEvent) => onUncaught(e.error ?? e.messa
 // MessagePort); `Object.defineProperty(self, "onmessage", ...)` shadows that setter WITHOUT invoking it,
 // and the port never starts — every message goes unanswered until the 120s timeout.
 function onMessage(e: MessageEvent): void {
-    const msg = e.data as RunMsg & { mlAnswer?: { seq: number; answer: unknown } };
+    const msg = e.data as RunMsg & { mlAnswer?: { seq: number; answer: unknown; buffer?: unknown } };
     // THE `ml` WIRE ANSWER (ML_WIRE.md): a call's final answer, matched by `seq`. An `ask` is not final —
     // the offscreen document holds the promise and only relays the later `ML_ANSWER`. Not a run message,
     // so it is handled before the `id` check.
@@ -533,6 +541,15 @@ function onMessage(e: MessageEvent): void {
         const pending = pendingWire.get(msg.mlAnswer.seq);
         if (pending) {
             pendingWire.delete(msg.mlAnswer.seq);
+            // An `ml.table` answer over a STORED table carries its bytes beside the JSON (offscreen.ts `tableAnswerBytes`):
+            // copied once into a bytearray named for this call, which the frame builder takes from the namespace.
+            const buffer = msg.mlAnswer.buffer;
+            const data = (msg.mlAnswer.answer as { value?: { data?: { kind?: unknown; buf?: unknown } } } | null)?.value?.data;
+            if (buffer instanceof ArrayBuffer && data && data.kind === "value") {
+                const name = `_ml_wbuf_${msg.mlAnswer.seq}`;
+                try { pending.bind(buffer, name); data.buf = name; }
+                catch { pending.resolve(JSON.stringify({ seq: msg.mlAnswer.seq, error: { code: "Failed", message: "the table's bytes could not be handed to the sandbox" } })); return; }
+            }
             try { pending.resolve(JSON.stringify(msg.mlAnswer.answer)); }
             catch { pending.resolve(JSON.stringify({ seq: msg.mlAnswer.seq, error: { code: "Failed", message: "the answer was not readable" } })); }
         }
@@ -636,7 +653,7 @@ function onMessage(e: MessageEvent): void {
         .then(() => { runningId = msg.id; return installWheels(wheels); })
         .then((failed) => failed !== null
             ? { ok: false, stdout: "", error: `Not run: a package this run installed could not be put in place: ${failed}. Nothing of the cell ran; the next cell tries again.`, installFailed: true } as RunResult
-            : run(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, onStdout, msg.persist === true, onStarted, msg.wire === true, msg.run ?? null, msg.id, msg.inside === true, Array.isArray(msg.libraries) ? msg.libraries : [], msg.bridges === true))
+            : run(msg.code, msg.image ?? null, msg.hardened !== false, onStdout, msg.persist === true, onStarted, msg.wire === true, msg.run ?? null, msg.id, msg.inside === true, Array.isArray(msg.libraries) ? msg.libraries : [], msg.bridges === true))
         .then(
             (result: RunResult) => {
                 runningId = 0;

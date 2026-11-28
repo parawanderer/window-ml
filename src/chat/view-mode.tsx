@@ -226,7 +226,7 @@ export function setGroupFold(key: string, folded: boolean): void {
 
 /** Where a run was last sent on a runtime, as picked in the start page's "Where it runs": an open tab, by its id and
  *  the address it showed then, or a new tab. */
-export type RememberedTarget = ({ tabId: number; url: string } | { blank: true }) & {
+export type RememberedTarget = ({ tabId: number; url: string } | { blank: true } | { none: true }) & {
     /** when it was picked (ms since the epoch); absent on a pick stored before this was kept, which counts as older than any visit */
     pickedAt?: number;
 };

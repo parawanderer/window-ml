@@ -637,7 +637,7 @@ export function openSettingsAt(tab: SettingsTab, section: string): void {
  * `target`, scroll that element into view once it is drawn: an element id (the chat page's
  * `#/settings/extension/backup`), or a setting's row by its config key, which is also marked (`set-marked`).
  */
-export function showSettingsSection(tab: SettingsTab, section?: string, target?: string | { setting: string }): void {
+export function showSettingsSection(tab: SettingsTab, section?: string, target?: string | { setting: string } | { policy: string }): void {
     settingsQuery.value = "";   // a shortcut lands on its tab, not on a filtered view of every tab
     settingsTab.value = tab;
     if (section) {
@@ -650,6 +650,7 @@ export function showSettingsSection(tab: SettingsTab, section?: string, target?:
     const look = () => {
         const el = typeof target === "string"
             ? document.getElementById(target) ?? panelBody?.querySelector(`#${target}`)
+            : "policy" in target ? panelBody?.querySelector(`[data-policy-id="${CSS.escape(target.policy)}"]`)
             : panelBody?.querySelector(`[data-setting~="${target.setting}"]`);
         if (!el) { if (++tries < 20) setTimeout(look, 50); return; }
         el.scrollIntoView?.({ block: typeof target === "string" ? "start" : "center" });
@@ -657,6 +658,9 @@ export function showSettingsSection(tab: SettingsTab, section?: string, target?:
     };
     setTimeout(look, 0);
 }
+
+/** The policy a broken-policy card asked to edit: its row opens its editor when drawn, then clears this. */
+const policyToEdit = signal<string | undefined>(undefined);   // state: ui
 
 /** The Settings body on screen, for a link's target: the sidebar draws it in a shadow root `document` cannot see. */
 let panelBody: HTMLElement | null = null;   // state: ui
@@ -674,7 +678,8 @@ function markRow(el: Element): void {
  * @param r the resolved view
  */
 export function openPanelRoute(r: PanelRoute): void {
-    showSettingsSection(r.tab, r.section, r.setting ? { setting: r.setting } : r.target);
+    if (r.policy) policyToEdit.value = r.policy;
+    showSettingsSection(r.tab, r.section, r.policy ? { policy: r.policy } : r.setting ? { setting: r.setting } : r.target);
     markReturn();
     view.value = { name: "settings" };
 }
@@ -723,7 +728,7 @@ function SheetsGrant() {
     return (
         <details class="set-section" open={!granted}>
             <summary class="set-group">Google Sheets access{granted ? <span class="perm-ok"> ✓</span> : null}</summary>
-            <div class="set-note">Lets <code>python_exec</code> load a Google Sheet (the <code>tables</code> arg / a Sheets URL) as a pandas DataFrame — the background CSV fetch needs host access to <code>docs.google.com</code>, which “On click” site access withholds. A narrower grant than “On all sites”.</div>
+            <div class="set-note">Lets <code>python_exec</code> load a Google Sheet (<code>ml.table</code> of a Sheets URL) as a pandas DataFrame — the background CSV fetch needs host access to <code>docs.google.com</code>, which “On click” site access withholds. A narrower grant than “On all sites”.</div>
             {granted
                 ? <div class="set-hint"><span class="perm-ok">Granted.</span> The extension can fetch Google Sheets you're signed into.</div>
                 : <div class="free-row"><button class="test-btn" onClick={enable}>Enable Google Sheets access</button></div>}
@@ -1186,6 +1191,8 @@ export function PolicyRow({ policy, broken, onEdit, onRemove }: { policy: Policy
     const [label, setLabel] = useState(policy.label);
     const [source, setSource] = useState(policy.source);
     const open = (): void => { setEffect(policy.effect); setLabel(policy.label); setSource(policy.source); setEditing(true); };
+    // A broken-policy card's "Edit policy" lands here with the editor already open.
+    useEffect(() => { if (policyToEdit.value === policy.id) { policyToEdit.value = undefined; open(); } }, [policyToEdit.value, policy.id]);
     const save = (): void => {
         const patch: PolicyPatch = {};
         if (effect !== policy.effect) patch.effect = effect;
@@ -1889,6 +1896,11 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                         onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("detachedTaskMaxMin", Number.isFinite(n) && n >= 1 && n <= 60 ? n : DEFAULT_CONFIG.detachedTaskMaxMin); }} />
                 </label>
                 <div class="set-hint">The longest a detached task runs before it is ended: a python_exec cell that outran its lease (the sandbox ends it) or an ml.sh call (its timeoutMs is held to this). 1 to 60; 60 is the ceiling and the default. A task keeps running after the model answers, and its result is read at the next turn.</div>
+                <label data-setting="closedRunGraceMin" class="set-field"><SettingLbl k="closedRunGraceMin" />
+                    <input type="number" min="0" max="1440" step="1" value={c.closedRunGraceMin}
+                        onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("closedRunGraceMin", Number.isFinite(n) && n >= 0 ? Math.min(n, 1440) : DEFAULT_CONFIG.closedRunGraceMin); }} />
+                </label>
+                <div class="set-hint">When the tab a run is on closes, the run keeps its Python names, stored values and background tasks for this many minutes, then they are released. Reopening the session or sending it a message within that time keeps them. 0 releases at once. The session and its transcript are kept either way; a later Continue starts with a fresh namespace. A run with a task still running is released this long after the task ends.</div>
                 <label data-setting="taskNotifyOnly" class="set-check">
                     <input type="checkbox" checked={c.taskNotifyOnly}
                         onChange={(e: any) => setField("taskNotifyOnly", e.target.checked)} />
@@ -1900,6 +1912,11 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                         onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("taskTurnChainMax", Number.isFinite(n) && n >= 1 && n <= 20 ? n : DEFAULT_CONFIG.taskTurnChainMax); }} />
                 </label>
                 <div class="set-hint">The most turns that finished tasks start one after another with no message from you between them. At the cap a finished task parks its result and the transcript says so; your next message resets the count. 1 to 20, default 5.</div>
+                <label data-setting="filesQuotaMB" class="set-field"><SettingLbl k="filesQuotaMB" />
+                    <input type="number" min="1" step="1" value={c.filesQuotaMB}
+                        onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("filesQuotaMB", Number.isFinite(n) && n >= 1 ? n : DEFAULT_CONFIG.filesQuotaMB); }} />
+                </label>
+                <div class="set-hint">How many MiB of files a session's runs may keep under /files/agent. Your own attachments do not count; files a run made count at their stored size. Whole number, at least 1, default 1024; no upper limit.</div>
                 </Section>
 
                 <Section id="fetch" title="Fetching (fetch_url / ml.fetch)">

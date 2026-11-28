@@ -28,7 +28,7 @@ globalThis.chrome = {
 };
 const P = await import("../src/sw/sw-policies.ts");
 const { addFilesRule, removeFilesRule, filesHideList, signalFilesHideChanges } = await import("../src/sw/sw-files-hide.ts");
-const { HIDE_NOT_ON_SPAWN } = await import("../src/sw/files-hide-view.ts");
+const { HIDE_LIMIT_HARD_LINK, HIDE_LIMIT_LINUX_LATE } = await import("../src/sw/files-hide-view.ts");
 const { DEFAULT_HOLDS, HIDE_ENTRIES_MAX, resolveHidden } = await import("../src/files-hide.ts");
 const { makeHideRule, HIDE_LIST_TTL_MS } = await import("../src/session/files-hide-rule.ts");
 const { RangedReader } = await import("../src/session/ranged-reader.ts");
@@ -37,7 +37,7 @@ const { SessionIndex } = await import("../src/session/session-index.ts");
 const { validList } = await import("../src/sw/policy-valid.ts");
 await P.policiesReady;
 
-const filesRows = (hash) => P.sessionPolicies(hash).rows.filter((r) => r.consumer === "files");
+const filesRows = (hash, platform) => P.sessionPolicies(hash, platform).rows.filter((r) => r.consumer === "files");
 const OFFSCREEN = { url: "chrome-extension://test/offscreen.html" };
 
 // --- the upgrade: today's store, with no files rows, read by the new code ---
@@ -116,13 +116,20 @@ test("the model's policy list carries no files rule: a hidden file reads as abse
 
 // --- the view rows ---
 
-test("with a rule, the view holds the four defaults first, and every files row says it does not bind a spawned process yet", () => {
-    addFilesRule("h5", { effect: "hide", source: "/files/agent/a.txt", scope: "session" });
+test("with a rule, the view holds the four defaults first, and a hide row's label states its limits, the Linux one only on a Linux host", () => {
+    const h = addFilesRule("h5", { effect: "hide", source: "/files/agent/a.txt", scope: "session" });
+    const sh = addFilesRule("h5", { effect: "show", source: "/files/agent/.env", scope: "session" });
     const rows = filesRows("h5");
     assert.deepEqual(rows.slice(0, DEFAULT_HOLDS.length).map((r) => [r.layer, r.entry.id]), DEFAULT_HOLDS.map((d) => ["default", d.id]));
     for (const r of rows.slice(0, DEFAULT_HOLDS.length)) assert.equal(r.removal, undefined, "a default cannot be removed");
-    for (const r of rows) assert.ok(r.entry.label.endsWith(HIDE_NOT_ON_SPAWN), r.entry.label);
-    assert.match(HIDE_NOT_ON_SPAWN, /not applied yet to programs the shell starts/);
+    for (const platform of [undefined, "macos", "linux"]) {
+        const of = (id) => filesRows("h5", platform).find((r) => r.entry.id === id).entry.label;
+        const lines = of(h.id).split("\n");
+        assert.deepEqual(lines, ["hide /files/agent/a.txt", ...(platform === "linux" ? [HIDE_LIMIT_LINUX_LATE] : []), HIDE_LIMIT_HARD_LINK], String(platform));
+        assert.equal(of(sh.id), "show /files/agent/.env", "a show row states no hide limit");
+        for (const r of filesRows("h5", platform)) assert.doesNotMatch(r.entry.label, /not applied yet/, "PR B binds a spawned process: the old words are gone");
+    }
+    for (const line of [HIDE_LIMIT_LINUX_LATE, HIDE_LIMIT_HARD_LINK]) assert.doesNotMatch(line, /\n| {2}/, "one plain line each");
     const keys = new Set(["consumer", "layer", "entry", "wins", "overrides", "overriddenBy", "removal"]);
     for (const r of rows) for (const k of Object.keys(r)) assert.ok(keys.has(k), `a files row carries ${k}`);
 });
@@ -138,7 +145,7 @@ test("a show over a default names the default it overrides; a session show over 
     assert.deepEqual(of(t.id).overrides, [g.id]);
     assert.ok(of(g.id).overriddenBy.includes(t.id));
     assert.equal(of(s.id).entry.origin, "person");
-    assert.equal(of(s.id).entry.label, "show /files/agent/.env" + HIDE_NOT_ON_SPAWN);
+    assert.equal(of(s.id).entry.label, "show /files/agent/.env");
     P.removePolicy(g.id);
 });
 

@@ -32,7 +32,7 @@
 // asserted by tests/e2e/pointer-values.spec.mjs.
 //
 //   9.  AN ARROW FILE FETCHES AS A TABLE — dtypes read from its schema, like Parquet, with nothing to decode.
-//   10. PYTHON OPENS IT BY POINTER — `tables: { df: '@tool:"the stock table"' }` — and returns a DataFrame,
+//   10. PYTHON OPENS IT BY POINTER — `ml.table('@tool:"the stock table"')` — and returns a DataFrame,
 //       which becomes a pointer of its own.
 //   11. JAVASCRIPT READS PYTHON'S TABLE IN FULL through that pointer — every row, not the 200-row preview.
 //   12. THE READ-ONLY DIALECT READS IT TOO, with no prompt.
@@ -126,6 +126,7 @@ const main = async () => {
             `return { rows: t.shape[0], top3revenue: top.map(r => r[rev]) };`,
         ].join("\n");
         const PY = [
+            `df = ml.table(${JSON.stringify(SALES)})`,
             "print('shape', df.shape)",
             "print('dtypes'); print(df.dtypes)",
             "by = df.groupby('region')['revenue'].sum().sort_values(ascending=False)",
@@ -142,7 +143,7 @@ const main = async () => {
             { tool: "fetch_url", args: { url: SALES, pipe: "grep west | head 3" } },
             { tool: "exec", args: { js: SURVEY } },
             { tool: "exec", args: { js: VIA_POINTER } },
-            { tool: "python_exec", args: { code: PY, mode: "readonly", tables: { df: SALES } } },
+            { tool: "python_exec", args: { code: PY, mode: "readonly" } },
             // The final answer CITES its own work instead of retyping it. Both references are the BARE TOOL
             // NAME form — "the last python_exec call" — so the demo can write them without knowing any minted
             // id, and the slots do the rest: `:in` is the code that ran, a bare reference is the output.
@@ -238,7 +239,7 @@ const main = async () => {
         await frame.page().screenshot({ path: path.join(ART, "6a-exec-pointer.png") });
 
         await narrate(page, "7 — python_exec loads it from the CACHE as a real DataFrame", { sub: "no second request, no read_csv — and pandas reports the dtypes beat 1 promised" });
-        log("\n--- 6b. python_exec with tables: { df: <the url> } ---\n" + (await outOf(6)).trim().slice(0, 800));
+        log("\n--- 6b. python_exec with df = ml.table(<the url>) ---\n" + (await outOf(6)).trim().slice(0, 800));
         await frame.page().screenshot({ path: path.join(ART, "6b-python-dataframe.png") });
 
         // 7 — the ANSWER cites its own work. Both pointers expand IN PLACE: the code block and the
@@ -261,6 +262,7 @@ const main = async () => {
         const outcome = (text, ok) => ok.test(text) ? "✓ works" : `✗ not built yet — got: ${text.split("\n").find((l) => l.trim() && !/^(Fetched |\()/.test(l))?.slice(0, 90) ?? "(nothing)"}`;
         const STOCK = `${data.url}/stock.arrow`;
         const PY2 = [
+            `df = ml.table('@tool:"the stock table"')`,
             "low = df[(df['stock'] < 10) & (~df['discontinued'])].copy()",
             "low['reorder'] = 60 - low['stock']",
             "print(df.dtypes.to_dict())",
@@ -275,7 +277,7 @@ const main = async () => {
         const RO2 = `const t = @tool:"the restock plan".table; return { rows: t.shape[0], first: t.head(3).records() };`;
         fake.setScript([
             { tool: "fetch_url", args: { url: STOCK, token: "the stock table" } },
-            { tool: "python_exec", args: { mode: "readonly", tables: { df: '@tool:"the stock table"' }, code: PY2, token: "the restock plan" } },
+            { tool: "python_exec", args: { mode: "readonly", code: PY2, token: "the restock plan" } },
             { tool: "exec", args: { js: JS2 } },
             { tool: "exec", args: { js: RO2 } },
             { content: "The restock plan, computed in Python and read back in JavaScript:\n\n![the restock plan](@tool:\"the restock plan\")" },
@@ -307,7 +309,7 @@ const main = async () => {
         await frame2.page().screenshot({ path: path.join(ART, "9-arrow-fetch.png") });
 
         const s10 = await out2(1);
-        await narrate(page, "10 — python_exec opens it BY POINTER", { sub: `tables: { df: '@tool:"the stock table"' } — and its DataFrame becomes a pointer · ${outcome(s10, /SKUs to reorder/)}` });
+        await narrate(page, "10 — python_exec opens it BY POINTER", { sub: `ml.table('@tool:"the stock table"') — and its DataFrame becomes a pointer · ${outcome(s10, /SKUs to reorder/)}` });
         log("\n--- 10. python_exec over the pointer ---\n" + s10.trim().slice(0, 700));
         await frame2.page().screenshot({ path: path.join(ART, "10-python-by-pointer.png") });
 

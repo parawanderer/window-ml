@@ -204,6 +204,33 @@ test("models.list: this runtime's list, another runtime's refused, and an unreac
     assert.deepEqual(await down.run({ type: "models.list", runtime: "local" }), { ok: true, data: { models: [] } });
 });
 
+test("session.release: this browser's own pages only, refused while a turn runs, and handed to the one release path", async () => {
+    const { run, index } = world({ releaseRun: async () => true });
+    index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    index.ingest(ev("aaaa0001", "agent-result", { result: { summary: "done" } }), { tabId: TAB, trusted: true });
+    // A hub device is not the person at the machine.
+    assert.equal(code(await run({ type: "session.release", session: sid("aaaa0001") }, { via: "hub" })), "forbidden");
+    assert.equal(code(await run({ type: "session.release", session: sid("ffff0000") })), "not-found");
+    assert.equal(code(await run({ type: "session.release", session: sid("aaaa0001") })), "ok");
+    // The worker refusing (a turn started since the index said idle) is a conflict too.
+    const busy = world({ releaseRun: async () => false });
+    busy.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    busy.index.ingest(ev("aaaa0001", "agent-result", { result: { summary: "done" } }), { tabId: TAB, trusted: true });
+    assert.equal(code(await busy.run({ type: "session.release", session: sid("aaaa0001") })), "conflict");
+    // A runtime that holds no run to release says so.
+    const none = world();
+    none.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    none.index.ingest(ev("aaaa0001", "agent-result", { result: { summary: "done" } }), { tabId: TAB, trusted: true });
+    assert.equal(code(await none.run({ type: "session.release", session: sid("aaaa0001") })), "unsupported");
+});
+
+test("session.release is refused while the index says a turn is running", async () => {
+    const { run, index } = world({ releaseRun: async () => true });
+    index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    assert.equal(index.get("aaaa0001").status, "running");
+    assert.equal(code(await run({ type: "session.release", session: sid("aaaa0001") })), "conflict");
+});
+
 test("session.pin: bounded, idempotent, and handed to the one pin path", async () => {
     const { run, index, named } = world();
     index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
@@ -625,6 +652,21 @@ test("agent.start on a blank tab opens one, at the command's url or the browser'
     const bad = world({ startPage: () => "" });
     assert.equal((await bad.run({ type: "agent.start", runtime: "local", task: "go", target: { kind: "blank", url: "file:///etc/passwd" } })).error.code, "invalid");
     assert.equal(bad.named("openTab").length, 0);
+});
+
+test("agent.start with no tab (a detached target) starts through startDetached, opening and naming no tab; a runtime without it refuses", async () => {
+    const detached = [];
+    const w = world({ startDetached: async (...a) => { detached.push(a); return { outcome: "started", hash: "ab120002" }; } });
+    const r = await w.run({ type: "agent.start", runtime: "local", task: "sum the logs", target: { kind: "detached" }, maxSteps: 3 });
+    assert.deepEqual(r, { ok: true, data: { session: sid("ab120002") } });
+    assert.deepEqual(detached, [[{ task: "sum the logs", maxSteps: 3 }, { surface: "chat" }]]);
+    assert.equal(w.named("startAgent").length, 0, "not started on any tab");
+    assert.equal(w.named("openTab").length, 0, "and no tab opened for it");
+    // A runtime that offers no detached start (no `capabilities.detached`) says so, as for any target kind it does not offer.
+    const older = world();
+    const refused = await older.run({ type: "agent.start", runtime: "local", task: "go", target: { kind: "detached" } });
+    assert.equal(refused.error.code, "unsupported");
+    assert.equal(older.named("startAgent").length + older.named("openTab").length, 0, "nothing started or opened in its place");
 });
 
 test("agent.start on a tab that has closed is refused, and nothing starts anywhere else", async () => {

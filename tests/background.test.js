@@ -887,6 +887,39 @@ test("CDP_CLICK reports the missing debugger permission (never attaches)", async
     assert.equal(bg.debuggerCalls.length, 0, "never attached without the permission");
 });
 
+// --- who answers a run's gate: a sender with no tab proves it is the extension's page ---
+
+// Bounded: a gate no one may answer leaves its run waiting forever, which is how ten rows here once hung the suite.
+test("a run's gate is not answered by a sender with no tab and no extension URL; the extension's page answers it", { timeout: 10000 }, async () => {
+    let n = 0, bg, gate = null;
+    bg = loadBackground({
+        config: baseConfig(),
+        openTabs: [{ id: 8, url: "https://page.test/", title: "Page" }],
+        onFetch: () => (++n === 1
+            ? jsonResponse({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "exec", arguments: JSON.stringify({ js: "1" }) } }] } }] })
+            : jsonResponse({ choices: [{ message: { content: "done" } }] })),
+        onTabMessage: async (tabId, msg) => {
+            if (msg?.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) gate = msg.event;
+            if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.name === "exec" && !msg.payload?.renderOnly && !msg.payload?.readonlyTry && !msg.payload?.precheck) return { result: "ran" };
+            return undefined;
+        },
+    });
+    const done = bg.send({ type: "START_RUN", payload: {
+        runId: "gate-who", task: "t", systemPrompt: "S",
+        tools: [{ name: "exec", requiresApproval: true, description: "", parameters: { type: "object", properties: { js: { type: "string" } } }, capabilities: [] }],
+        model: "m", think: null, maxSteps: 3, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
+    } }, { tab: { id: 8 } });
+    for (let i = 0; i < 200 && !gate; i++) await new Promise((r) => setTimeout(r, 10));
+    assert.ok(gate, "positive control: the exec asked");
+    const answer = (sender) => bg.send({ type: "SET_APPROVAL", payload: { runId: gate.id, seq: gate.seq, decision: true } }, sender);
+    void answer({});
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(n, 1, "a bare sender with no tab answered the gate");
+    void answer({ url: "chrome-extension://test/sidebar.html" });
+    await done;
+    assert.equal(n, 2, "the extension page's answer let the run go on");
+});
+
 // CDP EXEC routing (strict-CSP / Trusted-Types pages). Drive a full background run: the model calls exec, the
 // human approves it (via the fanned gate), the delegated page-side eval is CSP-BLOCKED and hands back a
 // cdpExec signal, and the background re-runs it via the debugger. The page echoes a DECOY source to prove the
@@ -3560,7 +3593,7 @@ test("SECURITY (grant): an approved agent run lets THAT sheet read (untrusted pa
             if (call.url.includes("docs.google.com")) return sheetCsv();   // the FETCH_SHEET's credentialed fetch
             // The model: turn 1 → call python_exec(full) loading the sheet; turn 2 → finish.
             return (++turn === 1)
-                ? jsonResponse({ choices: [{ finish_reason: "tool_calls", message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "python_exec", arguments: JSON.stringify({ code: "df", mode: "full", tables: { df: OK_URL } }) } }] } }] })
+                ? jsonResponse({ choices: [{ finish_reason: "tool_calls", message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "python_exec", arguments: JSON.stringify({ code: `df = ml.table(${JSON.stringify(OK_URL)})\ndf`, mode: "full" }) } }] } }] })
                 : jsonResponse({ choices: [{ message: { content: "done" } }] });
         },
         onTabMessage: async (tabId, msg) => {
@@ -5070,8 +5103,8 @@ test("SECURITY (PYTHON_EXEC): a page may read a STORED table only while a run on
     const held = await seed.put(new Blob(["a\n1\n"]), { format: "csv", session: "run-elsewhere" });
     const loose = await seed.put(new Blob(["a\n1\n"]), { format: "csv" });
     // Self-approving so the cell is allowed to run at all; the property is the TABLE OWNERSHIP, on any allowed path.
-    const bg = loadBackground({ config: baseConfig(), indexedDB: idb, local: { ml_site_schema: 2, ml_site_selfapprove: ["https://evil.example"] } });
-    const table = (key) => ({ code: "return len(df)", tables: [{ name: "df", data: { kind: "value", key, label: "@tool:abc1234", columns: ["a"] } }] });
+    const bg = loadBackground({ config: baseConfig(), indexedDB: idb, playTables: true, local: { ml_site_schema: 2, ml_site_selfapprove: ["https://evil.example"] } });
+    const table = (key) => ({ code: 'df = ml.table("@tool:abc1234")\nreturn len(df)', hoisted: [{ src: "@tool:abc1234", opts: {}, answer: { source: { kind: "pointer", label: "@tool:abc1234" }, data: { kind: "value", key, label: "@tool:abc1234", columns: ["a"] } } }] });
     const page = { tab: { id: 9 }, url: "https://evil.example/attack" };
 
     for (const key of [held.key, loose.key]) {
@@ -5084,7 +5117,7 @@ test("SECURITY (PYTHON_EXEC): a page may read a STORED table only while a run on
     await bg.send({ type: "PYTHON_EXEC", payload: table("v00000000000000ff") }, page);
     // And our own surface (the bench) is trusted, as for every other PYTHON_EXEC decision.
     await bg.send({ type: "PYTHON_EXEC", payload: table(held.key) }, { tab: { id: 9 }, url: "chrome-extension://test/sidebar.html" });
-    assert.deepEqual(bg.pyRuns.filter((m) => m.type === "PY_RUN").map((m) => m.tables[0].data.key), ["v00000000000000ff", held.key]);
+    assert.deepEqual(bg.pyRuns.filter((m) => m.type === "PY_RUN").map((m) => m.read[0].value.data.key), ["v00000000000000ff", held.key]);
 });
 
 test("SECURITY (VALUE_COLUMNS): a stored table's columns are read only for a background run this worker hosts on the sender's tab", async () => {
@@ -5127,7 +5160,7 @@ test("SECURITY (page-hosted values): a tab reads a stored value the worker discl
     const mine = await seed.put(new Blob(["a\n1\n2\n"]), { format: "csv", session: "page:9" });
     const theirs = await seed.put(new Blob(["a\n7\n"]), { format: "csv", session: "page:11" });
     // Self-approving so the cell is allowed to run at all; the property is the DISCLOSURE SCOPE, on any allowed path.
-    const bg = loadBackground({ config: baseConfig(), indexedDB: idb, local: { ml_site_schema: 2, ml_site_selfapprove: ["https://shop.example"] } });
+    const bg = loadBackground({ config: baseConfig(), indexedDB: idb, playTables: true, local: { ml_site_schema: 2, ml_site_selfapprove: ["https://shop.example"] } });
     const page = { tab: { id: 9 }, url: "https://shop.example/report" };
 
     // VALUE_COLUMNS: the run id is decorative on this path — the entitlement is the tab's.
@@ -5139,11 +5172,11 @@ test("SECURITY (page-hosted values): a tab reads a stored value the worker discl
     assert.equal(no.columns, undefined);
 
     // PYTHON_EXEC takes the same entitlement.
-    const table = (key) => ({ code: "return len(df)", tables: [{ name: "df", data: { kind: "value", key, label: "@tool:abc1234", columns: ["a"] } }] });
+    const table = (key) => ({ code: 'df = ml.table("@tool:abc1234")\nreturn len(df)', hoisted: [{ src: "@tool:abc1234", opts: {}, answer: { source: { kind: "pointer", label: "@tool:abc1234" }, data: { kind: "value", key, label: "@tool:abc1234", columns: ["a"] } } }] });
     const bad = await bg.send({ type: "PYTHON_EXEC", payload: table(theirs.key) }, page);
     assert.match(bad.error, /^Refused: that stored table belongs to a run that is not running on this page\./);
     await bg.send({ type: "PYTHON_EXEC", payload: table(mine.key) }, page);
-    assert.deepEqual(bg.pyRuns.filter((m) => m.type === "PY_RUN").map((m) => m.tables[0].data.key), [mine.key], "only the disclosed one reached the sandbox");
+    assert.deepEqual(bg.pyRuns.filter((m) => m.type === "PY_RUN").map((m) => m.read[0].value.data.key), [mine.key], "only the disclosed one reached the sandbox");
 });
 
 // USER_FOCUS: chat_metadata's "user focus" line, answered relative to the SENDER's tab and always COARSE — the

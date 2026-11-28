@@ -126,6 +126,9 @@ export interface RuntimeCapabilities {
     switchModel?: boolean;
     /** `device.*`: this runtime holds paired devices and can list, renew, revoke and re-scope them */
     devices?: boolean;
+    /** `agent.start` with a `detached` target: a run that starts with no tab (docs/spec/TABLESS_RUN.md). It needs `agent`,
+     *  not `tabs`. Absent means no, and a client offers no "No tab" choice. */
+    detached?: boolean;
     /** RESERVED: `agent.start` with a headless target. False on every runtime today. */
     headless?: boolean;
     /** RESERVED: accepts `agent.start` with `lineage` (a subagent started by another agent). False today. */
@@ -407,6 +410,9 @@ export type SessionStreamMessage =
 export type AgentTarget =
     | { kind: "tab"; tabId: number }
     | { kind: "blank"; url?: string }
+    /** No tab at all (docs/spec/TABLESS_RUN.md): the run's page tools are answered with how it gets a page, and the tools
+     *  that need none run. Requires `capabilities.detached`; on `agent.start` only, so far. */
+    | { kind: "detached" }
     /** RESERVED: requires `capabilities.headless` */
     | { kind: "headless" };
 
@@ -470,6 +476,12 @@ export type Command =
      */
     | { type: "session.continue"; session: SessionId; maxSteps?: number }
     | { type: "session.delete"; session: SessionId }
+    /**
+     * Release what a run holds in this browser's memory (its Python names, `@tool:` values, background tasks) while the
+     * session and its transcript stay: the Stop button of a run whose tab closed (ASYNC_CALLS.md, "A run whose tab
+     * closed: the release"). From this browser's own extension pages only; refused while a turn runs.
+     */
+    | { type: "session.release"; session: SessionId }
     /**
      * Keep a session, or stop keeping it. It is the runtime's because eviction is: a pin kept only on one device
      * cannot stop the runtime dropping the session. Unpinning leaves the session saved, and subject to the usual caps
@@ -682,6 +694,7 @@ export const COMMAND_SCOPE: { readonly [T in CommandType]: Scope } = {
     "session.cancel": "drive",
     "session.continue": "drive",
     "session.delete": "drive",
+    "session.release": "drive",
     "session.pin": "drive",
     "session.rename": "drive",
     "session.model": "drive",
@@ -876,6 +889,7 @@ export interface CommandResultData {
     /** the cap the run is carrying on under, which is the one asked for unless the runtime lowered it */
     "session.continue": { maxSteps?: number };
     "session.delete": Record<string, never>;
+    "session.release": Record<string, never>;
     /** the row changes through the index, as an `upsert`, like every other change to a session */
     "session.pin": Record<string, never>;
     /** the title as the runtime stored it (trimmed and capped); empty when it went back to being generated */

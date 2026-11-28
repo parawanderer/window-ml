@@ -232,6 +232,40 @@ that a message starts the next turn appears only when the composer is drawn unde
 Tests: `tests/task-row.test.mjs`, `tests/session-index.test.mjs`, `tests/task-mark.test.mjs`,
 `tests/event-admission.test.mjs`.
 
+## A run whose tab closed: the release (docs/spec/ASYNC_CALLS.md, points 1 to 5 and 7)
+
+`sw-release.ts` owns the deadline. `tabs.onRemoved` (`background.ts`) calls `onTabClosed`: each `bgRuns` run on that tab
+with no turn live gets `ml_release_due:<runId>` = `{ due, closedAt }`, with `due` = now + `closedRunGraceMin` minutes
+(a DevTools setting, an ordinary number, 0 to 1440, a longer one read as 1440; default 10, 0 releases at once). The one
+alarm `ml-release` is set to the earliest `due`. A run with a RUNNING task gets the entry with `due: null`, so the tab's
+closing is remembered across an eviction, and the `onTaskCounts` listener sets `due` when the last running task ends and
+the run still has no tab. A waiting result does not hold the run. The task table is read back (`hydrateTasks`) before
+any count, since a fresh worker holds none in memory and a count of 0 there would release a cell that still runs.
+
+The alarm and worker start (after `hydrationDone`) call `releaseDue`. A due entry whose run has a live turn or a tab
+(the `chrome.tabs.get` recheck, `runLacksTab`) is dropped: the turn's end sets a new one. One whose run has a running
+task goes back to `due: null`. The rest are released by `releaseRun`, which calls `releaseSessionTokens(runId,
+"tab-closed")`. `cancelRelease` runs at a turn's start (`hostTurn`), in `moveRun` and in a resume that adopts the run
+on a tab (`sw-sessions.ts`). A turn's end (`settle`) calls `rearmAfterTurn`: a run still on no tab gets a fresh
+deadline. `runLacksTab` is the stand-in for the move-run lane's `runHasNoTab` until that lands.
+
+Known gap: a settled run is not read back into `bgRuns` after an eviction, so a tab that closes after one arms nothing
+for it. What it held then is what outlived the worker: its Python namespace, which the idle reap ends, and its task rows.
+
+The reason (`ReleaseReason`: `tab-closed`, `person`; none for `forgetRun`, a failed start and the install purge) goes to
+every `onSessionRelease` hook. `deletePythonRun` puts it in `PY_DELETE_RUN`; the offscreen handler accepts it and does
+not read it yet (point 6, the namespace-drop record, is a later change). `endTasks(runId, reason, { keepUndelivered })`
+is how the task hook reads it: with a reason, the ended rows no turn has read stay in the table (persisted), their
+`result` pointer cleared and `releasedAt` stamped. The inbox text (`[task <id> done after 3 s: <text>; its value was
+released at <ISO time>]`), an `await` and a `tail` of that row say so. Running tasks are cancelled; archive and delete
+keep nothing.
+
+The session row's `releaseAt` is `setReleaseAtReader(releaseAtOf)` (`background.ts`); `armRelease` and `cancelRelease`
+refresh the row. The person's release is the `session.release` command (`session-commands.ts`), which no page sends
+yet (the chat page's Stop sends `session.cancel`): this browser's own pages only (`from.via`; a hub device is
+`forbidden`), `conflict` while a turn runs, reason `person`. Tests: `tests/release.test.mjs`
+(the bundle, with `loadBackground({ alarms: true })`), `tests/session-commands.test.mjs`.
+
 ## Traps
 
 - **A short `expectMs` shortens the lease.** The deadline is `expectMs ?? SH_LEASE_MS`, and models underestimate: on

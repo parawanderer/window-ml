@@ -1,6 +1,5 @@
 // The Python source assembled around a `python_exec` snippet — the PRELUDE (what's preloaded:
-// numpy/PIL/pandas, the injected image → img/img_np, the injected tables → named DataFrames + a
-// `tables` dict) and the wrapper that runs the user's code, captures stdout/return/tracebacks, and
+// numpy/PIL/pandas, the injected image → img/img_np) and the wrapper that runs the user's code, captures stdout/return/tracebacks, and
 // JSON-serializes the result. Split out of offscreen.ts (which owns the browser/Pyodide plumbing
 // + hardening) so this drift-prone Python can be exercised against REAL CPython in tests
 // (tests/python.test.js) instead of a re-implementation. Chrome-free (only imports python-env).
@@ -39,27 +38,28 @@ export function releaseNamespace(ns: any): void {
  *
  * @param ns the namespace to set on — `py.globals`, or a bench namespace
  * @param image the injected screenshot (data: URL / base64), or null for none
- * @param tablesJson the injected tables already JSON-encoded, or null for none
  * @param harness the harness module `lockdownReadonly` captured at boot. Re-bound HERE before every
  *   cell, never looked up through `sys.modules`: a cell that pops `sys.modules["_ml_harness"]` cannot
  *   force the next cell into the wrapper's `except ImportError` fallback (which imports the patched
  *   `ast`/`json`). Absent (real-CPython tests without the lockdown): the wrapper falls back to imports.
  */
-export function injectInputs(ns: any, image: string | null, tablesJson: string | null, harness?: unknown): void {
+export function injectInputs(ns: any, image: string | null, harness?: unknown, ...stale: unknown[]): void {
+    // The old (ns, image, tablesJson, harness) form would pass its null tables as the harness, and the cell would run
+    // with no gate: refuse it loudly rather than run a caller that has not moved.
+    if (stale.length) throw new Error("injectInputs takes (ns, image, harness): the tables argument is gone (ML_TABLE.md)");
     // Between cells: close the cell gate's window, so the next cell's revoke reaches only what that cell made.
     cellBoundary();
     if (harness !== undefined) ns.set("_ml_harness", harness);
     ns.set("INJECTED_IMAGE_B64", image == null ? undefined : String(image));
-    ns.set("INJECTED_TABLES_JSON", tablesJson == null ? undefined : String(tablesJson));
 }
 
 // Standard prelude injected before the model's code: numpy/PIL/pandas in scope, an optional
-// `img` (PIL.Image) + `img_np` (H×W×3 uint8) decoded from the injected screenshot, a `to_base64()`
-// helper, and the injected tables as named DataFrames (+ a `tables` dict). Reads the JS-injected
-// globals INJECTED_IMAGE_B64 / INJECTED_TABLES_JSON (set before this runs).
+// `img` (PIL.Image) + `img_np` (H×W×3 uint8) decoded from the injected screenshot, and a `to_base64()`
+// helper. Reads the JS-injected global INJECTED_IMAGE_B64 (set before this runs). A table is not injected: the cell
+// reads it with `ml.table(src)` (ML_FACADE).
 // The prelude in three parts, so the persistent BENCH can take only the first. BASE: imports + helpers.
-// DATA: the injected image/tables for a `python_exec` (resets `img`/`df`/`tables` to None each run, so it
-// would wipe a bench user's `df` between runs). LOADERS: the redirects that serve those injected objects —
+// DATA: the injected image for a `python_exec` (resets `img` to None each run, so it would wipe a bench
+// user's `img` between runs). LOADERS: the redirect that serves that injected image —
 // ONE patch per interpreter, reading the namespace the running cell's prelude names (`__main__._ml_load_ns`).
 // The bench has no injected data, so it needs neither (and names no namespace). `PRELUDE` is the three joined, unchanged.
 export const PRELUDE_BASE = /* python */ `
@@ -84,114 +84,44 @@ if _b64:
     img_np = np.array(img)
     H, W = img_np.shape[:2]
 
-# Each DataFrame is bound BOTH under its own variable name AND in a "tables" dict (tables[name]) —
-# models reaching for either work (the map's param name is tables, so tables[x] is a natural guess;
-# the description tells them to use the bare name). df stays the single-source alias.
-df = None
-tables = {}
-_tsj = globals().get("INJECTED_TABLES_JSON")
-if _tsj:
-    def _build_df(_t):
-        # A STORED table (the value store): its bytes were copied once into a bytearray bound as _t["buf"], and are
-        # decoded here by the format they arrived in. A delimited body is re-read with the columns, delimiter and
-        # header decision its preview already made, so pandas cannot disagree with what the model was shown.
-        if _t.get("kind") == "value":
-            _buf = globals().pop(_t.get("buf") or "", None)
-            if _buf is None:
-                raise RuntimeError("the stored table was not handed to the sandbox")
-            _fmt = _t.get("format")
-            if _fmt in ("arrow-file", "arrow-stream"):
-                import pyarrow as _pa, pyarrow.ipc as _ipc
-                _src = _pa.py_buffer(_buf)
-                return (_ipc.open_file(_src) if _fmt == "arrow-file" else _ipc.open_stream(_src)).read_all().to_pandas()
-            if _fmt == "parquet":
-                import pyarrow as _pa, pyarrow.parquet as _pq
-                return _pq.read_table(_pa.BufferReader(_pa.py_buffer(_buf))).to_pandas()
-            if _fmt in ("csv", "tsv"):
-                _sep = _t.get("delimiter") or ("\t" if _fmt == "tsv" else ",")
-                return pd.read_csv(io.BytesIO(_buf), sep=_sep, header=None if _t.get("headerless") else 0, names=_t.get("columns") or None)
-            if _fmt in ("paged", "bytes"):
-                raise RuntimeError("this stored value is " + str(_fmt) + ", which is not a table, so it cannot be loaded as a dataframe.")
-            raise RuntimeError("a stored table in a format the sandbox does not read: " + str(_fmt))
-        if _t.get("kind") == "rows":
-            _cols = _t.get("columns") or []
-            _rows = _t.get("rows") or []
-            if _cols:
-                _w = len(_cols)
-                _rows = [ (list(_r) + [None] * _w)[:_w] for _r in _rows ]
-                return pd.DataFrame(_rows, columns=_cols)
-            return pd.DataFrame(_rows)
-        return pd.read_html(io.StringIO(_t.get("html") or ""), flavor="bs4")[0]
-    for _entry in _ml_loads(_tsj):
-        _df = _build_df(_entry["data"])
-        globals()[_entry["name"]] = _df
-        tables[_entry["name"]] = _df
-        # Also key by the SOURCE string (e.g. a single source "current" → tables['current']), so a model
-        # that mirrors the arg it passed reaches its df without knowing the internal 'df' name.
-        _alias = _entry.get("alias")
-        if _alias and _alias != _entry["name"]:
-            tables[_alias] = _df
-
 `;
-const PRELUDE_LOADERS = /* python */ `
+/**
+ * Install the loader redirects once per interpreter (the guard is on the patched module), with `pd` and `Image` bound.
+ * The prelude runs it before every cell; a worker runs it before the dialect's setup too, so the `pd.read_csv` the setup
+ * registers for inside cells is the one a cell reaches (python-dialect-run.ts, `_ml_read_csv_inside`).
+ */
+export const LOADERS_INSTALL = /* python */ `
 # --- Loader interception (DX, not a security boundary) ---------------------------------------
-# Models have strong pre-training habits — Image.open(path), pd.read_csv(name), pd.read_html(
-# selector) — and reach for them with the SELECTOR/name they passed to the tool (observed:
-# Image.open('canvas#stage'), pd.read_csv('current')). This sandbox has no filesystem, so those
-# only ever throw FileNotFoundError, burning a whole turn. Their INTENT is obvious: the
-# already-loaded img / a loaded DataFrame. Redirect the call to the in-memory object — but ONLY
-# when we actually HAVE it, and never for a real file-like/URL — so nothing legitimate is
-# hijacked (a genuine http read_csv, or Image.open(BytesIO(...)), passes straight through). The
-# on-error redirect hint in builtin-tools.ts stays as the fallback for what this can't resolve.
+# Models have a strong pre-training habit, Image.open(path), and reach for it with the SELECTOR they passed to
+# the tool (observed: Image.open('canvas#stage')). No str names a real image file here, so that only ever throws
+# FileNotFoundError, burning a whole turn. Its INTENT is obvious: the already-loaded img. Redirect the call to it,
+# but ONLY when one is loaded, and never for a file-like (Image.open(BytesIO(...)) passes straight through). A
+# table has no redirect: pd.read_csv reads a /files/ path or a buffer, and ml.table reads everything else.
 #
-# ONE patch per interpreter. It is installed inside a function, so the originals live in its closure and no
+# ONE patch per interpreter. It is installed inside a function, so the original lives in its closure and no
 # namespace (a run's dict included) holds an \`_ml_orig_*\` name to chain onto. The guard is on the patched
-# module, so a later prelude run in ANY namespace installs nothing. The wrappers read img/tables from the
-# namespace the prelude of the cell that is running named (\`__main__._ml_load_ns\`, set per cell below), never
-# from the dict that defined them, so a second run cannot be handed the first run's image. None (the bench)
-# means no redirect: the real open runs.
+# module, so a later prelude run in ANY namespace installs nothing. The wrapper reads img from the namespace the
+# prelude of the cell that is running named (\`__main__._ml_load_ns\`, set per cell below), never from the dict that
+# defined it, so a second run cannot be handed the first run's image. None (the bench) means no redirect: the real
+# open runs.
 def _ml_install_loaders(_Image, _pd):
     import __main__ as _main
     def _ns():
         return getattr(_main, "_ml_load_ns", None) or {}
-    def _pick_table(_name):
-        _t = _ns().get("tables") or {}
-        if isinstance(_name, str) and _name in _t: return _t[_name]
-        if len(_t) == 1: return next(iter(_t.values()))   # one table loaded → that's the one they meant
-        return None
-    def _tableish(_s):
-        # A string that names a loaded table, not a real resource (not a URL, not raw HTML).
-        return isinstance(_s, str) and "://" not in _s and not _s.lstrip().startswith("<")
     _orig_open = _Image.open
     def _ml_image_open(_fp, *_a, **_k):
         # No str can name a real file here → if an image is loaded, that's what they meant.
         _img = _ns().get("img")
         if isinstance(_fp, str) and _img is not None: return _img
         return _orig_open(_fp, *_a, **_k)
-    _orig_read_csv = _pd.read_csv
-    def _ml_read_csv(_fp, *_a, **_k):
-        # The exact source a table was loaded from (a URL included) is that table: the sandbox has no network,
-        # and re-reading what \`tables\` already loaded is the commonest first try. Any other URL is not hijacked.
-        _tt = _ns().get("tables") or {}
-        if isinstance(_fp, str) and _fp in _tt: return _tt[_fp]
-        if _tableish(_fp):
-            _t = _pick_table(_fp)
-            if _t is not None: return _t
-        return _orig_read_csv(_fp, *_a, **_k)
-    _orig_read_html = _pd.read_html
-    def _ml_read_html(_fp, *_a, **_k):
-        _tt = _ns().get("tables") or {}
-        if isinstance(_fp, str) and _fp in _tt: return [_tt[_fp]]
-        if _tableish(_fp):
-            _t = _pick_table(_fp)
-            if _t is not None: return [_t]   # read_html returns a LIST of tables
-        return _orig_read_html(_fp, *_a, **_k)
-    _Image.open, _pd.read_csv, _pd.read_html = _ml_image_open, _ml_read_csv, _ml_read_html
+    _Image.open = _ml_image_open
     _main._ml_load_ns = None
 if not hasattr(pd, "_ml_loaders_installed"):
     _ml_install_loaders(Image, pd)
     pd._ml_loaders_installed = True
 del _ml_install_loaders
+`;
+const PRELUDE_LOADERS = LOADERS_INSTALL + /* python */ `
 import __main__ as _ml_m
 _ml_m._ml_load_ns = globals()
 del _ml_m
@@ -216,14 +146,11 @@ const replaceOnce = (src: string, from: string, to: string): string => {
     if (src.split(from).length !== 2) throw new Error(`prelude: expected exactly one ${JSON.stringify(from)}`);
     return src.replace(from, to);
 };
-// ROOT C's per-run dict: the same DATA, but `img`/`img_np`/`H`/`W` and `df`/`tables` are bound only by a cell that
-// passes an image or tables, so a later cell that passes none keeps them. The "run" prelude then adds the LOADERS:
-// one shared patch per interpreter that reads the namespace of the cell running, so a second run's dict installs
-// nothing over the first and cannot be handed the first run's `img`.
-const PRELUDE_DATA_KEPT = replaceOnce(replaceOnce(PRELUDE_DATA,
-    "img = None\nimg_np = None\nH = W = 0\n", ""),
-    "df = None\ntables = {}\n_tsj = globals().get(\"INJECTED_TABLES_JSON\")\nif _tsj:\n",
-    "_tsj = globals().get(\"INJECTED_TABLES_JSON\")\nif _tsj:\n    df = None\n    tables = {}\n");
+// ROOT C's per-run dict: the same DATA, but `img`/`img_np`/`H`/`W` are bound only by a cell that passes an image, so
+// a later cell that passes none keeps them. The "run" prelude then adds the LOADERS: one shared patch per interpreter
+// that reads the namespace of the cell running, so a second run's dict installs nothing over the first and cannot be
+// handed the first run's `img`.
+const PRELUDE_DATA_KEPT = replaceOnce(PRELUDE_DATA, "img = None\nimg_np = None\nH = W = 0\n", "");
 
 // Network policy. pandas' read_csv/read_html and urllib all funnel through
 // `urllib.request.OpenerDirector.open`, so patch THAT (robust to however urlopen was imported). The
@@ -235,7 +162,7 @@ const PRELUDE_DATA_KEPT = replaceOnce(replaceOnce(PRELUDE_DATA,
 //   40-line "[Errno 23] Host is unreachable". Replace it with one clear line steering to the loaded data.
 // - full: make the sync pandas idiom actually WORK by routing urllib through Pyodide's SYNCHRONOUS
 //   `pyodide.http.open_url` (a sync XHR) wrapped in a minimal urllib-response shim. Caveats (surfaced
-//   in the on-failure message): uncredentialed (no cookies — for a PRIVATE sheet use the `tables` param,
+//   in the on-failure message): uncredentialed (no cookies — for a PRIVATE sheet use `ml.table(<its URL>)`,
 //   which fetches credentialed) + text-only + subject to CORS/host-permissions like any extension fetch.
 //   Guarded: if pyodide.http can't load, full mode falls back to the raw (socket-bound) original.
 const netPolicy = (hardened: boolean): string => {
@@ -248,7 +175,7 @@ if not hasattr(_mlnet.OpenerDirector, "_ml_orig_open"):
     if (hardened) {
         policy += /* python */ `
 def _ml_blocked_open(self, *_a, **_k):
-    raise RuntimeError("network is disabled in python_exec — the tool ALREADY loaded your table/sheet/image via the tables/image parameter, so reference it directly (e.g. df, df_remote, img). For a live fetch, call fetch_url, then pass the same URL in tables.")
+    raise RuntimeError("network is disabled in python_exec. Read a table with ml.table(src): a page table, a Google Sheet, an @tool: or @file: pointer, a /files/ path, or a URL this run fetched (call fetch_url first). The image parameter's image is img.")
 _mlnet.OpenerDirector.open = _ml_blocked_open
 `;
 
@@ -265,7 +192,7 @@ try:
         try:
             _text = _mlph.open_url(_u).getvalue()   # synchronous XHR → StringIO of the response text
         except Exception as _e:
-            raise RuntimeError("full-mode fetch of " + repr(_u) + " failed (" + str(_e) + "). Pyodide fetches via the browser: the host must allow CORS and the extension must have access to it (check site access / host permissions). This path is UNCREDENTIALED + text-only — for a private Google Sheet use the tool's tables param instead (it fetches with your login).")
+            raise RuntimeError("full-mode fetch of " + repr(_u) + " failed (" + str(_e) + "). Pyodide fetches via the browser: the host must allow CORS and the extension must have access to it (check site access / host permissions). This path is UNCREDENTIALED + text-only — for a private Google Sheet use ml.table(<its URL>) instead (it reads with your login).")
         _r = _MlResp(_text.encode())
         _r.headers = {}; _r.status = 200; _r.url = _u
         return _r
@@ -284,7 +211,7 @@ except Exception:
 // prelude re-runs (rebuilding its own names). Keep the JS-injected inputs (set before this runs).
 export const RESET = /* python */ `
 for _k in list(globals().keys()):
-    if not _k.startswith('_') and _k not in ('INJECTED_IMAGE_B64', 'INJECTED_TABLES_JSON'):
+    if not _k.startswith('_') and _k != 'INJECTED_IMAGE_B64':
         try: del globals()[_k]
         except Exception: pass
 `;
@@ -304,7 +231,7 @@ for _k in list(globals().keys()):
  * a trailing expression and a traceback all come back.
  *
  * @param persist a KEEP-STATE mode: `true` is the bench (only `PRELUDE_BASE`), `"run"` is ROOT C's per-run dict
- *   (`PRELUDE_BASE` and the injected image/tables, bound only when a cell passes them). Neither resets, and the
+ *   (`PRELUDE_BASE` and the injected image, bound only when a cell passes one). Neither resets, and the
  *   script's own top-level names are declared `global` in the wrapper, so they land in the namespace it runs in and
  *   are still there next run. Without that the wrapper's function scope would swallow them: `x = 1` is a LOCAL of
  *   `_user` and disappears when the run ends.
@@ -364,6 +291,14 @@ if _ml_h is not None and getattr(_ml_h, "ast_parse", None) is not None:
     _ml_asyncio = _ml_h.asyncio
 else:
     import inspect as _ml_inspect, asyncio as _ml_asyncio
+# A SYNCHRONOUS \`ml\` MEMBER (\`ml.table\`) waits in place over JSPI. The hardened worker refuses \`pyodide.ffi\` to any
+# import, so its \`run_sync\` is the harness's; elsewhere it is imported, and real CPython has none.
+_ml_run_sync = getattr(_ml_h, "run_sync", None)
+if _ml_run_sync is None:
+    try:
+        from pyodide.ffi import run_sync as _ml_run_sync
+    except Exception:
+        _ml_run_sync = None
 # THE CELL GATE (cell-gate.ts): what the cell hands to JavaScript is revoked in the cancel. No-ops without the lockdown.
 _ml_cell_begin = getattr(_ml_h, "cell_begin", None) or (lambda: None)
 _ml_cell_revoke = getattr(_ml_h, "cell_revoke", None) or (lambda: None)
@@ -379,7 +314,6 @@ ${persist === true ? "" : `
 def _ml_in(_v):
     return _v if (isinstance(_v, str) or _v is None) else None
 INJECTED_IMAGE_B64 = _ml_in(globals().get("INJECTED_IMAGE_B64"))
-INJECTED_TABLES_JSON = _ml_in(globals().get("INJECTED_TABLES_JSON"))
 `}
 ${persist === true ? PRELUDE_BASE + PRELUDE_NO_LOADS : persist === "run" ? PRELUDE_BASE.slice(0, -1) + PRELUDE_DATA_KEPT.slice(0, -1) + PRELUDE_LOADERS : RESET + PRELUDE}
 ${netPolicy(hardened)}
@@ -391,6 +325,7 @@ ${netPolicy(hardened)}
 # when the worker installed no channel (real-CPython tests, a completion): \`ml\` is simply not bound
 # and a cell that names it gets NameError.
 ${ML_FACADE}
+${ML_TABLE_FRAME}
 _ml_send_fn = globals().get("_ml_send")
 if _ml_send_fn is not None:
     class _MlCodec:
@@ -398,11 +333,106 @@ if _ml_send_fn is not None:
         dumps = staticmethod(_ml_dumps)
         b64encode = staticmethod(_ml_b64e)
         b64decode = staticmethod(_ml_b64d)
+        run_sync = staticmethod(_ml_run_sync) if _ml_run_sync is not None else None
+        charge = staticmethod(_ml_table_charge) if _ml_table_charge is not None else None
+        frame = staticmethod(_ml_table_frame)
+        asks = _ml_table_asks
     ml, MlError = _ml_make(_ml_send_fn, _MlCodec)
+    _ml_table_inside(ml)
     globals().pop("_ml_make", None)
     globals().pop("_ml_send", None)
 else:
     globals().pop("_ml_make", None)
+for _k in ("_ml_table_frame", "_ml_table_charge", "_ml_table_asks", "_ml_table_inside", "_ml_run_sync"):
+    globals().pop(_k, None)
+`;
+
+/** How many bytes of a table's input `ml.table` charges as one evaluation step inside the dialect: the rate measured for
+ *  `pd.read_csv` on the fork core (docs/spec/ML_TABLE.md, "The charge"), since a stored CSV is parsed by it. */
+export const ML_TABLE_BYTES_PER_STEP = 2;
+
+/**
+ * The Python that turns an `ml.table` answer into the DataFrame the cell gets (ruling 78), and registers the member as a
+ * lifted leaf when the dialect is loaded. Defines, for the wrapper to hand the facade and then drop:
+ * - `_ml_table_frame(value)`: the answer's `data` as a frame. A stored table's bytes were copied once into a bytearray bound
+ *   under `data.buf` (python-worker.ts `bindTableBytes`) and are decoded by their format; a delimited body is re-read with the
+ *   delimiter and header decision discovery already made (table-data.ts), so pandas cannot disagree with the JS reader.
+ *   Rows and HTML are built as the old `tables` loader built them. The source facts go on `df.attrs`.
+ * - `_ml_table_charge(chars)`: bills the dialect's budget `ceil(chars / ML_TABLE_BYTES_PER_STEP)` steps, before the decode
+ *   it pays for; nothing outside a run. None without the fork core.
+ * - `_ml_table_asks`: the exception an inside call raises when its source needs the person (`NotInDialect`).
+ * - `_ml_table_inside(ml)`: admits `ml.table` inside (`allow_kind` on this cell's facade class, `allow_call` lifted with
+ *   a check that charges the source string before the call). The facade is built anew each cell, so this runs each cell.
+ */
+const ML_TABLE_FRAME = /* python */ `
+try:
+    import _restricted as _ml_rx
+    def _ml_table_charge(_n, _c=_ml_rx.charge):
+        if _n > 0:
+            _c(-(-_n // ${ML_TABLE_BYTES_PER_STEP}))
+    _ml_table_asks = _ml_rx.NotInDialect
+except ImportError:
+    _ml_rx = None
+    _ml_table_charge = None
+    _ml_table_asks = None
+
+def _ml_table_inside(_ml, _rx=_ml_rx):
+    import sys
+    if _rx is None or getattr(sys.modules.get("_ml_libraries"), "admitted", None) is None:
+        return
+    _leaf = type(_ml).__dict__["table"].__func__
+    def _check(func, self, args, kwargs, _charge=_ml_table_charge):
+        _src = args[0] if args else kwargs.get("src")
+        _charge(len(_src) if type(_src) is str else 1)
+    _rx.allow_kind(type(_ml), ["table"])
+    _rx.allow_call(_leaf, True, _check)
+
+def _ml_table_frame(_v, _charge=_ml_table_charge, _bio=_ml_bytesio, _sio=_ml_stringio):
+    import pandas as _pd
+    _d = _v.get("data") if isinstance(_v, dict) else None
+    if not isinstance(_d, dict):
+        raise RuntimeError("ml.table: the answer carried no table")
+    _kind = _d.get("kind")
+    if _kind == "value":
+        _buf = globals().pop(str(_d.get("buf") or ""), None)
+        if _buf is None:
+            raise RuntimeError("ml.table: the stored table was not handed to the sandbox")
+        if _charge is not None:
+            _charge(len(_buf))
+        _fmt = _d.get("format")
+        if _fmt in ("arrow-file", "arrow-stream"):
+            import pyarrow as _pa, pyarrow.ipc as _ipc
+            _src = _pa.py_buffer(_buf)
+            _df = (_ipc.open_file(_src) if _fmt == "arrow-file" else _ipc.open_stream(_src)).read_all().to_pandas()
+        elif _fmt == "parquet":
+            import pyarrow as _pa, pyarrow.parquet as _pq
+            _df = _pq.read_table(_pa.BufferReader(_pa.py_buffer(_buf))).to_pandas()
+        elif _fmt in ("csv", "tsv"):
+            _sep = _d.get("delimiter") or ("\\t" if _fmt == "tsv" else ",")
+            _df = _pd.read_csv(_bio(_buf), sep=_sep, header=None if _d.get("headerless") else 0, names=_d.get("columns") or None,
+                               **({"dtype": str, "keep_default_na": False} if _d.get("raw") else {}))
+        elif _fmt in ("paged", "bytes"):
+            raise RuntimeError("ml.table: this stored value is " + str(_fmt) + ", which is not a table. Read it with ml.dereference.")
+        else:
+            raise RuntimeError("ml.table: a stored table in a format the sandbox does not read: " + str(_fmt))
+    elif _kind == "rows":
+        _cols = _d.get("columns") or []
+        _rows = _d.get("rows") or []
+        if _cols:
+            _w = len(_cols)
+            _df = _pd.DataFrame([(list(_r) + [None] * _w)[:_w] for _r in _rows], columns=_cols)
+        else:
+            _df = _pd.DataFrame(_rows)
+    elif _kind == "html":
+        _df = _pd.read_html(_sio(_d.get("html") or ""), flavor="bs4")[0]
+    else:
+        raise RuntimeError("ml.table: an answer of a kind the sandbox does not read: " + str(_kind))
+    _s = _v.get("source") if isinstance(_v.get("source"), dict) else {}
+    _df.attrs.update({"source": _s.get("label"), "kind": _s.get("kind")})
+    for _f in ("delimiter", "headerless", "truncated"):
+        if _d.get(_f) is not None:
+            _df.attrs[_f] = _d[_f]
+    return _df
 `;
 
 /** The cell as full Python: parsed as an async `_user()`'s body, its trailing expression returned, and run. */
@@ -910,23 +940,21 @@ export function completeIn(py: any, code: string, line: number, column: number, 
 }
 
 /**
- * A STORED table's bytes into Python: ONE copy, straight into a `bytearray` in Pyodide's memory, bound as `name` for the
- * prelude to decode (and drop). It is a buffer, never a JsProxy: a proxy is a handle into this realm, which the readonly
- * hardening exists to remove, while a `bytearray` carries no capability at all. Returns the entry with its buffer
- * replaced by that name, since an ArrayBuffer does not survive the JSON the prelude reads.
+ * A STORED table's bytes into Python, for an `ml.table` answer: ONE copy, straight into a `bytearray` in Pyodide's memory,
+ * bound as `name` for the frame builder to decode and drop. It is a buffer, never a JsProxy: a proxy is a handle into this
+ * realm, which the readonly hardening exists to remove, while a `bytearray` carries no capability at all.
+ * @param py the interpreter
+ * @param ns the cell's namespace
+ * @param buffer the bytes
+ * @param name the name to bind them under
  */
-export function injectStoredTable(py: any, ns: any, t: any, name: string, bound: string[]): unknown {
-    const buffer = t?.data?.kind === "value" ? t.data.buffer : undefined;
-    if (!(buffer instanceof ArrayBuffer)) return t;
+export function bindTableBytes(py: any, ns: any, buffer: ArrayBuffer, name: string): void {
     const bytes = py.runPython("bytearray")(buffer.byteLength);
     try {
         const view = bytes.getBuffer("u8");
         try { view.data.set(new Uint8Array(buffer)); } finally { view.release(); }
         ns.set(name, bytes);
     } finally { bytes.destroy(); }
-    bound.push(name);
-    const { buffer: _dropped, ...data } = t.data;
-    return { ...t, data: { ...data, buf: name } };
 }
 
 /** The returned frame's IPC bytes (`_ipc_result`, set by the wrapper), as an ArrayBuffer of their own, or undefined. */

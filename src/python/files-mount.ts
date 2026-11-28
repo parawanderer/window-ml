@@ -10,6 +10,14 @@ export const FILES_AT = "/files";
 /** Read chunks the mount keeps, in fixed slots of one chunk each (32 × 512 KiB = 16 MiB, #1999 "The bounds"). */
 export const READ_CACHE_SLOTS = 32;
 
+/** The most names one directory page holds: the reader's own cap (ranged-reader.ts `DIR_PAGE_MAX`, which a test holds
+ *  this to), so the page the mount asks for is the page it is charged for. */
+export const DIR_PAGE = 500;
+
+/** The names the FIRST page of a listing asks for: most directories fit in it, so a walk over many small ones pays
+ *  for this page and not for `DIR_PAGE` each; a longer directory continues in pages of `DIR_PAGE`. */
+export const DIR_FIRST_PAGE = 50;
+
 /** The open(2) flag bits the mount reads (Emscripten's values, the Linux ones). */
 const O_ACCMODE = 3, O_TRUNC = 0o1000, O_APPEND = 0o2000;
 const S_IFDIR = 0o40000, S_IFREG = 0o100000;
@@ -29,13 +37,17 @@ export interface FilesMountDeps {
     Interrupted: new (...a: any[]) => Error;
     /** When a file's commit or a txn's abort fails after the stream is gone: the cell's log, never the model's reply. */
     onLost?: (path: string, why: string) => void;
+    /** Pay for a directory page of `names` names before it is asked for (listing-charge.ts): false when the running
+     *  cell's budget cannot, and the listing fails with EIO. Unset, nothing is charged. */
+    chargeListing?: (names: number) => boolean;
 }
 
 /**
  * Python's half of a refusal's words: `open`, `io.open` and `os.open` wrapped so a `PermissionError` under `/files`
  * gets the reader's message as its `strerror` (so `str(e)` and the traceback say why), read through `take(path)`.
  * Defined at boot by our own code. `switch(on)` puts the wrappers in for a cell outside the dialect and the originals
- * back for one inside, which cannot reach the mount, so the dialect's gate only ever judges the real `open`.
+ * back for one inside, so the dialect's gate only ever judges the real `open` (an inside cell's refusal under `/files`
+ * then says only "Permission denied").
  * (`sys.monitoring` is not free for this: the cancel's spend owns it and refuses a cell that leaves a tool registered.)
  */
 export const FILES_OPEN_WORDS = `
@@ -198,6 +210,11 @@ export function makeFilesMount(deps: FilesMountDeps) {
             },
             lookup(parent: any, name: string) {
                 const p = join(pathOf(parent), name);
+                // A shown name two entries share (rule 4) gets a node holding no stat: the listing's getdents looks up
+                // every name it returns and would fail on the reader's EACCES, while a stat or open of the node still
+                // asks the reader and is refused as ambiguous.
+                const shared = parent.kids ? parent.shared?.get(name) : undefined;
+                if (shared) { const node = makeNode(parent, name, shared); node.st = null; return node; }
                 const st = (parent.kids?.get(name) as Stat | undefined) ?? (req("stat", [p]) as Stat);
                 return makeNode(parent, name, st);
             },
@@ -234,14 +251,23 @@ export function makeFilesMount(deps: FilesMountDeps) {
             readdir(node: any) {
                 const p = pathOf(node);
                 const kids = new Map<string, Stat>();
+                // Every entry, a shown name twice when two files share it: both are listed, and `lookup` gives that
+                // name a node with no stat, so a stat or open asks the reader, which refuses it as ambiguous.
+                const names: string[] = [];
+                const shared = new Map<string, Stat>();
                 let cursor: string | undefined;
                 do {
-                    const page = req("opendir", [p, { limit: 1000, ...(cursor ? { cursor } : {}) }]) as { entries: Array<{ name: string } & Stat>; next?: string };
-                    for (const e of page.entries) kids.set(e.name, e);
+                    // Charged for a full page before asking, since the count is not known first; nothing gives back
+                    // what a shorter page did not use (the fork's charge cannot credit). The first page is short.
+                    const limit = cursor ? DIR_PAGE : DIR_FIRST_PAGE;
+                    if (deps.chargeListing && !deps.chargeListing(limit)) throw new FS.ErrnoError(ERRNO_CODES.EIO);
+                    const page = req("opendir", [p, { limit, ...(cursor ? { cursor } : {}) }]) as { entries: Array<{ name: string } & Stat>; next?: string };
+                    for (const e of page.entries) { if (kids.has(e.name)) shared.set(e.name, e); kids.set(e.name, e); names.push(e.name); }
                     cursor = page.next;
                 } while (cursor);
                 node.kids = kids;
-                return [".", "..", ...kids.keys()];
+                node.shared = shared;
+                return [".", "..", ...names];
             },
             symlink() { throw new FS.ErrnoError(ERRNO_CODES.EPERM); },
             // This core's `os` has no `link`; refused here too, for whatever reaches the node op.

@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { DEFAULT_CONFIG, SETTING_PLACES } from "../src/contract/contract-config.ts";
+import { DEFAULT_CONFIG, SETTING_PLACES, filesQuotaBytes } from "../src/contract/contract-config.ts";
 import { SETTING_CLASSES, DOMAIN_KINDS, domainAllows, hoursOk, modelWritable, restoreListsApart, settingDecl, settingWidens } from "../src/setting-class.ts";
 import { planRestore } from "../src/backup/backup-settings.ts";
 import { SITE_SCHEMA } from "../src/site-access.ts";
@@ -49,7 +49,7 @@ test("the model may change a setting only with a row in DevTools Settings, and n
     const everywhere = Object.fromEntries(KEYS.map((k) => [k, { tab: "advanced" }]));
     for (const k of [...ofClass("secret"), ...ofClass("gate")]) assert.equal(modelWritable(k, everywhere), false, k);
     assert.equal(modelWritable("notASetting", { notASetting: { tab: "advanced" } }), false);
-    assert.equal(KEYS.filter((k) => modelWritable(k)).length, 51);
+    assert.equal(KEYS.filter((k) => modelWritable(k)).length, 53);
 });
 
 test("the secrets and the gate keys are exactly the ruled ones", async () => {
@@ -60,7 +60,7 @@ test("the secrets and the gate keys are exactly the ruled ones", async () => {
     assert.deepEqual([...SECRET_KEYS, "pageApprovalDomains"].sort(), RULED);
     assert.deepEqual(ofClass("secret"), RULED);
     assert.deepEqual(ofClass("gate"), ["autoApprovePython", "autoApproveReadonly", "autoApproveSelfSource", "scrubPersonInput", "shellRevealsAllow"]);
-    assert.equal(ofClass("guarded").length, 24);
+    assert.equal(ofClass("guarded").length, 25);
 });
 
 test("no shell key and not agentStartPage is ever ordinary, so no setting allow frees one", () => {
@@ -118,9 +118,9 @@ test("a backup an older version wrote, changing every setting, lists the 30 guar
     const plan = planRestore(payload, { sync: { ...DEFAULT_CONFIG, apiKey: "sk-mine" }, local: { ml_site_schema: SITE_SCHEMA } });
     const sync = plan.changes.filter((c) => c.area === "sync");
     const risky = sync.filter((c) => c.group === "risky").map((c) => c.key).sort();
-    // Written before shellRevealsAllow, taskNotifyOnly, taskTurnChainMax and scrubPersonInput existed, so it changes every
+    // Written before shellRevealsAllow, taskNotifyOnly, taskTurnChainMax, filesQuotaMB and scrubPersonInput existed, so it changes every
     // key but those, which the restore leaves as they are.
-    const LATER = ["shellRevealsAllow", "taskNotifyOnly", "taskTurnChainMax", "scrubPersonInput"];
+    const LATER = ["shellRevealsAllow", "taskNotifyOnly", "taskTurnChainMax", "filesQuotaMB", "scrubPersonInput"];
     assert.deepEqual(risky, KEYS.filter((k) => SETTING_CLASSES[k].class !== "ordinary" && !LATER.includes(k)).sort());
     assert.equal(risky.length, 30);
     for (const k of LATER) assert.equal(sync.some((c) => c.key === k), false, `a backup without ${k} changes nothing of it`);
@@ -137,4 +137,13 @@ test("a backup an older version wrote, changing every setting, lists the 30 guar
         modelFilter: "the whitelist of models a page or run may use; clearing it allows every model the server offers",
         execDefaultWorld: "which world page scripts run in",
     });
+});
+
+// --- the files quota reads as a positive whole number of MiB, else the default ---
+
+test("filesQuotaBytes: a positive whole number is MiB, anything else is the 1024 default", () => {
+    const dflt = 1024 * 1024 * 1024;
+    for (const bad of [0, -1, 1.5, "12", NaN, Infinity, undefined, null]) assert.equal(filesQuotaBytes(bad), dflt, String(bad));
+    assert.equal(filesQuotaBytes(2048), 2048 * 1024 * 1024);
+    assert.equal(filesQuotaBytes(1), 1024 * 1024);
 });

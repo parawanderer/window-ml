@@ -158,7 +158,7 @@ test("a 50,000-row CSV reports its REAL size while showing five rows", async () 
     // nothing about the file's size. This says more, in a fraction of the tokens.
     expect(seen.length).toBeLessThan(1000);
     // The model is told how to get the REST — by URL, from the cache, not by re-fetching or read_csv.
-    expect(seen).toMatch(/pass "[^"]*\/large\.csv" to python_exec's `tables`/);
+    expect(seen).toMatch(/Whole table cached: in python_exec, `df = ml\.table\("[^"]*\/large\.csv"\)` reads all 50,000 rows as a DataFrame/);
 });
 
 test("a CSV with no header row keeps every record and numbers its columns", async () => {
@@ -214,7 +214,7 @@ test("python_exec loads the fetched table from the cache — no refetch, no read
     fake.setScript([
         { tool: "fetch_url", args: { url } },
         // The last print is formatted EXACTLY like the preview's dtypes line, so the two can be compared as strings.
-        { tool: "python_exec", args: { code: "print(df.shape, list(df.columns), str(df['price'].dtype), df['price'].sum())\nprint('dtypes: ' + ', '.join(f'{c} {t}' for c, t in df.dtypes.items()))", mode: "readonly", tables: { df: url } } },
+        { tool: "python_exec", args: { code: `df = ml.table(${JSON.stringify(url)})\n` + "print(df.shape, list(df.columns), str(df['price'].dtype), df['price'].sum())\nprint('dtypes: ' + ', '.join(f'{c} {t}' for c, t in df.dtypes.items()))", mode: "readonly" } },
         (req) => ({ content: req.messages.map((m) => (typeof m.content === "string" ? m.content : "")).join("\n") }),
     ]);
     const runPromise = page.evaluate((u) => window.ml.agent(`Fetch ${u} then total its price column.`, { env: false, approvalRouting: "both", extraTools: [window.ml.pythonTool()] }), url);

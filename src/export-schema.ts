@@ -329,6 +329,9 @@ export interface ExportStep {
      * only with a stable sort, or ties reorder; array order is authoritative.
      */
     seq: number;
+    /** In a chat session: the chat turn this tool call belongs to (the turn's id), with `step` and `seq` both the
+     *  session's count of tool calls. Absent in an agent run. */
+    turn?: string;
     /** When the step completed. Volatile. */
     at?: IsoTimestamp;
     /** How long the tool took, from `toolMs`. Frequently ABSENT — the loop records it
